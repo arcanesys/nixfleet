@@ -1,0 +1,13 @@
+[package]
+name = "nixfleet-types"
+version = "0.1.0"
+edition = "2021"
+description = "Shared types for the NixFleet control plane and agent"
+license = "Apache-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+serde_json = "1"

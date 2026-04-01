@@ -1,0 +1,23 @@
+[package]
+name = "nixfleet-agent"
+version = "0.1.0"
+edition = "2021"
+description = "NixFleet fleet management agent"
+license = "Apache-2.0"
+
+[dependencies]
+nixfleet-types = { path = "../shared" }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+rustls-pemfile = "2"
+
+[dev-dependencies]
+tempfile = "3"
