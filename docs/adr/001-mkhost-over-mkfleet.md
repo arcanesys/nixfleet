@@ -1,32 +1,33 @@
-# ADR-001: mkHost over mkFleet/mkOrg/mkRole
+# ADR-001: Single-Function API
 
-**Date:** 2026-03-31
 **Status:** Accepted
-**Spec:** `superpowers/specs/2026-03-31-nixfleet-simplification-design.md`
+**Date:** 2026-03-31
 
 ## Context
 
-nixfleet had a 4-function DSL: `mkFleet` (entry point, validates orgs+hosts), `mkOrg` (org-level defaults), `mkRole` (role presets like workstation/server), `mkHost` (single host). This required learning 4 abstractions before deploying a single machine.
+Fleet management frameworks face a design tension: provide a rich DSL with multiple abstractions (fleet → org → role → host) or keep the API surface minimal. More abstractions can reduce boilerplate but increase the learning curve and couple fleet structure to framework opinions.
+
+NixFleet needs an API that lets consumers define hosts without learning framework-specific concepts beyond the minimum necessary.
 
 ## Decision
 
-Replace the DSL with a single function: `nixfleet.lib.mkHost`. It takes a host definition and returns a standard `nixosSystem` or `darwinSystem`.
+NixFleet exposes a single public function: `nixfleet.lib.mkHost`. It takes a host definition and returns a standard `nixosSystem` or `darwinSystem`.
 
-- **mkFleet** removed — fleet repos define `nixosConfigurations` directly in their flake outputs
-- **mkOrg** removed — org defaults are plain `let` bindings in the fleet's `flake.nix`
-- **mkRole** removed — roles replaced by hostSpec flags (see ADR-002)
-- **mkHost** survives as the single API function
+```nix
+nixfleet.lib.mkHost {
+  hostName = "web-01";
+  platform = "x86_64-linux";
+  hostSpec = { userName = "admin"; isImpermanent = true; };
+  modules = [ ./hardware/web-01 ./disk-config.nix ];
+};
+```
 
-## Alternatives Considered
-
-1. **Keep mkFleet but simplify** — still requires learning the abstraction. Rejected because the ceremony doesn't earn its complexity for most use cases.
-2. **Pure modules, no mkHost** — fleet repos use `nixpkgs.lib.nixosSystem` directly and import nixfleet modules. Rejected because mkHost provides real value: auto-wiring scopes, injecting core modules, handling Darwin vs NixOS detection. Without it, every fleet repo would duplicate this wiring.
-3. **Convention-over-configuration (mkFleetFlake)** — auto-discover hosts from directory structure. Deferred as future sugar on top of mkHost (Approach C in spec).
+Fleet repos define `nixosConfigurations` directly in their flake outputs. Org-level defaults are plain `let` bindings in the fleet's `flake.nix`. There is no fleet, org, or role abstraction.
 
 ## Consequences
 
-- Standard NixOS commands work: `nixos-anywhere --flake .#host root@ip`, `nixos-rebuild switch --flake .#host`
+- Standard NixOS commands work directly: `nixos-anywhere --flake .#host`, `nixos-rebuild switch --flake .#host`
 - Zero learning curve beyond "call mkHost, get a nixosConfiguration"
-- Fleet repos are standard Nix flakes — no framework magic in the flake structure
-- Batch hosts and test matrices are handled by standard Nix (`builtins.map` over mkHost) instead of framework functions
-- Future mkFleetFlake (Approach C) can be layered on top without changing the primitive
+- Fleet repos are standard Nix flakes with no framework-specific flake structure
+- Batch hosts are created with standard Nix (`builtins.map` over mkHost)
+- Convenience sugar (e.g., auto-discovery from directory structure) can be layered on top without changing the primitive

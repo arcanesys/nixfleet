@@ -1,37 +1,36 @@
-# ADR-003: Agent as NixOS Service Module, Not hostSpec Flag
+# ADR-003: Agent and Control Plane as NixOS Service Modules
 
-**Date:** 2026-03-31
 **Status:** Accepted
-**Spec:** `superpowers/specs/2026-03-31-nixfleet-simplification-design.md`
+**Date:** 2026-03-31
 
 ## Context
 
-The nixfleet agent (Rust binary that polls the control plane for desired generation, runs `nixos-rebuild switch`, reports status) needs configuration: control plane URL, machine ID, poll interval, TLS certs, auth tokens. Two options: configure via hostSpec flags or via a dedicated NixOS service module.
+NixFleet includes a fleet agent (polls the control plane, runs `nixos-rebuild switch`, reports status) and a control plane (HTTP server managing fleet state). Both need configuration: URLs, TLS certs, auth tokens, poll intervals.
+
+This configuration could live in hostSpec (alongside host identity flags) or in dedicated NixOS service modules (the standard `services.*` pattern).
 
 ## Decision
 
-The agent is a standard NixOS service module: `services.nixfleet-agent`.
+Both are standard NixOS service modules, auto-included by mkHost but disabled by default:
 
 ```nix
 services.nixfleet-agent = {
   enable = true;
-  controlPlaneUrl = "https://cp.example.com";
-  machineId = "web-01";  # defaults to hostname
+  controlPlaneUrl = "https://fleet.example.com";
   pollInterval = 60;
-  # TLS cert paths, auth config...
+};
+
+services.nixfleet-control-plane = {
+  enable = true;
+  listenAddress = "0.0.0.0";
+  port = 8443;
 };
 ```
-
-mkHost auto-includes the module (disabled by default). Fleet repos enable and configure it.
-
-## Alternatives Considered
-
-1. **hostSpec flags** — `hostSpec.nixfleetAgent.enable = true; hostSpec.nixfleetAgent.controlPlaneUrl = "..."`. Rejected because hostSpec is for identity and capability flags (who is this machine, what does it do), not service configuration. Agent config has its own option space (URL, TLS certs, poll interval, auth) that belongs in `services.*`.
 
 ## Consequences
 
 - Follows NixOS conventions — users expect `services.foo.enable`
-- TLS certs and auth tokens wire naturally into agenix via module options
+- TLS certs and auth tokens wire naturally into secret management (agenix, sops, etc.)
 - Per-environment overrides work with standard NixOS semantics (`lib.mkForce`, per-host modules)
-- Enterprise customers get full override control without framework-specific patterns
-- Fleet-wide config is a single module in `fleetModules`; per-host overrides in host modules
+- Fleet-wide defaults set in shared fleet modules; per-host overrides in host-specific modules
+- hostSpec stays focused on host identity and capability flags, not service configuration

@@ -1,36 +1,33 @@
-# ADR-002: hostSpec Flags over Roles and Presets
+# ADR-002: hostSpec Flags Over Role Hierarchy
 
-**Date:** 2026-03-31
 **Status:** Accepted
-**Spec:** `superpowers/specs/2026-03-31-nixfleet-simplification-design.md`
+**Date:** 2026-03-31
 
 ## Context
 
-nixfleet had a role system (`mkRole`) defining named presets: workstation, server, edge, minimal, darwin-workstation. Each role bundled hostSpec defaults (e.g., workstation set `isGraphical = true`, `isDev = true`). Three options were considered: keep roles as a mkHost parameter, replace with composable preset modules, or drop roles entirely and use flags.
+Hosts in a fleet differ along multiple axes: graphical vs headless, persistent vs ephemeral, dev vs production, Linux vs macOS. These capabilities could be expressed as named roles (e.g., "workstation" = graphical + dev + persistent) or as independent boolean flags.
+
+Roles reduce repetition but hide what's actually enabled. A "workstation" that includes 4 flags creates a "what does this role include?" question for every new host definition.
 
 ## Decision
 
-Drop roles and presets. Each host sets its own hostSpec flags directly:
+Each host sets explicit flags in `hostSpec`:
 
 ```nix
-hostSpec = org // {
-  isGraphical = true;
+hostSpec = {
+  userName = "admin";
   isImpermanent = true;
-  isDev = true;
+  isServer = true;
 };
 ```
 
-Scopes already react to these flags via `lib.mkIf` — that machinery doesn't change.
+The framework defines a minimal set of flags (`isMinimal`, `isDarwin`, `isImpermanent`, `isServer`) plus data fields (`userName`, `hostName`, `timeZone`, `locale`, etc.). Scopes react to these flags via `lib.mkIf` (see [ADR-005](005-scope-self-activation.md)).
 
-## Alternatives Considered
-
-1. **Roles as mkHost parameter** — `mkHost { role = "workstation"; ... }` applies role defaults. Rejected because roles add a concept that doesn't earn its weight. A "workstation" is just 3-4 flags.
-2. **Composable preset modules** — `modules = [ nixfleet.presets.graphical nixfleet.presets.impermanent ]`. Each preset sets flags + optional config. Rejected because scopes already provide the composition layer — presets would be a redundant indirection that just sets flags that trigger scopes.
+Fleet repos extend hostSpec with their own flags via plain NixOS modules (see [ADR-006](006-hostspec-extension.md)).
 
 ## Consequences
 
 - Host definitions are fully self-describing — every capability is visible as a flag
-- No "what does the workstation role include?" questions
+- No hidden behavior behind role names
 - Repetition across similar hosts mitigated by shared `let` bindings (plain Nix)
-- Zero framework concepts beyond "hostSpec flags control what's enabled"
-- If repetition becomes a problem at scale, presets or mkFleetFlake can be added later as convenience
+- Zero framework concepts beyond "flags control what's enabled"
