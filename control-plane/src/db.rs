@@ -286,9 +286,8 @@ impl Db {
     /// Get all tags for a machine, ordered by tag name.
     pub fn get_machine_tags(&self, machine_id: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT tag FROM machine_tags WHERE machine_id = ?1 ORDER BY tag",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT tag FROM machine_tags WHERE machine_id = ?1 ORDER BY tag")?;
         let rows = stmt
             .query_map(rusqlite::params![machine_id], |row| row.get(0))?
             .collect::<std::result::Result<Vec<String>, _>>()?;
@@ -749,7 +748,8 @@ mod tests {
         let (db, _dir) = make_db();
         db.set_desired_generation("web-01", "/nix/store/abc")
             .unwrap();
-        db.set_desired_generation("dev-01", "/nix/store/def").unwrap();
+        db.set_desired_generation("dev-01", "/nix/store/def")
+            .unwrap();
         let gens = db.list_desired_generations().unwrap();
         assert_eq!(gens.len(), 2);
     }
@@ -934,18 +934,12 @@ mod tests {
         db.register_machine("web-01", "active").unwrap();
         db.register_machine("web-02", "active").unwrap();
         db.register_machine("db-01", "active").unwrap();
-        db.set_machine_tags(
-            "web-01",
-            &["web".to_string(), "production".to_string()],
-        )
-        .unwrap();
+        db.set_machine_tags("web-01", &["web".to_string(), "production".to_string()])
+            .unwrap();
         db.set_machine_tags("web-02", &["web".to_string(), "staging".to_string()])
             .unwrap();
-        db.set_machine_tags(
-            "db-01",
-            &["db".to_string(), "production".to_string()],
-        )
-        .unwrap();
+        db.set_machine_tags("db-01", &["db".to_string(), "production".to_string()])
+            .unwrap();
         let machines = db
             .get_machines_by_tags(&["web".to_string(), "production".to_string()])
             .unwrap();
@@ -956,11 +950,8 @@ mod tests {
     fn test_remove_machine_tag() {
         let (db, _dir) = make_db();
         db.register_machine("web-01", "active").unwrap();
-        db.set_machine_tags(
-            "web-01",
-            &["web".to_string(), "production".to_string()],
-        )
-        .unwrap();
+        db.set_machine_tags("web-01", &["web".to_string(), "production".to_string()])
+            .unwrap();
         db.remove_machine_tag("web-01", "web").unwrap();
         let tags = db.get_machine_tags("web-01").unwrap();
         assert_eq!(tags, vec!["production".to_string()]);
@@ -996,7 +987,10 @@ mod tests {
 
         let rollout = db.get_rollout("roll-1").unwrap().unwrap();
         assert_eq!(rollout.generation_hash, "/nix/store/abc123");
-        assert_eq!(rollout.cache_url, Some("http://cache.example.com".to_string()));
+        assert_eq!(
+            rollout.cache_url,
+            Some("http://cache.example.com".to_string())
+        );
         assert_eq!(rollout.strategy, "rolling");
         assert_eq!(rollout.batch_sizes, "[1, 2]");
         assert_eq!(rollout.failure_threshold, "1");
@@ -1005,7 +999,10 @@ mod tests {
         assert_eq!(rollout.status, "created");
         assert_eq!(rollout.target_tags, Some("web,production".to_string()));
         assert!(rollout.target_hosts.is_none());
-        assert_eq!(rollout.previous_generation, Some("/nix/store/old".to_string()));
+        assert_eq!(
+            rollout.previous_generation,
+            Some("/nix/store/old".to_string())
+        );
         assert_eq!(rollout.created_by, "apikey:deploy");
     }
 

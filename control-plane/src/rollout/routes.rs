@@ -115,11 +115,7 @@ pub async fn create_rollout(
     // Persist batches
     let mut batch_summaries = Vec::new();
     for (i, batch_machines) in batches.iter().enumerate() {
-        let batch_id = format!(
-            "{}-b{}",
-            rollout_id,
-            i
-        );
+        let batch_id = format!("{}-b{}", rollout_id, i);
         let machine_ids_json = serde_json::to_string(batch_machines).unwrap_or_default();
         db.create_rollout_batch(&batch_id, &rollout_id, i as i64, &machine_ids_json)
             .map_err(|e| {
@@ -138,13 +134,14 @@ pub async fn create_rollout(
     }
 
     // Set rollout status to running
-    db.update_rollout_status(&rollout_id, "running").map_err(|e| {
-        tracing::error!(error = %e, "Failed to update rollout status");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to update rollout status".to_string(),
-        )
-    })?;
+    db.update_rollout_status(&rollout_id, "running")
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to update rollout status");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to update rollout status".to_string(),
+            )
+        })?;
 
     // Audit log
     let total_machines = machine_ids.len();
@@ -354,8 +351,8 @@ pub async fn cancel_rollout(
 
 /// Convert database rows into a RolloutDetail response type.
 fn row_to_detail(rollout: &RolloutRow, batch_rows: &[RolloutBatchRow]) -> RolloutDetail {
-    let strategy: RolloutStrategy =
-        serde_json::from_str(&format!("\"{}\"", rollout.strategy)).unwrap_or(RolloutStrategy::Staged);
+    let strategy: RolloutStrategy = serde_json::from_str(&format!("\"{}\"", rollout.strategy))
+        .unwrap_or(RolloutStrategy::Staged);
 
     let on_failure: OnFailure =
         serde_json::from_str(&format!("\"{}\"", rollout.on_failure)).unwrap_or_default();
@@ -369,8 +366,7 @@ fn row_to_detail(rollout: &RolloutRow, batch_rows: &[RolloutBatchRow]) -> Rollou
     let batches = batch_rows
         .iter()
         .map(|b| {
-            let machine_ids: Vec<String> =
-                serde_json::from_str(&b.machine_ids).unwrap_or_default();
+            let machine_ids: Vec<String> = serde_json::from_str(&b.machine_ids).unwrap_or_default();
 
             let batch_status: BatchStatus =
                 serde_json::from_str(&format!("\"{}\"", b.status)).unwrap_or(BatchStatus::Pending);

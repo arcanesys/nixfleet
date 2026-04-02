@@ -285,7 +285,10 @@ mod url_integration {
         let base = "https://fleet.example.com";
         let machine_id = "dev-01";
         let url = format!("{}/api/v1/machines/{}/report", base, machine_id);
-        assert_eq!(url, "https://fleet.example.com/api/v1/machines/dev-01/report");
+        assert_eq!(
+            url,
+            "https://fleet.example.com/api/v1/machines/dev-01/report"
+        );
     }
 
     #[test]

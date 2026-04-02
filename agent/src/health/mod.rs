@@ -63,7 +63,11 @@ impl HealthRunner {
         let mut results = Vec::with_capacity(self.checks.len());
         for check in &self.checks {
             let result = check.run().await;
-            debug!(check = check.name(), pass = result.is_pass(), "Health check");
+            debug!(
+                check = check.name(),
+                pass = result.is_pass(),
+                "Health check"
+            );
             results.push(result);
         }
         let all_passed = results.iter().all(|r| r.is_pass());

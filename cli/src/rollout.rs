@@ -44,8 +44,8 @@ pub async fn list(cp_url: &str, api_key: &str, status_filter: Option<&str>) -> R
     }
 
     println!(
-        "{:<38} {:<12} {:<14} {:<8} {:<20} {}",
-        "ID", "STATUS", "STRATEGY", "BATCHES", "CREATED", "GENERATION"
+        "{:<38} {:<12} {:<14} {:<8} {:<20} GENERATION",
+        "ID", "STATUS", "STRATEGY", "BATCHES", "CREATED"
     );
     println!("{}", "-".repeat(110));
 
@@ -86,7 +86,10 @@ pub async fn status(cp_url: &str, api_key: &str, id: &str) -> Result<()> {
         );
     }
 
-    let rollout: RolloutDetail = resp.json().await.context("Failed to parse rollout detail")?;
+    let rollout: RolloutDetail = resp
+        .json()
+        .await
+        .context("Failed to parse rollout detail")?;
     print_rollout_detail(&rollout);
     Ok(())
 }
@@ -157,8 +160,10 @@ pub async fn wait_for_completion(cp_url: &str, api_key: &str, id: &str) -> Resul
             );
         }
 
-        let rollout: RolloutDetail =
-            resp.json().await.context("Failed to parse rollout detail")?;
+        let rollout: RolloutDetail = resp
+            .json()
+            .await
+            .context("Failed to parse rollout detail")?;
 
         print_progress(&rollout);
 
@@ -193,22 +198,14 @@ fn print_rollout_detail(rollout: &RolloutDetail) {
     );
 
     println!("\nBatches ({}):", rollout.batches.len());
-    println!(
-        "  {:<6} {:<16} {:<8} {}",
-        "INDEX", "STATUS", "MACHINES", "HEALTH"
-    );
+    println!("  {:<6} {:<16} {:<8} HEALTH", "INDEX", "STATUS", "MACHINES");
     println!("  {}", "-".repeat(60));
 
     for batch in &rollout.batches {
         let healthy = batch
             .machine_health
             .values()
-            .filter(|h| {
-                matches!(
-                    h,
-                    nixfleet_types::rollout::MachineHealthStatus::Healthy
-                )
-            })
+            .filter(|h| matches!(h, nixfleet_types::rollout::MachineHealthStatus::Healthy))
             .count();
         let total = batch.machine_ids.len();
 
@@ -234,12 +231,7 @@ fn print_progress(rollout: &RolloutDetail) {
         .batches
         .iter()
         .flat_map(|b| b.machine_health.values())
-        .filter(|h| {
-            matches!(
-                h,
-                nixfleet_types::rollout::MachineHealthStatus::Healthy
-            )
-        })
+        .filter(|h| matches!(h, nixfleet_types::rollout::MachineHealthStatus::Healthy))
         .count();
 
     let current_batch = rollout

@@ -33,8 +33,7 @@ pub async fn list(cp_url: &str, api_key: &str, tag_filter: Option<&str>) -> Resu
         );
     }
 
-    let machines: Vec<MachineStatus> =
-        resp.json().await.context("Failed to parse machine list")?;
+    let machines: Vec<MachineStatus> = resp.json().await.context("Failed to parse machine list")?;
 
     let filtered: Vec<&MachineStatus> = if let Some(tag) = tag_filter {
         machines
@@ -50,10 +49,7 @@ pub async fn list(cp_url: &str, api_key: &str, tag_filter: Option<&str>) -> Resu
         return Ok(());
     }
 
-    println!(
-        "{:<20} {:<12} {:<12} {}",
-        "ID", "LIFECYCLE", "STATE", "TAGS"
-    );
+    println!("{:<20} {:<12} {:<12} TAGS", "ID", "LIFECYCLE", "STATE");
     println!("{}", "-".repeat(70));
 
     for machine in &filtered {
@@ -92,11 +88,7 @@ pub async fn tag(cp_url: &str, api_key: &str, machine_id: &str, tags: &[String])
         );
     }
 
-    println!(
-        "Tags set on {}: {}",
-        machine_id,
-        tags.join(", ")
-    );
+    println!("Tags set on {}: {}", machine_id, tags.join(", "));
     Ok(())
 }
 

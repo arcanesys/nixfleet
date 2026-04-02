@@ -96,7 +96,10 @@ mod tests {
     #[test]
     fn test_build_batches_staged() {
         let m = machines(20);
-        let batches = build_batches(&m, &["1".to_string(), "25%".to_string(), "100%".to_string()]);
+        let batches = build_batches(
+            &m,
+            &["1".to_string(), "25%".to_string(), "100%".to_string()],
+        );
         assert_eq!(batches.len(), 3);
         assert_eq!(batches[0].len(), 1);
         assert_eq!(batches[1].len(), 5); // ceil(19 * 0.25) = 5

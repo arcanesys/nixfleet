@@ -308,12 +308,7 @@ async fn main() -> Result<()> {
         },
         Commands::Rollout { action } => match action {
             RolloutAction::List { status } => {
-                rollout::list(
-                    &cli.control_plane_url,
-                    &cli.api_key,
-                    status.as_deref(),
-                )
-                .await
+                rollout::list(&cli.control_plane_url, &cli.api_key, status.as_deref()).await
             }
             RolloutAction::Status { id } => {
                 rollout::status(&cli.control_plane_url, &cli.api_key, &id).await

@@ -274,6 +274,7 @@ pub async fn run(cp_url: &str, pattern: &str, flake: &str, dry_run: bool, ssh: b
 }
 
 /// Deploy via the rollout API instead of direct SSH or per-host control plane push.
+#[allow(clippy::too_many_arguments)]
 pub async fn deploy_rollout(
     cp_url: &str,
     api_key: &str,
@@ -291,7 +292,10 @@ pub async fn deploy_rollout(
         "canary" => RolloutStrategy::Canary,
         "staged" => RolloutStrategy::Staged,
         "all-at-once" | "all_at_once" => RolloutStrategy::AllAtOnce,
-        other => bail!("Unknown strategy: {}. Use canary, staged, or all-at-once.", other),
+        other => bail!(
+            "Unknown strategy: {}. Use canary, staged, or all-at-once.",
+            other
+        ),
     };
 
     let parsed_on_failure = match on_failure {
@@ -346,8 +350,10 @@ pub async fn deploy_rollout(
         );
     }
 
-    let created: CreateRolloutResponse =
-        resp.json().await.context("Failed to parse rollout response")?;
+    let created: CreateRolloutResponse = resp
+        .json()
+        .await
+        .context("Failed to parse rollout response")?;
 
     println!(
         "Rollout created: {} ({} machines in {} batches)",

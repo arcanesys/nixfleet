@@ -46,10 +46,7 @@ pub fn build_app(fleet_state: Arc<RwLock<state::FleetState>>, db: Arc<db::Db>) -
         )
         .route("/api/v1/rollouts", post(rollout::routes::create_rollout))
         .route("/api/v1/rollouts", get(rollout::routes::list_rollouts))
-        .route(
-            "/api/v1/rollouts/{id}",
-            get(rollout::routes::get_rollout),
-        )
+        .route("/api/v1/rollouts/{id}", get(rollout::routes::get_rollout))
         .route(
             "/api/v1/rollouts/{id}/resume",
             post(rollout::routes::resume_rollout),

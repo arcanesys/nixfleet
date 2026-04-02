@@ -19,10 +19,7 @@ pub fn parse_threshold(spec: &str, batch_size: usize) -> usize {
 }
 
 /// Spawn the executor background task. Returns a join handle.
-pub fn spawn(
-    state: Arc<RwLock<FleetState>>,
-    db: Arc<Db>,
-) -> JoinHandle<()> {
+pub fn spawn(state: Arc<RwLock<FleetState>>, db: Arc<Db>) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
         loop {
@@ -35,10 +32,7 @@ pub fn spawn(
 }
 
 /// One evaluation cycle: advance all running rollouts.
-async fn tick(
-    state: &Arc<RwLock<FleetState>>,
-    db: &Arc<Db>,
-) -> anyhow::Result<()> {
+async fn tick(state: &Arc<RwLock<FleetState>>, db: &Arc<Db>) -> anyhow::Result<()> {
     let rollouts = db.list_rollouts_by_status(Some("running"), 100)?;
 
     for rollout in rollouts {
@@ -58,9 +52,9 @@ async fn process_rollout(
     let batches = db.get_rollout_batches(&rollout.id)?;
 
     // Find the current batch: first batch that is pending, deploying, or waiting_health
-    let current_batch = batches.iter().find(|b| {
-        b.status == "pending" || b.status == "deploying" || b.status == "waiting_health"
-    });
+    let current_batch = batches
+        .iter()
+        .find(|b| b.status == "pending" || b.status == "deploying" || b.status == "waiting_health");
 
     let Some(batch) = current_batch else {
         // No active batch — check if all batches succeeded

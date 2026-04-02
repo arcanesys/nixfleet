@@ -20,6 +20,7 @@ pub struct SystemdConfig {
 pub struct HttpConfig {
     pub url: String,
     #[serde(default = "default_interval")]
+    #[allow(dead_code)]
     pub interval: i64,
     #[serde(default = "default_timeout")]
     pub timeout: i64,
@@ -32,6 +33,7 @@ pub struct CommandConfig {
     pub name: String,
     pub command: String,
     #[serde(default = "default_cmd_interval")]
+    #[allow(dead_code)]
     pub interval: i64,
     #[serde(default = "default_cmd_timeout")]
     pub timeout: i64,
@@ -56,8 +58,7 @@ fn default_cmd_timeout() -> i64 {
 pub fn load_config(path: &str) -> Result<HealthConfig> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read health config: {path}"))?;
-    serde_json::from_str(&content)
-        .with_context(|| format!("failed to parse health config: {path}"))
+    serde_json::from_str(&content).with_context(|| format!("failed to parse health config: {path}"))
 }
 
 #[cfg(test)]

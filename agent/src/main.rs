@@ -61,7 +61,11 @@ struct Cli {
     client_key: Option<String>,
 
     /// Path to health-checks JSON configuration
-    #[arg(long, default_value = "/etc/nixfleet/health-checks.json", env = "NIXFLEET_HEALTH_CONFIG")]
+    #[arg(
+        long,
+        default_value = "/etc/nixfleet/health-checks.json",
+        env = "NIXFLEET_HEALTH_CONFIG"
+    )]
     health_config: String,
 
     /// Health check interval in seconds

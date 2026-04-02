@@ -385,8 +385,7 @@ mod tests {
         assert_eq!(MachineHealthStatus::Pending.to_string(), "pending");
         assert_eq!(MachineHealthStatus::Healthy.to_string(), "healthy");
         assert_eq!(
-            MachineHealthStatus::Unhealthy("oom".to_string())
-            .to_string(),
+            MachineHealthStatus::Unhealthy("oom".to_string()).to_string(),
             "unhealthy: oom"
         );
         assert_eq!(MachineHealthStatus::TimedOut.to_string(), "timed_out");
@@ -428,9 +427,15 @@ mod tests {
         let json = serde_json::to_string(&request).unwrap();
         let back: CreateRolloutRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(back.generation_hash, request.generation_hash);
-        assert_eq!(back.cache_url, Some("https://cache.example.com".to_string()));
+        assert_eq!(
+            back.cache_url,
+            Some("https://cache.example.com".to_string())
+        );
         assert_eq!(back.strategy, RolloutStrategy::Canary);
-        assert_eq!(back.batch_sizes, Some(vec!["1".to_string(), "50%".to_string()]));
+        assert_eq!(
+            back.batch_sizes,
+            Some(vec!["1".to_string(), "50%".to_string()])
+        );
         assert_eq!(back.failure_threshold, "2");
         assert_eq!(back.on_failure, OnFailure::Pause);
         assert_eq!(back.health_timeout, Some(300));
@@ -476,10 +481,7 @@ mod tests {
     #[test]
     fn test_rollout_detail_roundtrip() {
         let mut machine_health = HashMap::new();
-        machine_health.insert(
-            "web-01".to_string(),
-            MachineHealthStatus::Healthy,
-        );
+        machine_health.insert("web-01".to_string(), MachineHealthStatus::Healthy);
         machine_health.insert(
             "web-02".to_string(),
             MachineHealthStatus::Unhealthy("health check timeout".to_string()),

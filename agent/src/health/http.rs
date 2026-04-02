@@ -48,10 +48,7 @@ impl Check for HttpChecker {
                     HealthCheckResult::Fail {
                         check_name,
                         duration_ms,
-                        message: format!(
-                            "expected status {}, got {status}",
-                            self.expected_status
-                        ),
+                        message: format!("expected status {}, got {status}", self.expected_status),
                     }
                 }
             }
