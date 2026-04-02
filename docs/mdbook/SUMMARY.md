@@ -14,6 +14,13 @@
 - [Installation](guide/getting-started/installation.md)
 - [Day-to-Day Usage](guide/getting-started/daily-usage.md)
 
+## Fleet Operations
+
+- [Overview](guide/fleet-operations/overview.md)
+- [Setting Up the Control Plane](guide/fleet-operations/control-plane-setup.md)
+- [Enrolling Agents](guide/fleet-operations/agent-enrollment.md)
+- [Deploying to Your Fleet](guide/fleet-operations/deploying.md)
+
 ## Concepts
 
 - [Why NixOS?](guide/concepts/why-nixos.md)

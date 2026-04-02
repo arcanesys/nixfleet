@@ -54,8 +54,15 @@ Use `nix develop` to enter the devShell with git hooks activated:
 - **pre-commit:** Format check (`nix fmt --fail-on-change`)
 - **pre-push:** Full validation (`nix run .#validate`)
 
+## Scaling Up
+
+The commands above work for individual machines. When your fleet grows, the NixFleet agent and control plane provide fleet-wide deployment with staged rollouts, health checks, and automatic rollback.
+
+See [Fleet Operations](../fleet-operations/overview.md) to set up orchestrated deployments.
+
 ## Next Steps
 
+- [Fleet Operations](../fleet-operations/overview.md) -- deploy to your entire fleet
 - [The Scope System](../concepts/scopes.md) -- understand how features are organized
 - [Testing](../development/testing.md) -- the test pyramid
 - [Adding a New Host](../advanced/new-host.md) -- expand your fleet
