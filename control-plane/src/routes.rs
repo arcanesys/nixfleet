@@ -49,6 +49,12 @@ pub async fn post_report(
         )
     })?;
 
+    // Persist health report if present
+    if let Some(ref health) = report.health {
+        let results_json = serde_json::to_string(&health.results).unwrap_or_default();
+        let _ = db.insert_health_report(&id, &results_json, health.all_passed);
+    }
+
     // Extract tags before moving report into state
     let report_tags = report.tags.clone();
 

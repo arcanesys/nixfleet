@@ -44,6 +44,20 @@ pub fn build_app(fleet_state: Arc<RwLock<state::FleetState>>, db: Arc<db::Db>) -
             "/api/v1/machines/{id}/tags/{tag}",
             axum::routing::delete(routes::remove_tag),
         )
+        .route("/api/v1/rollouts", post(rollout::routes::create_rollout))
+        .route("/api/v1/rollouts", get(rollout::routes::list_rollouts))
+        .route(
+            "/api/v1/rollouts/{id}",
+            get(rollout::routes::get_rollout),
+        )
+        .route(
+            "/api/v1/rollouts/{id}/resume",
+            post(rollout::routes::resume_rollout),
+        )
+        .route(
+            "/api/v1/rollouts/{id}/cancel",
+            post(rollout::routes::cancel_rollout),
+        )
         .route("/api/v1/audit", get(audit::list_audit_events))
         .route("/api/v1/audit/export", get(audit::export_audit_csv))
         .layer(middleware::from_fn(move |headers, request, next| {

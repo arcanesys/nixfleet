@@ -52,6 +52,10 @@ async fn main() -> anyhow::Result<()> {
     // Hydrate in-memory state from DB on startup
     state::hydrate_from_db(&fleet_state, &db).await?;
 
+    // Spawn rollout executor background task
+    let _executor =
+        nixfleet_control_plane::rollout::executor::spawn(fleet_state.clone(), db.clone());
+
     let app = build_app(fleet_state, db);
 
     match (&cli.tls_cert, &cli.tls_key) {
