@@ -16,7 +16,7 @@ NixFleet is a framework for managing fleets of NixOS and macOS machines. It prov
 ```nix
 # flake.nix — single machine, no ceremony
 {
-  inputs.nixfleet.url = "github:abstracts33d/nixfleet";
+  inputs.nixfleet.url = "github:your-org/nixfleet";
   inputs.nixpkgs.follows = "nixfleet/nixpkgs";
 
   outputs = {nixfleet, ...}: {
@@ -108,13 +108,11 @@ nix fmt                            # format (alejandra + shfmt)
 cargo test --workspace             # Rust tests
 ```
 
-## Related Repos
-
-| Repo | Content |
-|------|---------|
-| [fleet](https://github.com/abstracts33d/fleet) | Reference fleet (abstracts33d org config) |
-| [fleet-secrets](https://github.com/abstracts33d/fleet-secrets) | Encrypted secrets (agenix) |
-
 ## License
 
-Apache-2.0
+nixfleet uses a dual-license model:
+
+- **Control Plane** (`control-plane/`): [AGPL-3.0](LICENSE-AGPL) — modifications to the control plane must be shared when provided as a service
+- **Everything else** (framework, agent, CLI, modules): [MIT](LICENSE-MIT) — use freely, no copyleft obligation
+
+This means you can freely use the framework to manage your fleet without any copyleft requirement. Your fleet configurations, custom modules, and agent deployments remain fully private.

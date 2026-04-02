@@ -132,7 +132,7 @@ enum HostAction {
         hostname: String,
 
         /// Organization name
-        #[arg(long, default_value = "abstracts33d")]
+        #[arg(long, default_value = "my-org")]
         org: String,
 
         /// Host role (workstation, server, edge, kiosk)

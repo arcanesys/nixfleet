@@ -1,6 +1,6 @@
 [book]
 title = "NixFleet Documentation"
-authors = ["abstracts33d"]
+authors = ["nixfleet contributors"]
 language = "en"
 src = "."
 
@@ -8,4 +8,4 @@ src = "."
 build-dir = "../../result-docs"
 
 [output.html]
-git-repository-url = "https://github.com/abstracts33d/nixfleet"
+git-repository-url = "https://github.com/your-org/nixfleet"

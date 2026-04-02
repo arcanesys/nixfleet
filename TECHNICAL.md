@@ -85,15 +85,13 @@ Fleet repos follow the framework's pinned versions to avoid version conflicts:
 
 ```nix
 inputs = {
-  nixfleet.url = "github:abstracts33d/nixfleet";
+  nixfleet.url = "github:your-org/nixfleet";
   nixpkgs.follows = "nixfleet/nixpkgs";
   home-manager.follows = "nixfleet/home-manager";
 };
 ```
 
-Two input namespaces prevent collisions:
-- `inputs` (via `specialArgs`): framework inputs (nixpkgs, HM, disko, impermanence)
-- `fleetInputs` (via `_module.args`): fleet-specific inputs (catppuccin, secrets, etc.)
+Framework inputs are passed via `specialArgs = { inherit inputs; }`. Fleet repos access these as the `inputs` argument. Fleet-specific customization uses hostSpec extensions and plain NixOS modules.
 
 ### Org Defaults
 

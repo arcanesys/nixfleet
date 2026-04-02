@@ -88,10 +88,9 @@ Org defaults are plain `let` bindings merged via `//`. Host values override org 
 
 Scope modules are plain NixOS/Darwin modules that use `lib.mkIf hS.<flag>` to self-activate. They are imported by `mkHost` directly. Adding a new scope file and importing it in `mkHost` automatically applies to all hosts with the matching flag.
 
-## Two Input Namespaces
+## Framework Inputs
 
-- **Framework inputs:** `inputs` via `specialArgs` (nixfleet's pinned nixpkgs, HM, disko, etc.)
-- **Fleet inputs:** `fleetInputs` via `_module.args` (fleet-specific inputs: secrets, theme engines, etc.)
+mkHost passes framework inputs (nixpkgs, home-manager, disko, etc.) to modules via `specialArgs = { inherit inputs; }`. Fleet repos access these as the `inputs` argument in their modules. Fleet-specific customization uses hostSpec extensions and plain NixOS modules, not a separate input namespace.
 
 ## Key Integrations
 

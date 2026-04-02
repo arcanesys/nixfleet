@@ -45,10 +45,9 @@ Scopes self-activate via `lib.mkIf config.hostSpec.<flag>`. No registration, no 
 
 Fleet repos import `mkHost`, define org defaults as `let` bindings, call `mkHost` per host. Fleet-specific scopes are plain NixOS/HM modules organized in a module index.
 
-## Two Input Namespaces
+## Framework Inputs
 
-- **Framework modules:** `inputs` via `specialArgs` (nixfleet's pinned nixpkgs, HM, disko, etc.)
-- **Fleet modules:** `fleetInputs` via `_module.args` (fleet-specific: catppuccin, secrets, etc.)
+mkHost passes framework inputs (nixpkgs, home-manager, disko, etc.) to modules via `specialArgs = { inherit inputs; }`. Fleet repos access these as the `inputs` argument in their modules. Fleet-specific customization uses hostSpec extensions and plain NixOS modules, not a separate input namespace.
 
 ## Data Flow
 
@@ -81,7 +80,7 @@ This separation means an external organization can consume the framework without
 
 ```nix
 {
-  inputs.nixfleet.url = "github:abstracts33d/nixfleet";
+  inputs.nixfleet.url = "github:your-org/nixfleet";
 
   outputs = { nixfleet, ... }:
     let

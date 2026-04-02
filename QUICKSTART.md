@@ -14,7 +14,7 @@ Get NixFleet running in 5 minutes. For full documentation, see the [User Guide](
 ```nix
 {
   inputs = {
-    nixfleet.url = "github:abstracts33d/nixfleet";
+    nixfleet.url = "github:your-org/nixfleet";
     nixpkgs.follows = "nixfleet/nixpkgs";
     home-manager.follows = "nixfleet/home-manager";
   };

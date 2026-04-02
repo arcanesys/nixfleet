@@ -5,7 +5,7 @@ Get up and running with NixFleet.
 ## Prerequisites
 
 - A machine with [Nix](https://nixos.org/download) installed (NixOS, macOS, or any Linux)
-- A fleet repository consuming NixFleet (see [examples/](https://github.com/abstracts33d/nixfleet/tree/main/examples))
+- A fleet repository consuming NixFleet (see [examples/](https://github.com/your-org/nixfleet/tree/main/examples))
 
 ## Create Your Fleet
 
@@ -19,7 +19,7 @@ Or create a `flake.nix` that imports NixFleet and defines hosts with `mkHost`:
 
 ```nix
 {
-  inputs.nixfleet.url = "github:abstracts33d/nixfleet";
+  inputs.nixfleet.url = "github:your-org/nixfleet";
   inputs.nixpkgs.follows = "nixfleet/nixpkgs";
 
   outputs = { nixfleet, ... }: let

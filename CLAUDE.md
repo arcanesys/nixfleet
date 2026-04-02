@@ -103,7 +103,7 @@ Fleet repos add opinionated scopes (catppuccin, graphical, dev, hyprland, gnome,
 ```nix
 # Minimal fleet repo — flake.nix (no flake-parts needed)
 {
-  inputs.nixfleet.url = "github:abstracts33d/nixfleet";
+  inputs.nixfleet.url = "github:your-org/nixfleet";
   inputs.nixpkgs.follows = "nixfleet/nixpkgs";
 
   outputs = {nixfleet, ...}: {
@@ -131,8 +131,7 @@ See `examples/` for standalone-host, batch-hosts, and client-fleet patterns.
 | Repo | Content |
 |------|---------|
 | **nixfleet** (this repo) | Framework, Rust crates, tests, docs |
-| [fleet](https://github.com/abstracts33d/fleet) | Reference fleet (abstracts33d org config, hardware, dotfiles) |
-| [fleet-secrets](https://github.com/abstracts33d/fleet-secrets) | Encrypted secrets (agenix) |
+| your fleet repo | Your org's fleet configuration consuming nixfleet |
 
 ## Architecture
 
