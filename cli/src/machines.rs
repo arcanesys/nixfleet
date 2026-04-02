@@ -1,0 +1,124 @@
+use anyhow::{bail, Context, Result};
+use nixfleet_types::MachineStatus;
+
+fn api_client(api_key: &str) -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key))
+            .expect("invalid API key"),
+    );
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("failed to build HTTP client")
+}
+
+/// GET /api/v1/machines — list machines, optionally filtered by tag.
+pub async fn list(cp_url: &str, api_key: &str, tag_filter: Option<&str>) -> Result<()> {
+    let client = api_client(api_key);
+    let url = format!("{}/api/v1/machines", cp_url);
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .context("Failed to reach control plane")?;
+
+    if !resp.status().is_success() {
+        bail!(
+            "Control plane returned {}: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        );
+    }
+
+    let machines: Vec<MachineStatus> =
+        resp.json().await.context("Failed to parse machine list")?;
+
+    let filtered: Vec<&MachineStatus> = if let Some(tag) = tag_filter {
+        machines
+            .iter()
+            .filter(|m| m.tags.iter().any(|t| t == tag))
+            .collect()
+    } else {
+        machines.iter().collect()
+    };
+
+    if filtered.is_empty() {
+        println!("No machines found.");
+        return Ok(());
+    }
+
+    println!(
+        "{:<20} {:<12} {:<12} {}",
+        "ID", "LIFECYCLE", "STATE", "TAGS"
+    );
+    println!("{}", "-".repeat(70));
+
+    for machine in &filtered {
+        let tags = if machine.tags.is_empty() {
+            "(none)".to_string()
+        } else {
+            machine.tags.join(", ")
+        };
+        println!(
+            "{:<20} {:<12} {:<12} {}",
+            machine.machine_id, machine.lifecycle, machine.system_state, tags,
+        );
+    }
+
+    println!("\n{} machine(s)", filtered.len());
+    Ok(())
+}
+
+/// PUT /api/v1/machines/{id}/tags — set tags on a machine.
+pub async fn tag(cp_url: &str, api_key: &str, machine_id: &str, tags: &[String]) -> Result<()> {
+    let client = api_client(api_key);
+    let url = format!("{}/api/v1/machines/{}/tags", cp_url, machine_id);
+
+    let resp = client
+        .put(&url)
+        .json(tags)
+        .send()
+        .await
+        .context("Failed to reach control plane")?;
+
+    if !resp.status().is_success() {
+        bail!(
+            "Control plane returned {}: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        );
+    }
+
+    println!(
+        "Tags set on {}: {}",
+        machine_id,
+        tags.join(", ")
+    );
+    Ok(())
+}
+
+/// DELETE /api/v1/machines/{id}/tags/{tag} — remove a tag from a machine.
+pub async fn untag(cp_url: &str, api_key: &str, machine_id: &str, tag: &str) -> Result<()> {
+    let client = api_client(api_key);
+    let url = format!("{}/api/v1/machines/{}/tags/{}", cp_url, machine_id, tag);
+
+    let resp = client
+        .delete(&url)
+        .send()
+        .await
+        .context("Failed to reach control plane")?;
+
+    if !resp.status().is_success() {
+        bail!(
+            "Control plane returned {}: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        );
+    }
+
+    println!("Tag '{}' removed from {}.", tag, machine_id);
+    Ok(())
+}
