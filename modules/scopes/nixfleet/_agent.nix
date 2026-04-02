@@ -49,14 +49,104 @@ in {
       default = false;
       description = "When true, check and fetch but do not apply generations.";
     };
+
+    tags = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Tags for grouping this machine in fleet operations.";
+    };
+
+    healthInterval = lib.mkOption {
+      type = lib.types.int;
+      default = 60;
+      description = "Seconds between continuous health reports to control plane.";
+    };
+
+    healthChecks = {
+      systemd = lib.mkOption {
+        type = lib.types.listOf (lib.types.submodule {
+          options.units = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            description = "Systemd units that must be active.";
+          };
+        });
+        default = [];
+        description = "Systemd unit health checks.";
+      };
+
+      http = lib.mkOption {
+        type = lib.types.listOf (lib.types.submodule {
+          options = {
+            url = lib.mkOption {
+              type = lib.types.str;
+              description = "URL to GET.";
+            };
+            interval = lib.mkOption {
+              type = lib.types.int;
+              default = 5;
+              description = "Check interval in seconds.";
+            };
+            timeout = lib.mkOption {
+              type = lib.types.int;
+              default = 3;
+              description = "Timeout in seconds.";
+            };
+            expectedStatus = lib.mkOption {
+              type = lib.types.int;
+              default = 200;
+              description = "Expected HTTP status code.";
+            };
+          };
+        });
+        default = [];
+        description = "HTTP endpoint health checks.";
+      };
+
+      command = lib.mkOption {
+        type = lib.types.listOf (lib.types.submodule {
+          options = {
+            name = lib.mkOption {
+              type = lib.types.str;
+              description = "Check name.";
+            };
+            command = lib.mkOption {
+              type = lib.types.str;
+              description = "Shell command (exit 0 = healthy).";
+            };
+            interval = lib.mkOption {
+              type = lib.types.int;
+              default = 10;
+              description = "Check interval in seconds.";
+            };
+            timeout = lib.mkOption {
+              type = lib.types.int;
+              default = 5;
+              description = "Timeout in seconds.";
+            };
+          };
+        });
+        default = [];
+        description = "Custom command health checks.";
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
+    environment.etc."nixfleet/health-checks.json".text = builtins.toJSON {
+      systemd = cfg.healthChecks.systemd;
+      http = cfg.healthChecks.http;
+      command = cfg.healthChecks.command;
+    };
+
     systemd.services.nixfleet-agent = {
       description = "NixFleet Fleet Management Agent";
       wantedBy = ["multi-user.target"];
       after = ["network-online.target"];
       wants = ["network-online.target"];
+
+      environment = lib.mkIf (cfg.tags != []) {
+        NIXFLEET_TAGS = lib.concatStringsSep "," cfg.tags;
+      };
 
       serviceConfig = {
         Type = "simple";
@@ -71,6 +161,10 @@ in {
             (toString cfg.pollInterval)
             "--db-path"
             (lib.escapeShellArg cfg.dbPath)
+            "--health-config"
+            "/etc/nixfleet/health-checks.json"
+            "--health-interval"
+            (toString cfg.healthInterval)
           ]
           ++ lib.optionals (cfg.cacheUrl != null) [
             "--cache-url"
