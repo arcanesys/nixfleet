@@ -28,6 +28,15 @@ impl Actor {
             Actor::Machine { machine_id } => format!("machine:{machine_id}"),
         }
     }
+
+    /// Check whether the actor has one of the allowed roles.
+    /// Machines do not have roles and always return false.
+    pub fn has_role(&self, allowed: &[&str]) -> bool {
+        match self {
+            Actor::ApiKey { role, .. } => allowed.contains(&role.as_str()),
+            Actor::Machine { .. } => false,
+        }
+    }
 }
 
 /// Middleware: require valid API key in Authorization: Bearer header.

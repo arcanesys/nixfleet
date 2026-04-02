@@ -1,4 +1,7 @@
 use anyhow::{bail, Context, Result};
+use nixfleet_types::rollout::{
+    CreateRolloutRequest, CreateRolloutResponse, OnFailure, RolloutStrategy, RolloutTarget,
+};
 use std::collections::HashMap;
 use std::process::Stdio;
 
@@ -265,6 +268,117 @@ pub async fn run(cp_url: &str, pattern: &str, flake: &str, dry_run: bool, ssh: b
 
     if fail_count > 0 {
         bail!("{} host(s) failed", fail_count);
+    }
+
+    Ok(())
+}
+
+/// Deploy via the rollout API instead of direct SSH or per-host control plane push.
+#[allow(clippy::too_many_arguments)]
+pub async fn deploy_rollout(
+    cp_url: &str,
+    api_key: &str,
+    generation_hash: &str,
+    tags: &[String],
+    hosts: &[String],
+    strategy: &str,
+    batch_sizes: Option<Vec<String>>,
+    failure_threshold: &str,
+    on_failure: &str,
+    health_timeout: u64,
+    wait: bool,
+) -> Result<()> {
+    let parsed_strategy = match strategy {
+        "canary" => RolloutStrategy::Canary,
+        "staged" => RolloutStrategy::Staged,
+        "all-at-once" | "all_at_once" => RolloutStrategy::AllAtOnce,
+        other => bail!(
+            "Unknown strategy: {}. Use canary, staged, or all-at-once.",
+            other
+        ),
+    };
+
+    let parsed_on_failure = match on_failure {
+        "pause" => OnFailure::Pause,
+        "revert" => OnFailure::Revert,
+        other => bail!("Unknown on-failure: {}. Use pause or revert.", other),
+    };
+
+    let target = if !tags.is_empty() {
+        RolloutTarget::Tags(tags.to_vec())
+    } else if !hosts.is_empty() {
+        RolloutTarget::Hosts(hosts.to_vec())
+    } else {
+        bail!("Either --tag or --hosts must be specified for rollout deploy");
+    };
+
+    let request = CreateRolloutRequest {
+        generation_hash: generation_hash.to_string(),
+        cache_url: None,
+        strategy: parsed_strategy,
+        batch_sizes,
+        failure_threshold: failure_threshold.to_string(),
+        on_failure: parsed_on_failure,
+        health_timeout: Some(health_timeout),
+        target,
+    };
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key))
+            .expect("invalid API key"),
+    );
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("failed to build HTTP client");
+
+    let url = format!("{}/api/v1/rollouts", cp_url);
+    let resp = client
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+        .context("Failed to reach control plane")?;
+
+    if !resp.status().is_success() {
+        bail!(
+            "Control plane returned {}: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        );
+    }
+
+    let created: CreateRolloutResponse = resp
+        .json()
+        .await
+        .context("Failed to parse rollout response")?;
+
+    println!(
+        "Rollout created: {} ({} machines in {} batches)",
+        created.rollout_id,
+        created.total_machines,
+        created.batches.len(),
+    );
+
+    for batch in &created.batches {
+        println!(
+            "  Batch {}: {} machine(s) — {}",
+            batch.batch_index,
+            batch.machine_ids.len(),
+            batch.machine_ids.join(", "),
+        );
+    }
+
+    if wait {
+        println!("\nWaiting for rollout to complete...");
+        crate::rollout::wait_for_completion(cp_url, api_key, &created.rollout_id).await?;
+    } else {
+        println!(
+            "\nRollout {} started. Use `nixfleet rollout status {}` to track progress.",
+            created.rollout_id, created.rollout_id,
+        );
     }
 
     Ok(())

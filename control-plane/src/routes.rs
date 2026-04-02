@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 use nixfleet_types::{DesiredGeneration, MachineLifecycle, MachineStatus, Report};
@@ -49,11 +49,26 @@ pub async fn post_report(
         )
     })?;
 
+    // Persist health report if present
+    if let Some(ref health) = report.health {
+        let results_json = serde_json::to_string(&health.results).unwrap_or_default();
+        let _ = db.insert_health_report(&id, &results_json, health.all_passed);
+    }
+
+    // Extract tags before moving report into state
+    let report_tags = report.tags.clone();
+
     // Update in-memory state
     let mut fleet = state.write().await;
     let machine = fleet.get_or_create(&id);
     machine.last_seen = Some(report.timestamp);
     machine.last_report = Some(report);
+
+    // Sync tags if the report includes them
+    if !report_tags.is_empty() {
+        let _ = db.set_machine_tags(&id, &report_tags);
+        machine.tags = report_tags;
+    }
 
     // Auto-transition Pending/Provisioning -> Active on first report
     if machine.lifecycle == MachineLifecycle::Pending
@@ -92,6 +107,23 @@ pub async fn set_desired_generation(
     Path(id): Path<String>,
     Json(req): Json<SetGenerationRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["deploy", "admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "deploy or admin role required".to_string(),
+            ));
+        }
+    }
+
+    // Check for active rollout conflict
+    if let Ok(Some(rollout_id)) = db.machine_in_active_rollout(&id) {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("machine {id} is in active rollout {rollout_id}"),
+        ));
+    }
+
     // Persist to database
     db.set_desired_generation(&id, &req.hash).map_err(|e| {
         tracing::error!(error = %e, machine_id = %id, "Failed to persist generation");
@@ -127,10 +159,31 @@ pub async fn set_desired_generation(
     Ok(StatusCode::OK)
 }
 
+/// Query parameters for listing machines.
+#[derive(Debug, Deserialize)]
+pub struct ListMachinesQuery {
+    #[serde(default)]
+    pub tag: Vec<String>,
+}
+
 /// GET /api/v1/machines
 ///
 /// List all known machines with their current status.
-pub async fn list_machines(State((state, _db)): State<AppState>) -> Json<Vec<MachineStatus>> {
+/// Supports optional `?tag=X&tag=Y` filtering (AND logic).
+pub async fn list_machines(
+    State((state, _db)): State<AppState>,
+    actor: Option<Extension<Actor>>,
+    Query(query): Query<ListMachinesQuery>,
+) -> Result<Json<Vec<MachineStatus>>, (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["readonly", "deploy", "admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "readonly, deploy, or admin role required".to_string(),
+            ));
+        }
+    }
+
     let fleet = state.read().await;
     let machines: Vec<MachineStatus> = fleet
         .machines
@@ -158,10 +211,18 @@ pub async fn list_machines(State((state, _db)): State<AppState>) -> Json<Vec<Mac
             uptime_seconds: 0,
             last_report: m.last_report.as_ref().map(|r| r.timestamp),
             lifecycle: m.lifecycle.clone(),
+            tags: m.tags.clone(),
+        })
+        .filter(|m| {
+            if query.tag.is_empty() {
+                true
+            } else {
+                query.tag.iter().all(|t| m.tags.contains(t))
+            }
         })
         .collect();
 
-    Json(machines)
+    Ok(Json(machines))
 }
 
 /// Request body for registering a machine.
@@ -170,6 +231,9 @@ pub struct RegisterMachineRequest {
     /// Optional initial lifecycle state (defaults to "pending").
     #[serde(default = "default_pending")]
     pub lifecycle: String,
+    /// Optional initial tags for the machine.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 fn default_pending() -> String {
@@ -192,6 +256,15 @@ pub async fn register_machine(
     Path(id): Path<String>,
     Json(req): Json<RegisterMachineRequest>,
 ) -> Result<(StatusCode, Json<RegisterMachineResponse>), (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "admin role required".to_string(),
+            ));
+        }
+    }
+
     let lifecycle = MachineLifecycle::from_str_lc(&req.lifecycle).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
@@ -209,12 +282,26 @@ pub async fn register_machine(
             )
         })?;
 
+    // Persist tags if provided
+    if !req.tags.is_empty() {
+        db.set_machine_tags(&id, &req.tags).map_err(|e| {
+            tracing::error!(error = %e, machine_id = %id, "Failed to set tags on register");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to set tags".to_string(),
+            )
+        })?;
+    }
+
     // Update in-memory state
     let mut fleet = state.write().await;
     let machine = fleet.get_or_create(&id);
     machine.lifecycle = lifecycle.clone();
     if machine.registered_at.is_none() {
         machine.registered_at = Some(chrono::Utc::now());
+    }
+    if !req.tags.is_empty() {
+        machine.tags = req.tags;
     }
 
     let actor_id = actor
@@ -247,6 +334,15 @@ pub async fn update_lifecycle(
     Path(id): Path<String>,
     Json(req): Json<UpdateLifecycleRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "admin role required".to_string(),
+            ));
+        }
+    }
+
     let target = MachineLifecycle::from_str_lc(&req.lifecycle).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
@@ -296,6 +392,88 @@ pub async fn update_lifecycle(
         to = %target,
         "Lifecycle state changed"
     );
+    Ok(StatusCode::OK)
+}
+
+/// POST /api/v1/machines/{id}/tags
+///
+/// Set all tags for a machine (replaces existing tags).
+pub async fn set_tags(
+    State((state, db)): State<AppState>,
+    actor: Option<Extension<Actor>>,
+    Path(id): Path<String>,
+    Json(tags): Json<Vec<String>>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "admin role required".to_string(),
+            ));
+        }
+    }
+
+    db.set_machine_tags(&id, &tags).map_err(|e| {
+        tracing::error!(error = %e, machine_id = %id, "Failed to set tags");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to set tags".to_string(),
+        )
+    })?;
+
+    let mut fleet = state.write().await;
+    let machine = fleet.get_or_create(&id);
+    machine.tags = tags.clone();
+
+    let actor_id = actor
+        .map(|Extension(a)| a.identifier())
+        .unwrap_or_else(|| "unknown".to_string());
+    let _ = db.insert_audit_event(
+        &actor_id,
+        "set_tags",
+        &id,
+        Some(&format!("tags={}", tags.join(","))),
+    );
+
+    tracing::info!(machine_id = %id, tags = ?tags, "Tags set");
+    Ok(StatusCode::OK)
+}
+
+/// DELETE /api/v1/machines/{id}/tags/{tag}
+///
+/// Remove a single tag from a machine.
+pub async fn remove_tag(
+    State((state, db)): State<AppState>,
+    actor: Option<Extension<Actor>>,
+    Path((id, tag)): Path<(String, String)>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "admin role required".to_string(),
+            ));
+        }
+    }
+
+    db.remove_machine_tag(&id, &tag).map_err(|e| {
+        tracing::error!(error = %e, machine_id = %id, tag = %tag, "Failed to remove tag");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to remove tag".to_string(),
+        )
+    })?;
+
+    let mut fleet = state.write().await;
+    let machine = fleet.get_or_create(&id);
+    machine.tags.retain(|t| t != &tag);
+
+    let actor_id = actor
+        .map(|Extension(a)| a.identifier())
+        .unwrap_or_else(|| "unknown".to_string());
+    let _ = db.insert_audit_event(&actor_id, "remove_tag", &id, Some(&tag));
+
+    tracing::info!(machine_id = %id, tag = %tag, "Tag removed");
     Ok(StatusCode::OK)
 }
 

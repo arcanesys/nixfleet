@@ -20,6 +20,8 @@ mod tests {
             success: true,
             message: "deployed".to_string(),
             timestamp: Utc::now(),
+            tags: vec![],
+            health: None,
         };
         let json = serde_json::to_string(&report).unwrap();
         let back: Report = serde_json::from_str(&json).unwrap();
@@ -37,6 +39,8 @@ mod tests {
             success: false,
             message: "rolled back: health check failed".to_string(),
             timestamp: Utc::now(),
+            tags: vec![],
+            health: None,
         };
         let json = serde_json::to_string(&report).unwrap();
         let back: Report = serde_json::from_str(&json).unwrap();
@@ -81,6 +85,8 @@ mod tests {
             success: true,
             message: "up-to-date".to_string(),
             timestamp: Utc::now(),
+            tags: vec![],
+            health: None,
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("machine_id"));

@@ -2,8 +2,11 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use std::process::Stdio;
 
+mod client;
 mod deploy;
 mod host;
+mod machines;
+mod rollout;
 mod status;
 
 #[derive(Parser)]
@@ -20,13 +23,17 @@ struct Cli {
         env = "NIXFLEET_CP_URL"
     )]
     control_plane_url: String,
+
+    /// API key for control plane authentication
+    #[arg(long, global = true, default_value = "", env = "NIXFLEET_API_KEY")]
+    api_key: String,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     /// Deploy config to fleet hosts
     Deploy {
-        /// Host pattern (glob-style, e.g. "web*" or "*")
+        /// Host pattern (glob-style, e.g. "web*" or "*") — used with --ssh mode
         #[arg(long, default_value = "*")]
         hosts: String,
 
@@ -41,6 +48,38 @@ enum Commands {
         /// Flake reference (default: current directory)
         #[arg(long, default_value = ".")]
         flake: String,
+
+        /// Target tag for rollout deploy (repeatable)
+        #[arg(long = "tag", value_name = "TAG")]
+        tags: Vec<String>,
+
+        /// Rollout strategy: canary, staged, or all-at-once
+        #[arg(long, default_value = "all-at-once")]
+        strategy: String,
+
+        /// Batch sizes (comma-separated, e.g. "1,25%,100%")
+        #[arg(long, value_delimiter = ',')]
+        batch_size: Option<Vec<String>>,
+
+        /// Maximum failures before pausing/reverting
+        #[arg(long, default_value = "1")]
+        failure_threshold: String,
+
+        /// Action on failure: pause or revert
+        #[arg(long, default_value = "pause")]
+        on_failure: String,
+
+        /// Health check timeout in seconds
+        #[arg(long, default_value = "300")]
+        health_timeout: u64,
+
+        /// Wait and stream rollout progress
+        #[arg(long)]
+        wait: bool,
+
+        /// Store path hash for rollout deploy (skips nix build)
+        #[arg(long)]
+        generation: Option<String>,
     },
 
     /// Show fleet status from the control plane
@@ -69,6 +108,18 @@ enum Commands {
     Host {
         #[command(subcommand)]
         action: HostAction,
+    },
+
+    /// Manage rollouts
+    Rollout {
+        #[command(subcommand)]
+        action: RolloutAction,
+    },
+
+    /// Manage machines and tags
+    Machines {
+        #[command(subcommand)]
+        action: MachineAction,
     },
 }
 
@@ -113,6 +164,63 @@ enum HostAction {
     },
 }
 
+#[derive(Subcommand)]
+enum RolloutAction {
+    /// List rollouts
+    List {
+        /// Filter by status (e.g. running, paused, completed)
+        #[arg(long)]
+        status: Option<String>,
+    },
+
+    /// Show rollout detail with batch breakdown
+    Status {
+        /// Rollout ID
+        id: String,
+    },
+
+    /// Resume a paused rollout
+    Resume {
+        /// Rollout ID
+        id: String,
+    },
+
+    /// Cancel a rollout
+    Cancel {
+        /// Rollout ID
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MachineAction {
+    /// List machines
+    List {
+        /// Filter by tag
+        #[arg(long)]
+        tag: Option<String>,
+    },
+
+    /// Add tags to a machine
+    Tag {
+        /// Machine ID
+        id: String,
+
+        /// Tags to add
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+
+    /// Remove a tag from a machine
+    Untag {
+        /// Machine ID
+        id: String,
+
+        /// Tag to remove
+        tag: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -130,7 +238,45 @@ async fn main() -> Result<()> {
             dry_run,
             ssh,
             flake,
-        } => deploy::run(&cli.control_plane_url, &hosts, &flake, dry_run, ssh).await,
+            tags,
+            strategy,
+            batch_size,
+            failure_threshold,
+            on_failure,
+            health_timeout,
+            wait,
+            generation,
+        } => {
+            if ssh {
+                deploy::run(&cli.control_plane_url, &hosts, &flake, dry_run, true).await
+            } else if !tags.is_empty() || generation.is_some() {
+                // Rollout deploy mode
+                let generation_hash = match generation {
+                    Some(hash) => hash,
+                    None => {
+                        bail!(
+                            "--generation is required for rollout deploy (store path of the built closure)"
+                        );
+                    }
+                };
+                deploy::deploy_rollout(
+                    &cli.control_plane_url,
+                    &cli.api_key,
+                    &generation_hash,
+                    &tags,
+                    &[],
+                    &strategy,
+                    batch_size,
+                    &failure_threshold,
+                    &on_failure,
+                    health_timeout,
+                    wait,
+                )
+                .await
+            } else {
+                deploy::run(&cli.control_plane_url, &hosts, &flake, dry_run, false).await
+            }
+        }
         Commands::Status { json } => status::run(&cli.control_plane_url, json).await,
         Commands::Rollback {
             host,
@@ -160,6 +306,31 @@ async fn main() -> Result<()> {
                 target,
                 username,
             } => host::provision_host(&hostname, &target, &username).await,
+        },
+        Commands::Rollout { action } => match action {
+            RolloutAction::List { status } => {
+                rollout::list(&cli.control_plane_url, &cli.api_key, status.as_deref()).await
+            }
+            RolloutAction::Status { id } => {
+                rollout::status(&cli.control_plane_url, &cli.api_key, &id).await
+            }
+            RolloutAction::Resume { id } => {
+                rollout::resume(&cli.control_plane_url, &cli.api_key, &id).await
+            }
+            RolloutAction::Cancel { id } => {
+                rollout::cancel(&cli.control_plane_url, &cli.api_key, &id).await
+            }
+        },
+        Commands::Machines { action } => match action {
+            MachineAction::List { tag } => {
+                machines::list(&cli.control_plane_url, &cli.api_key, tag.as_deref()).await
+            }
+            MachineAction::Tag { id, tags } => {
+                machines::tag(&cli.control_plane_url, &cli.api_key, &id, &tags).await
+            }
+            MachineAction::Untag { id, tag } => {
+                machines::untag(&cli.control_plane_url, &cli.api_key, &id, &tag).await
+            }
         },
     }
 }

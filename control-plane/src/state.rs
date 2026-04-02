@@ -12,6 +12,7 @@ pub struct MachineState {
     pub last_seen: Option<DateTime<Utc>>,
     pub lifecycle: MachineLifecycle,
     pub registered_at: Option<DateTime<Utc>>,
+    pub tags: Vec<String>,
 }
 
 impl Default for MachineState {
@@ -28,6 +29,7 @@ impl MachineState {
             last_seen: None,
             lifecycle: MachineLifecycle::Active,
             registered_at: None,
+            tags: vec![],
         }
     }
 
@@ -39,6 +41,7 @@ impl MachineState {
             last_seen: None,
             lifecycle: MachineLifecycle::Pending,
             registered_at: Some(Utc::now()),
+            tags: vec![],
         }
     }
 }
@@ -82,6 +85,13 @@ pub async fn hydrate_from_db(
         }
     }
 
+    // Load tags for each registered machine
+    for row in &registered {
+        let tags = db.get_machine_tags(&row.machine_id)?;
+        let machine = fleet.get_or_create(&row.machine_id);
+        machine.tags = tags;
+    }
+
     // Load desired generations
     let generations = db.list_desired_generations()?;
     for (machine_id, hash) in generations {
@@ -91,8 +101,13 @@ pub async fn hydrate_from_db(
             cache_url: None,
         });
     }
+    let active_rollouts = db.list_rollouts_by_status(Some("running"), 100)?;
+    let paused_rollouts = db.list_rollouts_by_status(Some("paused"), 100)?;
+
     tracing::info!(
         machines = fleet.machines.len(),
+        active_rollouts = active_rollouts.len(),
+        paused_rollouts = paused_rollouts.len(),
         "Hydrated fleet state from database"
     );
     Ok(())

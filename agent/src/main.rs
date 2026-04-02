@@ -13,6 +13,7 @@ mod tls;
 mod types;
 
 use config::Config;
+use health::HealthRunner;
 use state::AgentState;
 use store::Store;
 
@@ -58,6 +59,22 @@ struct Cli {
     /// Path to client private key PEM file (for mTLS)
     #[arg(long, env = "NIXFLEET_CLIENT_KEY")]
     client_key: Option<String>,
+
+    /// Path to health-checks JSON configuration
+    #[arg(
+        long,
+        default_value = "/etc/nixfleet/health-checks.json",
+        env = "NIXFLEET_HEALTH_CONFIG"
+    )]
+    health_config: String,
+
+    /// Health check interval in seconds
+    #[arg(long, default_value = "60", env = "NIXFLEET_HEALTH_INTERVAL")]
+    health_interval: u64,
+
+    /// Machine tags (comma-separated)
+    #[arg(long, env = "NIXFLEET_TAGS", value_delimiter = ',')]
+    tags: Vec<String>,
 }
 
 #[tokio::main]
@@ -83,6 +100,9 @@ async fn main() -> anyhow::Result<()> {
         allow_insecure: cli.allow_insecure,
         client_cert: cli.client_cert,
         client_key: cli.client_key,
+        health_config_path: cli.health_config.clone(),
+        health_interval: Duration::from_secs(cli.health_interval),
+        tags: cli.tags,
     };
 
     info!(
@@ -99,7 +119,14 @@ async fn main() -> anyhow::Result<()> {
 
     // Create HTTP client for control plane communication
     let client = comms::Client::new(&config)?;
+    let health_runner = HealthRunner::from_config_path(&config.health_config_path);
     let mut agent_state = AgentState::Idle;
+
+    // Continuous health reporter interval — skips missed ticks so we never queue up
+    let mut health_tick = tokio::time::interval(config.health_interval);
+    health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Consume the first immediate tick so we wait a full interval before the first check
+    health_tick.tick().await;
 
     // Main poll loop — state machine drives all transitions
     // Graceful shutdown on SIGTERM/SIGINT
@@ -109,6 +136,25 @@ async fn main() -> anyhow::Result<()> {
             _ = signal::ctrl_c() => {
                 info!("Received shutdown signal, exiting gracefully");
                 break;
+            }
+            // Continuous health reporter — only fires when the agent is idle
+            _ = health_tick.tick(), if matches!(agent_state, AgentState::Idle) => {
+                info!("Running periodic health check");
+                let health_report = health_runner.run_all().await;
+                let report = types::Report {
+                    machine_id: config.machine_id.clone(),
+                    current_generation: nix::current_generation().await.unwrap_or_default(),
+                    success: health_report.all_passed,
+                    message: "health-check".to_string(),
+                    timestamp: chrono::Utc::now(),
+                    tags: config.tags.clone(),
+                    health: Some(health_report),
+                };
+                match client.post_report(&report).await {
+                    Ok(()) => info!("Health report sent"),
+                    Err(e) => warn!("Failed to send health report: {e}"),
+                }
+                AgentState::Idle
             }
             state = async {
                 match agent_state {
@@ -184,29 +230,29 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
                     },
-                    AgentState::Verifying { desired } => match health::check_system().await {
-                        Ok(healthy) if healthy => {
-                            info!("Health check passed");
+                    AgentState::Verifying { desired } => {
+                        let report = health_runner.run_all().await;
+                        if report.all_passed {
+                            info!("Health checks passed");
                             store.log_deploy(&desired.hash, true)
                                 .unwrap_or_else(|e| warn!("store error: {e}"));
                             AgentState::Reporting {
                                 success: true,
                                 message: "deployed".into(),
                             }
-                        }
-                        Ok(_) => {
-                            warn!("Health check failed after apply");
+                        } else {
+                            let failed: Vec<_> = report
+                                .results
+                                .iter()
+                                .filter(|r| !r.is_pass())
+                                .map(|r| r.to_string())
+                                .collect();
+                            warn!(?failed, "Health checks failed after apply");
                             AgentState::RollingBack {
-                                reason: "health check failed".into(),
+                                reason: format!("health check failed: {}", failed.join(", ")),
                             }
                         }
-                        Err(e) => {
-                            error!("Health check error: {e}");
-                            AgentState::RollingBack {
-                                reason: format!("health check error: {e}"),
-                            }
-                        }
-                    },
+                    }
                     AgentState::RollingBack { reason } => {
                         warn!(reason = %reason, "Rolling back to previous generation");
                         match nix::rollback().await {
@@ -233,6 +279,8 @@ async fn main() -> anyhow::Result<()> {
                             success,
                             message,
                             timestamp: chrono::Utc::now(),
+                            tags: config.tags.clone(),
+                            health: None,
                         };
                         match client.post_report(&report).await {
                             Ok(()) => info!("Report sent"),

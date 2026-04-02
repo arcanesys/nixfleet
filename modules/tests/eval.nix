@@ -115,6 +115,21 @@
               msg = "hostSpec should have rootHashedPasswordFile option";
             }
           ];
+
+        # --- Agent tags and health checks ---
+        eval-agent-tags-health = let
+          cfg = nixosCfg "agent-test";
+        in
+          mkEvalCheck "agent-tags-health" [
+            {
+              check = cfg.systemd.services.nixfleet-agent.environment.NIXFLEET_TAGS == "web,production";
+              msg = "agent-test should have NIXFLEET_TAGS set to web,production";
+            }
+            {
+              check = cfg.environment.etc."nixfleet/health-checks.json".text != "";
+              msg = "agent-test should have health-checks.json config file";
+            }
+          ];
       };
     };
 }

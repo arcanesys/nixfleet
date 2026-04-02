@@ -22,6 +22,12 @@ pub struct Config {
     pub client_cert: Option<String>,
     /// Path to client private key PEM file (for mTLS).
     pub client_key: Option<String>,
+    /// Path to the health-checks JSON configuration file.
+    pub health_config_path: String,
+    /// Interval between continuous health check runs.
+    pub health_interval: Duration,
+    /// Tags for this machine (e.g. role, environment).
+    pub tags: Vec<String>,
 }
 
 #[cfg(test)]
@@ -39,6 +45,9 @@ mod tests {
             allow_insecure: false,
             client_cert: None,
             client_key: None,
+            health_config_path: "/etc/nixfleet/health-checks.json".to_string(),
+            health_interval: Duration::from_secs(60),
+            tags: vec![],
         }
     }
 

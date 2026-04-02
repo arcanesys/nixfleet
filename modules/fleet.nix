@@ -77,5 +77,26 @@ in {
           isServer = true;
         };
     };
+
+    # agent-test: exercises agent with tags and health checks
+    agent-test = mkHost {
+      hostName = "agent-test";
+      platform = "x86_64-linux";
+      isVm = true;
+      hostSpec = orgDefaults;
+      modules = [
+        {
+          services.nixfleet-agent = {
+            enable = true;
+            controlPlaneUrl = "https://cp.test:8080";
+            tags = ["web" "production"];
+            healthChecks = {
+              systemd = [{units = ["nginx"];}];
+              http = [{url = "http://localhost:80/health";}];
+            };
+          };
+        }
+      ];
+    };
   };
 }
