@@ -2,6 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub mod health;
+pub mod rollout;
+
 /// Well-known API path constants shared between agent and control plane.
 pub mod api {
     /// GET: Returns the desired generation for a machine.
@@ -29,6 +32,29 @@ pub mod api {
 
     /// GET: List audit events with optional filters.
     pub const AUDIT: &str = "/api/v1/audit";
+
+    /// GET: List rollouts. POST: Create a new rollout.
+    pub const ROLLOUTS: &str = "/api/v1/rollouts";
+
+    /// GET: Get rollout detail.
+    /// Path parameter: `{id}` = rollout ID.
+    pub const ROLLOUT: &str = "/api/v1/rollouts/{id}";
+
+    /// POST: Resume a paused rollout.
+    /// Path parameter: `{id}` = rollout ID.
+    pub const ROLLOUT_RESUME: &str = "/api/v1/rollouts/{id}/resume";
+
+    /// POST: Cancel a rollout.
+    /// Path parameter: `{id}` = rollout ID.
+    pub const ROLLOUT_CANCEL: &str = "/api/v1/rollouts/{id}/cancel";
+
+    /// GET/PUT: Manage tags for a machine.
+    /// Path parameter: `{id}` = machine ID.
+    pub const MACHINE_TAGS: &str = "/api/v1/machines/{id}/tags";
+
+    /// DELETE: Remove a specific tag from a machine.
+    /// Path parameters: `{id}` = machine ID, `{tag}` = tag name.
+    pub const MACHINE_TAG: &str = "/api/v1/machines/{id}/tags/{tag}";
 }
 
 /// Machine lifecycle states for fleet management.
@@ -108,6 +134,10 @@ pub struct Report {
     pub success: bool,
     pub message: String,
     pub timestamp: DateTime<Utc>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub health: Option<health::HealthReport>,
 }
 
 /// Machine status for inventory reporting.
@@ -121,6 +151,8 @@ pub struct MachineStatus {
     pub uptime_seconds: u64,
     pub last_report: Option<DateTime<Utc>>,
     pub lifecycle: MachineLifecycle,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Audit event for compliance reporting.
@@ -147,6 +179,8 @@ mod tests {
             success: true,
             message: "deployed".to_string(),
             timestamp: Utc::now(),
+            tags: vec!["web".to_string(), "prod".to_string()],
+            health: None,
         };
         let json = serde_json::to_string(&report).unwrap();
         let back: Report = serde_json::from_str(&json).unwrap();
@@ -164,6 +198,8 @@ mod tests {
             success: false,
             message: "rolled back: health check failed".to_string(),
             timestamp: Utc::now(),
+            tags: vec![],
+            health: None,
         };
         let json = serde_json::to_string(&report).unwrap();
         let back: Report = serde_json::from_str(&json).unwrap();
@@ -224,6 +260,7 @@ mod tests {
             uptime_seconds: 3600,
             last_report: Some(Utc::now()),
             lifecycle: MachineLifecycle::Active,
+            tags: vec!["web".to_string()],
         };
         let json = serde_json::to_string(&status).unwrap();
         let back: MachineStatus = serde_json::from_str(&json).unwrap();
@@ -289,6 +326,8 @@ mod tests {
             success: true,
             message: "up-to-date".to_string(),
             timestamp: Utc::now(),
+            tags: vec!["staging".to_string()],
+            health: None,
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("machine_id"));

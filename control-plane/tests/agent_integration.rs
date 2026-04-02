@@ -155,6 +155,8 @@ async fn test_agent_control_plane_cycle() {
         success: true,
         message: "generation applied".to_string(),
         timestamp: chrono::Utc::now(),
+        tags: vec![],
+        health: None,
     };
     let report_resp = client
         .post(format!("{base}/api/v1/machines/{machine_id}/report"))
@@ -223,6 +225,8 @@ async fn test_failed_deploy_reported_correctly() {
         success: false,
         message: "rolled back: health check failed after 30s".to_string(),
         timestamp: chrono::Utc::now(),
+        tags: vec![],
+        health: None,
     };
     client
         .post(format!("{base}/api/v1/machines/{machine_id}/report"))
@@ -468,6 +472,8 @@ async fn test_lifecycle_transitions() {
         success: true,
         message: "deployed".to_string(),
         timestamp: chrono::Utc::now(),
+        tags: vec![],
+        health: None,
     };
     client
         .post(format!("{base}/api/v1/machines/trans-host/report"))
@@ -549,6 +555,8 @@ async fn test_auto_activate_on_first_report() {
         success: true,
         message: "initial boot".to_string(),
         timestamp: chrono::Utc::now(),
+        tags: vec![],
+        health: None,
     };
     client
         .post(format!("{base}/api/v1/machines/auto-host/report"))
@@ -601,6 +609,8 @@ async fn test_invalid_lifecycle_transition_rejected() {
         success: true,
         message: "ok".to_string(),
         timestamp: chrono::Utc::now(),
+        tags: vec![],
+        health: None,
     };
     client
         .post(format!("{base}/api/v1/machines/bad-trans/report"))

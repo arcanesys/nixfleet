@@ -233,6 +233,8 @@ async fn main() -> anyhow::Result<()> {
                             success,
                             message,
                             timestamp: chrono::Utc::now(),
+                            tags: vec![],
+                            health: None,
                         };
                         match client.post_report(&report).await {
                             Ok(()) => info!("Report sent"),

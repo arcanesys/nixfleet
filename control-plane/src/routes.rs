@@ -158,6 +158,7 @@ pub async fn list_machines(State((state, _db)): State<AppState>) -> Json<Vec<Mac
             uptime_seconds: 0,
             last_report: m.last_report.as_ref().map(|r| r.timestamp),
             lifecycle: m.lifecycle.clone(),
+            tags: vec![],
         })
         .collect();
 

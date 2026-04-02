@@ -215,6 +215,8 @@ mod serde_integration {
             success: true,
             message: "deployed".to_string(),
             timestamp: Utc::now(),
+            tags: vec![],
+            health: None,
         };
         let json = serde_json::to_string(&report).unwrap();
         let back: Report = serde_json::from_str(&json).unwrap();
