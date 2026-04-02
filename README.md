@@ -9,7 +9,7 @@ NixFleet is a framework for managing fleets of NixOS and macOS machines. It prov
 - **hostSpec** — extensible host configuration flags (fleet repos add their own)
 - **Core modules** — nix settings, boot, SSH hardening, networking, user management
 - **Disko templates** — reusable disk layout configurations
-- **Agent + Control Plane** — Rust-based fleet management (NixOS service modules)
+- **Agent + Control Plane** — Rust-based fleet orchestration with staged rollouts, health checks, and automatic rollback
 
 ## Quick Start
 
@@ -75,6 +75,15 @@ mkHost auto-includes framework scopes. They self-activate based on hostSpec flag
 
 Fleet repos add their own scopes (catppuccin, hyprland, dev tools, etc.) as plain NixOS/HM modules.
 
+## Fleet Orchestration
+
+The agent + control plane provide fleet-wide deployment orchestration:
+
+- **Machine tags** — group machines for targeted operations
+- **Health checks** — declarative systemd, HTTP, and command checks
+- **Rollout strategies** — canary, staged, all-at-once with automatic pause/revert
+- **CLI** — `nixfleet deploy --tag production --strategy canary --wait`
+
 ## Deployment
 
 Standard NixOS tooling — no custom scripts:
@@ -107,6 +116,8 @@ nix run .#validate -- --vm         # include VM tests
 nix fmt                            # format (alejandra + shfmt)
 cargo test --workspace             # Rust tests
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed contributor guidelines.
 
 ## License
 
