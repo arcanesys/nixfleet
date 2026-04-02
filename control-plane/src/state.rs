@@ -101,8 +101,13 @@ pub async fn hydrate_from_db(
             cache_url: None,
         });
     }
+    let active_rollouts = db.list_rollouts_by_status(Some("running"), 100)?;
+    let paused_rollouts = db.list_rollouts_by_status(Some("paused"), 100)?;
+
     tracing::info!(
         machines = fleet.machines.len(),
+        active_rollouts = active_rollouts.len(),
+        paused_rollouts = paused_rollouts.len(),
         "Hydrated fleet state from database"
     );
     Ok(())

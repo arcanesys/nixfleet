@@ -56,6 +56,23 @@ async fn main() -> anyhow::Result<()> {
     let _executor =
         nixfleet_control_plane::rollout::executor::spawn(fleet_state.clone(), db.clone());
 
+    // Spawn health report cleanup task (hourly)
+    let cleanup_db = db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            match cleanup_db.cleanup_old_health_reports(24) {
+                Ok(deleted) => {
+                    if deleted > 0 {
+                        tracing::info!(deleted, "Cleaned up old health reports");
+                    }
+                }
+                Err(e) => tracing::warn!("Health report cleanup failed: {e}"),
+            }
+        }
+    });
+
     let app = build_app(fleet_state, db);
 
     match (&cli.tls_cert, &cli.tls_key) {
