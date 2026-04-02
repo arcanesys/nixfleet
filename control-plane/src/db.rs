@@ -268,19 +268,21 @@ impl Db {
 
     /// Replace all tags for a machine.
     pub fn set_machine_tags(&self, machine_id: &str, tags: &[String]) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().context("failed to start transaction")?;
+        tx.execute(
             "DELETE FROM machine_tags WHERE machine_id = ?1",
             rusqlite::params![machine_id],
         )
         .context("failed to delete existing machine tags")?;
         for tag in tags {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO machine_tags (machine_id, tag) VALUES (?1, ?2)",
                 rusqlite::params![machine_id, tag],
             )
             .context("failed to insert machine tag")?;
         }
+        tx.commit().context("failed to commit tags")?;
         Ok(())
     }
 

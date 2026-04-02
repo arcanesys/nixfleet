@@ -1,18 +1,7 @@
 use anyhow::{bail, Context, Result};
 use nixfleet_types::MachineStatus;
 
-fn api_client(api_key: &str) -> reqwest::Client {
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        reqwest::header::AUTHORIZATION,
-        reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key))
-            .expect("invalid API key"),
-    );
-    reqwest::Client::builder()
-        .default_headers(headers)
-        .build()
-        .expect("failed to build HTTP client")
-}
+use crate::client::api_client;
 
 /// GET /api/v1/machines — list machines, optionally filtered by tag.
 pub async fn list(cp_url: &str, api_key: &str, tag_filter: Option<&str>) -> Result<()> {

@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use std::process::Stdio;
 
+mod client;
 mod deploy;
 mod host;
 mod machines;

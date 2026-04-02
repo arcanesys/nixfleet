@@ -27,6 +27,15 @@ pub async fn create_rollout(
     actor: Option<Extension<Actor>>,
     Json(req): Json<CreateRolloutRequest>,
 ) -> Result<(StatusCode, Json<CreateRolloutResponse>), (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["deploy", "admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "deploy or admin role required".to_string(),
+            ));
+        }
+    }
+
     // Resolve target machines
     let machine_ids = match &req.target {
         RolloutTarget::Tags(tags) => db.get_machines_by_tags(tags).map_err(|e| {
@@ -71,7 +80,7 @@ pub async fn create_rollout(
     };
 
     // Generate rollout ID
-    let rollout_id = format!("r-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    let rollout_id = format!("r-{}", uuid::Uuid::new_v4());
 
     // Persist rollout
     let target_tags = match &req.target {
@@ -180,8 +189,18 @@ pub async fn create_rollout(
 /// List rollouts with optional status filter.
 pub async fn list_rollouts(
     State((_state, db)): State<AppState>,
+    actor: Option<Extension<Actor>>,
     Query(query): Query<ListRolloutsQuery>,
 ) -> Result<Json<Vec<RolloutDetail>>, (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["readonly", "deploy", "admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "readonly, deploy, or admin role required".to_string(),
+            ));
+        }
+    }
+
     let rollouts = db
         .list_rollouts_by_status(query.status.as_deref(), 100)
         .map_err(|e| {
@@ -212,8 +231,18 @@ pub async fn list_rollouts(
 /// Get a single rollout by ID.
 pub async fn get_rollout(
     State((_state, db)): State<AppState>,
+    actor: Option<Extension<Actor>>,
     Path(id): Path<String>,
 ) -> Result<Json<RolloutDetail>, (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["readonly", "deploy", "admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "readonly, deploy, or admin role required".to_string(),
+            ));
+        }
+    }
+
     let rollout = db
         .get_rollout(&id)
         .map_err(|e| {
@@ -244,6 +273,15 @@ pub async fn resume_rollout(
     actor: Option<Extension<Actor>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["deploy", "admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "deploy or admin role required".to_string(),
+            ));
+        }
+    }
+
     let rollout = db
         .get_rollout(&id)
         .map_err(|e| {
@@ -309,6 +347,15 @@ pub async fn cancel_rollout(
     actor: Option<Extension<Actor>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if let Some(Extension(ref actor)) = actor {
+        if !actor.has_role(&["deploy", "admin"]) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "deploy or admin role required".to_string(),
+            ));
+        }
+    }
+
     let rollout = db
         .get_rollout(&id)
         .map_err(|e| {
@@ -413,5 +460,8 @@ fn row_to_detail(rollout: &RolloutRow, batch_rows: &[RolloutBatchRow]) -> Rollou
 fn parse_datetime(s: &str) -> chrono::DateTime<Utc> {
     NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
         .map(|dt| Utc.from_utc_datetime(&dt))
-        .unwrap_or_else(|_| Utc::now())
+        .unwrap_or_else(|e| {
+            tracing::warn!(input = %s, error = %e, "Failed to parse datetime, falling back to now");
+            Utc::now()
+        })
 }
