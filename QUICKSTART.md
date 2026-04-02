@@ -14,7 +14,7 @@ Get NixFleet running in 5 minutes. For full documentation, see the [User Guide](
 ```nix
 {
   inputs = {
-    nixfleet.url = "github:abstracts33d/nixfleet";
+    nixfleet.url = "github:your-org/nixfleet";
     nixpkgs.follows = "nixfleet/nixpkgs";
     home-manager.follows = "nixfleet/home-manager";
   };
@@ -83,4 +83,4 @@ nix run .#validate # full validation (format + eval + builds)
 - [TECHNICAL.md](TECHNICAL.md) -- Design decisions and Nix gotchas
 - [CLAUDE.md](CLAUDE.md) -- Framework context, commands, conventions
 - [docs/guide/](docs/guide/) -- Detailed user guide
-- [docs/src/](docs/src/) -- Technical reference
+- [docs/mdbook/](docs/mdbook/) -- Technical reference

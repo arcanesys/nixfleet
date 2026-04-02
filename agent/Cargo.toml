@@ -3,7 +3,10 @@ name = "nixfleet-agent"
 version = "0.1.0"
 edition = "2021"
 description = "NixFleet fleet management agent"
-license = "Apache-2.0"
+license = "MIT"
+repository = "https://github.com/your-org/nixfleet"
+homepage = "https://github.com/your-org/nixfleet"
+authors = ["nixfleet contributors"]
 
 [dependencies]
 nixfleet-types = { path = "../shared" }

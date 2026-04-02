@@ -34,6 +34,26 @@ in {
       btrfs-impermanence = ./_shared/disk-templates/btrfs-impermanence-disk.nix;
     };
 
+    # Flake templates — nix flake init -t nixfleet
+    templates = {
+      standalone = {
+        path = ../examples/standalone-host;
+        description = "Single NixOS machine managed by NixFleet";
+      };
+      batch = {
+        path = ../examples/batch-hosts;
+        description = "Batch of identical hosts from a template";
+      };
+      fleet = {
+        path = ../examples/client-fleet;
+        description = "Multi-host fleet with flake-parts";
+      };
+      default = {
+        path = ../examples/standalone-host;
+        description = "Single NixOS machine managed by NixFleet (default)";
+      };
+    };
+
     # Transitional flakeModules for fleet repos
     flakeModules = {
       apps = ./apps.nix;

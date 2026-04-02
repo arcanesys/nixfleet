@@ -9,14 +9,14 @@ NixFleet is a framework for managing fleets of NixOS and macOS machines. It prov
 - **hostSpec** — extensible host configuration flags (fleet repos add their own)
 - **Core modules** — nix settings, boot, SSH hardening, networking, user management
 - **Disko templates** — reusable disk layout configurations
-- **Agent + Control Plane** — Rust-based fleet management (NixOS service modules)
+- **Agent + Control Plane** — Rust-based fleet orchestration with staged rollouts, health checks, and automatic rollback
 
 ## Quick Start
 
 ```nix
 # flake.nix — single machine, no ceremony
 {
-  inputs.nixfleet.url = "github:abstracts33d/nixfleet";
+  inputs.nixfleet.url = "github:your-org/nixfleet";
   inputs.nixpkgs.follows = "nixfleet/nixpkgs";
 
   outputs = {nixfleet, ...}: {
@@ -43,7 +43,15 @@ nixos-anywhere --flake .#myhost root@192.168.1.50   # fresh install
 sudo nixos-rebuild switch --flake .#myhost           # rebuild
 ```
 
-See `examples/` for more patterns (standalone host, batch hosts, client fleet).
+See `examples/` for more patterns, or use `nix flake init -t nixfleet#fleet` for a multi-host template.
+
+## Documentation
+
+Full documentation: [your-org.github.io/nixfleet](https://your-org.github.io/nixfleet/)
+
+- [Quick Start](https://your-org.github.io/nixfleet/guide/getting-started/quick-start.html) — first host in 15 minutes
+- [Concepts](https://your-org.github.io/nixfleet/guide/concepts/) — architecture, scopes, hostSpec
+- [ADRs](docs/adr/) — architecture decision records
 
 ## Layout
 
@@ -74,6 +82,15 @@ mkHost auto-includes framework scopes. They self-activate based on hostSpec flag
 ```
 
 Fleet repos add their own scopes (catppuccin, hyprland, dev tools, etc.) as plain NixOS/HM modules.
+
+## Fleet Orchestration
+
+The agent + control plane provide fleet-wide deployment orchestration:
+
+- **Machine tags** — group machines for targeted operations
+- **Health checks** — declarative systemd, HTTP, and command checks
+- **Rollout strategies** — canary, staged, all-at-once with automatic pause/revert
+- **CLI** — `nixfleet deploy --tag production --strategy canary --wait`
 
 ## Deployment
 
@@ -108,13 +125,13 @@ nix fmt                            # format (alejandra + shfmt)
 cargo test --workspace             # Rust tests
 ```
 
-## Related Repos
-
-| Repo | Content |
-|------|---------|
-| [fleet](https://github.com/abstracts33d/fleet) | Reference fleet (abstracts33d org config) |
-| [fleet-secrets](https://github.com/abstracts33d/fleet-secrets) | Encrypted secrets (agenix) |
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed contributor guidelines.
 
 ## License
 
-Apache-2.0
+nixfleet uses a dual-license model:
+
+- **Control Plane** (`control-plane/`): [AGPL-3.0](LICENSE-AGPL) — modifications to the control plane must be shared when provided as a service
+- **Everything else** (framework, agent, CLI, modules): [MIT](LICENSE-MIT) — use freely, no copyleft obligation
+
+This means you can freely use the framework to manage your fleet without any copyleft requirement. Your fleet configurations, custom modules, and agent deployments remain fully private.

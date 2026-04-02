@@ -3,7 +3,10 @@ name = "nixfleet-control-plane"
 version = "0.1.0"
 edition = "2021"
 description = "NixFleet control plane server"
-license = "Apache-2.0"
+license = "AGPL-3.0-only"
+repository = "https://github.com/your-org/nixfleet"
+homepage = "https://github.com/your-org/nixfleet"
+authors = ["nixfleet contributors"]
 
 [dependencies]
 nixfleet-types = { path = "../shared" }

@@ -3,3 +3,4 @@ result-*
 .idea/
 target/
 .claude/
+.mcp.json

@@ -3,7 +3,10 @@ name = "nixfleet-types"
 version = "0.1.0"
 edition = "2021"
 description = "Shared types for the NixFleet control plane and agent"
-license = "Apache-2.0"
+license = "MIT"
+repository = "https://github.com/your-org/nixfleet"
+homepage = "https://github.com/your-org/nixfleet"
+authors = ["nixfleet contributors"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
