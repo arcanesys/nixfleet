@@ -37,6 +37,8 @@ Or create a `flake.nix` that imports NixFleet and defines hosts with `mkHost`:
 
 ## Deploy
 
+NixFleet uses standard NixOS deployment tooling — no custom wrappers. Any NixOS tutorial or documentation applies directly.
+
 ### NixOS (Remote)
 
 Boot the target machine from a NixOS ISO, then:

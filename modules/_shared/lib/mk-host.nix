@@ -96,6 +96,9 @@ in
       ];
 
     # Build NixOS system
+    # Framework inputs passed via specialArgs. Fleet modules access these as
+    # the `inputs` argument. Fleet-specific customization uses hostSpec
+    # extensions and plain NixOS modules — no separate input namespace.
     buildNixos = inputs.nixpkgs.lib.nixosSystem {
       specialArgs = {inherit inputs;};
       modules =

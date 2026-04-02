@@ -23,7 +23,8 @@ examples/
 ├── standalone-host/   # Example: single machine in its own repo
 └── batch-hosts/       # Example: 50 edge devices from a template
 docs/
-└── src/               # Technical reference + user guide (mdbook)
+├── adr/               # Architecture Decision Records (6 ADRs)
+└── mdbook/            # Technical reference + user guide (mdbook)
 ```
 
 ## Commands
@@ -140,7 +141,7 @@ See `examples/` for standalone-host, batch-hosts, and client-fleet patterns.
 - **Scopes** are plain NixOS/HM modules (`_`-prefixed for import-tree exclusion) that self-activate via hostSpec flags
 - **Service modules** (agent, CP) are auto-included by mkHost, disabled by default
 - **hostSpec** provides base options; fleet repos extend with their own flags via plain NixOS modules
-- **Two input namespaces:** Framework modules get `inputs` via specialArgs (nixfleet inputs). Fleet modules use `fleetInputs` via `_module.args` (fleet-specific inputs).
+- **Framework inputs via specialArgs:** mkHost passes framework inputs (nixpkgs, home-manager, disko, etc.) to modules via `specialArgs = { inherit inputs; }`. Fleet repos access these as `inputs` in their modules. Fleet-specific customization uses hostSpec extensions and plain NixOS modules, not a separate input namespace.
 
 ## Critical Rules
 
