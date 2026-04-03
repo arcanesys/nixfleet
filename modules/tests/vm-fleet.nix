@@ -95,6 +95,9 @@
         extraModules =
           [
             {
+              # Trust the fleet CA so the agent can verify the CP's TLS cert
+              security.pki.certificateFiles = ["${testCerts}/ca.pem"];
+
               environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
               environment.etc."nixfleet-tls/${hostName}-cert.pem".source = "${testCerts}/${hostName}-cert.pem";
               environment.etc."nixfleet-tls/${hostName}-key.pem".source = "${testCerts}/${hostName}-key.pem";
@@ -144,7 +147,7 @@
                   };
                 };
 
-                environment.systemPackages = [pkgs.sqlite];
+                environment.systemPackages = [pkgs.sqlite pkgs.python3];
               })
             ];
           };
