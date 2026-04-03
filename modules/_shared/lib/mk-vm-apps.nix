@@ -184,7 +184,7 @@
       if [ -n "''${VLAN_PORT:-}" ]; then
         local mac_suffix
         mac_suffix=$(printf "%02x" "$((HOST_INDEX + 1))")
-        VLAN_ARGS="-netdev socket,id=vlan0,mcast=230.0.0.1:''${VLAN_PORT} -device virtio-net-pci,netdev=vlan0,mac=52:54:00:12:34:''${mac_suffix}"
+        VLAN_ARGS="-netdev socket,id=vlan0,mcast=230.0.0.1:''${VLAN_PORT},localaddr=127.0.0.1 -device virtio-net-pci,netdev=vlan0,mac=52:54:00:12:34:''${mac_suffix}"
       fi
     }
   '';
