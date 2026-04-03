@@ -4,7 +4,7 @@
 #   - Fleet repos know their host inventory for scrape targets
 #
 # Usage: add the nodeExporter block to all hosts, Prometheus server to one host.
-{ ...}: {
+{...}: {
   # Enable node exporter with framework defaults on all hosts
   nixfleet.monitoring.nodeExporter = {
     enable = true;

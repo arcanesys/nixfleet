@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 pub mod health;
+pub mod metrics;
 pub mod rollout;
 
 /// Well-known API path constants shared between agent and control plane.
