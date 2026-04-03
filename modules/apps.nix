@@ -7,9 +7,10 @@ in {
     ...
   }: let
     isLinux = builtins.elem system ["x86_64-linux" "aarch64-linux"];
-    mkScript = name: text: {
+    mkScript = name: description: text: {
       type = "app";
       program = "${pkgs.writeShellScriptBin name text}/bin/${name}";
+      meta.description = description;
     };
   in {
     devShells.default = pkgs.mkShell {
@@ -37,7 +38,7 @@ in {
 
     apps =
       {
-        "validate" = mkScript "validate" ''
+        "validate" = mkScript "validate" "Run format checks, eval tests, and host builds" ''
           set -uo pipefail
 
           GREEN='\033[1;32m'

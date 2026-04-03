@@ -10,9 +10,10 @@
   isLinux = builtins.elem system ["x86_64-linux" "aarch64-linux"];
   isDarwin = builtins.elem system ["aarch64-darwin" "x86_64-darwin"];
   lib = pkgs.lib;
-  mkScript = name: text: {
+  mkScript = name: description: text: {
     type = "app";
     program = "${pkgs.writeShellScriptBin name text}/bin/${name}";
+    meta.description = description;
   };
   nixos-anywhere-bin =
     if inputs.nixos-anywhere.packages ? ${system}
@@ -20,7 +21,7 @@
     else "echo 'nixos-anywhere not available on ${system}'; exit 1";
 in
   lib.optionalAttrs isLinux {
-    "spawn-qemu" = mkScript "spawn-qemu" ''
+    "spawn-qemu" = mkScript "spawn-qemu" "Launch a QEMU VM for NixFleet hosts" ''
       set -euo pipefail
 
       GREEN='\033[1;32m'
@@ -240,7 +241,7 @@ in
         ''$BOOT_ARGS
     '';
 
-    "test-vm" = mkScript "test-vm" ''
+    "test-vm" = mkScript "test-vm" "Automated VM test cycle: build, install, verify" ''
       set -euo pipefail
 
       GREEN='\033[1;32m'
@@ -365,7 +366,7 @@ in
     '';
   }
   // lib.optionalAttrs isDarwin {
-    "spawn-utm" = mkScript "spawn-utm" ''
+    "spawn-utm" = mkScript "spawn-utm" "Manage UTM VMs on macOS" ''
       set -euo pipefail
       PATH=${lib.makeBinPath (with pkgs; [coreutils openssh])}:''$PATH
 
