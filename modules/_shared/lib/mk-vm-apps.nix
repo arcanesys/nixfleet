@@ -92,16 +92,17 @@
 
     assign_port() {
       local host="$1"
-      if [ -n "''${PORT_OVERRIDE:-}" ]; then
-        SSH_PORT="''$PORT_OVERRIDE"
-        return
-      fi
       local hosts
       hosts=$(nix eval .#nixosConfigurations --apply 'x: builtins.concatStringsSep "\n" (builtins.sort builtins.lessThan (builtins.attrNames x))' --raw 2>/dev/null)
       local idx=0
       while IFS= read -r name; do
         if [ "$name" = "$host" ]; then
-          SSH_PORT=$((2201 + idx))
+          HOST_INDEX=$idx
+          if [ -n "''${PORT_OVERRIDE:-}" ]; then
+            SSH_PORT="''$PORT_OVERRIDE"
+          else
+            SSH_PORT=$((2201 + idx))
+          fi
           return
         fi
         idx=$((idx + 1))
@@ -177,6 +178,15 @@
     all_hosts() {
       nix eval .#nixosConfigurations --apply 'x: builtins.concatStringsSep "\n" (builtins.sort builtins.lessThan (builtins.attrNames x))' --raw 2>/dev/null
     }
+
+    compute_vlan_args() {
+      VLAN_ARGS=""
+      if [ -n "''${VLAN_PORT:-}" ]; then
+        local mac_suffix
+        mac_suffix=$(printf "%02x" "$((HOST_INDEX + 1))")
+        VLAN_ARGS="-netdev socket,id=vlan0,mcast=230.0.0.1:''${VLAN_PORT},localaddr=127.0.0.1 -device virtio-net-pci,netdev=vlan0,mac=52:54:00:12:34:''${mac_suffix}"
+      fi
+    }
   '';
 in
   lib.optionalAttrs (isLinux || isDarwin) {
@@ -195,6 +205,7 @@ in
       RAM=4096
       CPUS=2
       DISK_SIZE="5G"
+      VLAN_PORT=""
 
       while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -206,6 +217,7 @@ in
           --ram) RAM="$2"; shift 2 ;;
           --cpus) CPUS="$2"; shift 2 ;;
           --disk-size) DISK_SIZE="$2"; shift 2 ;;
+          --vlan) VLAN_PORT="$2"; shift 2 ;;
           *) echo "Unknown argument: $1" >&2; exit 1 ;;
         esac
       done
@@ -223,6 +235,7 @@ in
         echo "  --ram MB           RAM in MB (default: 4096)" >&2
         echo "  --cpus N           CPU count (default: 2)" >&2
         echo "  --disk-size S      Disk size (default: 5G)" >&2
+        echo "  --vlan PORT        Enable inter-VM VLAN on multicast port" >&2
         exit 1
       fi
 
@@ -231,6 +244,7 @@ in
         echo -e "''${YELLOW}==> Building VM for host: $host''${NC}"
 
         assign_port "$host"
+        compute_vlan_args
         echo -e "''${GREEN}SSH port: ''$SSH_PORT''${NC}"
 
         local disk_path="''$VM_DIR/''${host}.qcow2"
@@ -256,6 +270,7 @@ in
           -smp "''$CPUS" \
           -drive file="''$disk_path",format=qcow2,if=virtio \
           -nic user,model=virtio-net-pci,hostfwd=tcp::"''$SSH_PORT"-:22 \
+          ''$VLAN_ARGS \
           -display none -serial null \
           -bios ${qemuFirmware} \
           -cdrom "''$ISO_FILE" -boot d \
@@ -310,6 +325,7 @@ in
       PORT_OVERRIDE=""
       RAM=1024
       CPUS=2
+      VLAN_PORT=""
 
       while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -318,6 +334,7 @@ in
           --ssh-port) PORT_OVERRIDE="$2"; shift 2 ;;
           --ram) RAM="$2"; shift 2 ;;
           --cpus) CPUS="$2"; shift 2 ;;
+          --vlan) VLAN_PORT="$2"; shift 2 ;;
           *) echo "Unknown argument: $1" >&2; exit 1 ;;
         esac
       done
@@ -327,6 +344,7 @@ in
       start_one() {
         local host="$1"
         assign_port "$host"
+        compute_vlan_args
         local disk="''$VM_DIR/$host.qcow2"
         local pidfile="''$VM_DIR/$host.pid"
 
@@ -347,6 +365,7 @@ in
           -smp "''$CPUS" \
           -drive file="$disk",format=qcow2,if=virtio \
           -nic user,model=virtio-net-pci,hostfwd=tcp::''$SSH_PORT-:22 \
+          ''$VLAN_ARGS \
           -display none -serial null \
           -bios ${qemuFirmware} \
           -daemonize -pidfile "$pidfile"

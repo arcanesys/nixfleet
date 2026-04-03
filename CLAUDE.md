@@ -39,8 +39,10 @@ nix run .#validate -- --vm         # include VM tests (slow)
 nix build .#checks.x86_64-linux.vm-fleet --no-link  # 4-node fleet test (CP + 3 agents, TLS/mTLS, rollouts)
 nix run .#build-vm -- -h web-02    # install VM (ISO + nixos-anywhere)
 nix run .#build-vm -- --all        # install all hosts
+nix run .#build-vm -- --all --vlan 1234  # install all with inter-VM VLAN
 nix run .#start-vm -- -h web-02    # start VM as headless daemon
 nix run .#start-vm -- --all        # start all installed VMs
+nix run .#start-vm -- --all --vlan 1234  # start all with inter-VM VLAN
 nix run .#stop-vm -- -h web-02     # stop VM daemon
 nix run .#clean-vm -- -h web-02    # delete VM disk + state
 nix run .#test-vm -- -h web-02     # end-to-end VM test cycle
