@@ -6,14 +6,17 @@
 {config, ...}: let
   mkHost = config.flake.lib.mkHost;
 
-  # Shared organization defaults — just a let binding, no framework function
+  # Shared organization defaults — just a let binding, no framework function.
+  # IMPORTANT: Replace sshAuthorizedKeys with your real public key.
+  # VM commands (build-vm, test-vm) SSH into the ISO using this key —
+  # if it doesn't match a private key on your machine, SSH will hang.
   orgDefaults = {
     userName = "deploy";
     timeZone = "UTC";
     locale = "en_US.UTF-8";
     keyboardLayout = "us";
     sshAuthorizedKeys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINixfleetTestKeyDoNotUseInProduction"
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA NixfleetDemoKeyReplaceWithYourOwn"
     ];
   };
 in {

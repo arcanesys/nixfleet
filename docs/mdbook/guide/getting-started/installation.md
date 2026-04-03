@@ -56,7 +56,9 @@ The resulting ISO is written to `result/iso/`. Flash it to USB and boot target m
 
 ## VM Testing
 
-Test host configurations in QEMU before deploying to real hardware:
+Test host configurations in QEMU before deploying to real hardware.
+
+**Prerequisite:** Your fleet's `sshAuthorizedKeys` must contain a public key whose private half is on your machine (typically `~/.ssh/id_ed25519`). The VM commands SSH into the ISO installer using this key — if it doesn't match, SSH will hang.
 
 ```bash
 # Install a host into a persistent VM disk (build ISO + nixos-anywhere)
