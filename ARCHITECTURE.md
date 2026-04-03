@@ -32,6 +32,8 @@ mkHost closure (binds framework inputs) ->
   - disko + impermanence NixOS modules
   - core/_nixos.nix or core/_darwin.nix
   - scopes/_base.nix, scopes/_impermanence.nix
+  - scopes/_firewall.nix (auto on !isMinimal)
+  - scopes/_secrets.nix, scopes/_backup.nix, scopes/_monitoring.nix (opt-in)
   - services: _agent.nix, _control-plane.nix (disabled by default)
   - home-manager (user config)
   - user-provided modules
@@ -99,7 +101,7 @@ This separation means an external organization can consume the framework without
 
 ### Scopes (flag-gated, framework + fleet-provided)
 
-Scope modules are plain NixOS/Darwin modules that self-activate with `lib.mkIf hS.<flag>` and co-locate impermanence persist paths. Framework scopes: base, impermanence, agent, control-plane. Fleet repos add their own scopes (dev tools, desktop environments, theming, etc.).
+Scope modules are plain NixOS/Darwin modules that self-activate with `lib.mkIf hS.<flag>` and co-locate impermanence persist paths. Framework scopes: base, impermanence, firewall (automatic); secrets, backup, monitoring, agent, control-plane (opt-in). Fleet repos add their own scopes (dev tools, desktop environments, theming, etc.).
 
 ### Fleet-Provided Modules
 

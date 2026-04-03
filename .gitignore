@@ -4,3 +4,4 @@ result-*
 target/
 .claude/
 .mcp.json
+.worktrees/

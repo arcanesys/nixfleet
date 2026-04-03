@@ -6,6 +6,7 @@ use tracing::{error, info, warn};
 mod comms;
 mod config;
 mod health;
+mod metrics;
 mod nix;
 mod state;
 mod store;
@@ -75,6 +76,10 @@ struct Cli {
     /// Machine tags (comma-separated)
     #[arg(long, env = "NIXFLEET_TAGS", value_delimiter = ',')]
     tags: Vec<String>,
+
+    /// Port for Prometheus metrics (disabled when omitted)
+    #[arg(long, env = "NIXFLEET_METRICS_PORT")]
+    metrics_port: Option<u16>,
 }
 
 #[tokio::main]
@@ -103,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
         health_config_path: cli.health_config.clone(),
         health_interval: Duration::from_secs(cli.health_interval),
         tags: cli.tags,
+        metrics_port: cli.metrics_port,
     };
 
     info!(
@@ -112,6 +118,10 @@ async fn main() -> anyhow::Result<()> {
         dry_run = config.dry_run,
         "NixFleet agent starting"
     );
+
+    if let Some(port) = config.metrics_port {
+        metrics::init(port);
+    }
 
     // Initialize SQLite store
     let store = Store::new(&cli.db_path)?;
@@ -160,16 +170,22 @@ async fn main() -> anyhow::Result<()> {
                 match agent_state {
                     AgentState::Idle => {
                         tokio::time::sleep(config.poll_interval).await;
+                        metrics::record_state_transition("idle", "checking");
                         AgentState::Checking
                     }
                     AgentState::Checking => {
-                        match client.get_desired_generation(&config.machine_id).await {
+                        let poll_start = std::time::Instant::now();
+                        let result = client.get_desired_generation(&config.machine_id).await;
+                        metrics::record_poll(poll_start.elapsed());
+                        match result {
                             Ok(desired) => {
                                 let current = nix::current_generation().await.unwrap_or_default();
+                                metrics::record_generation(&current);
                                 if current == desired.hash {
                                     info!("Already at desired generation");
                                     store.log_check(&desired.hash, "up-to-date")
                                         .unwrap_or_else(|e| warn!("store error: {e}"));
+                                    metrics::record_state_transition("checking", "reporting");
                                     AgentState::Reporting {
                                         success: true,
                                         message: "up-to-date".into(),
@@ -180,6 +196,7 @@ async fn main() -> anyhow::Result<()> {
                                         desired = %desired.hash,
                                         "Generation mismatch, fetching"
                                     );
+                                    metrics::record_state_transition("checking", "fetching");
                                     AgentState::Fetching { desired }
                                 }
                             }
@@ -187,6 +204,7 @@ async fn main() -> anyhow::Result<()> {
                                 warn!("Failed to check desired generation: {e}");
                                 store.log_error(&format!("check failed: {e}"))
                                     .unwrap_or_else(|e| warn!("store error: {e}"));
+                                metrics::record_state_transition("checking", "idle");
                                 AgentState::Idle
                             }
                         }
@@ -202,11 +220,13 @@ async fn main() -> anyhow::Result<()> {
                                 info!(hash = %desired.hash, "Closure fetched");
                                 if config.dry_run {
                                     info!("Dry run -- skipping apply");
+                                    metrics::record_state_transition("fetching", "reporting");
                                     AgentState::Reporting {
                                         success: true,
                                         message: "dry-run: would apply".into(),
                                     }
                                 } else {
+                                    metrics::record_state_transition("fetching", "applying");
                                     AgentState::Applying { desired }
                                 }
                             }
@@ -214,6 +234,7 @@ async fn main() -> anyhow::Result<()> {
                                 error!("Failed to fetch closure: {e}");
                                 store.log_error(&format!("fetch failed: {e}"))
                                     .unwrap_or_else(|e| warn!("store error: {e}"));
+                                metrics::record_state_transition("fetching", "idle");
                                 AgentState::Idle
                             }
                         }
@@ -221,10 +242,12 @@ async fn main() -> anyhow::Result<()> {
                     AgentState::Applying { desired } => match nix::apply_generation(&desired.hash).await {
                         Ok(()) => {
                             info!(hash = %desired.hash, "Generation applied");
+                            metrics::record_state_transition("applying", "verifying");
                             AgentState::Verifying { desired }
                         }
                         Err(e) => {
                             error!("Failed to apply generation: {e}");
+                            metrics::record_state_transition("applying", "rolling_back");
                             AgentState::RollingBack {
                                 reason: format!("apply failed: {e}"),
                             }
@@ -236,6 +259,7 @@ async fn main() -> anyhow::Result<()> {
                             info!("Health checks passed");
                             store.log_deploy(&desired.hash, true)
                                 .unwrap_or_else(|e| warn!("store error: {e}"));
+                            metrics::record_state_transition("verifying", "reporting");
                             AgentState::Reporting {
                                 success: true,
                                 message: "deployed".into(),
@@ -248,6 +272,7 @@ async fn main() -> anyhow::Result<()> {
                                 .map(|r| r.to_string())
                                 .collect();
                             warn!(?failed, "Health checks failed after apply");
+                            metrics::record_state_transition("verifying", "rolling_back");
                             AgentState::RollingBack {
                                 reason: format!("health check failed: {}", failed.join(", ")),
                             }
@@ -259,6 +284,7 @@ async fn main() -> anyhow::Result<()> {
                             Ok(()) => {
                                 store.log_rollback(&reason)
                                     .unwrap_or_else(|e| warn!("store error: {e}"));
+                                metrics::record_state_transition("rolling_back", "reporting");
                                 AgentState::Reporting {
                                     success: false,
                                     message: format!("rolled back: {reason}"),
@@ -268,6 +294,7 @@ async fn main() -> anyhow::Result<()> {
                                 error!("Rollback failed: {e}");
                                 store.log_error(&format!("rollback failed: {e}"))
                                     .unwrap_or_else(|e| warn!("store error: {e}"));
+                                metrics::record_state_transition("rolling_back", "idle");
                                 AgentState::Idle
                             }
                         }
@@ -286,6 +313,7 @@ async fn main() -> anyhow::Result<()> {
                             Ok(()) => info!("Report sent"),
                             Err(e) => warn!("Failed to send report: {e}"),
                         }
+                        metrics::record_state_transition("reporting", "idle");
                         AgentState::Idle
                     }
                 }

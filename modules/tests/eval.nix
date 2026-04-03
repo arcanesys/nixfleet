@@ -130,6 +130,139 @@
               msg = "agent-test should have health-checks.json config file";
             }
           ];
+
+        # --- Agent metrics port in ExecStart ---
+        eval-agent-metrics = let
+          cfg = nixosCfg "agent-test";
+        in
+          mkEvalCheck "agent-metrics" [
+            {
+              check = builtins.match ".*--metrics-port.*" cfg.systemd.services.nixfleet-agent.serviceConfig.ExecStart != null;
+              msg = "agent-test should have --metrics-port in ExecStart";
+            }
+            {
+              check = builtins.elem 9101 cfg.networking.firewall.allowedTCPPorts;
+              msg = "agent-test should have metrics port 9101 in firewall";
+            }
+          ];
+
+        # --- Secrets: resolved paths on server (host key only) ---
+        eval-secrets-server = let
+          cfg = nixosCfg "secrets-test";
+        in
+          mkEvalCheck "secrets-server" [
+            {
+              check = cfg.nixfleet.secrets.enable;
+              msg = "secrets-test should have secrets scope enabled";
+            }
+            {
+              check = cfg.nixfleet.secrets.resolvedIdentityPaths == ["/etc/ssh/ssh_host_ed25519_key"];
+              msg = "server should have only host key in resolvedIdentityPaths";
+            }
+            {
+              check = !cfg.nixfleet.secrets.identityPaths.enableUserKey;
+              msg = "server should have enableUserKey = false";
+            }
+          ];
+
+        # --- Secrets: resolved paths on workstation (host key + user key) ---
+        eval-secrets-workstation = let
+          cfg = nixosCfg "infra-test";
+        in
+          mkEvalCheck "secrets-workstation" [
+            {
+              check = builtins.length cfg.nixfleet.secrets.resolvedIdentityPaths == 2;
+              msg = "workstation should have 2 identity paths (host key + user key)";
+            }
+            {
+              check = builtins.head cfg.nixfleet.secrets.resolvedIdentityPaths == "/etc/ssh/ssh_host_ed25519_key";
+              msg = "first identity path should be host key";
+            }
+          ];
+
+        # --- Backup: option defaults ---
+        eval-backup-defaults = let
+          cfg = nixosCfg "infra-test";
+        in
+          mkEvalCheck "backup-defaults" [
+            {
+              check = cfg.nixfleet.backup.enable;
+              msg = "infra-test should have backup enabled";
+            }
+            {
+              check = cfg.nixfleet.backup.retention.daily == 7;
+              msg = "retention.daily should default to 7";
+            }
+            {
+              check = cfg.nixfleet.backup.retention.weekly == 4;
+              msg = "retention.weekly should default to 4";
+            }
+            {
+              check = cfg.nixfleet.backup.retention.monthly == 6;
+              msg = "retention.monthly should default to 6";
+            }
+            {
+              check = cfg.nixfleet.backup.paths == ["/persist"];
+              msg = "backup paths should default to /persist";
+            }
+            {
+              check = cfg.nixfleet.backup.schedule == "*-*-* 03:00:00";
+              msg = "infra-test should have custom schedule";
+            }
+          ];
+
+        # --- Monitoring: collector defaults ---
+        eval-monitoring-defaults = let
+          cfg = nixosCfg "infra-test";
+        in
+          mkEvalCheck "monitoring-defaults" [
+            {
+              check = cfg.nixfleet.monitoring.nodeExporter.enable;
+              msg = "infra-test should have node exporter enabled";
+            }
+            {
+              check = builtins.elem "systemd" cfg.nixfleet.monitoring.nodeExporter.enabledCollectors;
+              msg = "systemd collector should be enabled";
+            }
+            {
+              check = builtins.elem "cpu" cfg.nixfleet.monitoring.nodeExporter.enabledCollectors;
+              msg = "cpu collector should be enabled";
+            }
+            {
+              check = builtins.elem "textfile" cfg.nixfleet.monitoring.nodeExporter.disabledCollectors;
+              msg = "textfile collector should be disabled";
+            }
+            {
+              check = builtins.elem "wifi" cfg.nixfleet.monitoring.nodeExporter.disabledCollectors;
+              msg = "wifi collector should be disabled";
+            }
+          ];
+
+        # --- Firewall: nftables enabled on non-minimal ---
+        eval-firewall-nftables = let
+          cfg = nixosCfg "web-01";
+        in
+          mkEvalCheck "firewall-nftables" [
+            {
+              check = cfg.networking.nftables.enable;
+              msg = "non-minimal host should have nftables enabled";
+            }
+            {
+              check = cfg.networking.firewall.logRefusedConnections;
+              msg = "non-minimal host should log refused connections";
+            }
+          ];
+
+        # --- Firewall: minimal host should NOT have nftables forced ---
+        eval-firewall-minimal = let
+          cfg = nixosCfg "edge-01";
+        in
+          mkEvalCheck "firewall-minimal" [
+            {
+              check = !cfg.networking.nftables.enable;
+              msg = "minimal host should not have nftables forced by firewall scope";
+            }
+          ];
       };
     };
 }

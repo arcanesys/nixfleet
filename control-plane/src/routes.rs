@@ -14,6 +14,9 @@ pub async fn get_desired_generation(
     State((state, _db)): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<DesiredGeneration>, StatusCode> {
+    if id.len() > 256 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let fleet = state.read().await;
     fleet
         .machines
@@ -26,12 +29,28 @@ pub async fn get_desired_generation(
 /// POST /api/v1/machines/{id}/report
 ///
 /// Receives a status report from an agent.
+///
+/// This is an agent-facing endpoint, authenticated via mTLS at the transport layer.
+/// No bearer token is required. The actor is derived from the machine ID in the path.
 pub async fn post_report(
     State((state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
     Path(id): Path<String>,
     Json(report): Json<Report>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    // Validate path and report fields before any DB writes
+    if id.len() > 256 {
+        return Err((StatusCode::BAD_REQUEST, "machine_id too long".to_string()));
+    }
+    if report.current_generation.len() > 512 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "current_generation too long".to_string(),
+        ));
+    }
+    if report.message.len() > 4096 {
+        return Err((StatusCode::BAD_REQUEST, "message too long".to_string()));
+    }
+
     let report_success = report.success;
 
     // Persist to database
@@ -55,20 +74,14 @@ pub async fn post_report(
         let _ = db.insert_health_report(&id, &results_json, health.all_passed);
     }
 
-    // Extract tags before moving report into state
-    let report_tags = report.tags.clone();
-
-    // Update in-memory state
+    // Update in-memory state — only for pre-registered machines
     let mut fleet = state.write().await;
-    let machine = fleet.get_or_create(&id);
+    let machine = fleet
+        .machines
+        .get_mut(&id)
+        .ok_or((StatusCode::NOT_FOUND, format!("machine not found: {id}")))?;
     machine.last_seen = Some(report.timestamp);
     machine.last_report = Some(report);
-
-    // Sync tags if the report includes them
-    if !report_tags.is_empty() {
-        let _ = db.set_machine_tags(&id, &report_tags);
-        machine.tags = report_tags;
-    }
 
     // Auto-transition Pending/Provisioning -> Active on first report
     if machine.lifecycle == MachineLifecycle::Pending
@@ -80,13 +93,19 @@ pub async fn post_report(
         tracing::info!(machine_id = %id, "Auto-activated on first report");
     }
 
-    let actor_id = actor
-        .map(|Extension(a)| a.identifier())
-        .unwrap_or_else(|| format!("machine:{id}"));
+    let actor_id = format!("machine:{id}");
     let detail = if report_success { "success" } else { "failure" };
     let _ = db.insert_audit_event(&actor_id, "report", &id, Some(detail));
 
     tracing::info!(machine_id = %id, "Report received");
+
+    // Update fleet gauges — drop write lock first, then take read lock
+    drop(fleet);
+    {
+        let fleet = state.read().await;
+        crate::metrics::update_fleet_gauges(&fleet);
+    }
+
     Ok(StatusCode::OK)
 }
 
@@ -103,17 +122,15 @@ pub struct SetGenerationRequest {
 /// Admin endpoint to set the desired generation for a machine.
 pub async fn set_desired_generation(
     State((state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
     Json(req): Json<SetGenerationRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["deploy", "admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "deploy or admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["deploy", "admin"]) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "deploy or admin role required".to_string(),
+        ));
     }
 
     // Check for active rollout conflict
@@ -141,11 +158,8 @@ pub async fn set_desired_generation(
         cache_url: req.cache_url,
     });
 
-    let actor_id = actor
-        .map(|Extension(a)| a.identifier())
-        .unwrap_or_else(|| "unknown".to_string());
     let _ = db.insert_audit_event(
-        &actor_id,
+        &actor.identifier(),
         "set_generation",
         &id,
         Some(&format!("hash={}", req.hash)),
@@ -172,16 +186,14 @@ pub struct ListMachinesQuery {
 /// Supports optional `?tag=X&tag=Y` filtering (AND logic).
 pub async fn list_machines(
     State((state, _db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Query(query): Query<ListMachinesQuery>,
 ) -> Result<Json<Vec<MachineStatus>>, (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["readonly", "deploy", "admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "readonly, deploy, or admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["readonly", "deploy", "admin"]) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "readonly, deploy, or admin role required".to_string(),
+        ));
     }
 
     let fleet = state.read().await;
@@ -252,17 +264,12 @@ pub struct RegisterMachineResponse {
 /// Pre-register a machine in the fleet (admin endpoint).
 pub async fn register_machine(
     State((state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
     Json(req): Json<RegisterMachineRequest>,
 ) -> Result<(StatusCode, Json<RegisterMachineResponse>), (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["admin"]) {
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
 
     let lifecycle = MachineLifecycle::from_str_lc(&req.lifecycle).ok_or_else(|| {
@@ -304,12 +311,22 @@ pub async fn register_machine(
         machine.tags = req.tags;
     }
 
-    let actor_id = actor
-        .map(|Extension(a)| a.identifier())
-        .unwrap_or_else(|| "unknown".to_string());
-    let _ = db.insert_audit_event(&actor_id, "register", &id, Some(&lifecycle.to_string()));
+    let _ = db.insert_audit_event(
+        &actor.identifier(),
+        "register",
+        &id,
+        Some(&lifecycle.to_string()),
+    );
 
     tracing::info!(machine_id = %id, lifecycle = %lifecycle, "Machine registered");
+
+    // Update fleet gauges — drop write lock first, then take read lock
+    drop(fleet);
+    {
+        let fleet = state.read().await;
+        crate::metrics::update_fleet_gauges(&fleet);
+    }
+
     Ok((
         StatusCode::CREATED,
         Json(RegisterMachineResponse {
@@ -330,17 +347,12 @@ pub struct UpdateLifecycleRequest {
 /// Change a machine's lifecycle state (admin endpoint).
 pub async fn update_lifecycle(
     State((state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
     Json(req): Json<UpdateLifecycleRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["admin"]) {
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
 
     let target = MachineLifecycle::from_str_lc(&req.lifecycle).ok_or_else(|| {
@@ -376,11 +388,8 @@ pub async fn update_lifecycle(
     let from = machine.lifecycle.to_string();
     machine.lifecycle = target.clone();
 
-    let actor_id = actor
-        .map(|Extension(a)| a.identifier())
-        .unwrap_or_else(|| "unknown".to_string());
     let _ = db.insert_audit_event(
-        &actor_id,
+        &actor.identifier(),
         "update_lifecycle",
         &id,
         Some(&format!("{from} -> {target}")),
@@ -392,6 +401,14 @@ pub async fn update_lifecycle(
         to = %target,
         "Lifecycle state changed"
     );
+
+    // Update fleet gauges — drop write lock first, then take read lock
+    drop(fleet);
+    {
+        let fleet = state.read().await;
+        crate::metrics::update_fleet_gauges(&fleet);
+    }
+
     Ok(StatusCode::OK)
 }
 
@@ -400,17 +417,12 @@ pub async fn update_lifecycle(
 /// Set all tags for a machine (replaces existing tags).
 pub async fn set_tags(
     State((state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
     Json(tags): Json<Vec<String>>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["admin"]) {
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
 
     db.set_machine_tags(&id, &tags).map_err(|e| {
@@ -425,11 +437,8 @@ pub async fn set_tags(
     let machine = fleet.get_or_create(&id);
     machine.tags = tags.clone();
 
-    let actor_id = actor
-        .map(|Extension(a)| a.identifier())
-        .unwrap_or_else(|| "unknown".to_string());
     let _ = db.insert_audit_event(
-        &actor_id,
+        &actor.identifier(),
         "set_tags",
         &id,
         Some(&format!("tags={}", tags.join(","))),
@@ -444,16 +453,11 @@ pub async fn set_tags(
 /// Remove a single tag from a machine.
 pub async fn remove_tag(
     State((state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Path((id, tag)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["admin"]) {
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
 
     db.remove_machine_tag(&id, &tag).map_err(|e| {
@@ -468,10 +472,7 @@ pub async fn remove_tag(
     let machine = fleet.get_or_create(&id);
     machine.tags.retain(|t| t != &tag);
 
-    let actor_id = actor
-        .map(|Extension(a)| a.identifier())
-        .unwrap_or_else(|| "unknown".to_string());
-    let _ = db.insert_audit_event(&actor_id, "remove_tag", &id, Some(&tag));
+    let _ = db.insert_audit_event(&actor.identifier(), "remove_tag", &id, Some(&tag));
 
     tracing::info!(machine_id = %id, tag = %tag, "Tag removed");
     Ok(StatusCode::OK)

@@ -110,6 +110,7 @@ mod tests {
             health_config_path: "/etc/nixfleet/health-checks.json".to_string(),
             health_interval: Duration::from_secs(60),
             tags: vec![],
+            metrics_port: None,
         }
     }
 

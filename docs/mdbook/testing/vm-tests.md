@@ -1,6 +1,6 @@
 # VM Tests
 
-VM tests (Tier 2) boot real NixOS virtual machines and assert runtime state.
+VM tests boot real NixOS virtual machines and assert runtime state.
 They verify that services start, users exist, packages are available, and
 multi-node interactions work end-to-end.
 
@@ -16,6 +16,10 @@ Or build individual checks directly:
 nix build .#checks.x86_64-linux.vm-core --no-link
 nix build .#checks.x86_64-linux.vm-minimal --no-link
 nix build .#checks.x86_64-linux.vm-nixfleet --no-link
+nix build .#checks.x86_64-linux.vm-firewall --no-link
+nix build .#checks.x86_64-linux.vm-monitoring --no-link
+nix build .#checks.x86_64-linux.vm-backup --no-link
+nix build .#checks.x86_64-linux.vm-secrets --no-link
 ```
 
 ## Requirements
@@ -44,7 +48,7 @@ Boots a standard framework node (default `hostSpec`, no special flags) and verif
 - `multi-user.target` reached
 - `sshd` service running
 - `NetworkManager` service running
-- Firewall active (`iptables` has an INPUT chain)
+- Firewall active (nftables ruleset has an input chain)
 - Test user exists with `wheel` group membership
 - `zsh` and `git` are available to the test user
 
@@ -70,6 +74,18 @@ Two-node end-to-end test exercising the agent/control-plane cycle:
    - The agent appears in the machine list
    - `system_state == "ok"` (dry-run reports success)
    - `desired_generation` matches the fake hash that was set
+
+### Infrastructure scope tests (vm-infra.nix)
+
+Four focused tests for the infrastructure scopes:
+
+**vm-firewall** — Verifies nftables is active, SSH rate limiting rules present (`limit rate 5/minute`), and drop logging enabled.
+
+**vm-monitoring** — Enables the node exporter scope, verifies `prometheus-node-exporter.service` starts, port 9100 responds with Prometheus text format, and the `node_systemd` collector is active.
+
+**vm-backup** — Enables the backup scope with a dummy `ExecStart` (`true`), verifies the systemd timer is registered, manually triggers the service, and checks that `status.json` is written with `"status": "success"`.
+
+**vm-secrets** — Enables the secrets scope, verifies the SSH host key exists at `/etc/ssh/ssh_host_ed25519_key` with correct permissions (600).
 
 ## Test node construction
 

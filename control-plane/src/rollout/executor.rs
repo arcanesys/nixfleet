@@ -1,5 +1,6 @@
 use crate::db::Db;
 use crate::state::FleetState;
+use nixfleet_types::metrics as m;
 use nixfleet_types::DesiredGeneration;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -68,6 +69,8 @@ async fn process_rollout(
                 Some("All batches succeeded"),
             )?;
             tracing::info!(rollout_id = %rollout.id, "Rollout completed");
+            metrics::counter!(m::ROLLOUTS_TOTAL, "status" => "completed").increment(1);
+            update_rollouts_active_gauge(db);
         }
         return Ok(());
     };
@@ -271,6 +274,8 @@ async fn evaluate_batch(
                     batch_id = %batch.id,
                     "Rollout paused due to batch failure"
                 );
+                metrics::counter!(m::ROLLOUTS_TOTAL, "status" => "paused").increment(1);
+                update_rollouts_active_gauge(db);
             }
             "revert" => {
                 revert_completed_batches(state, db, rollout, all_batches).await?;
@@ -286,6 +291,8 @@ async fn evaluate_batch(
                     batch_id = %batch.id,
                     "Rollout failed — reverting completed batches"
                 );
+                metrics::counter!(m::ROLLOUTS_TOTAL, "status" => "failed").increment(1);
+                update_rollouts_active_gauge(db);
             }
             _ => {
                 // Default: pause
@@ -295,11 +302,22 @@ async fn evaluate_batch(
                     on_failure = %rollout.on_failure,
                     "Unknown on_failure action, defaulting to pause"
                 );
+                metrics::counter!(m::ROLLOUTS_TOTAL, "status" => "paused").increment(1);
+                update_rollouts_active_gauge(db);
             }
         }
     }
 
     Ok(())
+}
+
+/// Recalculate the ROLLOUTS_ACTIVE gauge from the live database state.
+fn update_rollouts_active_gauge(db: &Db) {
+    let active = db
+        .list_rollouts_by_status(Some("running"), 1000)
+        .map(|r| r.len())
+        .unwrap_or(0);
+    metrics::gauge!(m::ROLLOUTS_ACTIVE).set(active as f64);
 }
 
 /// Revert all machines in completed (succeeded) batches to the previous generation.

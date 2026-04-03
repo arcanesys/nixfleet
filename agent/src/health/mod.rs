@@ -10,6 +10,7 @@ use tracing::debug;
 #[async_trait]
 pub trait Check: Send + Sync {
     fn name(&self) -> &str;
+    fn check_type(&self) -> &str;
     async fn run(&self) -> HealthCheckResult;
 }
 
@@ -67,6 +68,16 @@ impl HealthRunner {
                 check = check.name(),
                 pass = result.is_pass(),
                 "Health check"
+            );
+            let (duration_ms, passed) = match &result {
+                HealthCheckResult::Pass { duration_ms, .. } => (*duration_ms, true),
+                HealthCheckResult::Fail { duration_ms, .. } => (*duration_ms, false),
+            };
+            crate::metrics::record_health_check(
+                check.name(),
+                check.check_type(),
+                duration_ms,
+                passed,
             );
             results.push(result);
         }

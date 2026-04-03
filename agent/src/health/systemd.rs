@@ -16,6 +16,10 @@ impl Check for SystemdChecker {
         &self.unit
     }
 
+    fn check_type(&self) -> &str {
+        "systemd"
+    }
+
     async fn run(&self) -> HealthCheckResult {
         let start = Instant::now();
         let result = Command::new("systemctl")
@@ -57,6 +61,10 @@ pub struct SystemdFallback;
 impl Check for SystemdFallback {
     fn name(&self) -> &str {
         "systemd-system"
+    }
+
+    fn check_type(&self) -> &str {
+        "systemd"
     }
 
     async fn run(&self) -> HealthCheckResult {

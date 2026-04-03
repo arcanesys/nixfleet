@@ -10,6 +10,10 @@
   # Import scope modules as plain attrsets
   baseScope = import ../../scopes/_base.nix;
   impermanenceScope = import ../../scopes/_impermanence.nix;
+  firewallScope = import ../../scopes/_firewall.nix;
+  secretsScope = import ../../scopes/_secrets.nix;
+  backupScope = import ../../scopes/_backup.nix;
+  monitoringScope = import ../../scopes/_monitoring.nix;
 
   # Core modules (plain NixOS/Darwin modules)
   coreNixos = ../../core/_nixos.nix;
@@ -56,6 +60,10 @@ in
         coreNixos
         baseScope.nixos
         impermanenceScope.nixos
+        firewallScope.nixos
+        secretsScope.nixos
+        backupScope.nixos
+        monitoringScope.nixos
         agentModule
         controlPlaneModule
       ]

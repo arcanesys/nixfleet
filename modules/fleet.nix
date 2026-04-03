@@ -90,10 +90,50 @@ in {
             enable = true;
             controlPlaneUrl = "https://cp.test:8080";
             tags = ["web" "production"];
+            metricsPort = 9101;
+            metricsOpenFirewall = true;
             healthChecks = {
               systemd = [{units = ["nginx"];}];
               http = [{url = "http://localhost:80/health";}];
             };
+          };
+        }
+      ];
+    };
+
+    # secrets-test: exercises secrets scope on a server (host key only)
+    secrets-test = mkHost {
+      hostName = "secrets-test";
+      platform = "x86_64-linux";
+      isVm = true;
+      hostSpec =
+        orgDefaults
+        // {
+          isServer = true;
+        };
+      modules = [
+        {
+          nixfleet.secrets.enable = true;
+        }
+      ];
+    };
+
+    # infra-test: exercises backup + monitoring scopes
+    infra-test = mkHost {
+      hostName = "infra-test";
+      platform = "x86_64-linux";
+      isVm = true;
+      hostSpec = orgDefaults;
+      modules = [
+        {
+          nixfleet.backup = {
+            enable = true;
+            schedule = "*-*-* 03:00:00";
+            healthCheck.onSuccess = "https://hc-ping.com/test-uuid";
+          };
+          nixfleet.monitoring.nodeExporter = {
+            enable = true;
+            openFirewall = true;
           };
         }
       ];

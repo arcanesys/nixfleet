@@ -15,6 +15,11 @@ All options under `services.nixfleet-agent`. The module is auto-included by mkHo
 | `dryRun` | `bool` | `false` | When true, check and fetch but do not apply generations. |
 | `tags` | `listOf str` | `[]` | Tags for grouping this machine in fleet operations. Passed via `NIXFLEET_TAGS` environment variable. |
 | `healthInterval` | `int` | `60` | Seconds between continuous health reports to the control plane. |
+| `allowInsecure` | `bool` | `false` | Allow insecure HTTP connections to the control plane. Development only. |
+| `tls.clientCert` | `nullOr str` | `null` | Path to client certificate PEM file for mTLS authentication. Example: `"/run/secrets/agent-cert.pem"`. |
+| `tls.clientKey` | `nullOr str` | `null` | Path to client private key PEM file for mTLS authentication. Example: `"/run/secrets/agent-key.pem"`. |
+| `metricsPort` | `nullOr port` | `null` | Port for agent Prometheus metrics HTTP listener. Null disables metrics. |
+| `metricsOpenFirewall` | `bool` | `false` | Open the metrics port in the firewall. Only effective when `metricsPort` is set. |
 
 ## healthChecks.systemd
 
@@ -74,6 +79,34 @@ services.nixfleet-agent.healthChecks.command = [
     timeout = 5;
   }
 ];
+```
+
+## Prometheus Metrics
+
+When `metricsPort` is set, the agent starts a Prometheus HTTP listener on that port. Null (the default) disables the listener.
+
+Metrics exposed:
+
+| Metric | Description |
+|--------|-------------|
+| `nixfleet_agent_state` | Current state machine state (encoded as a label) |
+| `nixfleet_agent_poll_duration_seconds` | Duration of the last poll cycle |
+| `nixfleet_agent_last_poll_timestamp` | Unix timestamp of the last completed poll |
+| `nixfleet_agent_health_check_duration_seconds` | Duration of the last health check run |
+| `nixfleet_agent_health_check_status` | Result of the last health check (1 = healthy, 0 = unhealthy) |
+| `nixfleet_agent_current_generation` | Nix store path of the current active generation (as a label) |
+
+Metrics are served in the standard Prometheus text format at `GET /metrics`.
+
+Example configuration:
+
+```nix
+services.nixfleet-agent = {
+  enable = true;
+  controlPlaneUrl = "https://fleet.example.com";
+  metricsPort = 9101;
+  metricsOpenFirewall = true;
+};
 ```
 
 ## Systemd service

@@ -136,6 +136,21 @@ The control plane uses these continuous reports to:
 - Inform rollout health gates (a machine reporting unhealthy will affect batch success evaluation)
 - Surface issues in `nixfleet status` output
 
+## Prometheus Metrics
+
+Enable the agent metrics listener by setting `metricsPort`:
+
+```nix
+services.nixfleet-agent = {
+  enable = true;
+  controlPlaneUrl = "https://fleet.example.com";
+  metricsPort = 9101;
+  metricsOpenFirewall = true;
+};
+```
+
+Scrape from Prometheus at `http://agent-host:9101/metrics`. See [Agent Options](../../reference/agent-options.md) for the full list of exposed metrics.
+
 ## Registration
 
 On first poll, the agent automatically registers itself with the control plane, sending its machine ID and tags. No manual registration step is required.

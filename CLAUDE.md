@@ -9,7 +9,7 @@ modules/
 ├── _shared/lib/       # Framework API: mkHost, mkVmApps
 ├── _shared/           # hostSpec options, disk templates
 ├── core/              # Core NixOS/Darwin modules (_nixos.nix, _darwin.nix)
-├── scopes/            # Scope modules (_base, _impermanence, nixfleet/_agent, nixfleet/_control-plane)
+├── scopes/            # Scope modules (_base, _impermanence, _firewall, _secrets, _backup, _monitoring, nixfleet/_agent, nixfleet/_control-plane)
 ├── tests/             # Eval tests, VM tests, integration tests
 ├── apps.nix           # Flake apps (validate, spawn-qemu, test-vm) — calls mkVmApps
 ├── fleet.nix          # Framework test fleet (5 hosts)
@@ -93,8 +93,12 @@ Scopes are plain NixOS/HM modules auto-included by mkHost. They self-activate vi
 |-------|------------------------|-----------------|
 | `base` | `!isMinimal` | Universal CLI packages (NixOS + Darwin + HM) |
 | `impermanence` | `isImpermanent` | Btrfs root wipe + system/user persistence paths |
-| `nixfleet-agent` | `services.nixfleet-agent.enable = true` | Fleet agent systemd service |
-| `nixfleet-control-plane` | `services.nixfleet-control-plane.enable = true` | Control plane HTTP server |
+| `firewall` | `!isMinimal` | SSH rate limiting, nftables, drop logging |
+| `secrets` | `nixfleet.secrets.enable = true` | Identity paths, persist, boot ordering, key validation |
+| `backup` | `nixfleet.backup.enable = true` | Systemd timer, hooks, health ping, status reporting |
+| `monitoring` | `nixfleet.monitoring.nodeExporter.enable = true` | Node exporter with fleet-tuned collector defaults |
+| `nixfleet-agent` | `services.nixfleet-agent.enable = true` | Fleet agent systemd service; key options: `metricsPort` (Prometheus listener), `metricsOpenFirewall`, `allowInsecure` |
+| `nixfleet-control-plane` | `services.nixfleet-control-plane.enable = true` | Control plane HTTP server; `GET /metrics` always available on listen address; routes split: agent-facing (mTLS, no API key) vs admin (API key required) |
 
 Fleet repos add opinionated scopes (dev tools, desktop environments, theming, etc.) as plain NixOS/HM modules.
 
@@ -124,6 +128,7 @@ See `examples/` for standalone-host, batch-hosts, and client-fleet patterns.
 3-tier pyramid:
 - **Eval** (`modules/tests/eval.nix`) — config correctness, instant. `nix flake check --no-build`
 - **VM** (`modules/tests/vm.nix`, `vm-nixfleet.nix`) — runtime assertions. `nix run .#validate -- --vm`
+- **VM Infrastructure** (`modules/tests/vm-infra.nix`) — firewall, node exporter, backup timer, secrets key generation. `nix run .#validate -- --vm`
 - **Integration** (`modules/tests/integration/`) — mock client consumption pattern
 
 ## Multi-Repo

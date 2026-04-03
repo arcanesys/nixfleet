@@ -81,6 +81,8 @@ mkHost auto-includes framework scopes. They self-activate based on hostSpec flag
 # services.nixfleet-agent.enable = true -> agent service starts
 ```
 
+The framework includes infrastructure scopes for firewall hardening (nftables, SSH rate limiting), secrets wiring (backend-agnostic identity paths), backup scaffolding (systemd timers, health pings), and monitoring (Prometheus node exporter). The agent and control plane expose Prometheus metrics endpoints for fleet-wide observability.
+
 Fleet repos add their own scopes (dev tools, desktop environments, theming, etc.) as plain NixOS/HM modules.
 
 ## Fleet Orchestration

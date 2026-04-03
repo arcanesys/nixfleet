@@ -52,6 +52,21 @@ curl http://localhost:8080/health
 curl http://localhost:8080/api/v1/audit
 ```
 
+## Monitoring
+
+The `/metrics` endpoint is available on the CP's listen address with no extra configuration. It is always active when the service is running.
+
+Add a scrape target to your Prometheus configuration:
+
+```yaml
+scrape_configs:
+  - job_name: nixfleet-control-plane
+    static_configs:
+      - targets: ["fleet.example.com:8080"]
+```
+
+See [Control Plane Options](../../reference/control-plane-options.md) for the full list of exposed metrics.
+
 ## Security
 
 The control plane supports TLS and mutual TLS (mTLS) via command-line flags / environment variables:

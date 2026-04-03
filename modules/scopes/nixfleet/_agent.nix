@@ -50,6 +50,40 @@ in {
       description = "When true, check and fetch but do not apply generations.";
     };
 
+    allowInsecure = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Allow insecure HTTP connections to the control plane. Development only.";
+    };
+
+    tls = {
+      clientCert = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/run/secrets/agent-cert.pem";
+        description = "Path to client certificate PEM file for mTLS authentication.";
+      };
+
+      clientKey = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/run/secrets/agent-key.pem";
+        description = "Path to client private key PEM file for mTLS authentication.";
+      };
+    };
+
+    metricsPort = lib.mkOption {
+      type = lib.types.nullOr lib.types.port;
+      default = null;
+      description = "Port for agent Prometheus metrics. Null disables.";
+    };
+
+    metricsOpenFirewall = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open agent metrics port in the firewall.";
+    };
+
     tags = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
@@ -173,6 +207,21 @@ in {
           ++ lib.optionals cfg.dryRun [
             "--dry-run"
           ]
+          ++ lib.optionals cfg.allowInsecure [
+            "--allow-insecure"
+          ]
+          ++ lib.optionals (cfg.tls.clientCert != null) [
+            "--client-cert"
+            (lib.escapeShellArg cfg.tls.clientCert)
+          ]
+          ++ lib.optionals (cfg.tls.clientKey != null) [
+            "--client-key"
+            (lib.escapeShellArg cfg.tls.clientKey)
+          ]
+          ++ lib.optionals (cfg.metricsPort != null) [
+            "--metrics-port"
+            (toString cfg.metricsPort)
+          ]
         );
         Restart = "always";
         RestartSec = 30;
@@ -196,5 +245,9 @@ in {
       lib.mkIf
       (config.hostSpec.isImpermanent or false)
       ["/var/lib/nixfleet"];
+
+    # Open metrics port if requested
+    networking.firewall.allowedTCPPorts =
+      lib.mkIf (cfg.metricsPort != null && cfg.metricsOpenFirewall) [cfg.metricsPort];
   };
 }

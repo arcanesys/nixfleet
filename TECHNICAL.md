@@ -32,6 +32,30 @@ SSH public keys and other managed files that should always be overwritten: use `
 
 Don't use `mkDefault` for `networking.useDHCP = false` in core — it conflicts with `hardware-configuration.nix`'s `mkDefault true` (same priority). Use plain value.
 
+## Infrastructure Scopes
+
+Four backend-agnostic scopes added as plain NixOS modules:
+
+- **Firewall** (`_firewall.nix`): enables nftables, SSH rate limiting (5/min), drop logging. Auto-activates on non-minimal hosts via `!isMinimal`.
+- **Secrets** (`_secrets.nix`): computes `resolvedIdentityPaths` from hostSpec (host key primary, user key fallback on workstations). Handles impermanence persistence and boot ordering. Fleet repos bring their own backend (agenix, sops-nix).
+- **Backup** (`_backup.nix`): provides a systemd timer, pre/post hooks, health check pings, and status reporting. Fleet repos wire the actual backup command (restic, borgbackup, etc.).
+- **Monitoring** (`_monitoring.nix`): wraps Prometheus node exporter with fleet-tuned collector defaults.
+
+Pattern: framework owns wiring, fleet repos pick tools.
+
+### Prometheus Metrics
+
+Both the agent and the control plane expose Prometheus metrics. The control plane serves `GET /metrics` on its listen address (always available). The agent exposes metrics on a configurable `metricsPort` with an optional firewall opening via `metricsOpenFirewall`.
+
+### Auth Route Split
+
+The control plane splits routes by caller:
+
+- **Agent-facing routes**: authenticated via mTLS (client certificate). No API key required.
+- **Admin routes**: authenticated via API key. Used by the CLI and operators.
+
+This separation ensures agents cannot be accidentally blocked by API key rotation, and admin endpoints cannot be reached by machine credentials alone.
+
 ## Rust Workspace
 
 Four crates in a Cargo workspace at the repo root:

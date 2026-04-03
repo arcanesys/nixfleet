@@ -17,6 +17,10 @@ impl Check for HttpChecker {
         &self.url
     }
 
+    fn check_type(&self) -> &str {
+        "http"
+    }
+
     async fn run(&self) -> HealthCheckResult {
         let check_name = self.url.clone();
         let start = Instant::now();

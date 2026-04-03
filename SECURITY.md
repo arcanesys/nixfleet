@@ -15,12 +15,21 @@ Include:
 - Potential impact
 - Suggested fix (if any)
 
+## Auth Route Split
+
+The control plane separates agent-facing routes from admin routes:
+
+- **Agent routes** (`/api/v1/machines/...`): authenticated via mTLS. Agents present a client certificate. No API key required or accepted.
+- **Admin routes** (`/api/v1/admin/...`): authenticated via API key. Used by operators and the CLI. mTLS is not required.
+
+This split ensures API key rotation does not affect deployed agents, and machine credentials cannot reach admin endpoints.
+
 ## Scope
 
 The following are in scope for security reports:
 
 - Control plane authentication and authorization (API keys, mTLS)
-- Agent-to-control-plane communication security
+- Agent-to-control-plane communication security (including route separation bypass)
 - Rollout orchestration logic (e.g., bypassing rollout protections)
 - Secret handling in Nix modules
 - SQL injection or data exposure in SQLite queries

@@ -29,9 +29,15 @@ These ship with NixFleet and are auto-included by mkHost.
 | **base** | `!isMinimal` | CLI packages (coreutils, ripgrep, fd, fzf, jq, eza, gh, nh, etc.) via HM. Linux-only system packages (ifconfig, netstat, xdg-utils) via NixOS. Darwin-only packages (dockutil, mas) via Darwin module. |
 | **impermanence** | `isImpermanent` | Btrfs root wipe on boot (initrd script), system-level persist paths (`/etc/nixos`, `/var/lib/systemd`, `/var/log`, etc.), user-level persist paths (`.keys`, shell state, editor state, SSH known_hosts). Linux only. |
 | **nixfleet-agent** | `services.nixfleet-agent.enable` | Systemd service for the fleet management agent. Polls the control plane, applies deployments, reports health. Hardened service config. |
-| **nixfleet-control-plane** | `services.nixfleet-control-plane.enable` | Systemd service for the fleet control plane HTTP server. Optional firewall opening. |
+| **nixfleet-control-plane** | `services.nixfleet-control-plane.enable` | Systemd service for the fleet control plane HTTP server. Optional firewall opening. `GET /metrics` always available; routes split: agent-facing (mTLS, no API key) vs admin (API key required). |
+| **firewall** | `!isMinimal` | Enables nftables, SSH rate limiting (5 connections/min), and drop logging. Auto-activates on all non-minimal hosts. |
+| **secrets** | `nixfleet.secrets.enable` | Computes `resolvedIdentityPaths` from hostSpec (host key primary, user key fallback on workstations). Handles impermanence persistence and boot ordering. Fleet repos wire the actual backend (agenix, sops-nix). |
+| **backup** | `nixfleet.backup.enable` | Systemd timer, pre/post hooks, health check pings, and status reporting. Fleet repos supply the actual backup command (restic, borgbackup, etc.). |
+| **monitoring** | `nixfleet.monitoring.nodeExporter.enable` | Prometheus node exporter with fleet-tuned collector defaults. |
 
 The agent and control-plane scopes are NixOS service modules (not hostSpec-gated). They follow the standard NixOS `enable` pattern.
+
+The framework ships two kinds of scopes: **automatic** (base, impermanence, firewall — activated by hostSpec flags) and **opt-in** (secrets, backup, monitoring, agent, control-plane — require explicit enable). Automatic scopes provide universal infrastructure. Opt-in scopes let fleet repos choose what they need.
 
 ## Scope-aware persistence
 
