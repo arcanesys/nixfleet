@@ -58,11 +58,11 @@
             machine.wait_for_open_port(9100)
 
             # Verify metrics endpoint responds with Prometheus text format
-            output = machine.succeed("curl -sf http://localhost:9100/metrics | head -5")
-            assert "# HELP" in output, f"Expected Prometheus metrics, got: {output}"
+            output = machine.succeed("curl -sf http://localhost:9100/metrics")
+            assert "# HELP" in output, f"Expected Prometheus metrics, got: {output[:200]}"
 
             # Verify systemd collector is active (we enabled it)
-            machine.succeed("curl -sf http://localhost:9100/metrics | grep -q 'node_systemd'")
+            assert "node_systemd" in output, "Expected node_systemd metrics from systemd collector"
           '';
         };
 

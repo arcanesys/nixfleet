@@ -91,11 +91,20 @@
                 f"\"INSERT INTO api_keys (key_hash, name, role) VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
             )
 
-            # 2. Start agent and wait for its service
+            # 2. Pre-register the agent machine (required — unregistered machines get 404)
+            cp.succeed(
+                f"curl -sf -X POST "
+                f"http://localhost:8080/api/v1/machines/agent/register "
+                f"{AUTH} "
+                f"-H 'Content-Type: application/json' "
+                f"-d '{{}}'"
+            )
+
+            # 3. Start agent and wait for its service
             agent.start()
             agent.wait_for_unit("nixfleet-agent.service")
 
-            # 3. Set a desired generation for the agent machine via CP API.
+            # 4. Set a desired generation for the agent machine via CP API.
             #    Use a fake store path -- the agent will detect a mismatch with
             #    its real /run/current-system and enter the fetch/dry-run path.
             cp.succeed(
@@ -106,18 +115,19 @@
                 f"-d '{{\"hash\": \"/nix/store/fake-test-generation\"}}'"
             )
 
-            # 4. Wait for the agent to poll, detect mismatch, and report back.
+            # 5. Wait for the agent to poll, detect mismatch, and report back.
             #    Agent cycle: Idle (2s sleep) -> Checking (reads /run/current-system,
             #    compares with desired) -> Fetching (no cache_url = no-op) ->
             #    dry-run branch -> Reporting (POST /report with success=true,
             #    message="dry-run: would apply") -> Idle.
             #    After report, the CP inventory will show "agent" in machine list.
+            # Wait for the agent to report (system_state transitions from "unknown" to "ok")
             cp.wait_until_succeeds(
-                f"curl -sf {AUTH} http://localhost:8080/api/v1/machines | grep '\"machine_id\"'",
-                timeout=30,
+                f"curl -sf {AUTH} http://localhost:8080/api/v1/machines | grep '\"system_state\":\"ok\"'",
+                timeout=60,
             )
 
-            # 5. Verify the machine inventory contains the agent with expected state
+            # 6. Verify the machine inventory contains the agent with expected state
             result = cp.succeed(f"curl -sf {AUTH} http://localhost:8080/api/v1/machines")
             inventory: list[dict] = json.loads(result)
 

@@ -24,16 +24,14 @@ pub struct ListRolloutsQuery {
 /// Create a new rollout targeting machines by tags or hosts.
 pub async fn create_rollout(
     State((state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Json(req): Json<CreateRolloutRequest>,
 ) -> Result<(StatusCode, Json<CreateRolloutResponse>), (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["deploy", "admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "deploy or admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["deploy", "admin"]) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "deploy or admin role required".to_string(),
+        ));
     }
 
     // Resolve target machines
@@ -94,10 +92,7 @@ pub async fn create_rollout(
     let batch_sizes_json = serde_json::to_string(&effective_sizes).unwrap_or_default();
     let health_timeout = req.health_timeout.unwrap_or(300) as i64;
 
-    let actor_id = actor
-        .as_ref()
-        .map(|Extension(a)| a.identifier())
-        .unwrap_or_else(|| "unknown".to_string());
+    let actor_id = actor.identifier();
 
     db.create_rollout(
         &rollout_id,
@@ -189,16 +184,14 @@ pub async fn create_rollout(
 /// List rollouts with optional status filter.
 pub async fn list_rollouts(
     State((_state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Query(query): Query<ListRolloutsQuery>,
 ) -> Result<Json<Vec<RolloutDetail>>, (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["readonly", "deploy", "admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "readonly, deploy, or admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["readonly", "deploy", "admin"]) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "readonly, deploy, or admin role required".to_string(),
+        ));
     }
 
     let rollouts = db
@@ -231,16 +224,14 @@ pub async fn list_rollouts(
 /// Get a single rollout by ID.
 pub async fn get_rollout(
     State((_state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
 ) -> Result<Json<RolloutDetail>, (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["readonly", "deploy", "admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "readonly, deploy, or admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["readonly", "deploy", "admin"]) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "readonly, deploy, or admin role required".to_string(),
+        ));
     }
 
     let rollout = db
@@ -270,16 +261,14 @@ pub async fn get_rollout(
 /// Resume a paused rollout by resetting the failed batch to pending.
 pub async fn resume_rollout(
     State((_state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["deploy", "admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "deploy or admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["deploy", "admin"]) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "deploy or admin role required".to_string(),
+        ));
     }
 
     let rollout = db
@@ -330,10 +319,7 @@ pub async fn resume_rollout(
         )
     })?;
 
-    let actor_id = actor
-        .map(|Extension(a)| a.identifier())
-        .unwrap_or_else(|| "unknown".to_string());
-    let _ = db.insert_audit_event(&actor_id, "rollout.resumed", &id, None);
+    let _ = db.insert_audit_event(&actor.identifier(), "rollout.resumed", &id, None);
 
     tracing::info!(rollout_id = %id, "Rollout resumed");
     Ok(StatusCode::OK)
@@ -344,16 +330,14 @@ pub async fn resume_rollout(
 /// Cancel an active rollout.
 pub async fn cancel_rollout(
     State((_state, db)): State<AppState>,
-    actor: Option<Extension<Actor>>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if let Some(Extension(ref actor)) = actor {
-        if !actor.has_role(&["deploy", "admin"]) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "deploy or admin role required".to_string(),
-            ));
-        }
+    if !actor.has_role(&["deploy", "admin"]) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "deploy or admin role required".to_string(),
+        ));
     }
 
     let rollout = db
@@ -387,10 +371,7 @@ pub async fn cancel_rollout(
         )
     })?;
 
-    let actor_id = actor
-        .map(|Extension(a)| a.identifier())
-        .unwrap_or_else(|| "unknown".to_string());
-    let _ = db.insert_audit_event(&actor_id, "rollout.cancelled", &id, None);
+    let _ = db.insert_audit_event(&actor.identifier(), "rollout.cancelled", &id, None);
 
     tracing::info!(rollout_id = %id, "Rollout cancelled");
     Ok(StatusCode::OK)
