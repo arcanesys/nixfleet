@@ -9,6 +9,7 @@
 ///   3. Multi-machine isolation: three machines do not interfere with each other.
 ///   4. Generation upsert: setting twice keeps only the latest, no duplicates.
 ///   5. cache_url propagation: optional field round-trips through the API.
+use metrics_exporter_prometheus::PrometheusBuilder;
 use nixfleet_control_plane::{build_app, db, state};
 use nixfleet_types::{DesiredGeneration, MachineStatus, Report};
 use sha2::{Digest, Sha256};
@@ -40,7 +41,17 @@ async fn spawn_server() -> (String, reqwest::Client, tempfile::TempDir) {
         .unwrap();
 
     let fleet_state = Arc::new(RwLock::new(state::FleetState::new()));
-    let app = build_app(fleet_state, database);
+
+    // Use a non-installed recorder so tests don't conflict with a global recorder.
+    let recorder = PrometheusBuilder::new().build_recorder();
+    let metrics_handle = Arc::new(recorder.handle());
+    // Install this recorder as the global for this test process (idempotent via once_cell).
+    static METRICS_INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    METRICS_INSTALLED.get_or_init(|| {
+        metrics::set_global_recorder(recorder).ok();
+    });
+
+    let app = build_app(fleet_state, database, metrics_handle);
 
     // Bind to a random OS-assigned port.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

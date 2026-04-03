@@ -81,6 +81,14 @@ pub async fn post_report(
     let _ = db.insert_audit_event(&actor_id, "report", &id, Some(detail));
 
     tracing::info!(machine_id = %id, "Report received");
+
+    // Update fleet gauges — drop write lock first, then take read lock
+    drop(fleet);
+    {
+        let fleet = state.read().await;
+        crate::metrics::update_fleet_gauges(&fleet);
+    }
+
     Ok(StatusCode::OK)
 }
 
@@ -292,6 +300,14 @@ pub async fn register_machine(
     let _ = db.insert_audit_event(&actor.identifier(), "register", &id, Some(&lifecycle.to_string()));
 
     tracing::info!(machine_id = %id, lifecycle = %lifecycle, "Machine registered");
+
+    // Update fleet gauges — drop write lock first, then take read lock
+    drop(fleet);
+    {
+        let fleet = state.read().await;
+        crate::metrics::update_fleet_gauges(&fleet);
+    }
+
     Ok((
         StatusCode::CREATED,
         Json(RegisterMachineResponse {
@@ -369,6 +385,14 @@ pub async fn update_lifecycle(
         to = %target,
         "Lifecycle state changed"
     );
+
+    // Update fleet gauges — drop write lock first, then take read lock
+    drop(fleet);
+    {
+        let fleet = state.read().await;
+        crate::metrics::update_fleet_gauges(&fleet);
+    }
+
     Ok(StatusCode::OK)
 }
 

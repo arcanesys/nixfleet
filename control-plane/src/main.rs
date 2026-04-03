@@ -43,6 +43,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    let metrics_handle = Arc::new(nixfleet_control_plane::metrics::init());
+
     let cli = Cli::parse();
 
     let fleet_state = Arc::new(RwLock::new(state::FleetState::new()));
@@ -73,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let app = build_app(fleet_state, db);
+    let app = build_app(fleet_state, db, metrics_handle);
 
     match (&cli.tls_cert, &cli.tls_key) {
         (Some(cert), Some(key)) => {

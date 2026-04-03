@@ -1,12 +1,14 @@
 use axum::middleware;
 use axum::routing::{get, patch, post};
 use axum::Router;
+use metrics_exporter_prometheus::PrometheusHandle;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub mod audit;
 pub mod auth;
 pub mod db;
+pub mod metrics;
 pub mod rollout;
 pub mod routes;
 pub mod state;
@@ -17,7 +19,11 @@ pub type AppState = (Arc<RwLock<state::FleetState>>, Arc<db::Db>);
 /// Build the Axum router with the given shared state.
 ///
 /// Extracted so integration tests can construct the app without binding a port.
-pub fn build_app(fleet_state: Arc<RwLock<state::FleetState>>, db: Arc<db::Db>) -> Router {
+pub fn build_app(
+    fleet_state: Arc<RwLock<state::FleetState>>,
+    db: Arc<db::Db>,
+    metrics_handle: Arc<PrometheusHandle>,
+) -> Router {
     let db_for_auth = db.clone();
 
     // Agent-facing endpoints: authenticated via mTLS at the transport layer.
@@ -71,5 +77,10 @@ pub fn build_app(fleet_state: Arc<RwLock<state::FleetState>>, db: Arc<db::Db>) -
         .merge(agent_routes)
         .merge(admin_routes)
         .route("/health", get(|| async { "ok" }))
+        .route(
+            "/metrics",
+            get(metrics::metrics_handler).with_state(metrics_handle),
+        )
+        .layer(middleware::from_fn(metrics::http_metrics_layer))
         .with_state((fleet_state, db))
 }
