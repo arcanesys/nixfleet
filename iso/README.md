@@ -16,9 +16,9 @@ The ISO includes:
 ## Usage
 
 ```sh
-# Manual VM install
-nix run .#spawn-qemu -- --iso result/iso/*.iso
+# Install a host using the ISO automatically (build ISO + install via nixos-anywhere)
+nix run .#build-vm -- -h <hostname>
 
-# Fully automated (build ISO + install + verify)
+# Fully automated (build ISO + install + reboot + verify + cleanup)
 nix run .#test-vm -- -h web-02
 ```

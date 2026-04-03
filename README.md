@@ -108,10 +108,13 @@ darwin-rebuild switch --flake .#hostname                # macOS
 ## Virtual Machines
 
 ```sh
-nix run .#spawn-qemu -- --iso iso/nixos-x86_64.iso   # first boot from ISO
-nix run .#spawn-qemu                                   # subsequent boots
-nix run .#spawn-qemu -- --persistent -h web-02         # build + install + launch (graphical)
-nix run .#test-vm -- -h web-02                         # full VM test cycle
+nix run .#build-vm -- -h web-02              # install VM (ISO + nixos-anywhere)
+nix run .#build-vm -- --all                  # install all hosts
+nix run .#start-vm -- -h web-02              # start VM as headless daemon
+nix run .#stop-vm -- -h web-02               # stop VM daemon
+nix run .#clean-vm -- -h web-02              # delete VM disk + state
+nix run .#test-vm -- -h web-02               # end-to-end VM test cycle
+nix run .#provision -- -h web-02 --target root@192.168.1.10  # real hardware
 ```
 
 Fleet repos wire these via `nixfleet.lib.mkVmApps { inherit pkgs; }`.

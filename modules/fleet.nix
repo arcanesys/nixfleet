@@ -6,14 +6,15 @@
 {config, ...}: let
   mkHost = config.flake.lib.mkHost;
 
-  # Shared organization defaults — just a let binding, no framework function
+  # Shared organization defaults — just a let binding, no framework function.
+  # Placeholder key for eval tests only. Fleet repos set real keys.
   orgDefaults = {
     userName = "deploy";
     timeZone = "UTC";
     locale = "en_US.UTF-8";
     keyboardLayout = "us";
     sshAuthorizedKeys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINixfleetTestKeyDoNotUseInProduction"
+      "ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"
     ];
   };
 in {

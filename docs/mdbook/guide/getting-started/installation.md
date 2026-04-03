@@ -56,16 +56,18 @@ The resulting ISO is written to `result/iso/`. Flash it to USB and boot target m
 
 ## VM Testing
 
-Test host configurations in QEMU before deploying to real hardware:
+Test host configurations in QEMU before deploying to real hardware.
+
+**Prerequisites:** Your fleet must set `nixfleet.isoSshKeys` with a public key whose private half is on your machine (`~/.ssh/id_ed25519.pub`). The `sshAuthorizedKeys` in your hostSpec should use the same key. VM commands SSH into the ISO installer using this key — if it doesn't match, SSH will hang.
 
 ```bash
-# Headless VM
-nix run .#spawn-qemu
+# Install a host into a persistent VM disk (build ISO + nixos-anywhere)
+nix run .#build-vm -- -h web-01
 
-# Persistent VM with graphical SPICE display
-nix run .#spawn-qemu -- --persistent -h web-01
+# Start the installed VM as a headless daemon
+nix run .#start-vm -- -h web-01
 
-# Full VM test cycle (boot, run assertions, report)
+# Full VM test cycle (build, install, reboot, verify, cleanup)
 nix run .#test-vm -- -h web-01
 ```
 

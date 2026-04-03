@@ -11,7 +11,7 @@ modules/
 ├── core/              # Core NixOS/Darwin modules (_nixos.nix, _darwin.nix)
 ├── scopes/            # Scope modules (_base, _impermanence, _firewall, _secrets, _backup, _monitoring, nixfleet/_agent, nixfleet/_control-plane)
 ├── tests/             # Eval tests, VM tests, integration tests
-├── apps.nix           # Flake apps (validate, spawn-qemu, test-vm) — calls mkVmApps
+├── apps.nix           # Flake apps (validate, build-vm, start-vm, stop-vm, clean-vm, test-vm, provision)
 ├── fleet.nix          # Framework test fleet (5 hosts)
 └── flake-module.nix   # Framework exports (lib.mkHost, nixosModules, diskoTemplates)
 agent/                 # Rust: nixfleet-agent (state machine daemon)
@@ -37,9 +37,14 @@ nix flake check --no-build         # eval tests (instant)
 nix run .#validate                 # full validation (eval + host builds)
 nix run .#validate -- --vm         # include VM tests (slow)
 nix build .#checks.x86_64-linux.vm-fleet --no-link  # 4-node fleet test (CP + 3 agents, TLS/mTLS, rollouts)
-nix run .#spawn-qemu               # QEMU VM (headless)
-nix run .#spawn-qemu -- --persistent -h web-02  # persistent VM (graphical SPICE)
-nix run .#test-vm -- -h web-02     # VM test cycle
+nix run .#build-vm -- -h web-02    # install VM (ISO + nixos-anywhere)
+nix run .#build-vm -- --all        # install all hosts
+nix run .#start-vm -- -h web-02    # start VM as headless daemon
+nix run .#start-vm -- --all        # start all installed VMs
+nix run .#stop-vm -- -h web-02     # stop VM daemon
+nix run .#clean-vm -- -h web-02    # delete VM disk + state
+nix run .#test-vm -- -h web-02     # end-to-end VM test cycle
+nix run .#provision -- -h web-02 --target root@192.168.1.10  # real hardware
 nix build .#iso                    # custom installer ISO
 
 # Deployment (standard NixOS tooling — no custom scripts)

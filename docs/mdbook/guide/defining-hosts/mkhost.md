@@ -175,4 +175,4 @@ No special batch API needed -- `mkHost` is a plain function, and Nix handles the
 - **hostSpec values use `lib.mkDefault`**, so modules you pass in `modules` can override them.
 - **`hostName` is the exception** -- it is set without `mkDefault` and always matches the `hostName` parameter.
 - **`isDarwin` is auto-detected** from the `platform` parameter. You never set it manually.
-- **VM mode** (`isVm = true`) adds QEMU hardware, SPICE agent, DHCP, and software GL -- useful for testing with `nix run .#spawn-qemu`.
+- **VM mode** (`isVm = true`) adds QEMU hardware, SPICE agent, DHCP, and software GL -- useful for testing with `nix run .#build-vm` and `nix run .#start-vm`.
