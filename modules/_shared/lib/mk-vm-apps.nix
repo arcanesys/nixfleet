@@ -560,4 +560,81 @@ in
   }
   // lib.optionalAttrs isLinux {
     # ── provision (Task 6, Linux-only — nixos-anywhere path: ${nixos-anywhere-bin}) ──
+    "provision" = mkScript "provision" "Install NixOS on real hardware via nixos-anywhere" ''
+      set -euo pipefail
+      export PATH="${lib.makeBinPath (with pkgs; [coreutils openssh nix git])}:$PATH"
+
+      ${sharedHelpers}
+
+      HOST=""
+      TARGET=""
+      TARGET_SSH_PORT=22
+      IDENTITY_KEY=""
+
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          -h|--host) HOST="$2"; shift 2 ;;
+          --target) TARGET="$2"; shift 2 ;;
+          --ssh-port) TARGET_SSH_PORT="$2"; shift 2 ;;
+          --identity-key) IDENTITY_KEY="$2"; shift 2 ;;
+          *) echo "Unknown argument: $1" >&2; exit 1 ;;
+        esac
+      done
+
+      [ -z "$HOST" ] && echo -e "''${RED}-h HOST is required''${NC}" && exit 1
+      [ -z "$TARGET" ] && echo -e "''${RED}--target USER@IP is required''${NC}" && exit 1
+
+      echo -e "''${YELLOW}[1/4] Provisioning identity key...''${NC}"
+      KEY_SRC=""
+      if [ -n "''${IDENTITY_KEY:-}" ]; then
+        [ ! -f "''$IDENTITY_KEY" ] && echo -e "''${RED}Identity key not found: ''$IDENTITY_KEY''${NC}" && exit 1
+        KEY_SRC="''$IDENTITY_KEY"
+      elif [ -f "''$HOME/.keys/id_ed25519" ]; then
+        KEY_SRC="''$HOME/.keys/id_ed25519"
+      elif [ -f "''$HOME/.ssh/id_ed25519" ]; then
+        KEY_SRC="''$HOME/.ssh/id_ed25519"
+      fi
+
+      if [ -n "$KEY_SRC" ]; then
+        VM_USER="$(nix eval ".#nixosConfigurations.''${HOST}.config.hostSpec.userName" --raw 2>/dev/null || echo "root")"
+        for prefix in "/persist/home/$VM_USER" "/home/$VM_USER"; do
+          ssh ''$SSH_OPTS -p "''$TARGET_SSH_PORT" "''$TARGET" "mkdir -p $prefix/.keys && chmod 700 $prefix/.keys"
+          scp ''$SSH_OPTS -P "''$TARGET_SSH_PORT" "$KEY_SRC" "''$TARGET:$prefix/.keys/id_ed25519"
+          ssh ''$SSH_OPTS -p "''$TARGET_SSH_PORT" "''$TARGET" "chmod 600 $prefix/.keys/id_ed25519"
+        done
+        echo -e "''${GREEN}Key provisioned for ''$VM_USER (from $KEY_SRC)''${NC}"
+      else
+        echo -e "''${YELLOW}No identity key found — skipping''${NC}"
+        echo -e "''${YELLOW}Provide one with --identity-key PATH, or place at ~/.keys/id_ed25519''${NC}"
+      fi
+
+      echo -e "''${YELLOW}[2/4] Installing $HOST via nixos-anywhere...''${NC}"
+      ${nixos-anywhere-bin} --flake ".#''$HOST" --ssh-port "''$TARGET_SSH_PORT" "''$TARGET"
+
+      echo -e "''${YELLOW}[3/4] Waiting for reboot...''${NC}"
+      sleep 10
+      ELAPSED=0
+      TARGET_HOST="$(echo "''$TARGET" | cut -d@ -f2)"
+      TARGET_USER="$(echo "''$TARGET" | cut -d@ -f1)"
+      while ! ssh ''$SSH_OPTS -p "''$TARGET_SSH_PORT" "''${TARGET_USER}@''${TARGET_HOST}" true 2>/dev/null; do
+        sleep 1
+        ELAPSED=$((ELAPSED + 1))
+        if [ "$ELAPSED" -ge 300 ]; then
+          echo -e "''${YELLOW}Host did not come back within 300s — check manually''${NC}"
+          break
+        fi
+      done
+      [ "$ELAPSED" -lt 300 ] && echo -e "''${GREEN}Host is back online (''${ELAPSED}s)''${NC}"
+
+      echo -e "''${YELLOW}[4/4] Collecting SSH host key...''${NC}"
+      HOST_KEY=$(ssh-keyscan -p "''$TARGET_SSH_PORT" "''$TARGET_HOST" 2>/dev/null | grep ed25519 | head -1) || true
+      if [ -n "''${HOST_KEY:-}" ]; then
+        echo -e "''${GREEN}SSH host public key:''${NC}"
+        echo "''$HOST_KEY"
+        echo ""
+        echo -e "''${YELLOW}Add this to your secrets recipients and rekey''${NC}"
+      else
+        echo -e "''${YELLOW}Could not collect host key — retrieve manually with ssh-keyscan''${NC}"
+      fi
+    '';
   }
