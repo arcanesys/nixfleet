@@ -18,6 +18,10 @@ impl Check for CommandChecker {
         &self.name
     }
 
+    fn check_type(&self) -> &str {
+        "command"
+    }
+
     async fn run(&self) -> HealthCheckResult {
         let start = Instant::now();
         let result = tokio::time::timeout(
