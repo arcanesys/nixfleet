@@ -151,6 +151,17 @@ impl Db {
         Ok(())
     }
 
+    /// Check if any API keys exist in the database.
+    pub fn has_api_keys(&self) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM api_keys",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     /// Verify an API key and return its role if found.
     pub fn verify_api_key(&self, key_hash: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
@@ -856,6 +867,19 @@ mod tests {
         let (db, _dir) = make_db();
         let role = db.verify_api_key("nonexistent").unwrap();
         assert!(role.is_none());
+    }
+
+    #[test]
+    fn test_has_api_keys_empty() {
+        let (db, _dir) = make_db();
+        assert!(!db.has_api_keys().unwrap());
+    }
+
+    #[test]
+    fn test_has_api_keys_after_insert() {
+        let (db, _dir) = make_db();
+        db.insert_api_key("hash123", "admin", "admin").unwrap();
+        assert!(db.has_api_keys().unwrap());
     }
 
     #[test]

@@ -105,10 +105,27 @@ Scopes are plain NixOS/HM modules auto-included by mkHost. They self-activate vi
 | `secrets` | `nixfleet.secrets.enable = true` | Identity paths, persist, boot ordering, key validation |
 | `backup` | `nixfleet.backup.enable = true` | Systemd timer, hooks, health ping, status reporting |
 | `monitoring` | `nixfleet.monitoring.nodeExporter.enable = true` | Node exporter with fleet-tuned collector defaults |
-| `nixfleet-agent` | `services.nixfleet-agent.enable = true` | Fleet agent systemd service; key options: `metricsPort` (Prometheus listener), `metricsOpenFirewall`, `allowInsecure` |
+| `nixfleet-agent` | `services.nixfleet-agent.enable = true` | Fleet agent systemd service; key options: `metricsPort` (Prometheus listener), `metricsOpenFirewall`, `allowInsecure`. Tags from `tags` option are sent in every health report and auto-synced to the CP. |
 | `nixfleet-control-plane` | `services.nixfleet-control-plane.enable = true` | Control plane HTTP server; `GET /metrics` always available on listen address; routes split: agent-facing (mTLS, no API key) vs admin (API key required); when `tls.clientCa` is set, all connections require a client certificate (defense-in-depth) |
 
 Fleet repos add opinionated scopes (dev tools, desktop environments, theming, etc.) as plain NixOS/HM modules.
+
+## Control Plane API
+
+### Bootstrap
+
+```bash
+# Create first admin API key (only works when no keys exist)
+curl -X POST https://cp:8080/api/v1/keys/bootstrap \
+  --cacert fleet-ca.pem --cert cp-cert --key cp-key \
+  -H 'Content-Type: application/json' -d '{"name":"admin"}'
+# Returns: {"key":"nfk-...","name":"admin","role":"admin"}
+# Returns 409 if keys already exist
+```
+
+### Agent tag sync
+
+Agent tags (from `services.nixfleet-agent.tags`) are automatically synced to the CP on every health report. No manual `POST /tags` needed — tags are self-managing from NixOS config.
 
 ## Consuming the Framework
 

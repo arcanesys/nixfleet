@@ -153,7 +153,13 @@ Scrape from Prometheus at `http://agent-host:9101/metrics`. See [Agent Options](
 
 ## Registration
 
-On first poll, the agent automatically registers itself with the control plane, sending its machine ID and tags. No manual registration step is required.
+On first health report, the control plane automatically registers the agent, setting it to `active` and syncing its tags. No manual registration step is required.
+
+Auto-registration is gated by mTLS — only agents presenting a valid client certificate signed by the fleet CA can register. Admins can also pre-register machines via `POST /api/v1/machines/{id}/register` before agents come online.
+
+## Tag Sync
+
+Tags configured via `services.nixfleet-agent.tags` are sent in every health report and automatically synced to the control plane. No manual tag management needed — change the NixOS config, rebuild, and the CP picks up the new tags on the next report cycle.
 
 To verify enrollment:
 

@@ -89,10 +89,23 @@ TLS and mTLS are configured via:
 Both `--tls-cert` and `--tls-key` must be provided together to enable HTTPS.
 
 When `--client-ca` is set, **all** TLS connections must present a client certificate signed by that CA:
-- **Agents** authenticate via their client certificate; no API key needed
+- **Agents** authenticate via their client certificate; no API key needed. Agents are auto-registered on their first health report — any client with a valid fleet cert can register as a machine.
 - **Admin clients** (CLI, REST API) must present both a client certificate AND an API key (defense-in-depth)
 
-API keys are configured in the control plane database and passed via the `Authorization: Bearer <key>` header.
+API keys are passed via the `Authorization: Bearer <key>` header.
+
+### Bootstrap
+
+On first deployment, create the initial admin key via the bootstrap endpoint (only works when no keys exist):
+
+```bash
+curl -X POST https://cp-host:8080/api/v1/keys/bootstrap \
+  --cacert fleet-ca.pem --cert client-cert.pem --key client-key.pem \
+  -H 'Content-Type: application/json' -d '{"name":"admin"}'
+# Returns: {"key":"nfk-...","name":"admin","role":"admin"}
+```
+
+Save the returned key — it's only shown once. Subsequent calls return 409 Conflict.
 
 > **Production recommendation:** Always enable TLS. When managing a fleet with agent certificates, set `--client-ca` to require mTLS from all clients. Admin clients must have access to both their client certificate and an API key.
 

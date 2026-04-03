@@ -74,9 +74,14 @@ pub fn build_app(
             auth::require_api_key(headers, db, request, next)
         }));
 
+    // Bootstrap route: no auth required (only works when no keys exist).
+    let bootstrap_routes = Router::new()
+        .route("/api/v1/keys/bootstrap", post(routes::bootstrap_api_key));
+
     Router::new()
         .merge(agent_routes)
         .merge(admin_routes)
+        .merge(bootstrap_routes)
         .route("/health", get(|| async { "ok" }))
         .route(
             "/metrics",
