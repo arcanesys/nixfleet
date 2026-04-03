@@ -14,6 +14,9 @@ pub async fn get_desired_generation(
     State((state, _db)): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<DesiredGeneration>, StatusCode> {
+    if id.len() > 256 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let fleet = state.read().await;
     fleet
         .machines
@@ -34,6 +37,20 @@ pub async fn post_report(
     Path(id): Path<String>,
     Json(report): Json<Report>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    // Validate path and report fields before any DB writes
+    if id.len() > 256 {
+        return Err((StatusCode::BAD_REQUEST, "machine_id too long".to_string()));
+    }
+    if report.current_generation.len() > 512 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "current_generation too long".to_string(),
+        ));
+    }
+    if report.message.len() > 4096 {
+        return Err((StatusCode::BAD_REQUEST, "message too long".to_string()));
+    }
+
     let report_success = report.success;
 
     // Persist to database

@@ -37,6 +37,21 @@ pub async fn list_audit_events(
     Json(events)
 }
 
+/// Escape a CSV field to prevent formula injection in spreadsheet software.
+fn escape_csv_field(field: &str) -> String {
+    if field.starts_with('=')
+        || field.starts_with('+')
+        || field.starts_with('-')
+        || field.starts_with('@')
+        || field.starts_with('\t')
+        || field.starts_with('\r')
+    {
+        format!("'{field}")
+    } else {
+        field.to_string()
+    }
+}
+
 /// GET /api/v1/audit/export
 pub async fn export_audit_csv(
     State((_state, db)): State<AppState>,
@@ -57,10 +72,10 @@ pub async fn export_audit_csv(
         csv.push_str(&format!(
             "{},{},{},{},{}\n",
             event.timestamp,
-            event.actor,
-            event.action,
-            event.target,
-            event.detail.as_deref().unwrap_or(""),
+            escape_csv_field(&event.actor),
+            escape_csv_field(&event.action),
+            escape_csv_field(&event.target),
+            escape_csv_field(event.detail.as_deref().unwrap_or("")),
         ));
     }
 

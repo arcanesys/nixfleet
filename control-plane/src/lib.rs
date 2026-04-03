@@ -1,3 +1,4 @@
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{get, patch, post};
 use axum::Router;
@@ -82,5 +83,6 @@ pub fn build_app(
             get(metrics::metrics_handler).with_state(metrics_handle),
         )
         .layer(middleware::from_fn(metrics::http_metrics_layer))
+        .layer(DefaultBodyLimit::max(1024 * 1024))
         .with_state((fleet_state, db))
 }
