@@ -12,6 +12,7 @@
   impermanenceScope = import ../../scopes/_impermanence.nix;
   firewallScope = import ../../scopes/_firewall.nix;
   secretsScope = import ../../scopes/_secrets.nix;
+  backupScope = import ../../scopes/_backup.nix;
 
   # Core modules (plain NixOS/Darwin modules)
   coreNixos = ../../core/_nixos.nix;
@@ -60,6 +61,7 @@ in
         impermanenceScope.nixos
         firewallScope.nixos
         secretsScope.nixos
+        backupScope.nixos
         agentModule
         controlPlaneModule
       ]

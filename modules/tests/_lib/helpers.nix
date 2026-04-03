@@ -6,6 +6,7 @@
   impermanenceScope = import ../../scopes/_impermanence.nix;
   firewallScope = import ../../scopes/_firewall.nix;
   secretsScope = import ../../scopes/_secrets.nix;
+  backupScope = import ../../scopes/_backup.nix;
   coreNixos = ../../core/_nixos.nix;
   agentModule = ../../scopes/nixfleet/_agent.nix;
   controlPlaneModule = ../../scopes/nixfleet/_control-plane.nix;
@@ -65,6 +66,7 @@ in {
         impermanenceScope.nixos
         firewallScope.nixos
         secretsScope.nixos
+        backupScope.nixos
         agentModule
         controlPlaneModule
       ]
