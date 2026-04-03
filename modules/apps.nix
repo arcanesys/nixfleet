@@ -118,7 +118,7 @@ in {
               if [ "$VM" = "1" ]; then
                 echo ""
                 echo "=== VM Integration Tests ==="
-                for t in vm-core vm-minimal; do
+                for t in vm-core vm-minimal vm-fleet; do
                   check "$t" nix build ".#checks.${system}.$t" --no-link
                 done
               fi
