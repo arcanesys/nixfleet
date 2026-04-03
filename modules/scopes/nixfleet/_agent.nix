@@ -50,6 +50,12 @@ in {
       description = "When true, check and fetch but do not apply generations.";
     };
 
+    allowInsecure = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Allow insecure HTTP connections to the control plane. Development only.";
+    };
+
     tags = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
@@ -172,6 +178,9 @@ in {
           ]
           ++ lib.optionals cfg.dryRun [
             "--dry-run"
+          ]
+          ++ lib.optionals cfg.allowInsecure [
+            "--allow-insecure"
           ]
         );
         Restart = "always";

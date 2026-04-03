@@ -77,6 +77,12 @@ async fn main() -> anyhow::Result<()> {
 
     match (&cli.tls_cert, &cli.tls_key) {
         (Some(cert), Some(key)) => {
+            if cli.client_ca.is_none() {
+                tracing::warn!(
+                    "Running TLS WITHOUT client CA — agent endpoints are not mTLS-protected. \
+                     Set --client-ca for production to authenticate fleet agents."
+                );
+            }
             let config = nixfleet_control_plane::tls::build_server_config(
                 std::path::Path::new(cert),
                 std::path::Path::new(key),
@@ -90,7 +96,10 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
         }
         (None, None) => {
-            tracing::warn!("Running WITHOUT TLS — not recommended for production");
+            tracing::warn!(
+                "Running WITHOUT TLS — agent endpoints are unprotected. \
+                 Not recommended for production."
+            );
             let listener = tokio::net::TcpListener::bind(&cli.listen).await?;
             tracing::info!("Control plane listening on {}", cli.listen);
             axum::serve(listener, app).await?;

@@ -20,13 +20,18 @@ pub type AppState = (Arc<RwLock<state::FleetState>>, Arc<db::Db>);
 pub fn build_app(fleet_state: Arc<RwLock<state::FleetState>>, db: Arc<db::Db>) -> Router {
     let db_for_auth = db.clone();
 
-    let api_routes = Router::new()
-        .route("/api/v1/machines", get(routes::list_machines))
+    // Agent-facing endpoints: authenticated via mTLS at the transport layer.
+    // No API key middleware — agents don't carry bearer tokens.
+    let agent_routes = Router::new()
         .route(
             "/api/v1/machines/{id}/desired-generation",
             get(routes::get_desired_generation),
         )
-        .route("/api/v1/machines/{id}/report", post(routes::post_report))
+        .route("/api/v1/machines/{id}/report", post(routes::post_report));
+
+    // Admin/operator endpoints: authenticated via API key (Bearer token).
+    let admin_routes = Router::new()
+        .route("/api/v1/machines", get(routes::list_machines))
         .route(
             "/api/v1/machines/{id}/set-generation",
             post(routes::set_desired_generation),
@@ -63,7 +68,8 @@ pub fn build_app(fleet_state: Arc<RwLock<state::FleetState>>, db: Arc<db::Db>) -
         }));
 
     Router::new()
-        .merge(api_routes)
+        .merge(agent_routes)
+        .merge(admin_routes)
         .route("/health", get(|| async { "ok" }))
         .with_state((fleet_state, db))
 }
