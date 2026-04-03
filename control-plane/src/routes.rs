@@ -74,14 +74,20 @@ pub async fn post_report(
         let _ = db.insert_health_report(&id, &results_json, health.all_passed);
     }
 
-    // Update in-memory state — only for pre-registered machines
+    // Update in-memory state — auto-register unknown machines on first report
     let mut fleet = state.write().await;
-    let machine = fleet
-        .machines
-        .get_mut(&id)
-        .ok_or((StatusCode::NOT_FOUND, format!("machine not found: {id}")))?;
+    let is_new = !fleet.machines.contains_key(&id);
+    let machine = fleet.get_or_create(&id);
     machine.last_seen = Some(report.timestamp);
     machine.last_report = Some(report);
+
+    // Auto-register: persist to DB on first report from unknown machine
+    if is_new {
+        let _ = db.register_machine(&id, "active");
+        machine.lifecycle = MachineLifecycle::Active;
+        machine.registered_at = Some(chrono::Utc::now());
+        tracing::info!(machine_id = %id, "Auto-registered on first report");
+    }
 
     // Sync tags from agent report if they changed
     if let Some(ref report) = machine.last_report {
