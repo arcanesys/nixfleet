@@ -23,6 +23,9 @@ in {
       modules = [
         # ./hosts/dev-01/hardware.nix
         # ./hosts/dev-01/disk-config.nix
+        # ./modules/secrets.nix     # Agenix secrets wiring
+        # ./modules/backup.nix      # Restic backup
+        # ./modules/monitoring.nix  # Prometheus node exporter
       ];
     };
 
@@ -39,6 +42,9 @@ in {
       modules = [
         # ./hosts/prod-web-01/hardware.nix
         # ./hosts/prod-web-01/disk-config.nix
+        # ./modules/secrets.nix     # Agenix secrets wiring
+        # ./modules/backup.nix      # Restic backup
+        # ./modules/monitoring.nix  # Prometheus node exporter
       ];
     };
   };
