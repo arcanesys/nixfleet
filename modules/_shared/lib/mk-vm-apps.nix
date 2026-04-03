@@ -271,7 +271,7 @@ in
         ${nixos-anywhere-bin} \
           --flake ".#''${host}" \
           --ssh-port "''$SSH_PORT" \
-          --no-reboot \
+          --phases kexec,disko,install \
           ''$EXTRA_FILES_ARGS \
           root@localhost
         [ -n "''${EXTRA_FILES_DIR:-}" ] && rm -rf "''$EXTRA_FILES_DIR"
