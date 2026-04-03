@@ -1,18 +1,18 @@
 # Secrets
 
-NixFleet is secrets-agnostic. It provides extension points for secrets integration but does not prescribe a specific tool. The two most common choices are [agenix](https://github.com/ryantm/agenix) and [sops-nix](https://github.com/Mic92/sops-nix); both work as fleet-level modules.
+NixFleet provides a secrets wiring scope that handles identity path management, impermanence persistence, and boot ordering. Fleet repos bring their own backend (agenix, sops-nix) and wire it to the framework.
 
-## Extension points
+## Enabling the secrets scope
 
-hostSpec provides three options for wiring secrets into the framework:
+```nix
+nixfleet.secrets.enable = true;
+```
 
-| Option | Type | Purpose |
-|--------|------|---------|
-| `secretsPath` | `nullOr str` | Hint for the path to your secrets repo/directory. Framework-agnostic. |
-| `hashedPasswordFile` | `nullOr str` | Path to a hashed password file for the primary user. |
-| `rootHashedPasswordFile` | `nullOr str` | Path to a hashed password file for root. |
+The scope computes `config.nixfleet.secrets.resolvedIdentityPaths` based on hostSpec:
+- **Servers** (`isServer = true`): host SSH key only (`/etc/ssh/ssh_host_ed25519_key`)
+- **Workstations**: host SSH key + user key fallback (`~/.keys/id_ed25519`)
 
-When `hashedPasswordFile` or `rootHashedPasswordFile` is non-null, the core NixOS module sets `users.users.<name>.hashedPasswordFile` accordingly.
+On impermanent hosts, identity keys are automatically persisted.
 
 ## agenix example
 
@@ -22,22 +22,16 @@ inputs.agenix.url = "github:ryantm/agenix";
 inputs.agenix.inputs.nixpkgs.follows = "nixfleet/nixpkgs";
 
 # In your host modules
-{inputs, config, ...}: let
-  secretsPath = "/path/to/secrets";
-in {
+{inputs, config, ...}: {
   imports = [inputs.agenix.nixosModules.default];
 
-  age.identityPaths = ["/persist/home/${config.hostSpec.userName}/.keys/id_ed25519"];
+  # Use framework-computed identity paths
+  age.identityPaths = config.nixfleet.secrets.resolvedIdentityPaths;
 
-  age.secrets.user-password = {
-    file = "${secretsPath}/user-password.age";
-    owner = config.hostSpec.userName;
-  };
-  age.secrets.root-password.file = "${secretsPath}/root-password.age";
+  age.secrets.root-password.file = "${inputs.secrets}/org/root-password.age";
 
   hostSpec = {
-    secretsPath = secretsPath;
-    hashedPasswordFile = config.age.secrets.user-password.path;
+    hashedPasswordFile = config.age.secrets.root-password.path;
     rootHashedPasswordFile = config.age.secrets.root-password.path;
   };
 }
@@ -56,18 +50,30 @@ inputs.sops-nix.inputs.nixpkgs.follows = "nixfleet/nixpkgs";
 
   sops = {
     defaultSopsFile = ./secrets/secrets.yaml;
-    age.keyFile = "/persist/home/${config.hostSpec.userName}/.keys/age-key.txt";
+    # sops-nix also uses age keys — resolvedIdentityPaths works here too
+    age.keyFile = builtins.head config.nixfleet.secrets.resolvedIdentityPaths;
   };
 
-  sops.secrets.user-password.neededForUsers = true;
   sops.secrets.root-password.neededForUsers = true;
 
   hostSpec = {
-    hashedPasswordFile = config.sops.secrets.user-password.path;
+    hashedPasswordFile = config.sops.secrets.root-password.path;
     rootHashedPasswordFile = config.sops.secrets.root-password.path;
   };
 }
 ```
+
+## Extension points
+
+hostSpec provides three options for wiring secrets into the framework:
+
+| Option | Type | Purpose |
+|--------|------|---------|
+| `secretsPath` | `nullOr str` | Hint for the path to your secrets repo/directory. |
+| `hashedPasswordFile` | `nullOr str` | Path to a hashed password file for the primary user. |
+| `rootHashedPasswordFile` | `nullOr str` | Path to a hashed password file for root. |
+
+When `hashedPasswordFile` or `rootHashedPasswordFile` is non-null, the core NixOS module sets `users.users.<name>.hashedPasswordFile` accordingly.
 
 ## Bootstrapping
 
@@ -78,27 +84,32 @@ New machines need a decryption key before they can decrypt secrets. Two approach
 Pass the key during initial install:
 
 ```sh
-mkdir -p /tmp/extra/persist/home/alice/.keys
-cp ~/.keys/id_ed25519 /tmp/extra/persist/home/alice/.keys/id_ed25519
-chmod 600 /tmp/extra/persist/home/alice/.keys/id_ed25519
+mkdir -p /tmp/extra/etc/ssh
+cp /path/to/ssh_host_ed25519_key /tmp/extra/etc/ssh/ssh_host_ed25519_key
+chmod 600 /tmp/extra/etc/ssh/ssh_host_ed25519_key
 
 nixos-anywhere --flake .#myhost --extra-files /tmp/extra root@192.168.1.50
 ```
 
 The `spawn-qemu` and `test-vm` apps do this automatically when a key is found at `~/.keys/id_ed25519` or `~/.ssh/id_ed25519`.
 
+The secrets scope's `nixfleet-host-key-check` service auto-generates the host key at `/etc/ssh/ssh_host_ed25519_key` on first boot if the key is missing, so bootstrapping without a pre-provisioned key is safe.
+
 ### Generate on target
 
-SSH into the machine and generate a new age key:
+SSH into the machine and the host key will be generated automatically by `nixfleet-host-key-check` before sshd starts. Alternatively, generate one manually and add it to your secrets configuration:
 
 ```sh
 ssh root@192.168.1.50
-mkdir -p /persist/home/alice/.keys
-age-keygen -o /persist/home/alice/.keys/age-key.txt
+ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
 ```
 
-Then add the public key to your secrets configuration and re-encrypt.
+Then extract the public key, add it to your secrets configuration (e.g., `secrets.nix` for agenix), and re-encrypt the affected secrets.
 
 ## Key placement on impermanent hosts
 
-On impermanent hosts, keys must live under `/persist`. The framework's impermanence scope automatically persists `~/.keys`. The activation script ensures correct ownership of `/persist/home/<userName>` and the `.keys` directory within it.
+On impermanent hosts, the secrets scope automatically persists:
+- `/etc/ssh/ssh_host_ed25519_key` (and `.pub`)
+- The user key directory (`~/.keys`) when `enableUserKey` is true
+
+The impermanence scope also persists `~/.keys` independently, providing defense in depth.
