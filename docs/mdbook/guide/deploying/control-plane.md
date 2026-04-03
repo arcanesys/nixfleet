@@ -89,7 +89,7 @@ TLS and mTLS are configured via:
 Both `--tls-cert` and `--tls-key` must be provided together to enable HTTPS.
 
 When `--client-ca` is set, **all** TLS connections must present a client certificate signed by that CA:
-- **Agents** authenticate via their client certificate; no API key needed
+- **Agents** authenticate via their client certificate; no API key needed. Agents are auto-registered on their first health report — any client with a valid fleet cert can register as a machine.
 - **Admin clients** (CLI, REST API) must present both a client certificate AND an API key (defense-in-depth)
 
 API keys are passed via the `Authorization: Bearer <key>` header.
