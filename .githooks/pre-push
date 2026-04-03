@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pre-push: eval tests + cargo test (fast, ~15s)
+# Full validate (host builds) runs in CI, not here
+echo "=== Checking formatting ==="
+nix fmt -- --fail-on-change || {
+  echo "Formatting issues. Run: nix fmt"
+  exit 1
+}
+
+echo "=== Eval tests ==="
+for check in eval-hostspec-defaults eval-ssh-hardening eval-username-override eval-locale-timezone eval-ssh-authorized eval-password-files; do
+  nix build ".#checks.x86_64-linux.$check" --no-link 2>/dev/null || {
+    echo "Eval test $check failed."
+    exit 1
+  }
+done
+
+echo "=== Rust workspace tests ==="
+if [[ -f Cargo.toml ]]; then
+  nix develop --command cargo test --workspace --bins --tests --lib --quiet 2>&1 || {
+    echo "Rust tests failed."
+    exit 1
+  }
+fi
+
+echo "All pre-push checks passed."

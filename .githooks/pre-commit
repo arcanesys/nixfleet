@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pre-commit: format check ONLY (fast, ~2s)
+# Heavy checks (eval tests, cargo test) run on pre-push
+echo "=== Checking formatting ==="
+nix fmt -- --fail-on-change || {
+  echo "Formatting issues. Run: nix fmt"
+  exit 1
+}
+
+echo "All pre-commit checks passed."
