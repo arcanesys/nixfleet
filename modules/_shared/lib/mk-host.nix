@@ -13,6 +13,7 @@
   firewallScope = import ../../scopes/_firewall.nix;
   secretsScope = import ../../scopes/_secrets.nix;
   backupScope = import ../../scopes/_backup.nix;
+  monitoringScope = import ../../scopes/_monitoring.nix;
 
   # Core modules (plain NixOS/Darwin modules)
   coreNixos = ../../core/_nixos.nix;
@@ -62,6 +63,7 @@ in
         firewallScope.nixos
         secretsScope.nixos
         backupScope.nixos
+        monitoringScope.nixos
         agentModule
         controlPlaneModule
       ]

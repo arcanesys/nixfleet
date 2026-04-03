@@ -7,6 +7,7 @@
   firewallScope = import ../../scopes/_firewall.nix;
   secretsScope = import ../../scopes/_secrets.nix;
   backupScope = import ../../scopes/_backup.nix;
+  monitoringScope = import ../../scopes/_monitoring.nix;
   coreNixos = ../../core/_nixos.nix;
   agentModule = ../../scopes/nixfleet/_agent.nix;
   controlPlaneModule = ../../scopes/nixfleet/_control-plane.nix;
@@ -67,6 +68,7 @@ in {
         firewallScope.nixos
         secretsScope.nixos
         backupScope.nixos
+        monitoringScope.nixos
         agentModule
         controlPlaneModule
       ]
