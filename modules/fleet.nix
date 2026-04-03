@@ -7,13 +7,7 @@
   mkHost = config.flake.lib.mkHost;
 
   # Shared organization defaults — just a let binding, no framework function.
-  #
-  # IMPORTANT: Replace sshAuthorizedKeys with your real public key (cat ~/.ssh/id_ed25519.pub).
-  # VM commands (build-vm, test-vm) SSH into the ISO using this key —
-  # if it doesn't match a private key on your machine, SSH will hang.
-  #
-  # Quick replace:
-  #   sed -i "s|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|$(cat ~/.ssh/id_ed25519.pub)|" modules/fleet.nix
+  # Placeholder key for eval tests only. Fleet repos set real keys.
   orgDefaults = {
     userName = "deploy";
     timeZone = "UTC";
@@ -24,9 +18,6 @@
     ];
   };
 in {
-  # Bake the test SSH key into the ISO so build-vm / test-vm can SSH in.
-  nixfleet.isoSshKeys = orgDefaults.sshAuthorizedKeys;
-
   flake.nixosConfigurations = {
     # web-01: default web server, impermanent root
     web-01 = mkHost {
