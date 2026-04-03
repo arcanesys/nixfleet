@@ -289,9 +289,10 @@ in
       build_iso
 
       if [[ $ALL -eq 1 ]]; then
-        while IFS= read -r host; do
+        mapfile -t hosts_arr <<< "$(all_hosts)"
+        for host in "''${hosts_arr[@]}"; do
           [[ -n "$host" ]] && build_one "$host"
-        done <<< "$(all_hosts)"
+        done
       else
         build_one "$HOST"
       fi
@@ -354,9 +355,10 @@ in
       }
 
       if [[ $ALL -eq 1 ]]; then
-        while IFS= read -r host; do
+        mapfile -t hosts_arr <<< "$(all_hosts)"
+        for host in "''${hosts_arr[@]}"; do
           [[ -n "$host" ]] && [ -f "''$VM_DIR/$host.qcow2" ] && start_one "$host"
-        done <<< "$(all_hosts)"
+        done
       else
         start_one "$HOST"
       fi
@@ -402,9 +404,10 @@ in
       }
 
       if [[ $ALL -eq 1 ]]; then
-        while IFS= read -r host; do
+        mapfile -t hosts_arr <<< "$(all_hosts)"
+        for host in "''${hosts_arr[@]}"; do
           [[ -n "$host" ]] && stop_one "$host"
-        done <<< "$(all_hosts)"
+        done
       else
         stop_one "$HOST"
       fi
@@ -456,9 +459,10 @@ in
       }
 
       if [[ $ALL -eq 1 ]]; then
-        while IFS= read -r host; do
+        mapfile -t hosts_arr <<< "$(all_hosts)"
+        for host in "''${hosts_arr[@]}"; do
           [[ -n "$host" ]] && clean_one "$host"
-        done <<< "$(all_hosts)"
+        done
       else
         clean_one "$HOST"
       fi
