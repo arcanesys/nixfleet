@@ -150,6 +150,12 @@
                 f"Expected desired_generation '/nix/store/fake-test-generation', "
                 f"got: {agent_entry['desired_generation']}"
             )
+
+            # 7. Verify /metrics endpoint returns Prometheus text format
+            metrics_output = cp.succeed("curl -sf http://localhost:8080/metrics")
+            assert "nixfleet_fleet_size" in metrics_output, (
+                f"Expected nixfleet_fleet_size in /metrics output"
+            )
           '';
         };
       };

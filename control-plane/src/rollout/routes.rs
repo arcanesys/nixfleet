@@ -401,9 +401,7 @@ fn row_to_detail(rollout: &RolloutRow, batch_rows: &[RolloutBatchRow]) -> Rollou
 
             let inferred_status = match batch_status {
                 BatchStatus::Succeeded => MachineHealthStatus::Healthy,
-                BatchStatus::Failed => {
-                    MachineHealthStatus::Unhealthy("batch failed".to_string())
-                }
+                BatchStatus::Failed => MachineHealthStatus::Unhealthy("batch failed".to_string()),
                 _ => MachineHealthStatus::Pending,
             };
             let machine_health: HashMap<String, MachineHealthStatus> = machine_ids

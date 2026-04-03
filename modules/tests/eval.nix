@@ -131,6 +131,21 @@
             }
           ];
 
+        # --- Agent metrics port in ExecStart ---
+        eval-agent-metrics = let
+          cfg = nixosCfg "agent-test";
+        in
+          mkEvalCheck "agent-metrics" [
+            {
+              check = builtins.match ".*--metrics-port.*" cfg.systemd.services.nixfleet-agent.serviceConfig.ExecStart != null;
+              msg = "agent-test should have --metrics-port in ExecStart";
+            }
+            {
+              check = builtins.elem 9101 cfg.networking.firewall.allowedTCPPorts;
+              msg = "agent-test should have metrics port 9101 in firewall";
+            }
+          ];
+
         # --- Secrets: resolved paths on server (host key only) ---
         eval-secrets-server = let
           cfg = nixosCfg "secrets-test";

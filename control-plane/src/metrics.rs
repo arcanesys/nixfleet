@@ -29,9 +29,7 @@ pub fn init() -> PrometheusHandle {
 /// GET /metrics
 ///
 /// Renders current metrics in Prometheus text exposition format.
-pub async fn metrics_handler(
-    State(handle): State<Arc<PrometheusHandle>>,
-) -> (StatusCode, String) {
+pub async fn metrics_handler(State(handle): State<Arc<PrometheusHandle>>) -> (StatusCode, String) {
     (StatusCode::OK, handle.render())
 }
 
@@ -106,14 +104,11 @@ pub fn update_fleet_gauges(state: &FleetState) {
         }
     }
 
-    metrics::gauge!(m::MACHINES_BY_LIFECYCLE, "lifecycle" => "pending")
-        .set(pending as f64);
+    metrics::gauge!(m::MACHINES_BY_LIFECYCLE, "lifecycle" => "pending").set(pending as f64);
     metrics::gauge!(m::MACHINES_BY_LIFECYCLE, "lifecycle" => "provisioning")
         .set(provisioning as f64);
-    metrics::gauge!(m::MACHINES_BY_LIFECYCLE, "lifecycle" => "active")
-        .set(active as f64);
-    metrics::gauge!(m::MACHINES_BY_LIFECYCLE, "lifecycle" => "maintenance")
-        .set(maintenance as f64);
+    metrics::gauge!(m::MACHINES_BY_LIFECYCLE, "lifecycle" => "active").set(active as f64);
+    metrics::gauge!(m::MACHINES_BY_LIFECYCLE, "lifecycle" => "maintenance").set(maintenance as f64);
     metrics::gauge!(m::MACHINES_BY_LIFECYCLE, "lifecycle" => "decommissioned")
         .set(decommissioned as f64);
 }
@@ -229,7 +224,10 @@ mod tests {
         assert_eq!(normalize_path("/api/v1/machines"), "/api/v1/machines");
         assert_eq!(normalize_path("/api/v1/rollouts"), "/api/v1/rollouts");
         assert_eq!(normalize_path("/api/v1/audit"), "/api/v1/audit");
-        assert_eq!(normalize_path("/api/v1/audit/export"), "/api/v1/audit/export");
+        assert_eq!(
+            normalize_path("/api/v1/audit/export"),
+            "/api/v1/audit/export"
+        );
     }
 
     #[test]

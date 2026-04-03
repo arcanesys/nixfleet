@@ -56,6 +56,18 @@ in {
       description = "Allow insecure HTTP connections to the control plane. Development only.";
     };
 
+    metricsPort = lib.mkOption {
+      type = lib.types.nullOr lib.types.port;
+      default = null;
+      description = "Port for agent Prometheus metrics. Null disables.";
+    };
+
+    metricsOpenFirewall = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open agent metrics port in the firewall.";
+    };
+
     tags = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
@@ -182,6 +194,10 @@ in {
           ++ lib.optionals cfg.allowInsecure [
             "--allow-insecure"
           ]
+          ++ lib.optionals (cfg.metricsPort != null) [
+            "--metrics-port"
+            (toString cfg.metricsPort)
+          ]
         );
         Restart = "always";
         RestartSec = 30;
@@ -205,5 +221,9 @@ in {
       lib.mkIf
       (config.hostSpec.isImpermanent or false)
       ["/var/lib/nixfleet"];
+
+    # Open metrics port if requested
+    networking.firewall.allowedTCPPorts =
+      lib.mkIf (cfg.metricsPort != null && cfg.metricsOpenFirewall) [cfg.metricsPort];
   };
 }

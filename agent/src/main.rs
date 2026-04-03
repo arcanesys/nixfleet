@@ -6,10 +6,10 @@ use tracing::{error, info, warn};
 mod comms;
 mod config;
 mod health;
+mod metrics;
 mod nix;
 mod state;
 mod store;
-mod metrics;
 mod tls;
 mod types;
 

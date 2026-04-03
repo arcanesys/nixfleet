@@ -90,6 +90,8 @@ in {
             enable = true;
             controlPlaneUrl = "https://cp.test:8080";
             tags = ["web" "production"];
+            metricsPort = 9101;
+            metricsOpenFirewall = true;
             healthChecks = {
               systemd = [{units = ["nginx"];}];
               http = [{url = "http://localhost:80/health";}];

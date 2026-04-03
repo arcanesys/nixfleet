@@ -73,7 +73,12 @@ impl HealthRunner {
                 HealthCheckResult::Pass { duration_ms, .. } => (*duration_ms, true),
                 HealthCheckResult::Fail { duration_ms, .. } => (*duration_ms, false),
             };
-            crate::metrics::record_health_check(check.name(), check.check_type(), duration_ms, passed);
+            crate::metrics::record_health_check(
+                check.name(),
+                check.check_type(),
+                duration_ms,
+                passed,
+            );
             results.push(result);
         }
         let all_passed = results.iter().all(|r| r.is_pass());

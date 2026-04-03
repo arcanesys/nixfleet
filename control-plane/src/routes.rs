@@ -252,10 +252,7 @@ pub async fn register_machine(
     Json(req): Json<RegisterMachineRequest>,
 ) -> Result<(StatusCode, Json<RegisterMachineResponse>), (StatusCode, String)> {
     if !actor.has_role(&["admin"]) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "admin role required".to_string(),
-        ));
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
 
     let lifecycle = MachineLifecycle::from_str_lc(&req.lifecycle).ok_or_else(|| {
@@ -297,7 +294,12 @@ pub async fn register_machine(
         machine.tags = req.tags;
     }
 
-    let _ = db.insert_audit_event(&actor.identifier(), "register", &id, Some(&lifecycle.to_string()));
+    let _ = db.insert_audit_event(
+        &actor.identifier(),
+        "register",
+        &id,
+        Some(&lifecycle.to_string()),
+    );
 
     tracing::info!(machine_id = %id, lifecycle = %lifecycle, "Machine registered");
 
@@ -333,10 +335,7 @@ pub async fn update_lifecycle(
     Json(req): Json<UpdateLifecycleRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     if !actor.has_role(&["admin"]) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "admin role required".to_string(),
-        ));
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
 
     let target = MachineLifecycle::from_str_lc(&req.lifecycle).ok_or_else(|| {
@@ -406,10 +405,7 @@ pub async fn set_tags(
     Json(tags): Json<Vec<String>>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     if !actor.has_role(&["admin"]) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "admin role required".to_string(),
-        ));
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
 
     db.set_machine_tags(&id, &tags).map_err(|e| {
@@ -444,10 +440,7 @@ pub async fn remove_tag(
     Path((id, tag)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     if !actor.has_role(&["admin"]) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "admin role required".to_string(),
-        ));
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
 
     db.remove_machine_tag(&id, &tag).map_err(|e| {
