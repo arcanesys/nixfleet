@@ -56,6 +56,22 @@ in {
       description = "Allow insecure HTTP connections to the control plane. Development only.";
     };
 
+    tls = {
+      clientCert = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/run/secrets/agent-cert.pem";
+        description = "Path to client certificate PEM file for mTLS authentication.";
+      };
+
+      clientKey = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/run/secrets/agent-key.pem";
+        description = "Path to client private key PEM file for mTLS authentication.";
+      };
+    };
+
     metricsPort = lib.mkOption {
       type = lib.types.nullOr lib.types.port;
       default = null;
@@ -193,6 +209,14 @@ in {
           ]
           ++ lib.optionals cfg.allowInsecure [
             "--allow-insecure"
+          ]
+          ++ lib.optionals (cfg.tls.clientCert != null) [
+            "--client-cert"
+            (lib.escapeShellArg cfg.tls.clientCert)
+          ]
+          ++ lib.optionals (cfg.tls.clientKey != null) [
+            "--client-key"
+            (lib.escapeShellArg cfg.tls.clientKey)
           ]
           ++ lib.optionals (cfg.metricsPort != null) [
             "--metrics-port"

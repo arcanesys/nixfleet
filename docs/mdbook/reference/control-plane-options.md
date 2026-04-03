@@ -10,6 +10,9 @@ All options under `services.nixfleet-control-plane`. The module is auto-included
 | `listen` | `str` | `"0.0.0.0:8080"` | Address and port to listen on. |
 | `dbPath` | `str` | `"/var/lib/nixfleet-cp/state.db"` | Path to the SQLite state database. |
 | `openFirewall` | `bool` | `false` | Open the control plane port in the firewall. The port is parsed from the `listen` value. |
+| `tls.cert` | `nullOr str` | `null` | Path to TLS certificate PEM file. Enables HTTPS when set (requires `tls.key`). Example: `"/run/secrets/cp-cert.pem"`. |
+| `tls.key` | `nullOr str` | `null` | Path to TLS private key PEM file. Example: `"/run/secrets/cp-key.pem"`. |
+| `tls.clientCa` | `nullOr str` | `null` | Path to client CA PEM file. Enables mTLS agent authentication when set. Example: `"/run/secrets/fleet-ca.pem"`. |
 
 ## Prometheus Metrics
 

@@ -16,6 +16,8 @@ All options under `services.nixfleet-agent`. The module is auto-included by mkHo
 | `tags` | `listOf str` | `[]` | Tags for grouping this machine in fleet operations. Passed via `NIXFLEET_TAGS` environment variable. |
 | `healthInterval` | `int` | `60` | Seconds between continuous health reports to the control plane. |
 | `allowInsecure` | `bool` | `false` | Allow insecure HTTP connections to the control plane. Development only. |
+| `tls.clientCert` | `nullOr str` | `null` | Path to client certificate PEM file for mTLS authentication. Example: `"/run/secrets/agent-cert.pem"`. |
+| `tls.clientKey` | `nullOr str` | `null` | Path to client private key PEM file for mTLS authentication. Example: `"/run/secrets/agent-key.pem"`. |
 | `metricsPort` | `nullOr port` | `null` | Port for agent Prometheus metrics HTTP listener. Null disables metrics. |
 | `metricsOpenFirewall` | `bool` | `false` | Open the metrics port in the firewall. Only effective when `metricsPort` is set. |
 

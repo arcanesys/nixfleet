@@ -26,6 +26,7 @@ in {
         # ./modules/secrets.nix     # Agenix secrets wiring
         # ./modules/backup.nix      # Restic backup
         # ./modules/monitoring.nix  # Prometheus node exporter
+        # ./modules/tls.nix         # mTLS (agent ↔ CP)
       ];
     };
 
@@ -45,6 +46,7 @@ in {
         # ./modules/secrets.nix     # Agenix secrets wiring
         # ./modules/backup.nix      # Restic backup
         # ./modules/monitoring.nix  # Prometheus node exporter
+        # ./modules/tls.nix         # mTLS (agent ↔ CP)
       ];
     };
   };

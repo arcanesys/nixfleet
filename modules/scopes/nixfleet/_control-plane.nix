@@ -29,6 +29,29 @@ in {
       default = false;
       description = "Open the control plane port in the firewall.";
     };
+
+    tls = {
+      cert = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/run/secrets/cp-cert.pem";
+        description = "Path to TLS certificate PEM file. Enables HTTPS when set (requires tls.key).";
+      };
+
+      key = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/run/secrets/cp-key.pem";
+        description = "Path to TLS private key PEM file.";
+      };
+
+      clientCa = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/run/secrets/fleet-ca.pem";
+        description = "Path to client CA PEM file. Enables mTLS agent authentication when set.";
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -40,13 +63,27 @@ in {
 
       serviceConfig = {
         Type = "simple";
-        ExecStart = lib.concatStringsSep " " [
-          "${nixfleet-control-plane}/bin/nixfleet-control-plane"
-          "--listen"
-          (lib.escapeShellArg cfg.listen)
-          "--db-path"
-          (lib.escapeShellArg cfg.dbPath)
-        ];
+        ExecStart = lib.concatStringsSep " " (
+          [
+            "${nixfleet-control-plane}/bin/nixfleet-control-plane"
+            "--listen"
+            (lib.escapeShellArg cfg.listen)
+            "--db-path"
+            (lib.escapeShellArg cfg.dbPath)
+          ]
+          ++ lib.optionals (cfg.tls.cert != null) [
+            "--tls-cert"
+            (lib.escapeShellArg cfg.tls.cert)
+          ]
+          ++ lib.optionals (cfg.tls.key != null) [
+            "--tls-key"
+            (lib.escapeShellArg cfg.tls.key)
+          ]
+          ++ lib.optionals (cfg.tls.clientCa != null) [
+            "--client-ca"
+            (lib.escapeShellArg cfg.tls.clientCa)
+          ]
+        );
         Restart = "always";
         RestartSec = 10;
         StateDirectory = "nixfleet-cp";
