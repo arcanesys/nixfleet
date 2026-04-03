@@ -7,16 +7,20 @@
   mkHost = config.flake.lib.mkHost;
 
   # Shared organization defaults — just a let binding, no framework function.
-  # IMPORTANT: Replace sshAuthorizedKeys with your real public key.
+  #
+  # IMPORTANT: Replace sshAuthorizedKeys with your real public key (cat ~/.ssh/id_ed25519.pub).
   # VM commands (build-vm, test-vm) SSH into the ISO using this key —
   # if it doesn't match a private key on your machine, SSH will hang.
+  #
+  # Quick replace:
+  #   sed -i "s|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|$(cat ~/.ssh/id_ed25519.pub)|" modules/fleet.nix
   orgDefaults = {
     userName = "deploy";
     timeZone = "UTC";
     locale = "en_US.UTF-8";
     keyboardLayout = "us";
     sshAuthorizedKeys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA NixfleetDemoKeyReplaceWithYourOwn"
+      "ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"
     ];
   };
 in {
