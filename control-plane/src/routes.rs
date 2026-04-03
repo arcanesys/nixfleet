@@ -83,6 +83,15 @@ pub async fn post_report(
     machine.last_seen = Some(report.timestamp);
     machine.last_report = Some(report);
 
+    // Sync tags from agent report if they changed
+    if let Some(ref report) = machine.last_report {
+        if !report.tags.is_empty() && machine.tags != report.tags {
+            machine.tags = report.tags.clone();
+            let _ = db.set_machine_tags(&id, &report.tags);
+            tracing::info!(machine_id = %id, tags = ?report.tags, "Tags synced from report");
+        }
+    }
+
     // Auto-transition Pending/Provisioning -> Active on first report
     if machine.lifecycle == MachineLifecycle::Pending
         || machine.lifecycle == MachineLifecycle::Provisioning
@@ -476,6 +485,71 @@ pub async fn remove_tag(
 
     tracing::info!(machine_id = %id, tag = %tag, "Tag removed");
     Ok(StatusCode::OK)
+}
+
+/// POST /api/v1/keys/bootstrap
+///
+/// Create the first admin API key. Only works when no keys exist (first-time setup).
+/// Returns 409 Conflict if keys already exist.
+pub async fn bootstrap_api_key(
+    State((_, db)): State<AppState>,
+    Json(req): Json<BootstrapKeyRequest>,
+) -> Result<Json<BootstrapKeyResponse>, (StatusCode, String)> {
+    if db.has_api_keys().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("db error: {e}"),
+        )
+    })? {
+        return Err((
+            StatusCode::CONFLICT,
+            "API keys already exist. Use an admin key to create more.".to_string(),
+        ));
+    }
+
+    let raw_key = format!("nfk-{}", generate_random_key());
+    let key_hash = crate::auth::hash_key(&raw_key);
+
+    let name = if req.name.is_empty() {
+        "admin"
+    } else {
+        &req.name
+    };
+
+    db.insert_api_key(&key_hash, name, "admin").map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to create key: {e}"),
+        )
+    })?;
+
+    tracing::info!(name = %name, "Bootstrap API key created");
+
+    Ok(Json(BootstrapKeyResponse {
+        key: raw_key,
+        name: name.to_string(),
+        role: "admin".to_string(),
+    }))
+}
+
+fn generate_random_key() -> String {
+    use rand::Rng;
+    let mut rng = rand::rng();
+    let bytes: [u8; 32] = rng.random();
+    hex::encode(bytes)
+}
+
+#[derive(serde::Deserialize)]
+pub struct BootstrapKeyRequest {
+    #[serde(default)]
+    pub name: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct BootstrapKeyResponse {
+    pub key: String,
+    pub name: String,
+    pub role: String,
 }
 
 #[cfg(test)]
