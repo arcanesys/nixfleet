@@ -92,16 +92,17 @@
 
     assign_port() {
       local host="$1"
-      if [ -n "''${PORT_OVERRIDE:-}" ]; then
-        SSH_PORT="''$PORT_OVERRIDE"
-        return
-      fi
       local hosts
       hosts=$(nix eval .#nixosConfigurations --apply 'x: builtins.concatStringsSep "\n" (builtins.sort builtins.lessThan (builtins.attrNames x))' --raw 2>/dev/null)
       local idx=0
       while IFS= read -r name; do
         if [ "$name" = "$host" ]; then
-          SSH_PORT=$((2201 + idx))
+          HOST_INDEX=$idx
+          if [ -n "''${PORT_OVERRIDE:-}" ]; then
+            SSH_PORT="''$PORT_OVERRIDE"
+          else
+            SSH_PORT=$((2201 + idx))
+          fi
           return
         fi
         idx=$((idx + 1))
@@ -176,6 +177,15 @@
 
     all_hosts() {
       nix eval .#nixosConfigurations --apply 'x: builtins.concatStringsSep "\n" (builtins.sort builtins.lessThan (builtins.attrNames x))' --raw 2>/dev/null
+    }
+
+    compute_vlan_args() {
+      VLAN_ARGS=""
+      if [ -n "''${VLAN_PORT:-}" ]; then
+        local mac_suffix
+        mac_suffix=$(printf "%02x" "$((HOST_INDEX + 1))")
+        VLAN_ARGS="-netdev socket,id=vlan0,mcast=230.0.0.1:''${VLAN_PORT} -device virtio-net-pci,netdev=vlan0,mac=52:54:00:12:34:''${mac_suffix}"
+      fi
     }
   '';
 in
