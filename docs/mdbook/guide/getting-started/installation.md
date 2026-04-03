@@ -59,13 +59,13 @@ The resulting ISO is written to `result/iso/`. Flash it to USB and boot target m
 Test host configurations in QEMU before deploying to real hardware:
 
 ```bash
-# Headless VM
-nix run .#spawn-qemu
+# Install a host into a persistent VM disk (build ISO + nixos-anywhere)
+nix run .#build-vm -- -h web-01
 
-# Persistent VM with graphical SPICE display
-nix run .#spawn-qemu -- --persistent -h web-01
+# Start the installed VM as a headless daemon
+nix run .#start-vm -- -h web-01
 
-# Full VM test cycle (boot, run assertions, report)
+# Full VM test cycle (build, install, reboot, verify, cleanup)
 nix run .#test-vm -- -h web-01
 ```
 

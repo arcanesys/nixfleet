@@ -91,7 +91,7 @@ chmod 600 /tmp/extra/etc/ssh/ssh_host_ed25519_key
 nixos-anywhere --flake .#myhost --extra-files /tmp/extra root@192.168.1.50
 ```
 
-The `spawn-qemu` and `test-vm` apps do this automatically when a key is found at `~/.keys/id_ed25519` or `~/.ssh/id_ed25519`.
+The `build-vm`, `test-vm`, and `provision` apps do this automatically when a key is found at `~/.keys/id_ed25519` or `~/.ssh/id_ed25519`. You can also pass a key explicitly with `--identity-key PATH`.
 
 The secrets scope's `nixfleet-host-key-check` service auto-generates the host key at `/etc/ssh/ssh_host_ed25519_key` on first boot if the key is missing, so bootstrapping without a pre-provisioned key is safe.
 

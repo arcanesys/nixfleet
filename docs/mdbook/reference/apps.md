@@ -1,6 +1,6 @@
 # Apps
 
-Flake apps provided by NixFleet. Available via `nix run .#<app>`. VM apps (`spawn-qemu`, `test-vm`, `spawn-utm`) are also exported via `nixfleet.lib.mkVmApps` for fleet repos.
+Flake apps provided by NixFleet. Available via `nix run .#<app>`. VM lifecycle apps (`build-vm`, `start-vm`, `stop-vm`, `clean-vm`, `test-vm`, `provision`) are exported via `nixfleet.lib.mkVmApps` for fleet repos.
 
 ## validate
 
@@ -28,59 +28,108 @@ Reports pass/fail/skip counts. Exits with code 1 if any check fails.
 
 ---
 
-## spawn-qemu
+## build-vm
 
-Launch a QEMU virtual machine. Linux only.
+Install a host into a persistent QEMU disk via nixos-anywhere. Linux and macOS.
 
 ```sh
-nix run .#spawn-qemu
-nix run .#spawn-qemu -- --persistent -h web-02
-nix run .#spawn-qemu -- --iso path/to/nixos.iso
-nix run .#spawn-qemu -- --console
+nix run .#build-vm -- -h web-02
+nix run .#build-vm -- -h web-02 --rebuild
+nix run .#build-vm -- --all
 ```
 
-### Modes
-
-**Basic mode** (default): Boot from an existing disk image or ISO.
-
-**Persistent mode** (`--persistent -h HOST`): Build, install via nixos-anywhere, and launch a named host with a persistent disk stored at `~/.local/share/nixfleet/vms/<HOST>.qcow2`. On subsequent runs, boots the existing disk unless `--rebuild` is specified.
-
-Persistent mode steps:
+Steps:
 1. Build custom ISO
-2. Create disk image
-3. Boot from ISO (headless)
+2. Create disk image at `~/.local/share/nixfleet/vms/<HOST>.qcow2`
+3. Boot QEMU from ISO (headless, SSH forwarded)
 4. Install via nixos-anywhere
-5. Launch graphical VM (SPICE)
+5. Stop ISO VM
 
-If a key is found at `~/.keys/id_ed25519` or `~/.ssh/id_ed25519`, it is provisioned into the VM for secrets decryption.
+If a disk already exists, the install is skipped unless `--rebuild` is specified. If a key is found at `~/.keys/id_ed25519` or `~/.ssh/id_ed25519`, it is provisioned into the VM for secrets decryption.
 
 ### Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--iso <PATH>` | string | -- | Boot from ISO (manual install) |
-| `--disk <PATH>` | string | `qemu-disk.qcow2` | Disk image path |
+| `-h <HOST>` | string | -- | Host config to install |
+| `--all` | bool | -- | Install all hosts in nixosConfigurations |
+| `--rebuild` | bool | -- | Wipe and reinstall existing disk |
+| `--identity-key <PATH>` | string | -- | Path to identity key for secrets decryption |
+| `--ssh-port <N>` | string | auto | Override SSH port (default: auto-assigned by index) |
 | `--ram <MB>` | string | `4096` | RAM in MB |
 | `--cpus <N>` | string | `2` | CPU count |
-| `--ssh-port <N>` | string | `2222` | Host port for SSH forwarding |
-| `--disk-size <S>` | string | `20G` | Disk size for new images |
-| `--console` | bool | -- | Headless mode (serial console, no GUI) |
-| `--graphical` | bool | -- | GPU-accelerated GUI via SPICE (default) |
-| `--persistent` | bool | -- | Persistent mode |
-| `-h <HOST>` | string | -- | Host config to install (requires `--persistent`) |
-| `--rebuild` | bool | -- | Wipe and reinstall (persistent mode only) |
-| `--help` | -- | -- | Show help |
+| `--disk-size <S>` | string | `20G` | Disk size |
 
-Graphical mode uses SPICE with `remote-viewer` and EGL headless rendering.
+---
+
+## start-vm
+
+Start an installed VM as a headless daemon. Linux and macOS.
+
+```sh
+nix run .#start-vm -- -h web-02
+nix run .#start-vm -- --all
+```
+
+Boots from the existing disk created by `build-vm`. SSH is forwarded to a per-host port (auto-assigned by sorted nixosConfigurations index, base 2201).
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-h <HOST>` | string | -- | Host to start |
+| `--all` | bool | -- | Start all installed VMs |
+| `--ssh-port <N>` | string | auto | Override SSH port |
+| `--ram <MB>` | string | `1024` | RAM in MB |
+| `--cpus <N>` | string | `2` | CPU count |
+
+---
+
+## stop-vm
+
+Stop a running VM daemon. Linux and macOS.
+
+```sh
+nix run .#stop-vm -- -h web-02
+nix run .#stop-vm -- --all
+```
+
+Sends SIGTERM to the QEMU process and removes the pidfile.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-h <HOST>` | string | -- | Host to stop |
+| `--all` | bool | -- | Stop all running VMs |
+
+---
+
+## clean-vm
+
+Delete VM disk, pidfile, and port file. Linux and macOS.
+
+```sh
+nix run .#clean-vm -- -h web-02
+nix run .#clean-vm -- --all
+```
+
+Stops the VM if running, then removes `<HOST>.qcow2`, `<HOST>.pid`, and `<HOST>.port` from `~/.local/share/nixfleet/vms/`.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-h <HOST>` | string | -- | Host to clean |
+| `--all` | bool | -- | Clean all VMs |
 
 ---
 
 ## test-vm
 
-Automated VM test cycle: build ISO, boot, install, reboot, verify, cleanup. Linux only.
+Automated VM test cycle: build ISO, boot, install, reboot, verify, cleanup. Linux and macOS.
 
 ```sh
-nix run .#test-vm
 nix run .#test-vm -- -h web-02
 nix run .#test-vm -- -h edge-01 --keep
 ```
@@ -89,7 +138,7 @@ nix run .#test-vm -- -h edge-01 --keep
 
 1. Build custom ISO
 2. Create ephemeral disk (20G)
-3. Boot QEMU from ISO (headless, SSH on port 2222)
+3. Boot QEMU from ISO (headless, SSH on port 2299)
 4. Install via nixos-anywhere
 5. Reboot from disk
 6. Verify: hostname, `multi-user.target`, `sshd`
@@ -100,40 +149,31 @@ Cleans up temp directory and disk on exit unless `--keep` is specified.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-h <HOST>` | string | `edge-01` | Host config to install |
+| `-h <HOST>` | string | -- | Host config to install |
 | `--keep` | bool | `false` | Keep temp dir and disk after test |
-| `--ssh-port <N>` | string | `2222` | Host port for SSH |
+| `--ssh-port <N>` | string | `2299` | Host port for SSH |
+| `--identity-key <PATH>` | string | -- | Path to identity key for secrets decryption |
 | `--ram <MB>` | string | `4096` | RAM in MB |
 | `--cpus <N>` | string | `2` | CPU count |
-| `--help` | -- | -- | Show help |
 
 ---
 
-## spawn-utm
+## provision
 
-Launch or manage a UTM virtual machine. macOS only.
+Install NixOS on real hardware via nixos-anywhere. Linux only.
 
 ```sh
-nix run .#spawn-utm -- --host myhost --start
-nix run .#spawn-utm -- --ip
+nix run .#provision -- -h web-02 --target root@192.168.1.10
+nix run .#provision -- -h web-02 --target root@192.168.1.10 --identity-key ~/.keys/id_ed25519
 ```
 
-Requires UTM installed at `/Applications/UTM.app`.
+Provisions an identity key to the target, runs nixos-anywhere, waits for reboot, and collects the SSH host key for secrets rekeying.
 
 ### Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--name <NAME>` | string | `nixos` | UTM VM name |
-| `--host <HOST>` | string | -- | Host config |
-| `--start` | bool | -- | Start the VM and detect IP |
-| `--ip` | bool | -- | Print the VM's IP address |
-| `--help` / `-h` | -- | -- | Show help |
-
-### Actions
-
-| Action | Description |
-|--------|-------------|
-| `setup` (default) | Print setup instructions |
-| `start` (`--start`) | Start VM via `utmctl`, wait for IP (up to 60s) |
-| `ip` (`--ip`) | Print current VM IP address |
+| `-h <HOST>` | string | -- | Host config to install |
+| `--target <USER@IP>` | string | -- | SSH target (user@ip) |
+| `--ssh-port <N>` | string | `22` | Target SSH port |
+| `--identity-key <PATH>` | string | -- | Path to identity key for secrets decryption |
