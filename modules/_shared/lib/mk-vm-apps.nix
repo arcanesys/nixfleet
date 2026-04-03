@@ -274,7 +274,7 @@ in
           --phases kexec,disko,install \
           ''$EXTRA_FILES_ARGS \
           root@localhost
-        [ -n "''${EXTRA_FILES_DIR:-}" ] && rm -rf "''$EXTRA_FILES_DIR"
+        [ -n "''${EXTRA_FILES_DIR:-}" ] && rm -rf "''$EXTRA_FILES_DIR" || true
 
         echo -e "''${YELLOW}Stopping ISO VM...''${NC}"
         if [[ -f "''$VM_DIR/''${host}.pid" ]]; then
@@ -535,7 +535,7 @@ in
         --no-reboot \
         ''$EXTRA_FILES_ARGS \
         root@localhost
-      [ -n "''${EXTRA_FILES_DIR:-}" ] && rm -rf "''$EXTRA_FILES_DIR"
+      [ -n "''${EXTRA_FILES_DIR:-}" ] && rm -rf "''$EXTRA_FILES_DIR" || true
 
       echo -e "''${YELLOW}[5/6] Rebooting from disk...''${NC}"
       kill "$(cat "''$PIDFILE")" 2>/dev/null || true
