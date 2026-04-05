@@ -99,6 +99,10 @@ enum Commands {
         #[arg(long)]
         policy: Option<String>,
 
+        /// Binary cache URL for agents to fetch closures from (e.g. http://cache:8081)
+        #[arg(long)]
+        cache_url: Option<String>,
+
         /// Schedule the rollout for a future time (ISO 8601, e.g. "2026-04-06T03:00:00Z")
         #[arg(long)]
         schedule_at: Option<String>,
@@ -403,6 +407,7 @@ async fn main() -> Result<()> {
             wait,
             generation,
             policy,
+            cache_url,
             schedule_at,
         } => {
             let http_client = client::build_client(&tls, &cli.api_key)?;
@@ -441,6 +446,7 @@ async fn main() -> Result<()> {
                         &on_failure,
                         health_timeout,
                         policy.as_deref(),
+                        cache_url.as_deref(),
                         schedule_at_str,
                     )
                     .await
@@ -459,6 +465,7 @@ async fn main() -> Result<()> {
                         health_timeout,
                         wait,
                         policy.as_deref(),
+                        cache_url.as_deref(),
                     )
                     .await
                 }

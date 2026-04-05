@@ -332,6 +332,7 @@ pub async fn deploy_rollout(
     health_timeout: u64,
     wait: bool,
     policy: Option<&str>,
+    cache_url: Option<&str>,
 ) -> Result<()> {
     let parsed_strategy = parse_strategy(strategy)?;
     let parsed_on_failure = parse_on_failure(on_failure)?;
@@ -339,7 +340,7 @@ pub async fn deploy_rollout(
 
     let request = CreateRolloutRequest {
         generation_hash: generation_hash.to_string(),
-        cache_url: None,
+        cache_url: cache_url.map(|s| s.to_string()),
         strategy: parsed_strategy,
         batch_sizes,
         failure_threshold: failure_threshold.to_string(),
@@ -413,6 +414,7 @@ pub async fn deploy_scheduled(
     on_failure: &str,
     health_timeout: u64,
     policy: Option<&str>,
+    cache_url: Option<&str>,
     schedule_at_str: &str,
 ) -> Result<()> {
     use nixfleet_types::rollout::CreateScheduleRequest;
@@ -429,7 +431,7 @@ pub async fn deploy_scheduled(
         scheduled_at,
         policy: policy.map(|s| s.to_string()),
         generation_hash: generation_hash.to_string(),
-        cache_url: None,
+        cache_url: cache_url.map(|s| s.to_string()),
         strategy: parsed_strategy,
         batch_sizes,
         failure_threshold: Some(failure_threshold.to_string()),
