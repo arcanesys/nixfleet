@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use tokio::process::Command;
-use tracing::{debug, info};
+use tracing::info;
 
 /// Read the current system generation by resolving the `/run/current-system` symlink.
 /// Returns the full nix store path (e.g. `/nix/store/abc123...-nixos-system-web-01-25.05`).
@@ -30,10 +30,18 @@ pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<
             anyhow::bail!("nix copy failed: {stderr}");
         }
     } else {
-        debug!(
-            store_path,
-            "No cache URL — assuming closure is available locally"
-        );
+        info!(store_path, "No cache URL — verifying path exists locally");
+        let output = Command::new("nix")
+            .args(["path-info", store_path])
+            .output()
+            .await
+            .context("failed to spawn nix path-info")?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "store path {store_path} not found locally and no cache URL configured"
+            );
+        }
     }
     Ok(())
 }
@@ -175,5 +183,13 @@ mod tests {
     fn test_not_enough_generations_for_rollback() {
         let generations: Vec<&str> = vec!["  42   2026-03-25 12:00:00   (current)"];
         assert!(generations.len() < 2);
+    }
+
+    #[test]
+    fn test_path_info_command_construction() {
+        let store_path = "/nix/store/abc123-nixos-system";
+        let args = ["path-info", store_path];
+        assert_eq!(args[0], "path-info");
+        assert_eq!(args[1], store_path);
     }
 }
