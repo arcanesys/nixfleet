@@ -13,7 +13,7 @@
   in {
     # Note: impermanence NixOS module import is handled by mkHost.
     config = lib.mkIf hS.isImpermanent {
-      environment.persistence."/persist/system" = {
+      environment.persistence."/persist" = {
         directories = [
           "/etc/nixos"
           "/etc/NetworkManager/system-connections"
