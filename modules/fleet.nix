@@ -139,5 +139,66 @@ in {
         }
       ];
     };
+
+    # attic-test: exercises Attic binary cache server + client
+    attic-test = mkHost {
+      hostName = "attic-test";
+      platform = "x86_64-linux";
+      isVm = true;
+      hostSpec =
+        orgDefaults
+        // {
+          isImpermanent = true;
+        };
+      modules = [
+        {
+          services.nixfleet-attic-server = {
+            enable = true;
+            signingKeyFile = "/run/secrets/attic-signing-key";
+            openFirewall = true;
+          };
+          services.nixfleet-attic-client = {
+            enable = true;
+            cacheUrl = "http://localhost:8081";
+            publicKey = "attic-test:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+          };
+        }
+      ];
+    };
+
+    # microvm-test: exercises MicroVM host infrastructure (bridge, DHCP, NAT)
+    microvm-test = mkHost {
+      hostName = "microvm-test";
+      platform = "x86_64-linux";
+      isVm = true;
+      hostSpec = orgDefaults;
+      modules = [
+        {
+          services.nixfleet-microvm-host = {
+            enable = true;
+          };
+        }
+      ];
+    };
+
+    # backup-restic-test: exercises backup with restic backend
+    backup-restic-test = mkHost {
+      hostName = "backup-restic-test";
+      platform = "x86_64-linux";
+      isVm = true;
+      hostSpec = orgDefaults;
+      modules = [
+        {
+          nixfleet.backup = {
+            enable = true;
+            backend = "restic";
+            restic = {
+              repository = "/mnt/backup/restic";
+              passwordFile = "/run/secrets/restic-password";
+            };
+          };
+        }
+      ];
+    };
   };
 }

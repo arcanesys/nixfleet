@@ -22,6 +22,9 @@
   # Service modules (auto-included, disabled by default)
   agentModule = ../../scopes/nixfleet/_agent.nix;
   controlPlaneModule = ../../scopes/nixfleet/_control-plane.nix;
+  atticServerModule = ../../scopes/nixfleet/_attic-server.nix;
+  atticClientModule = ../../scopes/nixfleet/_attic-client.nix;
+  microvmHostModule = ../../scopes/nixfleet/_microvm-host.nix;
 
   backupCmd = ''mv {} {}.nbkp.$(date +%Y%m%d%H%M%S) && ls -t {}.nbkp.* 2>/dev/null | tail -n +6 | xargs -r rm -f'';
 
@@ -66,6 +69,9 @@ in
         monitoringScope.nixos
         agentModule
         controlPlaneModule
+        atticServerModule
+        atticClientModule
+        microvmHostModule
       ]
       ++ lib.optionals isVm [
         ../../_hardware/qemu/disk-config.nix
