@@ -1,6 +1,6 @@
 # Apps
 
-Flake apps provided by NixFleet. Available via `nix run .#<app>`. VM lifecycle apps (`build-vm`, `start-vm`, `stop-vm`, `clean-vm`, `test-vm`, `provision`) are exported via `nixfleet.lib.mkVmApps` for fleet repos.
+Flake apps provided by NixFleet. Available via `nix run .#<app>`. VM lifecycle apps (`build-vm`, `start-vm`, `stop-vm`, `clean-vm`, `test-vm`) are exported via `nixfleet.lib.mkVmApps` for fleet repos.
 
 ## validate
 
@@ -156,24 +156,6 @@ Cleans up temp directory and disk on exit unless `--keep` is specified.
 | `--ram <MB>` | string | `4096` | RAM in MB |
 | `--cpus <N>` | string | `2` | CPU count |
 
----
 
-## provision
 
-Install NixOS on real hardware via nixos-anywhere. Linux only.
-
-```sh
-nix run .#provision -- -h web-02 --target root@192.168.1.10
-nix run .#provision -- -h web-02 --target root@192.168.1.10 --identity-key ~/.keys/id_ed25519
-```
-
-Provisions an identity key to the target, runs nixos-anywhere, waits for reboot, and collects the SSH host key for secrets rekeying.
-
-### Flags
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `-h <HOST>` | string | -- | Host config to install |
-| `--target <USER@IP>` | string | -- | SSH target (user@ip) |
-| `--ssh-port <N>` | string | `22` | Target SSH port |
-| `--identity-key <PATH>` | string | -- | Path to identity key for secrets decryption |
+> **Note:** Provisioning real hardware is done via the CLI: `nixfleet host provision --hostname <HOST> --target <USER@IP>`. See the [CLI reference](cli.md#host-provision).

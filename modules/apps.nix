@@ -34,7 +34,7 @@ in {
 
     # Deployment is now standard: nixos-anywhere, nixos-rebuild, darwin-rebuild.
     # Removed: install, build-switch, docs, launch-vm, rollback, spawn-qemu, spawn-utm (ADR-004).
-    # VM lifecycle apps (build-vm, start-vm, stop-vm, clean-vm, test-vm, provision) from mkVmApps.
+    # VM lifecycle apps (build-vm, start-vm, stop-vm, clean-vm, test-vm) from mkVmApps.
 
     apps =
       {
