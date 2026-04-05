@@ -10,7 +10,7 @@ All options under `services.nixfleet-agent`. The module is auto-included by mkHo
 | `controlPlaneUrl` | `str` | -- (required when enabled) | URL of the NixFleet control plane. Example: `"https://fleet.example.com"`. |
 | `machineId` | `str` | `config.networking.hostName` | Machine identifier reported to the control plane. |
 | `pollInterval` | `int` | `300` | Poll interval in seconds. |
-| `cacheUrl` | `nullOr str` | `null` | Binary cache URL for `nix copy --from`. Falls back to control plane default. Example: `"https://cache.fleet.example.com"`. |
+| `cacheUrl` | `nullOr str` | `null` | Global binary cache URL for fetching closures. Resolution order: (1) per-generation `cache_url` provided by the CP; (2) this option if set; (3) if neither is set, the agent verifies the store path exists locally via `nix path-info` instead of fetching — the path must be pre-pushed to the host out-of-band (e.g., via SSH). Example: `"https://cache.fleet.example.com"`. |
 | `dbPath` | `str` | `"/var/lib/nixfleet/state.db"` | Path to the SQLite state database. |
 | `dryRun` | `bool` | `false` | When true, check and fetch but do not apply generations. |
 | `tags` | `listOf str` | `[]` | Tags for grouping this machine in fleet operations. Passed via `NIXFLEET_TAGS` environment variable. |

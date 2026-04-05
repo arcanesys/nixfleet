@@ -65,7 +65,9 @@ Idle ──(poll timer)──→ Checking ──(mismatch)──→ Fetching ─
 
 **Checking** — Queries the control plane for the desired generation and compares it to the current system profile. If they match, skips directly to Reporting with "up-to-date". On mismatch, transitions to Fetching.
 
-**Fetching** — Downloads the closure from a binary cache (per-generation `cache_url` from the CP, or the configured `cacheUrl`, or the default Nix substituters).
+**Fetching** — Resolves the closure using one of two paths depending on cache configuration:
+- If a cache URL is available (per-generation `cache_url` from the CP, or the configured `cacheUrl`): fetches via `nix copy --from <cache_url> <store_path>`.
+- If no cache URL is configured: verifies the store path exists locally via `nix path-info`. If the path is missing, the agent transitions to Idle and reports the error. In this mode the store path must be pre-pushed to the host via SSH or another out-of-band mechanism before the agent polls.
 
 **Applying** — Runs `switch-to-configuration switch` to activate the new generation. If the switch command fails, transitions directly to RollingBack.
 
