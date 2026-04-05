@@ -263,6 +263,102 @@
               msg = "minimal host should not have nftables forced by firewall scope";
             }
           ];
+
+        # --- Attic server: listen port, firewall, impermanence ---
+        eval-attic-server = let
+          cfg = nixosCfg "attic-test";
+        in
+          mkEvalCheck "attic-server" [
+            {
+              check = cfg.services.nixfleet-attic-server.enable;
+              msg = "attic-test should have attic server enabled";
+            }
+            {
+              check = builtins.elem 8081 cfg.networking.firewall.allowedTCPPorts;
+              msg = "attic-test should have port 8081 in firewall";
+            }
+            {
+              check = cfg.services.nixfleet-attic-server.signingKeyFile == "/run/secrets/attic-signing-key";
+              msg = "attic-test should have signing key file set";
+            }
+            {
+              check = cfg.services.nixfleet-attic-server.storage.type == "local";
+              msg = "attic-test should default to local storage";
+            }
+            {
+              check = builtins.elem "/var/lib/nixfleet-attic" cfg.environment.persistence."/persist".directories;
+              msg = "attic-test should persist /var/lib/nixfleet-attic (impermanent host)";
+            }
+          ];
+
+        # --- Attic client: substituters and trusted keys ---
+        eval-attic-client = let
+          cfg = nixosCfg "attic-test";
+        in
+          mkEvalCheck "attic-client" [
+            {
+              check = cfg.services.nixfleet-attic-client.enable;
+              msg = "attic-test should have attic client enabled";
+            }
+            {
+              check = builtins.elem "http://localhost:8081" cfg.nix.settings.substituters;
+              msg = "attic client should add cache URL to substituters";
+            }
+            {
+              check = builtins.elem "attic-test:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" cfg.nix.settings.trusted-public-keys;
+              msg = "attic client should add public key to trusted-public-keys";
+            }
+          ];
+
+        # --- MicroVM host: bridge, IP forwarding ---
+        eval-microvm-host = let
+          cfg = nixosCfg "microvm-test";
+        in
+          mkEvalCheck "microvm-host" [
+            {
+              check = cfg.services.nixfleet-microvm-host.enable;
+              msg = "microvm-test should have microvm host enabled";
+            }
+            {
+              check = cfg.services.nixfleet-microvm-host.bridge.name == "nixfleet-br0";
+              msg = "microvm-test should have default bridge name";
+            }
+            {
+              check = cfg.boot.kernel.sysctl."net.ipv4.ip_forward" == 1;
+              msg = "microvm-test should have IP forwarding enabled";
+            }
+            {
+              check = cfg.networking.nat.enable;
+              msg = "microvm-test should have NAT enabled";
+            }
+            {
+              check = cfg.services.dnsmasq.enable;
+              msg = "microvm-test should have dnsmasq DHCP enabled";
+            }
+          ];
+
+        # --- Backup restic: ExecStart, packages ---
+        eval-backup-restic = let
+          cfg = nixosCfg "backup-restic-test";
+        in
+          mkEvalCheck "backup-restic" [
+            {
+              check = cfg.nixfleet.backup.enable;
+              msg = "backup-restic-test should have backup enabled";
+            }
+            {
+              check = cfg.nixfleet.backup.backend == "restic";
+              msg = "backup-restic-test should have restic backend";
+            }
+            {
+              check = cfg.nixfleet.backup.restic.repository == "/mnt/backup/restic";
+              msg = "backup-restic-test should have restic repository set";
+            }
+            {
+              check = builtins.any (p: (p.pname or "") == "restic") cfg.environment.systemPackages;
+              msg = "backup-restic-test should have restic in system packages";
+            }
+          ];
       };
     };
 }

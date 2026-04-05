@@ -9,10 +9,10 @@ modules/
 ├── _shared/lib/       # Framework API: mkHost, mkVmApps
 ├── _shared/           # hostSpec options, disk templates
 ├── core/              # Core NixOS/Darwin modules (_nixos.nix, _darwin.nix)
-├── scopes/            # Scope modules (_base, _impermanence, _firewall, _secrets, _backup, _monitoring, nixfleet/_agent, nixfleet/_control-plane)
+├── scopes/            # Scope modules (_base, _impermanence, _firewall, _secrets, _backup, _monitoring, nixfleet/_agent, nixfleet/_control-plane, nixfleet/_attic-server, nixfleet/_attic-client, nixfleet/_microvm-host)
 ├── tests/             # Eval tests, VM tests, integration tests
 ├── apps.nix           # Flake apps (validate, build-vm, start-vm, stop-vm, clean-vm, test-vm, provision)
-├── fleet.nix          # Framework test fleet (5 hosts)
+├── fleet.nix          # Framework test fleet (8 hosts)
 └── flake-module.nix   # Framework exports (lib.mkHost, nixosModules, diskoTemplates)
 agent/                 # Rust: nixfleet-agent (state machine daemon)
 control-plane/         # Rust: nixfleet-control-plane (Axum HTTP server)
@@ -101,12 +101,15 @@ Scopes are plain NixOS/HM modules auto-included by mkHost. They self-activate vi
 |-------|------------------------|-----------------|
 | `base` | `!isMinimal` | Universal CLI packages (NixOS + Darwin + HM) |
 | `impermanence` | `isImpermanent` | Btrfs root wipe + system/user persistence paths |
-| `firewall` | `!isMinimal` | SSH rate limiting, nftables, drop logging |
+| `firewall` | `!isMinimal` | SSH rate limiting, nftables, drop logging; bridge forwarding rules when microVM host is enabled |
 | `secrets` | `nixfleet.secrets.enable = true` | Identity paths, persist, boot ordering, key validation |
-| `backup` | `nixfleet.backup.enable = true` | Systemd timer, hooks, health ping, status reporting |
+| `backup` | `nixfleet.backup.enable = true` | Systemd timer, hooks, health ping, status reporting; optional `backend` (`"restic"`, `"borgbackup"`) for concrete backup commands |
 | `monitoring` | `nixfleet.monitoring.nodeExporter.enable = true` | Node exporter with fleet-tuned collector defaults |
 | `nixfleet-agent` | `services.nixfleet-agent.enable = true` | Fleet agent systemd service; key options: `metricsPort` (Prometheus listener), `metricsOpenFirewall`, `allowInsecure`. Tags from `tags` option are sent in every health report and auto-synced to the CP. |
 | `nixfleet-control-plane` | `services.nixfleet-control-plane.enable = true` | Control plane HTTP server; `GET /metrics` always available on listen address; routes split: agent-facing (mTLS, no API key) vs admin (API key required); when `tls.clientCa` is set, all connections require a client certificate (defense-in-depth) |
+| `nixfleet-attic-server` | `services.nixfleet-attic-server.enable = true` | Attic binary cache server; key options: `signingKeyFile`, `storage.type` (`"local"` / `"s3"`), `garbageCollection.schedule`, `openFirewall` |
+| `nixfleet-attic-client` | `services.nixfleet-attic-client.enable = true` | Attic cache client; configures `nix.settings.substituters` + `trusted-public-keys`, installs `attic-client` CLI |
+| `nixfleet-microvm-host` | `services.nixfleet-microvm-host.enable = true` | MicroVM host with TAP + bridge networking, DHCP (dnsmasq), NAT; microVMs participate in fleet as first-class members |
 
 Fleet repos add opinionated scopes (dev tools, desktop environments, theming, etc.) as plain NixOS/HM modules.
 
@@ -192,16 +195,16 @@ See `examples/` for standalone-host, batch-hosts, and client-fleet patterns.
 
 ## Architecture
 
-- **mkHost** is a closure over framework inputs (nixpkgs, home-manager, disko, impermanence)
+- **mkHost** is a closure over framework inputs (nixpkgs, home-manager, disko, impermanence, attic, microvm)
 - It calls `nixosSystem`/`darwinSystem` directly, injecting core modules and scopes
 - **Scopes** are plain NixOS/HM modules (`_`-prefixed for import-tree exclusion) that self-activate via hostSpec flags
-- **Service modules** (agent, CP) are auto-included by mkHost, disabled by default
+- **Service modules** (agent, CP, attic-server, attic-client, microvm-host) are auto-included by mkHost, disabled by default
 - **hostSpec** provides base options; fleet repos extend with their own flags via plain NixOS modules
 - **Framework inputs via specialArgs:** mkHost passes framework inputs (nixpkgs, home-manager, disko, etc.) to modules via `specialArgs = { inherit inputs; }`. Fleet repos access these as `inputs` in their modules. Fleet-specific customization uses hostSpec extensions and plain NixOS modules, not a separate input namespace.
 
 ## Critical Rules
 
-- **Framework vs fleet:** Opinionated modules (graphical, dev, theming, dotfiles) belong in fleet repos. The framework provides lib + core + base/impermanence/agent/CP.
+- **Framework vs fleet:** Opinionated modules (graphical, dev, theming, dotfiles) belong in fleet repos. The framework provides lib + core + base/impermanence/agent/CP/attic/microvm.
 - **Plain modules:** Scopes are plain NixOS/HM modules. They self-activate with `lib.mkIf hS.<flag>`.
 - **Scope-aware impermanence:** Persist paths live alongside their program definitions, not centralized.
 - **hostSpec extension:** Fleet repos extend `hostSpec` with their own flags via plain NixOS modules.

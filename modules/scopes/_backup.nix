@@ -1,6 +1,7 @@
 # Backup scaffolding — backend-agnostic timer, hooks, health, persistence.
-# Fleet repos set systemd.services.nixfleet-backup.serviceConfig.ExecStart
-# to their chosen backup tool (restic, borgbackup, etc.).
+# Optional concrete backends: restic, borgbackup.
+# When backend is null, fleet repos set systemd.services.nixfleet-backup.serviceConfig.ExecStart
+# to their chosen backup tool.
 # Returns { nixos } module attrset.
 # mkHost imports this directly; it activates via nixfleet.backup.enable.
 {
@@ -13,9 +14,73 @@
     hS = config.hostSpec;
     cfg = config.nixfleet.backup;
     types = lib.types;
+
+    excludeFlags = backend:
+      if backend == "restic"
+      then lib.concatMapStringsSep " " (p: "--exclude ${lib.escapeShellArg p}") cfg.exclude
+      else lib.concatMapStringsSep " " (p: "--exclude ${lib.escapeShellArg p}") cfg.exclude;
+
+    resticBackupScript = pkgs.writeShellScript "nixfleet-backup-restic" ''
+      set -euo pipefail
+      export RESTIC_REPOSITORY=${lib.escapeShellArg cfg.restic.repository}
+      export RESTIC_PASSWORD_FILE=${lib.escapeShellArg cfg.restic.passwordFile}
+      export RESTIC_CACHE_DIR=${cfg.stateDirectory}/restic-cache
+
+      # Initialize repo if needed (idempotent)
+      ${pkgs.restic}/bin/restic cat config >/dev/null 2>&1 || \
+        ${pkgs.restic}/bin/restic init
+
+      # Backup
+      ${pkgs.restic}/bin/restic backup \
+        --tag ${lib.escapeShellArg config.networking.hostName} \
+        ${excludeFlags "restic"} \
+        ${lib.concatStringsSep " " (map lib.escapeShellArg cfg.paths)}
+
+      # Prune
+      ${pkgs.restic}/bin/restic forget \
+        --keep-daily ${toString cfg.retention.daily} \
+        --keep-weekly ${toString cfg.retention.weekly} \
+        --keep-monthly ${toString cfg.retention.monthly} \
+        --prune
+    '';
+
+    borgArchiveName = "${config.networking.hostName}-{now:%Y-%m-%dT%H:%M:%S}";
+
+    borgBackupScript = pkgs.writeShellScript "nixfleet-backup-borg" ''
+      set -euo pipefail
+      export BORG_REPO=${lib.escapeShellArg cfg.borgbackup.repository}
+      ${lib.optionalString (cfg.borgbackup.passphraseFile != null)
+        "export BORG_PASSCOMMAND=\"cat ${lib.escapeShellArg cfg.borgbackup.passphraseFile}\""}
+      ${lib.optionalString (cfg.borgbackup.passphraseFile == null)
+        "export BORG_PASSPHRASE=\"\""}
+
+      # Initialize repo if needed (idempotent)
+      ${pkgs.borgbackup}/bin/borg info "$BORG_REPO" >/dev/null 2>&1 || \
+        ${pkgs.borgbackup}/bin/borg init --encryption=${lib.escapeShellArg cfg.borgbackup.encryption}
+
+      # Backup
+      ${pkgs.borgbackup}/bin/borg create \
+        ${excludeFlags "borgbackup"} \
+        "$BORG_REPO::${borgArchiveName}" \
+        ${lib.concatStringsSep " " (map lib.escapeShellArg cfg.paths)}
+
+      # Prune
+      ${pkgs.borgbackup}/bin/borg prune \
+        --keep-daily ${toString cfg.retention.daily} \
+        --keep-weekly ${toString cfg.retention.weekly} \
+        --keep-monthly ${toString cfg.retention.monthly}
+
+      ${pkgs.borgbackup}/bin/borg compact
+    '';
   in {
     options.nixfleet.backup = {
       enable = lib.mkEnableOption "NixFleet backup scaffolding (timer, health, persistence)";
+
+      backend = lib.mkOption {
+        type = types.nullOr (types.enum ["restic" "borgbackup"]);
+        default = null;
+        description = "Backup backend. Null = fleet sets ExecStart manually.";
+      };
 
       paths = lib.mkOption {
         type = types.listOf types.str;
@@ -90,6 +155,40 @@
         default = "/var/lib/nixfleet-backup";
         description = "Directory for backup state/cache. Persisted on impermanent hosts.";
       };
+
+      restic = {
+        repository = lib.mkOption {
+          type = types.str;
+          default = "";
+          example = "/mnt/backup/restic";
+          description = "Restic repository URL or path.";
+        };
+        passwordFile = lib.mkOption {
+          type = types.str;
+          default = "";
+          example = "/run/secrets/restic-password";
+          description = "Path to file containing the repository password.";
+        };
+      };
+
+      borgbackup = {
+        repository = lib.mkOption {
+          type = types.str;
+          default = "";
+          example = "/mnt/backup/borg";
+          description = "Borg repository path or ssh://user@host/path.";
+        };
+        passphraseFile = lib.mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Path to file containing the repository passphrase. Null = repokey without passphrase.";
+        };
+        encryption = lib.mkOption {
+          type = types.str;
+          default = "repokey";
+          description = "Borg encryption mode (repokey, repokey-blake2, none, etc.).";
+        };
+      };
     };
 
     config = lib.mkIf cfg.enable {
@@ -103,16 +202,24 @@
         };
       };
 
-      # Service skeleton — fleet module sets ExecStart
+      # Service skeleton — backend sets ExecStart, or fleet module overrides
       systemd.services.nixfleet-backup = {
         description = "NixFleet Backup";
         after = ["network-online.target"];
         wants = ["network-online.target"];
 
-        serviceConfig = {
-          Type = "oneshot";
-          StateDirectory = "nixfleet-backup";
-        };
+        serviceConfig = lib.mkMerge [
+          {
+            Type = "oneshot";
+            StateDirectory = "nixfleet-backup";
+          }
+          (lib.mkIf (cfg.backend == "restic") {
+            ExecStart = resticBackupScript;
+          })
+          (lib.mkIf (cfg.backend == "borgbackup") {
+            ExecStart = borgBackupScript;
+          })
+        ];
 
         # Pre-hook
         preStart = lib.mkIf (cfg.preHook != "") cfg.preHook;
@@ -142,6 +249,11 @@
       };
       systemd.services.nixfleet-backup.unitConfig.OnFailure =
         lib.mkIf (cfg.healthCheck.onFailure != null) ["nixfleet-backup-failure.service"];
+
+      # Add backend packages to system
+      environment.systemPackages =
+        lib.optional (cfg.backend == "restic") pkgs.restic
+        ++ lib.optional (cfg.backend == "borgbackup") pkgs.borgbackup;
 
       # Impermanence: persist backup state
       environment.persistence."/persist".directories =

@@ -26,6 +26,7 @@
 - [Standard Tools](guide/deploying/standard-tools.md)
 - [Control Plane](guide/deploying/control-plane.md)
 - [Agent](guide/deploying/agent.md)
+- [Binary Cache (Attic)](guide/deploying/attic.md)
 - [Rollouts](guide/deploying/rollouts.md)
 
 ## Operating
@@ -51,6 +52,8 @@
 - [Control Plane Options](reference/control-plane-options.md)
 - [Secrets Options](reference/secrets-options.md)
 - [Backup Options](reference/backup-options.md)
+- [Attic Options](reference/attic-options.md)
+- [MicroVM Host Options](reference/microvm-options.md)
 - [Monitoring Options](reference/monitoring-options.md)
 - [Firewall Scope](reference/firewall-scope.md)
 - [Core NixOS Module](reference/core-nixos.md)

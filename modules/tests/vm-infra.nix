@@ -120,6 +120,119 @@
             machine.succeed("stat -c '%a' /etc/ssh/ssh_host_ed25519_key | grep -q '600'")
           '';
         };
+
+        # --- vm-attic-server: Attic binary cache server starts and responds ---
+        vm-attic-server = let
+          # Generate a signing key at build time for the test
+          signingKeyFile = pkgs.runCommand "attic-test-signing-key" {} ''
+            ${pkgs.nix}/bin/nix-store --generate-binary-cache-key test-cache "$out" /dev/null
+          '';
+        in
+          pkgs.testers.nixosTest {
+            name = "vm-attic-server";
+
+            nodes.server = mkTestNode {
+              hostSpecValues = defaultTestSpec // {hostName = "server";};
+              extraModules = [
+                {
+                  services.nixfleet-attic-server = {
+                    enable = true;
+                    signingKeyFile = "${signingKeyFile}";
+                  };
+                }
+              ];
+            };
+
+            nodes.client = mkTestNode {
+              hostSpecValues = defaultTestSpec // {hostName = "client";};
+            };
+
+            testScript = ''
+              server.start()
+              client.start()
+
+              server.wait_for_unit("multi-user.target")
+              server.wait_for_unit("nixfleet-attic-server.service")
+              server.wait_for_open_port(8081)
+
+              # Attic server should respond on port 8081
+              server.succeed("curl -sf http://localhost:8081/")
+
+              # Storage directory should be created by StateDirectory=
+              server.succeed("test -d /var/lib/nixfleet-attic")
+            '';
+          };
+
+        # --- vm-attic-client: Attic client configures Nix substituters and installs CLI ---
+        vm-attic-client = pkgs.testers.nixosTest {
+          name = "vm-attic-client";
+
+          nodes.machine = mkTestNode {
+            hostSpecValues = defaultTestSpec;
+            extraModules = [
+              {
+                services.nixfleet-attic-client = {
+                  enable = true;
+                  cacheUrl = "http://cache.example.com";
+                  publicKey = "test-cache:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+                };
+              }
+            ];
+          };
+
+          testScript = ''
+            machine.wait_for_unit("multi-user.target")
+
+            # Nix substituters should include the cache URL
+            machine.succeed("nix show-config | grep substituters | grep cache.example.com")
+
+            # Nix trusted-public-keys should include the signing key
+            machine.succeed("nix show-config | grep trusted-public-keys | grep test-cache")
+
+            # attic CLI should be available
+            machine.succeed("which attic")
+          '';
+        };
+
+        # --- vm-backup-restic: restic backend wires up correctly ---
+        vm-backup-restic = let
+          passwordFile = pkgs.writeText "restic-test-password" "test-password";
+          repositoryPath = "/tmp/restic-test-repo";
+        in
+          pkgs.testers.nixosTest {
+            name = "vm-backup-restic";
+
+            nodes.machine = mkTestNode {
+              hostSpecValues = defaultTestSpec;
+              extraModules = [
+                {
+                  nixfleet.backup = {
+                    enable = true;
+                    backend = "restic";
+                    schedule = "*-*-* *:*:00";
+                    paths = ["/tmp"];
+                    restic = {
+                      repository = repositoryPath;
+                      passwordFile = "${passwordFile}";
+                    };
+                  };
+                }
+              ];
+            };
+
+            testScript = ''
+              machine.wait_for_unit("multi-user.target")
+
+              # Backup timer should be registered
+              machine.succeed("systemctl list-timers | grep nixfleet-backup")
+
+              # restic binary should be available (installed by backend = "restic")
+              machine.succeed("which restic")
+
+              # Backup service ExecStart should reference restic
+              machine.succeed("systemctl cat nixfleet-backup.service | grep restic")
+            '';
+          };
       };
     };
 }
