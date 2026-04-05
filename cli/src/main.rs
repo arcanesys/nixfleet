@@ -133,6 +133,17 @@ enum Commands {
         #[command(subcommand)]
         action: MachineAction,
     },
+
+    /// Bootstrap the first admin API key (only works when no keys exist)
+    Bootstrap {
+        /// Name for the admin key
+        #[arg(long, default_value = "admin")]
+        name: String,
+
+        /// Output raw JSON instead of human-friendly format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -388,6 +399,11 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Bootstrap { name, json } => {
+            // Bootstrap does not require an API key, but does use mTLS
+            let http_client = client::build_client(&tls, "")?;
+            bootstrap(&http_client, &cli.control_plane_url, &name, json).await
+        }
     }
 }
 
@@ -471,6 +487,54 @@ async fn rollback(
             "Desired generation set to {} for {} (agent will pick up on next poll)",
             store_path, host
         );
+    }
+
+    Ok(())
+}
+
+async fn bootstrap(
+    client: &reqwest::Client,
+    cp_url: &str,
+    name: &str,
+    json_output: bool,
+) -> Result<()> {
+    let url = format!("{}/api/v1/keys/bootstrap", cp_url);
+    let body = serde_json::json!({ "name": name });
+
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("failed to reach control plane")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 409 {
+            bail!("Bootstrap failed: API keys already exist. Use an existing admin key to create new keys.");
+        }
+        bail!("Control plane returned {}: {}", status, body);
+    }
+
+    let payload: serde_json::Value = resp
+        .json()
+        .await
+        .context("failed to parse bootstrap response")?;
+
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload)
+                .context("failed to serialize bootstrap response")?
+        );
+    } else {
+        let key = payload["key"]
+            .as_str()
+            .context("response missing 'key' field")?;
+        let role = payload["role"].as_str().unwrap_or("admin");
+        eprintln!("API key created (name: {}, role: {})", name, role);
+        println!("{}", key);
     }
 
     Ok(())
