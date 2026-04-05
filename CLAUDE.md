@@ -11,7 +11,7 @@ modules/
 ├── core/              # Core NixOS/Darwin modules (_nixos.nix, _darwin.nix)
 ├── scopes/            # Scope modules (_base, _impermanence, _firewall, _secrets, _backup, _monitoring, nixfleet/_agent, nixfleet/_control-plane, nixfleet/_attic-server, nixfleet/_attic-client, nixfleet/_microvm-host)
 ├── tests/             # Eval tests, VM tests, integration tests
-├── apps.nix           # Flake apps (validate, build-vm, start-vm, stop-vm, clean-vm, test-vm, provision)
+├── apps.nix           # Flake apps (validate, build-vm, start-vm, stop-vm, clean-vm, test-vm)
 ├── fleet.nix          # Framework test fleet (8 hosts)
 └── flake-module.nix   # Framework exports (lib.mkHost, nixosModules, diskoTemplates)
 agent/                 # Rust: nixfleet-agent (state machine daemon)
@@ -46,7 +46,7 @@ nix run .#start-vm -- --all --vlan 1234  # start all with inter-VM VLAN
 nix run .#stop-vm -- -h web-02     # stop VM daemon
 nix run .#clean-vm -- -h web-02    # delete VM disk + state
 nix run .#test-vm -- -h web-02     # end-to-end VM test cycle
-nix run .#provision -- -h web-02 --target root@192.168.1.10  # real hardware
+nixfleet host provision --hostname web-02 --target root@192.168.1.10  # real hardware (CLI)
 nix build .#iso                    # custom installer ISO
 
 # Deployment (standard NixOS tooling — no custom scripts)
