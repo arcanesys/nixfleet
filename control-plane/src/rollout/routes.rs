@@ -71,9 +71,10 @@ pub async fn create_rollout(
         if req.health_timeout.is_none() {
             req.health_timeout = Some(policy.health_timeout_secs as u64);
         }
-        // Strategy from policy is used as-is (the request always has a strategy field,
-        // but when --policy is used the CLI will set it from the policy)
-        let _ = policy_strategy; // strategy comes from the request
+        // Use policy strategy as default when request has the CLI default (all-at-once)
+        if req.strategy == RolloutStrategy::AllAtOnce && policy_strategy != RolloutStrategy::AllAtOnce {
+            req.strategy = policy_strategy;
+        }
 
         Some(policy.id.clone())
     } else {
