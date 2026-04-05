@@ -67,6 +67,28 @@ pub fn build_app(
             "/api/v1/rollouts/{id}/cancel",
             post(rollout::routes::cancel_rollout),
         )
+        .route(
+            "/api/v1/policies",
+            post(rollout::policy::create_policy).get(rollout::policy::list_policies),
+        )
+        .route(
+            "/api/v1/policies/{name}",
+            get(rollout::policy::get_policy)
+                .put(rollout::policy::update_policy)
+                .delete(rollout::policy::delete_policy),
+        )
+        .route(
+            "/api/v1/schedules",
+            post(rollout::schedule::create_schedule).get(rollout::schedule::list_schedules),
+        )
+        .route(
+            "/api/v1/schedules/{id}",
+            get(rollout::schedule::get_schedule),
+        )
+        .route(
+            "/api/v1/schedules/{id}/cancel",
+            post(rollout::schedule::cancel_schedule),
+        )
         .route("/api/v1/audit", get(audit::list_audit_events))
         .route("/api/v1/audit/export", get(audit::export_audit_csv))
         .layer(middleware::from_fn(move |headers, request, next| {

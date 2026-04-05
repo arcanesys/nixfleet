@@ -4,7 +4,8 @@ use axum::{Extension, Json};
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use nixfleet_types::rollout::{
     BatchDetail, BatchStatus, BatchSummary, CreateRolloutRequest, CreateRolloutResponse,
-    MachineHealthStatus, OnFailure, RolloutDetail, RolloutStatus, RolloutStrategy, RolloutTarget,
+    MachineHealthStatus, OnFailure, RolloutDetail, RolloutEvent, RolloutStatus, RolloutStrategy,
+    RolloutTarget,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -33,6 +34,51 @@ pub async fn create_rollout(
             "deploy or admin role required".to_string(),
         ));
     }
+
+    // Resolve policy if specified — policy values serve as defaults
+    let mut req = req;
+    let resolved_policy_id = if let Some(ref policy_name) = req.policy {
+        let policy = db
+            .get_policy_by_name(policy_name)
+            .map_err(|e| {
+                tracing::error!(error = %e, "Failed to get policy");
+                (StatusCode::INTERNAL_SERVER_ERROR, "failed to get policy".to_string())
+            })?
+            .ok_or((
+                StatusCode::BAD_REQUEST,
+                format!("policy not found: {policy_name}"),
+            ))?;
+
+        // Policy values act as defaults — explicit request values override
+        let policy_strategy: RolloutStrategy =
+            serde_json::from_str(&format!("\"{}\"", policy.strategy))
+                .unwrap_or(RolloutStrategy::Staged);
+        let policy_on_failure: OnFailure =
+            serde_json::from_str(&format!("\"{}\"", policy.on_failure)).unwrap_or_default();
+        let policy_batch_sizes: Vec<String> =
+            serde_json::from_str(&policy.batch_sizes).unwrap_or_default();
+
+        // Use policy defaults for fields that were left at their defaults in the request
+        if req.batch_sizes.is_none() && !policy_batch_sizes.is_empty() {
+            req.batch_sizes = Some(policy_batch_sizes);
+        }
+        if req.failure_threshold == "1" {
+            req.failure_threshold = policy.failure_threshold.clone();
+        }
+        if req.on_failure == OnFailure::Pause && policy_on_failure != OnFailure::Pause {
+            req.on_failure = policy_on_failure;
+        }
+        if req.health_timeout.is_none() {
+            req.health_timeout = Some(policy.health_timeout_secs as u64);
+        }
+        // Strategy from policy is used as-is (the request always has a strategy field,
+        // but when --policy is used the CLI will set it from the policy)
+        let _ = policy_strategy; // strategy comes from the request
+
+        Some(policy.id.clone())
+    } else {
+        None
+    };
 
     // Resolve target machines
     let machine_ids = match &req.target {
@@ -137,6 +183,11 @@ pub async fn create_rollout(
         });
     }
 
+    // Set policy_id if applicable
+    if let Some(ref policy_id) = resolved_policy_id {
+        let _ = db.set_rollout_policy_id(&rollout_id, policy_id);
+    }
+
     // Set rollout status to running
     db.update_rollout_status(&rollout_id, "running")
         .map_err(|e| {
@@ -146,6 +197,17 @@ pub async fn create_rollout(
                 "failed to update rollout status".to_string(),
             )
         })?;
+
+    // Emit rollout events
+    let _ = db.insert_rollout_event(
+        &rollout_id,
+        "status_change",
+        &format!(
+            "{{\"from\":\"created\",\"to\":\"running\",\"strategy\":\"{}\"}}",
+            req.strategy
+        ),
+        &actor_id,
+    );
 
     // Audit log
     let total_machines = machine_ids.len();
@@ -253,7 +315,12 @@ pub async fn get_rollout(
         )
     })?;
 
-    Ok(Json(row_to_detail(&rollout, &batches)))
+    let events = db.get_rollout_events(&rollout.id).unwrap_or_default();
+    let policy_id = db.get_rollout_policy_id(&rollout.id).unwrap_or(None);
+
+    Ok(Json(row_to_detail_with_events(
+        &rollout, &batches, &events, policy_id,
+    )))
 }
 
 /// POST /api/v1/rollouts/{id}/resume
@@ -319,6 +386,12 @@ pub async fn resume_rollout(
         )
     })?;
 
+    let _ = db.insert_rollout_event(
+        &id,
+        "status_change",
+        "{\"from\":\"paused\",\"to\":\"running\"}",
+        &actor.identifier(),
+    );
     let _ = db.insert_audit_event(&actor.identifier(), "rollout.resumed", &id, None);
 
     tracing::info!(rollout_id = %id, "Rollout resumed");
@@ -371,6 +444,12 @@ pub async fn cancel_rollout(
         )
     })?;
 
+    let _ = db.insert_rollout_event(
+        &id,
+        "status_change",
+        &format!("{{\"from\":\"{}\",\"to\":\"cancelled\"}}", rollout.status),
+        &actor.identifier(),
+    );
     let _ = db.insert_audit_event(&actor.identifier(), "rollout.cancelled", &id, None);
 
     tracing::info!(rollout_id = %id, "Rollout cancelled");
@@ -379,6 +458,16 @@ pub async fn cancel_rollout(
 
 /// Convert database rows into a RolloutDetail response type.
 fn row_to_detail(rollout: &RolloutRow, batch_rows: &[RolloutBatchRow]) -> RolloutDetail {
+    row_to_detail_with_events(rollout, batch_rows, &[], None)
+}
+
+/// Convert database rows into a RolloutDetail response type, with events and policy_id.
+fn row_to_detail_with_events(
+    rollout: &RolloutRow,
+    batch_rows: &[RolloutBatchRow],
+    event_rows: &[crate::db::RolloutEventRow],
+    policy_id: Option<String>,
+) -> RolloutDetail {
     let strategy: RolloutStrategy = serde_json::from_str(&format!("\"{}\"", rollout.strategy))
         .unwrap_or(RolloutStrategy::Staged);
 
@@ -420,6 +509,18 @@ fn row_to_detail(rollout: &RolloutRow, batch_rows: &[RolloutBatchRow]) -> Rollou
         })
         .collect();
 
+    let events: Vec<RolloutEvent> = event_rows
+        .iter()
+        .map(|e| RolloutEvent {
+            id: e.id,
+            rollout_id: e.rollout_id.clone(),
+            event_type: e.event_type.clone(),
+            detail: e.detail.clone(),
+            actor: e.actor.clone(),
+            created_at: parse_datetime(&e.created_at),
+        })
+        .collect();
+
     RolloutDetail {
         id: rollout.id.clone(),
         status,
@@ -432,6 +533,8 @@ fn row_to_detail(rollout: &RolloutRow, batch_rows: &[RolloutBatchRow]) -> Rollou
         created_at,
         updated_at,
         created_by: rollout.created_by.clone(),
+        policy_id,
+        events,
     }
 }
 

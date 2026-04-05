@@ -32,14 +32,185 @@ pub fn spawn(state: Arc<RwLock<FleetState>>, db: Arc<Db>) -> JoinHandle<()> {
     })
 }
 
-/// One evaluation cycle: advance all running rollouts.
+/// One evaluation cycle: advance all running rollouts and trigger due scheduled rollouts.
 async fn tick(state: &Arc<RwLock<FleetState>>, db: &Arc<Db>) -> anyhow::Result<()> {
+    // Trigger due scheduled rollouts
+    if let Err(error) = trigger_due_schedules(state, db).await {
+        tracing::error!(%error, "Failed to trigger scheduled rollouts");
+    }
+
     let rollouts = db.list_rollouts_by_status(Some("running"), 100)?;
 
     for rollout in rollouts {
         if let Err(error) = process_rollout(state, db, &rollout).await {
             tracing::error!(rollout_id = %rollout.id, %error, "Failed to process rollout");
         }
+    }
+
+    Ok(())
+}
+
+/// Check for and trigger any scheduled rollouts whose time has come.
+async fn trigger_due_schedules(
+    state: &Arc<RwLock<FleetState>>,
+    db: &Arc<Db>,
+) -> anyhow::Result<()> {
+    let due = db.get_due_scheduled_rollouts()?;
+
+    for schedule in due {
+        tracing::info!(schedule_id = %schedule.id, "Triggering scheduled rollout");
+
+        // Resolve strategy: explicit on schedule > policy > default
+        let (strategy, batch_sizes, failure_threshold, on_failure, health_timeout) =
+            if let Some(ref policy_id) = schedule.policy_id {
+                // Load policy defaults — iterate all policies to find by ID
+                let policies = db.list_policies()?;
+                let policy = policies.iter().find(|p| p.id == *policy_id);
+                if let Some(p) = policy {
+                    (
+                        schedule.strategy.clone().unwrap_or_else(|| p.strategy.clone()),
+                        schedule.batch_sizes.clone().unwrap_or_else(|| p.batch_sizes.clone()),
+                        schedule.failure_threshold.clone().unwrap_or_else(|| p.failure_threshold.clone()),
+                        schedule.on_failure.clone().unwrap_or_else(|| p.on_failure.clone()),
+                        schedule.health_timeout_secs.unwrap_or(p.health_timeout_secs),
+                    )
+                } else {
+                    tracing::warn!(schedule_id = %schedule.id, policy_id, "Policy not found, using schedule values");
+                    (
+                        schedule.strategy.clone().unwrap_or_else(|| "all_at_once".to_string()),
+                        schedule.batch_sizes.clone().unwrap_or_else(|| "[\"100%\"]".to_string()),
+                        schedule.failure_threshold.clone().unwrap_or_else(|| "1".to_string()),
+                        schedule.on_failure.clone().unwrap_or_else(|| "pause".to_string()),
+                        schedule.health_timeout_secs.unwrap_or(300),
+                    )
+                }
+            } else {
+                (
+                    schedule.strategy.clone().unwrap_or_else(|| "all_at_once".to_string()),
+                    schedule.batch_sizes.clone().unwrap_or_else(|| "[\"100%\"]".to_string()),
+                    schedule.failure_threshold.clone().unwrap_or_else(|| "1".to_string()),
+                    schedule.on_failure.clone().unwrap_or_else(|| "pause".to_string()),
+                    schedule.health_timeout_secs.unwrap_or(300),
+                )
+            };
+
+        // Resolve target machines
+        let machine_ids = if let Some(ref tags_json) = schedule.target_tags {
+            let tags: Vec<String> = serde_json::from_str(tags_json).unwrap_or_default();
+            db.get_machines_by_tags(&tags)?
+        } else if let Some(ref hosts_json) = schedule.target_hosts {
+            serde_json::from_str(hosts_json).unwrap_or_default()
+        } else {
+            tracing::warn!(schedule_id = %schedule.id, "No target specified");
+            db.update_scheduled_rollout_status(&schedule.id, "cancelled", None)?;
+            continue;
+        };
+
+        if machine_ids.is_empty() {
+            tracing::warn!(schedule_id = %schedule.id, "No machines match target");
+            db.update_scheduled_rollout_status(&schedule.id, "cancelled", None)?;
+            continue;
+        }
+
+        // Check for active rollout conflicts
+        let mut conflict = false;
+        for machine_id in &machine_ids {
+            if let Ok(Some(rollout_id)) = db.machine_in_active_rollout(machine_id) {
+                tracing::warn!(
+                    schedule_id = %schedule.id,
+                    machine_id,
+                    rollout_id = %rollout_id,
+                    "Machine in active rollout, skipping schedule"
+                );
+                conflict = true;
+                break;
+            }
+        }
+        if conflict {
+            continue; // Will retry on next tick
+        }
+
+        // Build batches
+        let parsed_strategy = match strategy.as_str() {
+            "canary" => nixfleet_types::rollout::RolloutStrategy::Canary,
+            "staged" => nixfleet_types::rollout::RolloutStrategy::Staged,
+            _ => nixfleet_types::rollout::RolloutStrategy::AllAtOnce,
+        };
+        let parsed_sizes: Option<Vec<String>> = serde_json::from_str(&batch_sizes).ok();
+        let effective_sizes =
+            crate::rollout::batch::effective_batch_sizes(&parsed_strategy, &parsed_sizes);
+        let batches = crate::rollout::batch::build_batches(&machine_ids, &effective_sizes);
+
+        // Capture previous generation
+        let previous_generation = {
+            let fleet = state.read().await;
+            fleet
+                .machines
+                .get(&machine_ids[0])
+                .and_then(|m| m.last_report.as_ref())
+                .map(|r| r.current_generation.clone())
+        };
+
+        // Create the rollout
+        let rollout_id = format!("r-{}", uuid::Uuid::new_v4());
+        let target_tags = schedule.target_tags.as_deref();
+        let target_hosts = schedule.target_hosts.as_deref();
+
+        db.create_rollout(
+            &rollout_id,
+            &schedule.generation_hash,
+            schedule.cache_url.as_deref(),
+            &strategy,
+            &serde_json::to_string(&effective_sizes).unwrap_or_default(),
+            &failure_threshold,
+            &on_failure,
+            health_timeout,
+            target_tags,
+            target_hosts,
+            previous_generation.as_deref(),
+            &format!("schedule:{}", schedule.id),
+        )?;
+
+        // Set policy_id if applicable
+        if let Some(ref policy_id) = schedule.policy_id {
+            let _ = db.set_rollout_policy_id(&rollout_id, policy_id);
+        }
+
+        // Create batches
+        for (i, batch_machines) in batches.iter().enumerate() {
+            let batch_id = format!("{}-b{}", rollout_id, i);
+            let machine_ids_json = serde_json::to_string(batch_machines).unwrap_or_default();
+            db.create_rollout_batch(&batch_id, &rollout_id, i as i64, &machine_ids_json)?;
+        }
+
+        // Start the rollout
+        db.update_rollout_status(&rollout_id, "running")?;
+
+        // Emit event
+        let _ = db.insert_rollout_event(
+            &rollout_id,
+            "status_change",
+            &format!("{{\"from\":\"created\",\"to\":\"running\",\"trigger\":\"schedule:{}\"}}",
+                schedule.id),
+            "executor",
+        );
+
+        // Mark schedule as triggered
+        db.update_scheduled_rollout_status(&schedule.id, "triggered", Some(&rollout_id))?;
+
+        let _ = db.insert_audit_event(
+            "executor",
+            "schedule.triggered",
+            &schedule.id,
+            Some(&format!("rollout_id={rollout_id}")),
+        );
+
+        tracing::info!(
+            schedule_id = %schedule.id,
+            rollout_id = %rollout_id,
+            machines = machine_ids.len(),
+            "Scheduled rollout triggered"
+        );
     }
 
     Ok(())
@@ -62,6 +233,12 @@ async fn process_rollout(
         let all_succeeded = batches.iter().all(|b| b.status == "succeeded");
         if all_succeeded && !batches.is_empty() {
             db.update_rollout_status(&rollout.id, "completed")?;
+            let _ = db.insert_rollout_event(
+                &rollout.id,
+                "status_change",
+                "{\"from\":\"running\",\"to\":\"completed\"}",
+                "executor",
+            );
             db.insert_audit_event(
                 "executor",
                 "rollout.completed",
@@ -112,6 +289,17 @@ async fn deploy_batch(
     }
 
     db.update_batch_status(&batch.id, "deploying")?;
+
+    let _ = db.insert_rollout_event(
+        &rollout.id,
+        "batch_started",
+        &format!(
+            "{{\"batch_index\":{},\"machines\":{}}}",
+            batch.batch_index,
+            machine_ids.len()
+        ),
+        "executor",
+    );
 
     db.insert_audit_event(
         "executor",
@@ -230,6 +418,15 @@ async fn evaluate_batch(
     if unhealthy_count < threshold {
         // Batch succeeded
         db.update_batch_status(&batch.id, "succeeded")?;
+        let _ = db.insert_rollout_event(
+            &rollout.id,
+            "batch_completed",
+            &format!(
+                "{{\"batch_index\":{},\"healthy\":{healthy_count},\"unhealthy\":{unhealthy_count}}}",
+                batch.batch_index
+            ),
+            "executor",
+        );
         db.insert_audit_event(
             "executor",
             "batch.succeeded",
@@ -250,6 +447,15 @@ async fn evaluate_batch(
     } else {
         // Batch failed
         db.update_batch_status(&batch.id, "failed")?;
+        let _ = db.insert_rollout_event(
+            &rollout.id,
+            "batch_failed",
+            &format!(
+                "{{\"batch_index\":{},\"unhealthy\":{unhealthy_count},\"threshold\":{threshold}}}",
+                batch.batch_index
+            ),
+            "executor",
+        );
         db.insert_audit_event(
             "executor",
             "batch.failed",
@@ -263,6 +469,12 @@ async fn evaluate_batch(
         match rollout.on_failure.as_str() {
             "pause" => {
                 db.update_rollout_status(&rollout.id, "paused")?;
+                let _ = db.insert_rollout_event(
+                    &rollout.id,
+                    "status_change",
+                    "{\"from\":\"running\",\"to\":\"paused\",\"reason\":\"batch failure\"}",
+                    "executor",
+                );
                 db.insert_audit_event(
                     "executor",
                     "rollout.paused",
@@ -280,6 +492,12 @@ async fn evaluate_batch(
             "revert" => {
                 revert_completed_batches(state, db, rollout, all_batches).await?;
                 db.update_rollout_status(&rollout.id, "failed")?;
+                let _ = db.insert_rollout_event(
+                    &rollout.id,
+                    "status_change",
+                    "{\"from\":\"running\",\"to\":\"failed\",\"reason\":\"batch failure + revert\"}",
+                    "executor",
+                );
                 db.insert_audit_event(
                     "executor",
                     "rollout.failed",

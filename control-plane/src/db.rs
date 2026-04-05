@@ -630,6 +630,403 @@ impl Db {
         Ok(rows)
     }
 
+    // -----------------------------------------------------------------------
+    // Rollout policies
+    // -----------------------------------------------------------------------
+
+    /// Create a new rollout policy.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_policy(
+        &self,
+        id: &str,
+        name: &str,
+        strategy: &str,
+        batch_sizes: &str,
+        failure_threshold: &str,
+        on_failure: &str,
+        health_timeout_secs: i64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO rollout_policies (id, name, strategy, batch_sizes, failure_threshold,
+             on_failure, health_timeout_secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                id,
+                name,
+                strategy,
+                batch_sizes,
+                failure_threshold,
+                on_failure,
+                health_timeout_secs,
+            ],
+        )
+        .context("failed to create policy")?;
+        Ok(())
+    }
+
+    /// Get a policy by name.
+    pub fn get_policy_by_name(&self, name: &str) -> Result<Option<PolicyRow>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT id, name, strategy, batch_sizes, failure_threshold, on_failure,
+             health_timeout_secs, created_at, updated_at
+             FROM rollout_policies WHERE name = ?1",
+            rusqlite::params![name],
+            |row| {
+                Ok(PolicyRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    strategy: row.get(2)?,
+                    batch_sizes: row.get(3)?,
+                    failure_threshold: row.get(4)?,
+                    on_failure: row.get(5)?,
+                    health_timeout_secs: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            },
+        );
+        match result {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// List all policies ordered by name.
+    pub fn list_policies(&self) -> Result<Vec<PolicyRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, strategy, batch_sizes, failure_threshold, on_failure,
+             health_timeout_secs, created_at, updated_at
+             FROM rollout_policies ORDER BY name",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(PolicyRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    strategy: row.get(2)?,
+                    batch_sizes: row.get(3)?,
+                    failure_threshold: row.get(4)?,
+                    on_failure: row.get(5)?,
+                    health_timeout_secs: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Update a policy by name. Returns true if a row was updated.
+    pub fn update_policy(
+        &self,
+        name: &str,
+        strategy: &str,
+        batch_sizes: &str,
+        failure_threshold: &str,
+        on_failure: &str,
+        health_timeout_secs: i64,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .execute(
+                "UPDATE rollout_policies SET strategy = ?2, batch_sizes = ?3,
+                 failure_threshold = ?4, on_failure = ?5, health_timeout_secs = ?6,
+                 updated_at = datetime('now') WHERE name = ?1",
+                rusqlite::params![
+                    name,
+                    strategy,
+                    batch_sizes,
+                    failure_threshold,
+                    on_failure,
+                    health_timeout_secs,
+                ],
+            )
+            .context("failed to update policy")?;
+        Ok(rows > 0)
+    }
+
+    /// Delete a policy by name. Returns true if a row was deleted.
+    pub fn delete_policy(&self, name: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .execute(
+                "DELETE FROM rollout_policies WHERE name = ?1",
+                rusqlite::params![name],
+            )
+            .context("failed to delete policy")?;
+        Ok(rows > 0)
+    }
+
+    // -----------------------------------------------------------------------
+    // Rollout events
+    // -----------------------------------------------------------------------
+
+    /// Insert a rollout event.
+    pub fn insert_rollout_event(
+        &self,
+        rollout_id: &str,
+        event_type: &str,
+        detail: &str,
+        actor: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO rollout_events (rollout_id, event_type, detail, actor)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![rollout_id, event_type, detail, actor],
+        )
+        .context("failed to insert rollout event")?;
+        Ok(())
+    }
+
+    /// Get all events for a rollout, ordered by created_at ASC.
+    pub fn get_rollout_events(&self, rollout_id: &str) -> Result<Vec<RolloutEventRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, rollout_id, event_type, detail, actor, created_at
+             FROM rollout_events WHERE rollout_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![rollout_id], |row| {
+                Ok(RolloutEventRow {
+                    id: row.get(0)?,
+                    rollout_id: row.get(1)?,
+                    event_type: row.get(2)?,
+                    detail: row.get(3)?,
+                    actor: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    // -----------------------------------------------------------------------
+    // Scheduled rollouts
+    // -----------------------------------------------------------------------
+
+    /// Create a scheduled rollout.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_scheduled_rollout(
+        &self,
+        id: &str,
+        scheduled_at: &str,
+        policy_id: Option<&str>,
+        generation_hash: &str,
+        cache_url: Option<&str>,
+        strategy: Option<&str>,
+        batch_sizes: Option<&str>,
+        failure_threshold: Option<&str>,
+        on_failure: Option<&str>,
+        health_timeout_secs: Option<i64>,
+        target_tags: Option<&str>,
+        target_hosts: Option<&str>,
+        created_by: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO scheduled_rollouts (id, scheduled_at, policy_id, generation_hash,
+             cache_url, strategy, batch_sizes, failure_threshold, on_failure, health_timeout_secs,
+             target_tags, target_hosts, created_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            rusqlite::params![
+                id,
+                scheduled_at,
+                policy_id,
+                generation_hash,
+                cache_url,
+                strategy,
+                batch_sizes,
+                failure_threshold,
+                on_failure,
+                health_timeout_secs,
+                target_tags,
+                target_hosts,
+                created_by,
+            ],
+        )
+        .context("failed to create scheduled rollout")?;
+        Ok(())
+    }
+
+    /// List scheduled rollouts with optional status filter.
+    pub fn list_scheduled_rollouts(
+        &self,
+        status: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ScheduledRolloutRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT id, scheduled_at, policy_id, generation_hash, cache_url, strategy,
+             batch_sizes, failure_threshold, on_failure, health_timeout_secs, target_tags,
+             target_hosts, status, rollout_id, created_at, created_by
+             FROM scheduled_rollouts WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(s) = status {
+            sql.push_str(&format!(" AND status = ?{}", params.len() + 1));
+            params.push(Box::new(s.to_string()));
+        }
+
+        sql.push_str(&format!(
+            " ORDER BY scheduled_at ASC LIMIT ?{}",
+            params.len() + 1
+        ));
+        params.push(Box::new(limit as i64));
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                Ok(ScheduledRolloutRow {
+                    id: row.get(0)?,
+                    scheduled_at: row.get(1)?,
+                    policy_id: row.get(2)?,
+                    generation_hash: row.get(3)?,
+                    cache_url: row.get(4)?,
+                    strategy: row.get(5)?,
+                    batch_sizes: row.get(6)?,
+                    failure_threshold: row.get(7)?,
+                    on_failure: row.get(8)?,
+                    health_timeout_secs: row.get(9)?,
+                    target_tags: row.get(10)?,
+                    target_hosts: row.get(11)?,
+                    status: row.get(12)?,
+                    rollout_id: row.get(13)?,
+                    created_at: row.get(14)?,
+                    created_by: row.get(15)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Get a scheduled rollout by ID.
+    pub fn get_scheduled_rollout(&self, id: &str) -> Result<Option<ScheduledRolloutRow>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT id, scheduled_at, policy_id, generation_hash, cache_url, strategy,
+             batch_sizes, failure_threshold, on_failure, health_timeout_secs, target_tags,
+             target_hosts, status, rollout_id, created_at, created_by
+             FROM scheduled_rollouts WHERE id = ?1",
+            rusqlite::params![id],
+            |row| {
+                Ok(ScheduledRolloutRow {
+                    id: row.get(0)?,
+                    scheduled_at: row.get(1)?,
+                    policy_id: row.get(2)?,
+                    generation_hash: row.get(3)?,
+                    cache_url: row.get(4)?,
+                    strategy: row.get(5)?,
+                    batch_sizes: row.get(6)?,
+                    failure_threshold: row.get(7)?,
+                    on_failure: row.get(8)?,
+                    health_timeout_secs: row.get(9)?,
+                    target_tags: row.get(10)?,
+                    target_hosts: row.get(11)?,
+                    status: row.get(12)?,
+                    rollout_id: row.get(13)?,
+                    created_at: row.get(14)?,
+                    created_by: row.get(15)?,
+                })
+            },
+        );
+        match result {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Update a scheduled rollout's status and optionally set the resulting rollout_id.
+    pub fn update_scheduled_rollout_status(
+        &self,
+        id: &str,
+        status: &str,
+        rollout_id: Option<&str>,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .execute(
+                "UPDATE scheduled_rollouts SET status = ?2, rollout_id = ?3 WHERE id = ?1",
+                rusqlite::params![id, status, rollout_id],
+            )
+            .context("failed to update scheduled rollout status")?;
+        Ok(rows > 0)
+    }
+
+    /// Get pending scheduled rollouts that are due (scheduled_at <= now).
+    pub fn get_due_scheduled_rollouts(&self) -> Result<Vec<ScheduledRolloutRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, scheduled_at, policy_id, generation_hash, cache_url, strategy,
+             batch_sizes, failure_threshold, on_failure, health_timeout_secs, target_tags,
+             target_hosts, status, rollout_id, created_at, created_by
+             FROM scheduled_rollouts
+             WHERE status = 'pending' AND scheduled_at <= datetime('now')
+             ORDER BY scheduled_at ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ScheduledRolloutRow {
+                    id: row.get(0)?,
+                    scheduled_at: row.get(1)?,
+                    policy_id: row.get(2)?,
+                    generation_hash: row.get(3)?,
+                    cache_url: row.get(4)?,
+                    strategy: row.get(5)?,
+                    batch_sizes: row.get(6)?,
+                    failure_threshold: row.get(7)?,
+                    on_failure: row.get(8)?,
+                    health_timeout_secs: row.get(9)?,
+                    target_tags: row.get(10)?,
+                    target_hosts: row.get(11)?,
+                    status: row.get(12)?,
+                    rollout_id: row.get(13)?,
+                    created_at: row.get(14)?,
+                    created_by: row.get(15)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    // -----------------------------------------------------------------------
+    // Rollout policy_id
+    // -----------------------------------------------------------------------
+
+    /// Set the policy_id on a rollout (for traceability).
+    pub fn set_rollout_policy_id(&self, rollout_id: &str, policy_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE rollouts SET policy_id = ?2 WHERE id = ?1",
+            rusqlite::params![rollout_id, policy_id],
+        )
+        .context("failed to set rollout policy_id")?;
+        Ok(())
+    }
+
+    /// Get policy_id for a rollout.
+    pub fn get_rollout_policy_id(&self, rollout_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT policy_id FROM rollouts WHERE id = ?1",
+            rusqlite::params![rollout_id],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(policy_id) => Ok(policy_id),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Check if a machine is part of any active rollout (status: created/running/paused).
     /// Returns the rollout id if found.
     pub fn machine_in_active_rollout(&self, machine_id: &str) -> Result<Option<String>> {
@@ -714,6 +1111,52 @@ pub struct HealthReportRow {
     pub results: String,
     pub all_passed: bool,
     pub received_at: String,
+}
+
+/// A rollout policy row as stored in SQLite.
+#[derive(Debug, Clone)]
+pub struct PolicyRow {
+    pub id: String,
+    pub name: String,
+    pub strategy: String,
+    pub batch_sizes: String,
+    pub failure_threshold: String,
+    pub on_failure: String,
+    pub health_timeout_secs: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A rollout event row as stored in SQLite.
+#[derive(Debug, Clone)]
+pub struct RolloutEventRow {
+    pub id: i64,
+    pub rollout_id: String,
+    pub event_type: String,
+    pub detail: String,
+    pub actor: String,
+    pub created_at: String,
+}
+
+/// A scheduled rollout row as stored in SQLite.
+#[derive(Debug, Clone)]
+pub struct ScheduledRolloutRow {
+    pub id: String,
+    pub scheduled_at: String,
+    pub policy_id: Option<String>,
+    pub generation_hash: String,
+    pub cache_url: Option<String>,
+    pub strategy: Option<String>,
+    pub batch_sizes: Option<String>,
+    pub failure_threshold: Option<String>,
+    pub on_failure: Option<String>,
+    pub health_timeout_secs: Option<i64>,
+    pub target_tags: Option<String>,
+    pub target_hosts: Option<String>,
+    pub status: String,
+    pub rollout_id: Option<String>,
+    pub created_at: String,
+    pub created_by: String,
 }
 
 #[cfg(test)]
