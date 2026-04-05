@@ -40,6 +40,7 @@
 
 - [Custom Scopes](guide/extending/custom-scopes.md)
 - [Secrets](guide/extending/secrets.md)
+- [Compliance](guide/extending/compliance.md)
 - [Templates & Patterns](guide/extending/templates.md)
 
 ---
