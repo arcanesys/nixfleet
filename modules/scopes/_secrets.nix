@@ -63,14 +63,12 @@
 
       # Active config only when enabled
       (lib.mkIf cfg.enable {
-        # Impermanence: persist host key and user key directory
+        # Impermanence: persist host key only.
+        # User key directory (.keys) is persisted by _impermanence.nix (HM level).
         environment.persistence."/persist" = lib.mkIf (hS.isImpermanent or false) {
           files =
             lib.optional (cfg.identityPaths.hostKey != null) cfg.identityPaths.hostKey
             ++ lib.optional (cfg.identityPaths.hostKey != null) "${cfg.identityPaths.hostKey}.pub";
-          directories =
-            lib.optional (cfg.identityPaths.enableUserKey && cfg.identityPaths.userKey != null)
-            (builtins.dirOf cfg.identityPaths.userKey);
         };
 
         # Boot ordering: ensure host key exists before sshd
