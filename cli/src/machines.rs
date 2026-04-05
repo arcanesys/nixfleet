@@ -112,3 +112,40 @@ pub async fn untag(
     println!("Tag '{}' removed from {}.", tag, machine_id);
     Ok(())
 }
+
+/// POST /api/v1/machines/{id}/register — register a machine with the control plane.
+pub async fn register(
+    client: &reqwest::Client,
+    cp_url: &str,
+    machine_id: &str,
+    tags: &[String],
+) -> Result<()> {
+    let url = format!("{}/api/v1/machines/{}/register", cp_url, machine_id);
+    let body = serde_json::json!({ "tags": tags });
+
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("failed to reach control plane")?;
+
+    if !resp.status().is_success() {
+        bail!(
+            "Control plane returned {}: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        );
+    }
+
+    if tags.is_empty() {
+        println!("Machine '{}' registered.", machine_id);
+    } else {
+        println!(
+            "Machine '{}' registered with tags: {}",
+            machine_id,
+            tags.join(", ")
+        );
+    }
+    Ok(())
+}

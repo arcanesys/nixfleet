@@ -242,6 +242,16 @@ enum MachineAction {
         /// Tag to remove
         tag: String,
     },
+
+    /// Register a machine with the control plane
+    Register {
+        /// Machine ID
+        id: String,
+
+        /// Initial tags
+        #[arg(long = "tag", value_name = "TAG")]
+        tags: Vec<String>,
+    },
 }
 
 #[tokio::main]
@@ -396,6 +406,9 @@ async fn main() -> Result<()> {
                 }
                 MachineAction::Untag { id, tag } => {
                     machines::untag(&http_client, &cli.control_plane_url, &id, &tag).await
+                }
+                MachineAction::Register { id, tags } => {
+                    machines::register(&http_client, &cli.control_plane_url, &id, &tags).await
                 }
             }
         }
