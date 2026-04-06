@@ -59,6 +59,12 @@ enum Commands {
         #[arg(long)]
         ssh: bool,
 
+        /// SSH target override (e.g. root@192.168.1.10). When set with --ssh,
+        /// uses this address instead of resolving the hostname.
+        /// Only valid with a single host (--hosts must match exactly one).
+        #[arg(long)]
+        target: Option<String>,
+
         /// Flake reference (default: current directory)
         #[arg(long, default_value = ".")]
         flake: String,
@@ -397,6 +403,7 @@ async fn main() -> Result<()> {
             hosts,
             dry_run,
             ssh,
+            target,
             flake,
             tags,
             strategy,
@@ -419,6 +426,7 @@ async fn main() -> Result<()> {
                     &flake,
                     dry_run,
                     true,
+                    target.as_deref(),
                 )
                 .await
             } else if !tags.is_empty() || generation.is_some() {
@@ -477,6 +485,7 @@ async fn main() -> Result<()> {
                     &flake,
                     dry_run,
                     false,
+                    None,
                 )
                 .await
             }

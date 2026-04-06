@@ -144,11 +144,12 @@ async fn push_to_control_plane(
 }
 
 /// Deploy via SSH fallback: nix-copy-closure + switch-to-configuration.
-async fn deploy_via_ssh(host: &str, store_path: &str) -> Result<()> {
-    tracing::info!(host, store_path, "Copying closure via SSH");
+/// `ssh_target` overrides the hostname for SSH connections (e.g. "root@192.168.1.10").
+async fn deploy_via_ssh(host: &str, store_path: &str, ssh_target: &str) -> Result<()> {
+    tracing::info!(host, ssh_target, store_path, "Copying closure via SSH");
 
     let copy_status = tokio::process::Command::new("nix-copy-closure")
-        .args(["--to", &format!("root@{}", host), store_path])
+        .args(["--to", ssh_target, store_path])
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
@@ -163,7 +164,7 @@ async fn deploy_via_ssh(host: &str, store_path: &str) -> Result<()> {
 
     let switch_status = tokio::process::Command::new("ssh")
         .args([
-            &format!("root@{}", host),
+            ssh_target,
             &format!("{}/bin/switch-to-configuration", store_path),
             "switch",
         ])
@@ -187,6 +188,7 @@ pub async fn run(
     flake: &str,
     dry_run: bool,
     ssh: bool,
+    target_override: Option<&str>,
 ) -> Result<()> {
     println!("Discovering hosts from {}...", flake);
     let all_hosts = discover_hosts(flake).await?;
@@ -197,6 +199,15 @@ pub async fn run(
             "No hosts match pattern '{}'. Available: {}",
             pattern,
             all_hosts.join(", ")
+        );
+    }
+
+    // --target requires exactly one host
+    if target_override.is_some() && targets.len() > 1 {
+        bail!(
+            "--target can only be used with a single host, but {} hosts matched pattern '{}'",
+            targets.len(),
+            pattern
         );
     }
 
@@ -243,8 +254,12 @@ pub async fn run(
     for host in &targets {
         if let Some(Ok(store_path)) = results.get(host) {
             if ssh {
-                print!("  Deploying {} via SSH... ", host);
-                match deploy_via_ssh(host, store_path).await {
+                let ssh_dest = match target_override {
+                    Some(t) => t.to_string(),
+                    None => format!("root@{}", host),
+                };
+                print!("  Deploying {} via SSH ({})... ", host, ssh_dest);
+                match deploy_via_ssh(host, store_path, &ssh_dest).await {
                     Ok(()) => {
                         println!("OK");
                         success_count += 1;
