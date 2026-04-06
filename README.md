@@ -114,7 +114,6 @@ nix run .#start-vm -- -h web-02              # start VM as headless daemon
 nix run .#stop-vm -- -h web-02               # stop VM daemon
 nix run .#clean-vm -- -h web-02              # delete VM disk + state
 nix run .#test-vm -- -h web-02               # end-to-end VM test cycle
-nix run .#provision -- -h web-02 --target root@192.168.1.10  # real hardware
 ```
 
 Fleet repos wire these via `nixfleet.lib.mkVmApps { inherit pkgs; }`.
