@@ -231,22 +231,24 @@ pub async fn provision_host(hostname: &str, target: &str, username: &str) -> Res
     println!("  Installation complete");
 
     // 4. Wait for reboot
+    // Use StrictHostKeyChecking=no for post-provision polling: the host key
+    // just changed (fresh install) and the old known_hosts entry is stale.
+    // This is safe because we just provisioned the machine ourselves.
     let connect_host = target.trim_start_matches("root@");
     let ssh_target = format!("{}@{}", username, connect_host);
+    let ssh_opts = [
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "ConnectTimeout=3",
+        "-o", "LogLevel=ERROR",
+    ];
     println!("  Waiting for machine to come back online...");
 
     let mut online = false;
     for _ in 0..60 {
         let ping = tokio::process::Command::new("ssh")
-            .args([
-                "-o",
-                "StrictHostKeyChecking=accept-new",
-                "-o",
-                "ConnectTimeout=3",
-                &ssh_target,
-                "echo",
-                "online",
-            ])
+            .args(&ssh_opts)
+            .args([&ssh_target, "echo", "online"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -270,9 +272,8 @@ pub async fn provision_host(hostname: &str, target: &str, username: &str) -> Res
     // 5. Verify
     println!("  Verifying...");
     let verify = tokio::process::Command::new("ssh")
+        .args(&ssh_opts)
         .args([
-            "-o",
-            "StrictHostKeyChecking=accept-new",
             &ssh_target,
             "nixos-version && systemctl is-active nixfleet-agent",
         ])
