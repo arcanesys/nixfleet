@@ -22,7 +22,7 @@ The `/persist` filesystem is marked `neededForBoot = true` so it is available du
 
 ## What the framework persists
 
-### System-level (`/persist/system`)
+### System-level (`/persist`)
 
 | Path | Purpose |
 |------|---------|

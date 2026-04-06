@@ -125,9 +125,13 @@ API_KEY=$(nixfleet bootstrap \
 nixfleet status
 nixfleet machines list --tag web
 
-# Rollout
+# Rollout (via control plane)
 nixfleet deploy --tag web --generation /nix/store/... --strategy staged --batch-size 1,100% --wait
 nixfleet deploy --tag web --generation /nix/store/... --policy production-canary --wait
+
+# Direct SSH deploy (no control plane needed)
+nixfleet deploy --hosts web-02 --ssh                                          # deploy via SSH (resolves hostname)
+nixfleet deploy --hosts web-02 --ssh --target root@192.168.1.10               # deploy via SSH to specific IP
 
 # Rollout management
 nixfleet rollout list
