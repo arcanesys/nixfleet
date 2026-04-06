@@ -40,6 +40,7 @@ nixfleet deploy [FLAGS]
 | `--hosts <PATTERN>` | string | `*` | Host glob pattern (SSH mode only) |
 | `--dry-run` | bool | `false` | Build closures and show plan, do not push |
 | `--ssh` | bool | `false` | SSH fallback mode: copy closures and switch via SSH |
+| `--target <SSH>` | string | -- | SSH target override (e.g., `root@192.168.1.10`). Only valid with `--ssh` and a single host. |
 | `--flake <REF>` | string | `.` | Flake reference |
 | `--tag <TAG>` | string (repeatable) | -- | Target machines by tag (rollout mode) |
 | `--strategy <STRATEGY>` | string | `all-at-once` | Rollout strategy: `canary`, `staged`, `all-at-once` |
