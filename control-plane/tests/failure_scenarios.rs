@@ -61,11 +61,6 @@ async fn f4_generation_mismatch_counted_as_pending_then_accepted() {
         "success=true on stale gen must NOT mark batch failed either"
     );
 
-    // Wait for the next SQLite `datetime('now')` tick so Stage 2 reports
-    // have a strictly larger `received_at` than Stage 1 — avoids tie-break
-    // ambiguity in `ORDER BY received_at DESC LIMIT 1`.
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
-
     // Stage 2: agent re-applies and reports the correct store path.
     harness::fake_agent_report(
         &cp,

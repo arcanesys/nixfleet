@@ -15,6 +15,8 @@ Out of Phase 2's original contingent scenarios (C1–C3):
 - **C2 (schedule creation + executor pickup)** — dropped; schedule subsystem was deleted in Phase 2
 - **C3 (agent health check subsystem)** — kept; folded into Task 22b (`vm-fleet-revert`) which requires post-apply `run_all` to trigger the revert path
 
+- [x] **`get_recent_reports` non-deterministic tiebreaker** — F4 — fixed in this branch. `ORDER BY received_at DESC` was not enough when two reports arrived in the same wall-clock second (TEXT column with `datetime('now')` second precision). Added `id DESC` secondary sort so "latest wins" is deterministic under sub-second collisions.
+
 ## Phase 4 — checklist coverage
 
 ### CLI gaps surfaced during Phase 2 verification
