@@ -1,0 +1,33 @@
+# Phase 3 VM scenario tests. Each subtest is an independently buildable
+# `testers.nixosTest` so a failure in one does not mask another.
+#
+# Run any subtest with:
+#   nix build .#checks.x86_64-linux.vm-fleet-<name> --no-link
+{ ...}: {
+  perSystem = {
+    system,
+    lib,
+    ...
+  }: let
+    # Subtest imports in Tasks 19..26 will bring back the shared
+    # bindings (`helpers`, `mkTestNode`, `defaultTestSpec`, `mkTlsCerts`)
+    # inside this `let`. They are intentionally omitted here because
+    # `treefmt`'s `deadnix` pass strips unused `let` bindings; the
+    # scaffold has nothing to reference them yet.
+    subtests = {
+      # Task 19: vm-fleet-release = import ./vm-fleet-scenarios/release.nix { ... };
+      # Task 20: vm-fleet-bootstrap = ...
+      # Task 21: vm-fleet-deploy-ssh = ...
+      # Task 22a: vm-fleet-apply-failure = ...
+      # Task 22b: vm-fleet-revert = ...
+      # Task 22c: vm-fleet-timeout = ...
+      # Task 23: vm-fleet-poll-retry = ...
+      # Task 24: vm-fleet-mtls-missing = ...
+      # Task 25: vm-fleet-rollback-ssh = ...
+      # Task 26: vm-fleet-tag-sync = ...
+    };
+  in
+    lib.optionalAttrs (system == "x86_64-linux") {
+      checks = subtests;
+    };
+}

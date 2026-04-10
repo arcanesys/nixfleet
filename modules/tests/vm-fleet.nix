@@ -13,6 +13,7 @@
     ...
   }: let
     helpers = import ./_lib/helpers.nix {inherit lib;};
+    mkTlsCerts = import ./_lib/tls-certs.nix {inherit pkgs lib;};
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
@@ -47,37 +48,7 @@
 
     # Build-time TLS certificates: fleet CA + CP server cert + 3 agent client certs.
     # Deterministic — no runtime setup needed.
-    testCerts =
-      pkgs.runCommand "nixfleet-fleet-test-certs" {
-        nativeBuildInputs = [pkgs.openssl];
-      } ''
-        mkdir -p $out
-
-        # Fleet CA (self-signed, EC P-256)
-        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-          -keyout $out/ca-key.pem -out $out/ca.pem -days 365 -nodes \
-          -subj '/CN=nixfleet-test-ca'
-
-        # CP server cert (CN=cp, SAN includes cp + localhost for test curl)
-        openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-          -keyout $out/cp-key.pem -out $out/cp-csr.pem -nodes \
-          -subj '/CN=cp' \
-          -addext 'subjectAltName=DNS:cp,DNS:localhost'
-        openssl x509 -req -in $out/cp-csr.pem -CA $out/ca.pem -CAkey $out/ca-key.pem \
-          -CAcreateserial -out $out/cp-cert.pem -days 365 \
-          -copy_extensions copyall
-
-        # Agent client certs (CN = hostname)
-        for host in web-01 web-02 db-01; do
-          openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-            -keyout $out/$host-key.pem -out $out/$host-csr.pem -nodes \
-            -subj "/CN=$host"
-          openssl x509 -req -in $out/$host-csr.pem -CA $out/ca.pem -CAkey $out/ca-key.pem \
-            -CAcreateserial -out $out/$host-cert.pem -days 365
-        done
-
-        rm -f $out/*.csr.pem $out/*.srl
-      '';
+    testCerts = mkTlsCerts {hostnames = ["web-01" "web-02" "db-01"];};
 
     # Helper: build an agent node with TLS, tags, and optional extra modules.
     mkAgentNode = {
