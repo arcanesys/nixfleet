@@ -34,14 +34,14 @@ pub async fn list(
     }
 
     println!(
-        "{:<38} {:<12} {:<14} {:<8} {:<20} GENERATION",
+        "{:<38} {:<12} {:<14} {:<8} {:<20} RELEASE",
         "ID", "STATUS", "STRATEGY", "BATCHES", "CREATED"
     );
     println!("{}", "-".repeat(110));
 
     for rollout in &rollouts {
         let created = rollout.created_at.format("%Y-%m-%d %H:%M:%S");
-        let generation = truncate(&rollout.generation_hash, 30);
+        let release = truncate(&rollout.release_id, 30);
         println!(
             "{:<38} {:<12} {:<14} {:<8} {:<20} {}",
             rollout.id,
@@ -49,7 +49,7 @@ pub async fn list(
             rollout.strategy,
             rollout.batches.len(),
             created,
-            generation,
+            release,
         );
     }
 
@@ -128,11 +128,7 @@ pub async fn cancel(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
 }
 
 /// Poll a rollout until it reaches a terminal state, printing progress every interval.
-pub async fn wait_for_completion(
-    client: &reqwest::Client,
-    cp_url: &str,
-    id: &str,
-) -> Result<()> {
+pub async fn wait_for_completion(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<()> {
     let url = format!("{}/api/v1/rollouts/{}", cp_url, id);
 
     loop {
@@ -173,7 +169,7 @@ fn print_rollout_detail(rollout: &RolloutDetail) {
     println!("Rollout:       {}", rollout.id);
     println!("Status:        {}", rollout.status);
     println!("Strategy:      {}", rollout.strategy);
-    println!("Generation:    {}", rollout.generation_hash);
+    println!("Release:       {}", rollout.release_id);
     println!("On failure:    {}", rollout.on_failure);
     println!("Fail threshold:{}", rollout.failure_threshold);
     println!("Health timeout:{}s", rollout.health_timeout);

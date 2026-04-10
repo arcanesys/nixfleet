@@ -24,7 +24,7 @@ pub struct ListRolloutsQuery {
 ///
 /// Create a new rollout targeting machines by tags or hosts.
 pub async fn create_rollout(
-    State((state, db)): State<AppState>,
+    State((_state, db)): State<AppState>,
     Extension(actor): Extension<Actor>,
     Json(req): Json<CreateRolloutRequest>,
 ) -> Result<(StatusCode, Json<CreateRolloutResponse>), (StatusCode, String)> {
@@ -42,7 +42,10 @@ pub async fn create_rollout(
             .get_policy_by_name(policy_name)
             .map_err(|e| {
                 tracing::error!(error = %e, "Failed to get policy");
-                (StatusCode::INTERNAL_SERVER_ERROR, "failed to get policy".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to get policy".to_string(),
+                )
             })?
             .ok_or((
                 StatusCode::BAD_REQUEST,
@@ -72,7 +75,9 @@ pub async fn create_rollout(
             req.health_timeout = Some(policy.health_timeout_secs as u64);
         }
         // Use policy strategy as default when request has the CLI default (all-at-once)
-        if req.strategy == RolloutStrategy::AllAtOnce && policy_strategy != RolloutStrategy::AllAtOnce {
+        if req.strategy == RolloutStrategy::AllAtOnce
+            && policy_strategy != RolloutStrategy::AllAtOnce
+        {
             req.strategy = policy_strategy;
         }
 
@@ -82,7 +87,7 @@ pub async fn create_rollout(
     };
 
     // Resolve target machines
-    let machine_ids = match &req.target {
+    let mut machine_ids = match &req.target {
         RolloutTarget::Tags(tags) => db.get_machines_by_tags(tags).map_err(|e| {
             tracing::error!(error = %e, "Failed to resolve machines by tags");
             (
@@ -100,6 +105,40 @@ pub async fn create_rollout(
         ));
     }
 
+    // Load release and intersect with target machines
+    let release = db
+        .get_release(&req.release_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("release {} not found", req.release_id),
+            )
+        })?;
+    let release_entries = db
+        .get_release_entries(&req.release_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let release_hosts: std::collections::HashSet<String> =
+        release_entries.iter().map(|e| e.hostname.clone()).collect();
+    let original_count = machine_ids.len();
+    machine_ids.retain(|id| release_hosts.contains(id));
+    if machine_ids.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "no machines match both the target and release {}",
+                req.release_id
+            ),
+        ));
+    }
+    if original_count > machine_ids.len() {
+        tracing::warn!(
+            skipped = original_count - machine_ids.len(),
+            "machines in target but not in release"
+        );
+    }
+    let cache_url = req.cache_url.or(release.cache_url);
+
     // Check for active rollout conflicts
     for machine_id in &machine_ids {
         if let Ok(Some(rollout_id)) = db.machine_in_active_rollout(machine_id) {
@@ -113,16 +152,6 @@ pub async fn create_rollout(
     // Build batches
     let effective_sizes = batch::effective_batch_sizes(&req.strategy, &req.batch_sizes);
     let batches = batch::build_batches(&machine_ids, &effective_sizes);
-
-    // Capture previous generation from the first machine's state
-    let previous_generation = {
-        let fleet = state.read().await;
-        fleet
-            .machines
-            .get(&machine_ids[0])
-            .and_then(|m| m.last_report.as_ref())
-            .map(|r| r.current_generation.clone())
-    };
 
     // Generate rollout ID
     let rollout_id = format!("r-{}", uuid::Uuid::new_v4());
@@ -143,8 +172,8 @@ pub async fn create_rollout(
 
     db.create_rollout(
         &rollout_id,
-        &req.generation_hash,
-        req.cache_url.as_deref(),
+        &req.release_id,
+        cache_url.as_deref(),
         &req.strategy.to_string(),
         &batch_sizes_json,
         &req.failure_threshold,
@@ -152,7 +181,6 @@ pub async fn create_rollout(
         health_timeout,
         target_tags.as_deref(),
         target_hosts.as_deref(),
-        previous_generation.as_deref(),
         &actor_id,
     )
     .map_err(|e| {
@@ -526,7 +554,7 @@ fn row_to_detail_with_events(
         id: rollout.id.clone(),
         status,
         strategy,
-        generation_hash: rollout.generation_hash.clone(),
+        release_id: rollout.release_id.clone(),
         on_failure,
         failure_threshold: rollout.failure_threshold.clone(),
         health_timeout: rollout.health_timeout as u64,

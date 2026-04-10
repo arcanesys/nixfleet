@@ -244,10 +244,12 @@ mod serde_integration {
         let a = DesiredGeneration {
             hash: "/nix/store/abc123".to_string(),
             cache_url: None,
+            poll_hint: None,
         };
         let b = DesiredGeneration {
             hash: "/nix/store/abc123".to_string(),
             cache_url: None,
+            poll_hint: None,
         };
         assert_eq!(a, b);
     }
@@ -257,10 +259,12 @@ mod serde_integration {
         let a = DesiredGeneration {
             hash: "/nix/store/gen1".to_string(),
             cache_url: None,
+            poll_hint: None,
         };
         let b = DesiredGeneration {
             hash: "/nix/store/gen2".to_string(),
             cache_url: None,
+            poll_hint: None,
         };
         assert_ne!(a, b);
     }

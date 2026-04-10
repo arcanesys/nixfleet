@@ -21,7 +21,11 @@ pub async fn create_policy(
     }
 
     // Check for duplicate name
-    if db.get_policy_by_name(&req.name).map_err(internal)?.is_some() {
+    if db
+        .get_policy_by_name(&req.name)
+        .map_err(internal)?
+        .is_some()
+    {
         return Err((
             StatusCode::CONFLICT,
             format!("policy '{}' already exists", req.name),
@@ -49,11 +53,10 @@ pub async fn create_policy(
         Some(&format!("strategy={} id={}", req.strategy, id)),
     );
 
-    let policy = row_to_policy(
-        &db.get_policy_by_name(&req.name)
-            .map_err(internal)?
-            .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "policy not found after creation".to_string()))?,
-    );
+    let policy = row_to_policy(&db.get_policy_by_name(&req.name).map_err(internal)?.ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "policy not found after creation".to_string(),
+    ))?);
 
     tracing::info!(policy_name = %req.name, "Policy created");
     Ok((StatusCode::CREATED, Json(policy)))
@@ -145,10 +148,7 @@ pub async fn delete_policy(
     Path(name): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     if !actor.has_role(&["admin"]) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "admin role required".to_string(),
-        ));
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
 
     let deleted = db.delete_policy(&name).map_err(internal)?;
@@ -168,8 +168,8 @@ fn internal(e: anyhow::Error) -> (StatusCode, String) {
 }
 
 fn row_to_policy(row: &crate::db::PolicyRow) -> RolloutPolicy {
-    let strategy: RolloutStrategy = serde_json::from_str(&format!("\"{}\"", row.strategy))
-        .unwrap_or(RolloutStrategy::Staged);
+    let strategy: RolloutStrategy =
+        serde_json::from_str(&format!("\"{}\"", row.strategy)).unwrap_or(RolloutStrategy::Staged);
     let on_failure: OnFailure =
         serde_json::from_str(&format!("\"{}\"", row.on_failure)).unwrap_or_default();
     let batch_sizes: Vec<String> =

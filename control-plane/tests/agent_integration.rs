@@ -7,8 +7,6 @@
 ///   1. Happy-path deploy: set generation -> agent polls -> agent reports success.
 ///   2. Failed deploy: agent reports failure; inventory reflects "error" state.
 ///   3. Multi-machine isolation: three machines do not interfere with each other.
-///   4. Generation upsert: setting twice keeps only the latest, no duplicates.
-///   5. cache_url propagation: optional field round-trips through the API.
 use metrics_exporter_prometheus::PrometheusBuilder;
 use nixfleet_control_plane::{build_app, db, state};
 use nixfleet_types::{DesiredGeneration, MachineStatus, Report};
@@ -22,10 +20,16 @@ const RAW_TEST_KEY: &str = "test-key";
 
 /// Spawns a real control-plane server on a random port.
 ///
-/// Returns (base_url, authenticated_client, TempDir). The server runs on a background
-/// Tokio task and is torn down when the test process exits. The `TempDir` must be kept
+/// Returns (base_url, authenticated_client, db, fleet_state, TempDir). The server runs on a
+/// background Tokio task and is torn down when the test process exits. The `TempDir` must be kept
 /// alive for the duration of the test to prevent the SQLite database from being deleted.
-async fn spawn_server() -> (String, reqwest::Client, tempfile::TempDir) {
+async fn spawn_server() -> (
+    String,
+    reqwest::Client,
+    Arc<db::Db>,
+    Arc<RwLock<state::FleetState>>,
+    tempfile::TempDir,
+) {
     let dir = tempfile::tempdir().expect("tempdir");
     let db_path = dir.path().join("test.db").to_string_lossy().into_owned();
 
@@ -51,7 +55,7 @@ async fn spawn_server() -> (String, reqwest::Client, tempfile::TempDir) {
         metrics::set_global_recorder(recorder).ok();
     });
 
-    let app = build_app(fleet_state, database, metrics_handle);
+    let app = build_app(fleet_state.clone(), database.clone(), metrics_handle);
 
     // Bind to a random OS-assigned port.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -75,14 +79,34 @@ async fn spawn_server() -> (String, reqwest::Client, tempfile::TempDir) {
         .build()
         .unwrap();
 
-    (format!("http://{addr}"), client, dir)
+    (format!("http://{addr}"), client, database, fleet_state, dir)
+}
+
+/// Set the desired generation for a machine directly via DB + in-memory state.
+///
+/// This bypasses the removed `set-generation` HTTP endpoint and replicates what
+/// the rollout executor does when it processes a batch.
+async fn set_desired_gen(
+    db: &db::Db,
+    fleet_state: &Arc<RwLock<state::FleetState>>,
+    machine_id: &str,
+    hash: &str,
+) {
+    db.set_desired_generation(machine_id, hash).unwrap();
+    let mut fleet = fleet_state.write().await;
+    let machine = fleet.get_or_create(machine_id);
+    machine.desired_generation = Some(DesiredGeneration {
+        hash: hash.to_string(),
+        cache_url: None,
+        poll_hint: None,
+    });
 }
 
 // ---- Auth -------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_unauthenticated_request_rejected() {
-    let (base, _client, _dir) = spawn_server().await;
+    let (base, _client, _db, _state, _dir) = spawn_server().await;
     let no_auth_client = reqwest::Client::new();
     let resp = no_auth_client
         .get(format!("{base}/api/v1/machines"))
@@ -94,7 +118,7 @@ async fn test_unauthenticated_request_rejected() {
 
 #[tokio::test]
 async fn test_health_no_auth_required() {
-    let (base, _client, _dir) = spawn_server().await;
+    let (base, _client, _db, _state, _dir) = spawn_server().await;
     let no_auth_client = reqwest::Client::new();
     let resp = no_auth_client
         .get(format!("{base}/health"))
@@ -108,7 +132,7 @@ async fn test_health_no_auth_required() {
 
 #[tokio::test]
 async fn test_health_endpoint() {
-    let (base, _client, _dir) = spawn_server().await;
+    let (base, _client, _db, _state, _dir) = spawn_server().await;
     let resp = reqwest::get(format!("{base}/health"))
         .await
         .expect("GET /health");
@@ -121,7 +145,7 @@ async fn test_health_endpoint() {
 /// Happy path: operator sets generation -> agent polls -> agent reports success.
 #[tokio::test]
 async fn test_agent_control_plane_cycle() {
-    let (base, client, _dir) = spawn_server().await;
+    let (base, client, db, fleet_state, _dir) = spawn_server().await;
     let machine_id = "test";
     let gen_hash = "/nix/store/abc123zzz-nixos-system-test-25.05";
 
@@ -135,16 +159,8 @@ async fn test_agent_control_plane_cycle() {
         .unwrap();
     assert_eq!(resp.status(), 404, "unknown machine must 404");
 
-    // 2. Operator sets a desired generation.
-    let set_resp = client
-        .post(format!(
-            "{base}/api/v1/machines/{machine_id}/set-generation"
-        ))
-        .json(&serde_json::json!({ "hash": gen_hash }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(set_resp.status(), 200, "set-generation must succeed");
+    // 2. Set a desired generation directly (replaces removed set-generation endpoint).
+    set_desired_gen(&db, &fleet_state, machine_id, gen_hash).await;
 
     // 3. Agent polls -- must receive the generation that was just set.
     let get_resp = client
@@ -212,22 +228,13 @@ async fn test_agent_control_plane_cycle() {
 /// Control plane must record the failure and expose "error" state in inventory.
 #[tokio::test]
 async fn test_failed_deploy_reported_correctly() {
-    let (base, client, _dir) = spawn_server().await;
+    let (base, client, db, fleet_state, _dir) = spawn_server().await;
     let machine_id = "dev-01";
     let bad_hash = "/nix/store/bad000-nixos-system-dev-01-25.05";
     let rollback_gen = "/nix/store/good111-nixos-system-dev-01-25.05";
 
-    // Operator sets generation.
-    client
-        .post(format!(
-            "{base}/api/v1/machines/{machine_id}/set-generation"
-        ))
-        .json(&serde_json::json!({ "hash": bad_hash }))
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap();
+    // Set desired generation directly (replaces removed set-generation endpoint).
+    set_desired_gen(&db, &fleet_state, machine_id, bad_hash).await;
 
     // Agent attempts deployment, health check fails, rolls back to previous generation.
     let report = Report {
@@ -283,7 +290,7 @@ async fn test_failed_deploy_reported_correctly() {
 /// Multiple machines must not interfere with each other's desired generation.
 #[tokio::test]
 async fn test_multi_machine_isolation() {
-    let (base, client, _dir) = spawn_server().await;
+    let (base, client, db, fleet_state, _dir) = spawn_server().await;
 
     let machines = [
         ("web-01", "/nix/store/aaa-nixos-system-web-01"),
@@ -291,16 +298,9 @@ async fn test_multi_machine_isolation() {
         ("mac-01", "/nix/store/ccc-nixos-system-mac-01"),
     ];
 
-    // Set generations for all machines.
+    // Set desired generations directly for all machines.
     for (id, hash) in &machines {
-        client
-            .post(format!("{base}/api/v1/machines/{id}/set-generation"))
-            .json(&serde_json::json!({ "hash": hash }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap();
+        set_desired_gen(&db, &fleet_state, id, hash).await;
     }
 
     // Each machine must see only its own desired generation.
@@ -330,104 +330,12 @@ async fn test_multi_machine_isolation() {
     assert_eq!(list.len(), 3, "all three machines must appear in inventory");
 }
 
-// ---- Generation upsert ------------------------------------------------------
-
-/// Setting a generation twice must upsert (not duplicate) and return the latest.
-#[tokio::test]
-async fn test_set_generation_upsert() {
-    let (base, client, _dir) = spawn_server().await;
-    let machine_id = "srv-01";
-    let gen_v1 = "/nix/store/v1-nixos-system";
-    let gen_v2 = "/nix/store/v2-nixos-system";
-
-    for gen in [gen_v1, gen_v2] {
-        client
-            .post(format!(
-                "{base}/api/v1/machines/{machine_id}/set-generation"
-            ))
-            .json(&serde_json::json!({ "hash": gen }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap();
-    }
-
-    // Poll must return the second (latest) generation.
-    let desired: DesiredGeneration = client
-        .get(format!(
-            "{base}/api/v1/machines/{machine_id}/desired-generation"
-        ))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(desired.hash, gen_v2, "second set must win (upsert)");
-
-    // Inventory must show exactly one entry for this machine.
-    let list: Vec<MachineStatus> = client
-        .get(format!("{base}/api/v1/machines"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let count = list.iter().filter(|m| m.machine_id == machine_id).count();
-    assert_eq!(
-        count, 1,
-        "upsert must not create duplicate inventory entries"
-    );
-}
-
-// ---- Optional cache_url propagation -----------------------------------------
-
-/// cache_url set alongside a generation must round-trip through the API.
-#[tokio::test]
-async fn test_set_generation_with_cache_url() {
-    let (base, client, _dir) = spawn_server().await;
-    let machine_id = "cache-test";
-    let hash = "/nix/store/cached-nixos-system";
-    let cache_url = "https://cache.example.com";
-
-    client
-        .post(format!(
-            "{base}/api/v1/machines/{machine_id}/set-generation"
-        ))
-        .json(&serde_json::json!({ "hash": hash, "cache_url": cache_url }))
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap();
-
-    let desired: DesiredGeneration = client
-        .get(format!(
-            "{base}/api/v1/machines/{machine_id}/desired-generation"
-        ))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-
-    assert_eq!(desired.hash, hash);
-    assert_eq!(
-        desired.cache_url.as_deref(),
-        Some(cache_url),
-        "cache_url must be returned with the desired generation"
-    );
-}
-
 // ---- Machine Registry -------------------------------------------------------
 
 /// Pre-registering a machine sets it to Pending lifecycle.
 #[tokio::test]
 async fn test_register_machine() {
-    let (base, client, _dir) = spawn_server().await;
+    let (base, client, _db, _state, _dir) = spawn_server().await;
 
     let resp = client
         .post(format!("{base}/api/v1/machines/new-host/register"))
@@ -464,7 +372,7 @@ async fn test_register_machine() {
 /// Lifecycle transitions: Active -> Maintenance -> Active.
 #[tokio::test]
 async fn test_lifecycle_transitions() {
-    let (base, client, _dir) = spawn_server().await;
+    let (base, client, _db, _state, _dir) = spawn_server().await;
 
     // Register as pending, then auto-activate via report.
     client
@@ -532,7 +440,7 @@ async fn test_lifecycle_transitions() {
 /// First agent report auto-transitions Pending -> Active.
 #[tokio::test]
 async fn test_auto_activate_on_first_report() {
-    let (base, client, _dir) = spawn_server().await;
+    let (base, client, _db, _state, _dir) = spawn_server().await;
 
     // Register as pending.
     client
@@ -601,7 +509,7 @@ async fn test_auto_activate_on_first_report() {
 /// Invalid lifecycle transitions must be rejected with 409 Conflict.
 #[tokio::test]
 async fn test_invalid_lifecycle_transition_rejected() {
-    let (base, client, _dir) = spawn_server().await;
+    let (base, client, _db, _state, _dir) = spawn_server().await;
 
     // Register as pending, auto-activate, then decommission.
     client
@@ -656,20 +564,22 @@ async fn test_invalid_lifecycle_transition_rejected() {
 
 // ---- Audit Trail ------------------------------------------------------------
 
-/// Setting a generation must produce an audit event.
+/// Registering a machine must produce an audit event.
 #[tokio::test]
-async fn test_audit_trail_on_set_generation() {
-    let (base, client, _dir) = spawn_server().await;
+async fn test_audit_trail_on_register() {
+    let (base, client, _db, _state, _dir) = spawn_server().await;
 
     client
-        .post(format!("{base}/api/v1/machines/web-01/set-generation"))
-        .json(&serde_json::json!({"hash": "/nix/store/abc123"}))
+        .post(format!("{base}/api/v1/machines/audit-host/register"))
+        .json(&serde_json::json!({ "lifecycle": "pending" }))
         .send()
         .await
+        .unwrap()
+        .error_for_status()
         .unwrap();
 
     let events: Vec<serde_json::Value> = client
-        .get(format!("{base}/api/v1/audit?action=set_generation"))
+        .get(format!("{base}/api/v1/audit?action=register"))
         .send()
         .await
         .unwrap()
@@ -677,22 +587,24 @@ async fn test_audit_trail_on_set_generation() {
         .await
         .unwrap();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["action"], "set_generation");
-    assert_eq!(events[0]["target"], "web-01");
+    assert_eq!(events[0]["action"], "register");
+    assert_eq!(events[0]["target"], "audit-host");
 }
 
 // ---- Audit CSV Export -------------------------------------------------------
 
 #[tokio::test]
 async fn test_audit_csv_export() {
-    let (base, client, _dir) = spawn_server().await;
+    let (base, client, _db, _state, _dir) = spawn_server().await;
 
-    // Create an audit event via an action
+    // Create an audit event via registering a machine.
     client
-        .post(format!("{base}/api/v1/machines/web-01/set-generation"))
-        .json(&serde_json::json!({"hash": "/nix/store/abc123"}))
+        .post(format!("{base}/api/v1/machines/csv-host/register"))
+        .json(&serde_json::json!({ "lifecycle": "pending" }))
         .send()
         .await
+        .unwrap()
+        .error_for_status()
         .unwrap();
 
     let resp = client
@@ -704,14 +616,14 @@ async fn test_audit_csv_export() {
 
     let body = resp.text().await.unwrap();
     assert!(body.starts_with("timestamp,actor,action,target,detail"));
-    assert!(body.contains("set_generation"));
-    assert!(body.contains("web-01"));
+    assert!(body.contains("register"));
+    assert!(body.contains("csv-host"));
 }
 
 /// Decommissioned machines still appear in inventory but with decommissioned lifecycle.
 #[tokio::test]
 async fn test_decommissioned_machine_in_inventory() {
-    let (base, client, _dir) = spawn_server().await;
+    let (base, client, _db, _state, _dir) = spawn_server().await;
 
     // Register and decommission.
     client

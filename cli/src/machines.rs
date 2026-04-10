@@ -2,11 +2,7 @@ use anyhow::{bail, Context, Result};
 use nixfleet_types::MachineStatus;
 
 /// GET /api/v1/machines — list machines, optionally filtered by tag.
-pub async fn list(
-    client: &reqwest::Client,
-    cp_url: &str,
-    tag_filter: Option<&str>,
-) -> Result<()> {
+pub async fn list(client: &reqwest::Client, cp_url: &str, tag_filter: Option<&str>) -> Result<()> {
     let url = format!("{}/api/v1/machines", cp_url);
 
     let resp = client

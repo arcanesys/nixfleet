@@ -2,11 +2,7 @@ use anyhow::{bail, Context, Result};
 use nixfleet_types::rollout::{PolicyRequest, RolloutPolicy};
 
 /// POST /api/v1/policies — create a new policy.
-pub async fn create(
-    client: &reqwest::Client,
-    cp_url: &str,
-    request: &PolicyRequest,
-) -> Result<()> {
+pub async fn create(client: &reqwest::Client, cp_url: &str, request: &PolicyRequest) -> Result<()> {
     let url = format!("{}/api/v1/policies", cp_url);
 
     let resp = client
@@ -24,7 +20,10 @@ pub async fn create(
         );
     }
 
-    let policy: RolloutPolicy = resp.json().await.context("Failed to parse policy response")?;
+    let policy: RolloutPolicy = resp
+        .json()
+        .await
+        .context("Failed to parse policy response")?;
     println!("Policy '{}' created (id: {})", policy.name, policy.id);
     println!("  Strategy:         {}", policy.strategy);
     println!("  Batch sizes:      {}", policy.batch_sizes.join(", "));

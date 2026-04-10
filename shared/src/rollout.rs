@@ -242,7 +242,7 @@ pub struct ScheduledRollout {
     pub id: String,
     pub scheduled_at: DateTime<Utc>,
     pub policy_id: Option<String>,
-    pub generation_hash: String,
+    pub release_id: String,
     pub cache_url: Option<String>,
     pub strategy: Option<RolloutStrategy>,
     pub batch_sizes: Option<Vec<String>>,
@@ -263,7 +263,7 @@ pub struct CreateScheduleRequest {
     pub scheduled_at: DateTime<Utc>,
     #[serde(default)]
     pub policy: Option<String>,
-    pub generation_hash: String,
+    pub release_id: String,
     #[serde(default)]
     pub cache_url: Option<String>,
     #[serde(default)]
@@ -290,7 +290,7 @@ fn default_failure_threshold() -> String {
 /// Request body to create a new rollout.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateRolloutRequest {
-    pub generation_hash: String,
+    pub release_id: String,
     #[serde(default)]
     pub cache_url: Option<String>,
     pub strategy: RolloutStrategy,
@@ -341,7 +341,7 @@ pub struct RolloutDetail {
     pub id: String,
     pub status: RolloutStatus,
     pub strategy: RolloutStrategy,
-    pub generation_hash: String,
+    pub release_id: String,
     pub on_failure: OnFailure,
     pub failure_threshold: String,
     pub health_timeout: u64,
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn test_create_rollout_request_roundtrip() {
         let request = CreateRolloutRequest {
-            generation_hash: "/nix/store/abc123-nixos-system".to_string(),
+            release_id: "rel-abc123".to_string(),
             cache_url: Some("https://cache.example.com".to_string()),
             strategy: RolloutStrategy::Canary,
             batch_sizes: Some(vec!["1".to_string(), "50%".to_string()]),
@@ -556,7 +556,7 @@ mod tests {
         };
         let json = serde_json::to_string(&request).unwrap();
         let back: CreateRolloutRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.generation_hash, request.generation_hash);
+        assert_eq!(back.release_id, request.release_id);
         assert_eq!(
             back.cache_url,
             Some("https://cache.example.com".to_string())
@@ -574,11 +574,12 @@ mod tests {
     #[test]
     fn test_create_rollout_request_defaults() {
         let json = r#"{
-            "generation_hash": "/nix/store/abc123",
+            "release_id": "rel-abc123",
             "target": {"tags": ["web"]},
             "strategy": "staged"
         }"#;
         let request: CreateRolloutRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.release_id, "rel-abc123");
         assert_eq!(request.on_failure, OnFailure::Pause);
         assert_eq!(request.health_timeout, None);
         assert_eq!(request.cache_url, None);
@@ -621,7 +622,7 @@ mod tests {
             id: "r-002".to_string(),
             status: RolloutStatus::Running,
             strategy: RolloutStrategy::Staged,
-            generation_hash: "/nix/store/def456-nixos-system".to_string(),
+            release_id: "rel-xyz789".to_string(),
             on_failure: OnFailure::Revert,
             failure_threshold: "1".to_string(),
             health_timeout: 300,
@@ -642,6 +643,7 @@ mod tests {
         let json = serde_json::to_string(&detail).unwrap();
         let back: RolloutDetail = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, "r-002");
+        assert_eq!(back.release_id, "rel-xyz789");
         assert_eq!(back.strategy, RolloutStrategy::Staged);
         assert_eq!(back.on_failure, OnFailure::Revert);
         assert_eq!(back.failure_threshold, "1");

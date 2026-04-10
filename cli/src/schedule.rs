@@ -36,16 +36,16 @@ pub async fn list(
 
     println!(
         "{:<42} {:<12} {:<22} {:<30}",
-        "ID", "STATUS", "SCHEDULED AT", "GENERATION"
+        "ID", "STATUS", "SCHEDULED AT", "RELEASE"
     );
     println!("{}", "-".repeat(106));
 
     for sched in &schedules {
         let scheduled_at = sched.scheduled_at.format("%Y-%m-%d %H:%M:%S UTC");
-        let generation = truncate(&sched.generation_hash, 28);
+        let release = truncate(&sched.release_id, 28);
         println!(
             "{:<42} {:<12} {:<22} {}",
-            sched.id, sched.status, scheduled_at, generation,
+            sched.id, sched.status, scheduled_at, release,
         );
     }
 
