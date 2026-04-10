@@ -74,7 +74,6 @@ pub struct ResolvedConfig {
     pub health_timeout: Option<u64>,
     pub failure_threshold: Option<String>,
     pub on_failure: Option<String>,
-    pub config_dir: Option<PathBuf>,
 }
 
 /// Resolve a well-known variable by name. Falls back to env var lookup.
@@ -245,6 +244,8 @@ pub fn write_config_file(
 
 /// Resolve config from all sources: config file → credentials → env vars → CLI args.
 /// CLI args with default values (empty strings, "http://localhost:8080") are treated as unset.
+// CRUD function arguments map directly to table columns; refactoring is busywork
+#[allow(clippy::too_many_arguments)]
 pub fn resolve(
     config_file: Option<&ConfigFile>,
     config_dir: Option<&Path>,
@@ -256,7 +257,6 @@ pub fn resolve(
     cli_client_key: &str,
 ) -> ResolvedConfig {
     let mut resolved = ResolvedConfig::default();
-    resolved.config_dir = config_dir.map(|p| p.to_path_buf());
 
     // Layer 1: config file
     if let Some(cfg) = config_file {
@@ -267,8 +267,8 @@ pub fn resolve(
             resolved.ca_cert = cp.ca_cert.as_deref().map(|p| resolve_path(p, dir));
         }
         if let Some(ref tls) = cfg.tls {
-            resolved.client_cert = tls.client_cert.as_deref().map(|p| expand_env_vars(p));
-            resolved.client_key = tls.client_key.as_deref().map(|p| expand_env_vars(p));
+            resolved.client_cert = tls.client_cert.as_deref().map(expand_env_vars);
+            resolved.client_key = tls.client_key.as_deref().map(expand_env_vars);
         }
         if let Some(ref cache) = cfg.cache {
             resolved.cache_url = cache.url.clone();
@@ -449,5 +449,22 @@ url = "https://lab:8080"
             "",
         );
         assert_eq!(resolved.control_plane_url, Some("https://lab:8080".to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_api_key_sets_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+
+        save_api_key("https://test.example.com", "nfk-testkey").unwrap();
+
+        let path = credentials_path();
+        let metadata = std::fs::metadata(&path).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "credentials file must be 0o600, got {mode:o}");
     }
 }

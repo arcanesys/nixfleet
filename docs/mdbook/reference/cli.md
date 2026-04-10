@@ -73,9 +73,7 @@ nixfleet deploy [FLAGS]
 | `--on-failure <ACTION>` | string | `pause` | Action on failure: `pause` or `revert` |
 | `--health-timeout <SECS>` | u64 | `300` | Seconds to wait for health reports per batch |
 | `--wait` | bool | `false` | Stream rollout progress to stdout |
-| `--policy <NAME>` | string | -- | Use a named rollout policy (policy values serve as defaults; explicit flags override) |
 | `--cache-url <URL>` | string | -- | Binary cache URL for agents to fetch closures from (overrides the release's cache_url) |
-| `--schedule-at <ISO8601>` | string | -- | Schedule the rollout for a future time (e.g., `2026-04-06T03:00:00Z`) |
 
 **Modes:**
 
@@ -226,22 +224,6 @@ nixfleet host add --hostname <NAME> [FLAGS]
 
 ---
 
-## host provision
-
-Provision a host via nixos-anywhere.
-
-```sh
-nixfleet host provision --hostname <NAME> --target <SSH> [FLAGS]
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--hostname <NAME>` | string | -- (required) | Host name (must exist in flake) |
-| `--target <SSH>` | string | -- (required) | SSH target (e.g., `root@192.168.1.42`) |
-| `--username <USER>` | string | `root` | Username for post-install verification |
-
----
-
 ## rollout list
 
 List rollouts.
@@ -298,110 +280,6 @@ nixfleet rollout cancel <ID>
 
 ---
 
-## policy create
-
-Create a named rollout policy.
-
-```sh
-nixfleet policy create --name <NAME> [FLAGS]
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--name <NAME>` | string | -- (required) | Policy name (unique) |
-| `--strategy <STRATEGY>` | string | `all-at-once` | Rollout strategy: `canary`, `staged`, `all-at-once` |
-| `--batch-size <SIZES>` | string (comma-separated) | `100%` | Batch sizes (e.g., `1,25%,100%`) |
-| `--failure-threshold <N>` | string | `1` | Max failures before pausing/reverting |
-| `--on-failure <ACTION>` | string | `pause` | Action on failure: `pause` or `revert` |
-| `--health-timeout <SECS>` | u64 | `300` | Seconds to wait for health reports per batch |
-
----
-
-## policy list
-
-List all rollout policies.
-
-```sh
-nixfleet policy list
-```
-
----
-
-## policy get
-
-Show detail for a named policy.
-
-```sh
-nixfleet policy get <NAME>
-```
-
-| Argument | Type | Description |
-|----------|------|-------------|
-| `<NAME>` | string | Policy name |
-
----
-
-## policy update
-
-Update an existing policy. All flags replace the current values.
-
-```sh
-nixfleet policy update <NAME> [FLAGS]
-```
-
-| Argument/Flag | Type | Default | Description |
-|---------------|------|---------|-------------|
-| `<NAME>` | string | -- (required) | Policy name |
-| `--strategy <STRATEGY>` | string | `all-at-once` | Rollout strategy |
-| `--batch-size <SIZES>` | string (comma-separated) | `100%` | Batch sizes |
-| `--failure-threshold <N>` | string | `1` | Max failures before pausing/reverting |
-| `--on-failure <ACTION>` | string | `pause` | Action on failure: `pause` or `revert` |
-| `--health-timeout <SECS>` | u64 | `300` | Seconds to wait for health reports per batch |
-
----
-
-## policy delete
-
-Delete a policy (admin only).
-
-```sh
-nixfleet policy delete <NAME>
-```
-
-| Argument | Type | Description |
-|----------|------|-------------|
-| `<NAME>` | string | Policy name |
-
----
-
-## schedule list
-
-List scheduled rollouts.
-
-```sh
-nixfleet schedule list [FLAGS]
-```
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--status <STATUS>` | string | -- | Filter by status: `pending`, `triggered`, `cancelled` |
-
----
-
-## schedule cancel
-
-Cancel a scheduled rollout.
-
-```sh
-nixfleet schedule cancel <ID>
-```
-
-| Argument | Type | Description |
-|----------|------|-------------|
-| `<ID>` | string | Schedule ID |
-
----
-
 ## bootstrap
 
 Create the first admin API key. Only works when no keys exist in the control plane.
@@ -455,21 +333,6 @@ nixfleet machines list [FLAGS]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--tag <TAG>` | string | -- | Filter by tag |
-
----
-
-## machines tag
-
-Add tags to a machine.
-
-```sh
-nixfleet machines tag <ID> <TAGS...>
-```
-
-| Argument | Type | Description |
-|----------|------|-------------|
-| `<ID>` | string | Machine ID |
-| `<TAGS...>` | string (one or more) | Tags to add |
 
 ---
 

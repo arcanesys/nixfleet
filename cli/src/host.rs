@@ -26,17 +26,10 @@ pub async fn add_host(
     println!("\nNext steps:");
     println!("  1. Add the above snippet to modules/fleet.nix");
     println!("  2. git add && git commit");
-    if let Some(t) = target {
-        println!(
-            "  3. nixfleet host provision --hostname {} --target {}",
-            hostname, t
-        );
-    } else {
-        println!(
-            "  3. nixfleet host provision --hostname {} --target root@<ip>",
-            hostname
-        );
-    }
+    println!(
+        "  3. nixos-anywhere --flake .#{} root@<ip>",
+        hostname
+    );
 
     Ok(())
 }
@@ -155,148 +148,6 @@ fn print_fleet_snippet(hostname: &str, org: &str, role: &str, platform: &str, cp
     );
 }
 
-pub async fn provision_host(hostname: &str, target: &str, username: &str) -> Result<()> {
-    println!("Provisioning {} on {}...", hostname, target);
-
-    // 1. Verify host exists in flake
-    let check = tokio::process::Command::new("nix")
-        .args([
-            "eval",
-            &format!(".#nixosConfigurations.{}", hostname),
-            "--apply",
-            "x: true",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("Failed to run nix eval")?;
-
-    if !check.status.success() {
-        bail!(
-            "Host '{}' not found in flake. Did you add it to fleet.nix?",
-            hostname
-        );
-    }
-    println!("  Host found in flake");
-
-    // 2. Build the closure
-    println!("  Building closure (this may take a while)...");
-    let build = tokio::process::Command::new("nix")
-        .args([
-            "build",
-            &format!(
-                ".#nixosConfigurations.{}.config.system.build.toplevel",
-                hostname
-            ),
-            "--no-link",
-            "--print-out-paths",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("Failed to build closure")?;
-
-    if !build.status.success() {
-        bail!("Build failed: {}", String::from_utf8_lossy(&build.stderr));
-    }
-
-    let closure = String::from_utf8(build.stdout)?.trim().to_string();
-    if closure.is_empty() {
-        bail!("Build produced empty store path");
-    }
-    println!("  Built: {}", closure);
-
-    // 3. Install via nixos-anywhere
-    println!("  Installing via nixos-anywhere...");
-    let install = tokio::process::Command::new("nix")
-        .args([
-            "run",
-            "github:nix-community/nixos-anywhere",
-            "--",
-            "--flake",
-            &format!(".#{}", hostname),
-            target,
-        ])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .await
-        .context("Failed to run nixos-anywhere")?;
-
-    if !install.success() {
-        bail!("nixos-anywhere failed");
-    }
-    println!("  Installation complete");
-
-    // 4. Wait for reboot
-    // Use StrictHostKeyChecking=no for post-provision polling: the host key
-    // just changed (fresh install) and the old known_hosts entry is stale.
-    // This is safe because we just provisioned the machine ourselves.
-    let connect_host = target.trim_start_matches("root@");
-    let ssh_target = format!("{}@{}", username, connect_host);
-    let ssh_opts = [
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=3",
-        "-o", "LogLevel=ERROR",
-    ];
-    println!("  Waiting for machine to come back online...");
-
-    let mut online = false;
-    for _ in 0..60 {
-        let ping = tokio::process::Command::new("ssh")
-            .args(&ssh_opts)
-            .args([&ssh_target, "echo", "online"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await;
-
-        if let Ok(out) = ping {
-            if out.status.success() {
-                online = true;
-                break;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    }
-
-    if !online {
-        println!("  WARNING: Machine did not come back online within 5 minutes");
-        println!("  You may need to check the target manually.");
-        return Ok(());
-    }
-
-    // 5. Verify
-    println!("  Verifying...");
-    let verify = tokio::process::Command::new("ssh")
-        .args(&ssh_opts)
-        .args([
-            &ssh_target,
-            "nixos-version && systemctl is-active nixfleet-agent",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("Failed to verify installation")?;
-
-    let verify_output = String::from_utf8_lossy(&verify.stdout);
-    println!("  {}", verify_output.trim());
-
-    if verify.status.success() {
-        println!(
-            "\n{} provisioned successfully and agent is running!",
-            hostname
-        );
-    } else {
-        println!("\n{} installed but agent may not be running yet", hostname);
-    }
-
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

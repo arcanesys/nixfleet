@@ -111,7 +111,6 @@ Operator tool for interacting with the control plane. Major commands:
 - `nixfleet deploy --release <ID>` -- trigger a rollout against a release (or build+push+deploy in one command with `--push-to` / `--copy`)
 - `nixfleet status` -- query fleet inventory
 - `nixfleet rollout list/status/resume/cancel` -- manage running rollouts
-- `nixfleet policy` / `nixfleet schedule` -- named presets and scheduled rollouts
 - `nixfleet rollback` -- trigger rollback on a specific machine
 
 ### NixOS integration

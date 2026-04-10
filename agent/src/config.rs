@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::time::Duration;
 
 /// Agent configuration, assembled from CLI flags and environment variables.
@@ -35,6 +36,22 @@ pub struct Config {
     pub metrics_port: Option<u16>,
 }
 
+impl Config {
+    /// Validate invariants that depend on multiple fields together.
+    pub fn validate(&self) -> Result<()> {
+        match (self.client_cert.as_ref(), self.client_key.as_ref()) {
+            (Some(_), Some(_)) => Ok(()),
+            (None, None) => Ok(()),
+            (Some(_), None) => anyhow::bail!(
+                "client_cert is set but client_key is not — mTLS requires both or neither"
+            ),
+            (None, Some(_)) => anyhow::bail!(
+                "client_key is set but client_cert is not — mTLS requires both or neither"
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,36 +73,6 @@ mod tests {
             tags: vec![],
             metrics_port: None,
         }
-    }
-
-    #[test]
-    fn test_config_defaults() {
-        // Verify poll interval is reasonable (1 min – 1 hour)
-        let interval = Duration::from_secs(300);
-        assert!(interval.as_secs() >= 60);
-        assert!(interval.as_secs() <= 3600);
-    }
-
-    #[test]
-    fn test_config_poll_interval_at_minimum_boundary() {
-        let interval = Duration::from_secs(60);
-        assert!(interval.as_secs() >= 60);
-    }
-
-    #[test]
-    fn test_config_poll_interval_at_maximum_boundary() {
-        let interval = Duration::from_secs(3600);
-        assert!(interval.as_secs() <= 3600);
-    }
-
-    #[test]
-    fn test_config_clone() {
-        let config = default_config();
-        let cloned = config.clone();
-        assert_eq!(config.machine_id, cloned.machine_id);
-        assert_eq!(config.control_plane_url, cloned.control_plane_url);
-        assert_eq!(config.poll_interval, cloned.poll_interval);
-        assert_eq!(config.dry_run, cloned.dry_run);
     }
 
     #[test]
@@ -116,5 +103,49 @@ mod tests {
     fn test_config_db_path_default() {
         let config = default_config();
         assert_eq!(config.db_path, "/var/lib/nixfleet/state.db");
+    }
+
+    #[test]
+    fn test_config_validate_mtls_both_set() {
+        let cfg = Config {
+            client_cert: Some("/etc/ssl/cert.pem".into()),
+            client_key: Some("/etc/ssl/key.pem".into()),
+            ..default_config()
+        };
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_mtls_neither_set() {
+        let cfg = default_config();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_mtls_cert_without_key() {
+        let cfg = Config {
+            client_cert: Some("/etc/ssl/cert.pem".into()),
+            client_key: None,
+            ..default_config()
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            format!("{err}").contains("client_key is not"),
+            "error should mention missing client_key"
+        );
+    }
+
+    #[test]
+    fn test_config_validate_mtls_key_without_cert() {
+        let cfg = Config {
+            client_cert: None,
+            client_key: Some("/etc/ssl/key.pem".into()),
+            ..default_config()
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            format!("{err}").contains("client_cert is not"),
+            "error should mention missing client_cert"
+        );
     }
 }

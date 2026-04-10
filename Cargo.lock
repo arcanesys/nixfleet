@@ -1178,7 +1178,6 @@ dependencies = [
  "nixfleet-types",
  "reqwest",
  "rusqlite",
- "rustls-pemfile",
  "serde",
  "serde_json",
  "tempfile",
@@ -1192,7 +1191,6 @@ name = "nixfleet-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "clap",
  "dirs",
  "hostname",
@@ -1200,6 +1198,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",
@@ -1230,7 +1229,6 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
- "tower-http",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -2260,7 +2258,6 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]

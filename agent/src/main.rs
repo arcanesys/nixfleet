@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::Parser;
 use std::time::Duration;
 use tokio::signal;
@@ -114,6 +115,8 @@ async fn main() -> anyhow::Result<()> {
         tags: cli.tags,
         metrics_port: cli.metrics_port,
     };
+
+    config.validate().context("invalid agent configuration")?;
 
     info!(
         machine_id = %config.machine_id,

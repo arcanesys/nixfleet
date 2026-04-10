@@ -104,7 +104,6 @@ Key flags for `nixfleet deploy` in rollout mode:
 | `--health-timeout <SECS>` | `300` | Seconds to wait for health reports per batch |
 | `--wait` | `false` | Stream rollout progress to stdout |
 | `--cache-url <URL>` | — | Override the release's recorded cache URL (for agents) |
-| `--policy <NAME>` | — | Use a named rollout policy (values serve as defaults; explicit flags override) |
 | `--dry-run` | `false` | Build closures and show plan without deploying |
 
 See [CLI reference](../../reference/cli.md#deploy) for the full list and connection flags.

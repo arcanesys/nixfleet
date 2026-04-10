@@ -8,7 +8,7 @@ NixFleet builds on standard NixOS tooling. Every host produced by `mkHost` is a 
 nixos-anywhere --flake .#hostname root@192.168.1.42
 ```
 
-Disko partitions the disk according to the host's disk config, then installs the NixOS closure. The CLI wraps this as `nixfleet host provision` for convenience.
+Disko partitions the disk according to the host's disk config, then installs the NixOS closure.
 
 ## Local rebuild
 

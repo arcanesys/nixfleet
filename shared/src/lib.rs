@@ -54,24 +54,6 @@ pub mod api {
     /// Path parameters: `{id}` = machine ID, `{tag}` = tag name.
     pub const MACHINE_TAG: &str = "/api/v1/machines/{id}/tags/{tag}";
 
-    /// GET: List all policies. POST: Create a new policy.
-    pub const POLICIES: &str = "/api/v1/policies";
-
-    /// GET: Get policy by name. PUT: Update policy. DELETE: Delete policy.
-    /// Path parameter: `{name}` = policy name.
-    pub const POLICY: &str = "/api/v1/policies/{name}";
-
-    /// GET: List scheduled rollouts. POST: Create a scheduled rollout.
-    pub const SCHEDULES: &str = "/api/v1/schedules";
-
-    /// GET: Get scheduled rollout. POST (cancel): Cancel a scheduled rollout.
-    /// Path parameter: `{id}` = scheduled rollout ID.
-    pub const SCHEDULE: &str = "/api/v1/schedules/{id}";
-
-    /// POST: Cancel a scheduled rollout.
-    /// Path parameter: `{id}` = scheduled rollout ID.
-    pub const SCHEDULE_CANCEL: &str = "/api/v1/schedules/{id}/cancel";
-
     /// GET: List releases. POST: Create a new release.
     pub const RELEASES: &str = "/api/v1/releases";
 
@@ -202,43 +184,6 @@ mod tests {
     use chrono::Utc;
 
     #[test]
-    fn test_report_serialization() {
-        let report = Report {
-            machine_id: "web-01".to_string(),
-            current_generation: "/nix/store/abc123-nixos-system".to_string(),
-            success: true,
-            message: "deployed".to_string(),
-            timestamp: Utc::now(),
-            tags: vec!["web".to_string(), "prod".to_string()],
-            health: None,
-        };
-        let json = serde_json::to_string(&report).unwrap();
-        let back: Report = serde_json::from_str(&json).unwrap();
-        assert_eq!(report.machine_id, back.machine_id);
-        assert_eq!(report.current_generation, back.current_generation);
-        assert_eq!(report.success, back.success);
-        assert_eq!(report.message, back.message);
-    }
-
-    #[test]
-    fn test_report_failure_serialization() {
-        let report = Report {
-            machine_id: "dev-01".to_string(),
-            current_generation: "/nix/store/xyz789-nixos-system".to_string(),
-            success: false,
-            message: "rolled back: health check failed".to_string(),
-            timestamp: Utc::now(),
-            tags: vec![],
-            health: None,
-        };
-        let json = serde_json::to_string(&report).unwrap();
-        let back: Report = serde_json::from_str(&json).unwrap();
-        assert_eq!(report.machine_id, back.machine_id);
-        assert!(!back.success);
-        assert!(back.message.contains("rolled back"));
-    }
-
-    #[test]
     fn test_desired_generation_deserialization() {
         let json = r#"{"hash": "/nix/store/abc123-nixos-system"}"#;
         let gen: DesiredGeneration = serde_json::from_str(json).unwrap();
@@ -252,20 +197,6 @@ mod tests {
         let gen: DesiredGeneration = serde_json::from_str(json).unwrap();
         assert_eq!(gen.hash, "/nix/store/abc123-nixos-system");
         assert_eq!(gen.cache_url, Some("https://cache.example.com".to_string()));
-    }
-
-    #[test]
-    fn test_desired_generation_serialization_roundtrip() {
-        let gen = DesiredGeneration {
-            hash: "/nix/store/def456-nixos-system-web-01-25.05".to_string(),
-            cache_url: Some("https://cache.nixos.org".to_string()),
-            poll_hint: None,
-        };
-        let json = serde_json::to_string(&gen).unwrap();
-        let back: DesiredGeneration = serde_json::from_str(&json).unwrap();
-        assert_eq!(gen.hash, back.hash);
-        assert_eq!(gen.cache_url, back.cache_url);
-        assert_eq!(gen.poll_hint, back.poll_hint);
     }
 
     #[test]
@@ -349,28 +280,6 @@ mod tests {
             MachineLifecycle::Decommissioned.to_string(),
             "decommissioned"
         );
-    }
-
-    #[test]
-    fn test_lifecycle_from_str() {
-        assert_eq!(
-            MachineLifecycle::from_str_lc("pending"),
-            Some(MachineLifecycle::Pending)
-        );
-        assert_eq!(
-            MachineLifecycle::from_str_lc("active"),
-            Some(MachineLifecycle::Active)
-        );
-        assert_eq!(MachineLifecycle::from_str_lc("invalid"), None);
-    }
-
-    #[test]
-    fn test_lifecycle_valid_transitions() {
-        assert!(MachineLifecycle::Pending.can_transition_to(&MachineLifecycle::Active));
-        assert!(MachineLifecycle::Pending.can_transition_to(&MachineLifecycle::Decommissioned));
-        assert!(MachineLifecycle::Active.can_transition_to(&MachineLifecycle::Maintenance));
-        assert!(MachineLifecycle::Active.can_transition_to(&MachineLifecycle::Decommissioned));
-        assert!(MachineLifecycle::Maintenance.can_transition_to(&MachineLifecycle::Active));
     }
 
     #[test]

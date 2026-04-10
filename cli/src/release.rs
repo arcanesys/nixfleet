@@ -195,14 +195,12 @@ fn run_push_hook(push_to_host: Option<&str>, hook_cmd: &str, store_path: &str) -
 
 /// Extract SSH host from a URL like ssh://root@host or ssh://host.
 fn extract_ssh_host(url: &str) -> Option<String> {
-    if let Some(rest) = url.strip_prefix("ssh://") {
-        Some(rest.trim_end_matches('/').to_string())
-    } else {
-        None
-    }
+    url.strip_prefix("ssh://").map(|rest| rest.trim_end_matches('/').to_string())
 }
 
 /// `nixfleet release create`
+// CRUD function arguments map directly to table columns; refactoring is busywork
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     client: &Client,
     base_url: &str,
@@ -287,7 +285,7 @@ pub async fn create(
 
     // Print summary
     println!("\nRelease manifest:");
-    println!("{:<20} {:<18} {}", "HOST", "PLATFORM", "STORE PATH");
+    println!("{:<20} {:<18} STORE PATH", "HOST", "PLATFORM");
     for entry in &entries {
         println!(
             "{:<20} {:<18} {}",
@@ -351,8 +349,8 @@ pub async fn list(client: &Client, base_url: &str, limit: u32) -> Result<()> {
     }
 
     println!(
-        "{:<16} {:<12} {:>6} {:<22} {}",
-        "ID", "REVISION", "HOSTS", "CREATED", "BY"
+        "{:<16} {:<12} {:>6} {:<22} BY",
+        "ID", "REVISION", "HOSTS", "CREATED"
     );
     for r in releases {
         let rev = r.flake_rev.as_deref().unwrap_or("-");
@@ -396,8 +394,8 @@ pub async fn show(client: &Client, base_url: &str, release_id: &str) -> Result<(
     println!("By:        {}", release.created_by);
     println!();
     println!(
-        "{:<20} {:<18} {:<50} {}",
-        "HOST", "PLATFORM", "STORE PATH", "TAGS"
+        "{:<20} {:<18} {:<50} TAGS",
+        "HOST", "PLATFORM", "STORE PATH"
     );
     for entry in &release.entries {
         let tags = if entry.tags.is_empty() {

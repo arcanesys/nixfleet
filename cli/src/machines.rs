@@ -54,34 +54,6 @@ pub async fn list(client: &reqwest::Client, cp_url: &str, tag_filter: Option<&st
     Ok(())
 }
 
-/// PUT /api/v1/machines/{id}/tags — set tags on a machine.
-pub async fn tag(
-    client: &reqwest::Client,
-    cp_url: &str,
-    machine_id: &str,
-    tags: &[String],
-) -> Result<()> {
-    let url = format!("{}/api/v1/machines/{}/tags", cp_url, machine_id);
-
-    let resp = client
-        .post(&url)
-        .json(tags)
-        .send()
-        .await
-        .context("Failed to reach control plane")?;
-
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            resp.text().await.unwrap_or_default()
-        );
-    }
-
-    println!("Tags set on {}: {}", machine_id, tags.join(", "));
-    Ok(())
-}
-
 /// DELETE /api/v1/machines/{id}/tags/{tag} — remove a tag from a machine.
 pub async fn untag(
     client: &reqwest::Client,

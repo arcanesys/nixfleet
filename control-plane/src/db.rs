@@ -30,6 +30,9 @@ impl Db {
         // Enable WAL mode for better concurrent read performance
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
 
+        // Enforce referential integrity (SQLite disables FK checks by default)
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -640,136 +643,6 @@ impl Db {
     }
 
     // -----------------------------------------------------------------------
-    // Rollout policies
-    // -----------------------------------------------------------------------
-
-    /// Create a new rollout policy.
-    #[allow(clippy::too_many_arguments)]
-    pub fn create_policy(
-        &self,
-        id: &str,
-        name: &str,
-        strategy: &str,
-        batch_sizes: &str,
-        failure_threshold: &str,
-        on_failure: &str,
-        health_timeout_secs: i64,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO rollout_policies (id, name, strategy, batch_sizes, failure_threshold,
-             on_failure, health_timeout_secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![
-                id,
-                name,
-                strategy,
-                batch_sizes,
-                failure_threshold,
-                on_failure,
-                health_timeout_secs,
-            ],
-        )
-        .context("failed to create policy")?;
-        Ok(())
-    }
-
-    /// Get a policy by name.
-    pub fn get_policy_by_name(&self, name: &str) -> Result<Option<PolicyRow>> {
-        let conn = self.conn.lock().unwrap();
-        let result = conn.query_row(
-            "SELECT id, name, strategy, batch_sizes, failure_threshold, on_failure,
-             health_timeout_secs, created_at, updated_at
-             FROM rollout_policies WHERE name = ?1",
-            rusqlite::params![name],
-            |row| {
-                Ok(PolicyRow {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    strategy: row.get(2)?,
-                    batch_sizes: row.get(3)?,
-                    failure_threshold: row.get(4)?,
-                    on_failure: row.get(5)?,
-                    health_timeout_secs: row.get(6)?,
-                    created_at: row.get(7)?,
-                    updated_at: row.get(8)?,
-                })
-            },
-        );
-        match result {
-            Ok(row) => Ok(Some(row)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// List all policies ordered by name.
-    pub fn list_policies(&self) -> Result<Vec<PolicyRow>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, name, strategy, batch_sizes, failure_threshold, on_failure,
-             health_timeout_secs, created_at, updated_at
-             FROM rollout_policies ORDER BY name",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(PolicyRow {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    strategy: row.get(2)?,
-                    batch_sizes: row.get(3)?,
-                    failure_threshold: row.get(4)?,
-                    on_failure: row.get(5)?,
-                    health_timeout_secs: row.get(6)?,
-                    created_at: row.get(7)?,
-                    updated_at: row.get(8)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
-    }
-
-    /// Update a policy by name. Returns true if a row was updated.
-    pub fn update_policy(
-        &self,
-        name: &str,
-        strategy: &str,
-        batch_sizes: &str,
-        failure_threshold: &str,
-        on_failure: &str,
-        health_timeout_secs: i64,
-    ) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let rows = conn
-            .execute(
-                "UPDATE rollout_policies SET strategy = ?2, batch_sizes = ?3,
-                 failure_threshold = ?4, on_failure = ?5, health_timeout_secs = ?6,
-                 updated_at = datetime('now') WHERE name = ?1",
-                rusqlite::params![
-                    name,
-                    strategy,
-                    batch_sizes,
-                    failure_threshold,
-                    on_failure,
-                    health_timeout_secs,
-                ],
-            )
-            .context("failed to update policy")?;
-        Ok(rows > 0)
-    }
-
-    /// Delete a policy by name. Returns true if a row was deleted.
-    pub fn delete_policy(&self, name: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let rows = conn
-            .execute(
-                "DELETE FROM rollout_policies WHERE name = ?1",
-                rusqlite::params![name],
-            )
-            .context("failed to delete policy")?;
-        Ok(rows > 0)
-    }
-
-    // -----------------------------------------------------------------------
     // Rollout events
     // -----------------------------------------------------------------------
 
@@ -813,229 +686,6 @@ impl Db {
         Ok(rows)
     }
 
-    // -----------------------------------------------------------------------
-    // Scheduled rollouts
-    // -----------------------------------------------------------------------
-
-    /// Create a scheduled rollout.
-    #[allow(clippy::too_many_arguments)]
-    pub fn create_scheduled_rollout(
-        &self,
-        id: &str,
-        scheduled_at: &str,
-        policy_id: Option<&str>,
-        release_id: &str,
-        cache_url: Option<&str>,
-        strategy: Option<&str>,
-        batch_sizes: Option<&str>,
-        failure_threshold: Option<&str>,
-        on_failure: Option<&str>,
-        health_timeout_secs: Option<i64>,
-        target_tags: Option<&str>,
-        target_hosts: Option<&str>,
-        created_by: &str,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO scheduled_rollouts (id, scheduled_at, policy_id, release_id,
-             cache_url, strategy, batch_sizes, failure_threshold, on_failure, health_timeout_secs,
-             target_tags, target_hosts, created_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            rusqlite::params![
-                id,
-                scheduled_at,
-                policy_id,
-                release_id,
-                cache_url,
-                strategy,
-                batch_sizes,
-                failure_threshold,
-                on_failure,
-                health_timeout_secs,
-                target_tags,
-                target_hosts,
-                created_by,
-            ],
-        )
-        .context("failed to create scheduled rollout")?;
-        Ok(())
-    }
-
-    /// List scheduled rollouts with optional status filter.
-    pub fn list_scheduled_rollouts(
-        &self,
-        status: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<ScheduledRolloutRow>> {
-        let conn = self.conn.lock().unwrap();
-        let mut sql = String::from(
-            "SELECT id, scheduled_at, policy_id, release_id, cache_url, strategy,
-             batch_sizes, failure_threshold, on_failure, health_timeout_secs, target_tags,
-             target_hosts, status, rollout_id, created_at, created_by
-             FROM scheduled_rollouts WHERE 1=1",
-        );
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-        if let Some(s) = status {
-            sql.push_str(&format!(" AND status = ?{}", params.len() + 1));
-            params.push(Box::new(s.to_string()));
-        }
-
-        sql.push_str(&format!(
-            " ORDER BY scheduled_at ASC LIMIT ?{}",
-            params.len() + 1
-        ));
-        params.push(Box::new(limit as i64));
-
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
-
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(param_refs.as_slice(), |row| {
-                Ok(ScheduledRolloutRow {
-                    id: row.get(0)?,
-                    scheduled_at: row.get(1)?,
-                    policy_id: row.get(2)?,
-                    release_id: row.get(3)?,
-                    cache_url: row.get(4)?,
-                    strategy: row.get(5)?,
-                    batch_sizes: row.get(6)?,
-                    failure_threshold: row.get(7)?,
-                    on_failure: row.get(8)?,
-                    health_timeout_secs: row.get(9)?,
-                    target_tags: row.get(10)?,
-                    target_hosts: row.get(11)?,
-                    status: row.get(12)?,
-                    rollout_id: row.get(13)?,
-                    created_at: row.get(14)?,
-                    created_by: row.get(15)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
-    }
-
-    /// Get a scheduled rollout by ID.
-    pub fn get_scheduled_rollout(&self, id: &str) -> Result<Option<ScheduledRolloutRow>> {
-        let conn = self.conn.lock().unwrap();
-        let result = conn.query_row(
-            "SELECT id, scheduled_at, policy_id, release_id, cache_url, strategy,
-             batch_sizes, failure_threshold, on_failure, health_timeout_secs, target_tags,
-             target_hosts, status, rollout_id, created_at, created_by
-             FROM scheduled_rollouts WHERE id = ?1",
-            rusqlite::params![id],
-            |row| {
-                Ok(ScheduledRolloutRow {
-                    id: row.get(0)?,
-                    scheduled_at: row.get(1)?,
-                    policy_id: row.get(2)?,
-                    release_id: row.get(3)?,
-                    cache_url: row.get(4)?,
-                    strategy: row.get(5)?,
-                    batch_sizes: row.get(6)?,
-                    failure_threshold: row.get(7)?,
-                    on_failure: row.get(8)?,
-                    health_timeout_secs: row.get(9)?,
-                    target_tags: row.get(10)?,
-                    target_hosts: row.get(11)?,
-                    status: row.get(12)?,
-                    rollout_id: row.get(13)?,
-                    created_at: row.get(14)?,
-                    created_by: row.get(15)?,
-                })
-            },
-        );
-        match result {
-            Ok(row) => Ok(Some(row)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// Update a scheduled rollout's status and optionally set the resulting rollout_id.
-    pub fn update_scheduled_rollout_status(
-        &self,
-        id: &str,
-        status: &str,
-        rollout_id: Option<&str>,
-    ) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let rows = conn
-            .execute(
-                "UPDATE scheduled_rollouts SET status = ?2, rollout_id = ?3 WHERE id = ?1",
-                rusqlite::params![id, status, rollout_id],
-            )
-            .context("failed to update scheduled rollout status")?;
-        Ok(rows > 0)
-    }
-
-    /// Get pending scheduled rollouts that are due (scheduled_at <= now).
-    pub fn get_due_scheduled_rollouts(&self) -> Result<Vec<ScheduledRolloutRow>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, scheduled_at, policy_id, release_id, cache_url, strategy,
-             batch_sizes, failure_threshold, on_failure, health_timeout_secs, target_tags,
-             target_hosts, status, rollout_id, created_at, created_by
-             FROM scheduled_rollouts
-             WHERE status = 'pending' AND scheduled_at <= datetime('now')
-             ORDER BY scheduled_at ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(ScheduledRolloutRow {
-                    id: row.get(0)?,
-                    scheduled_at: row.get(1)?,
-                    policy_id: row.get(2)?,
-                    release_id: row.get(3)?,
-                    cache_url: row.get(4)?,
-                    strategy: row.get(5)?,
-                    batch_sizes: row.get(6)?,
-                    failure_threshold: row.get(7)?,
-                    on_failure: row.get(8)?,
-                    health_timeout_secs: row.get(9)?,
-                    target_tags: row.get(10)?,
-                    target_hosts: row.get(11)?,
-                    status: row.get(12)?,
-                    rollout_id: row.get(13)?,
-                    created_at: row.get(14)?,
-                    created_by: row.get(15)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
-    }
-
-    // -----------------------------------------------------------------------
-    // Rollout policy_id
-    // -----------------------------------------------------------------------
-
-    /// Set the policy_id on a rollout (for traceability).
-    pub fn set_rollout_policy_id(&self, rollout_id: &str, policy_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE rollouts SET policy_id = ?2 WHERE id = ?1",
-            rusqlite::params![rollout_id, policy_id],
-        )
-        .context("failed to set rollout policy_id")?;
-        Ok(())
-    }
-
-    /// Get policy_id for a rollout.
-    pub fn get_rollout_policy_id(&self, rollout_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
-        let result = conn.query_row(
-            "SELECT policy_id FROM rollouts WHERE id = ?1",
-            rusqlite::params![rollout_id],
-            |row| row.get(0),
-        );
-        match result {
-            Ok(policy_id) => Ok(policy_id),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
     /// Check if a machine is part of any active rollout (status: created/running/paused).
     /// Returns the rollout id if found.
     pub fn machine_in_active_rollout(&self, machine_id: &str) -> Result<Option<String>> {
@@ -1066,6 +716,8 @@ impl Db {
     // -----------------------------------------------------------------------
 
     /// Create a new release with its per-host entries (transactional).
+    // CRUD function arguments map directly to table columns; refactoring is busywork
+    #[allow(clippy::too_many_arguments)]
     pub fn create_release(
         &self,
         id: &str,
@@ -1190,7 +842,7 @@ impl Db {
         Ok(rows)
     }
 
-    /// Check if a release is referenced by any rollout or scheduled rollout.
+    /// Check if a release is referenced by any rollout.
     pub fn release_referenced_by_rollout(&self, release_id: &str) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let rollout_count: i64 = conn.query_row(
@@ -1198,12 +850,7 @@ impl Db {
             rusqlite::params![release_id],
             |row| row.get(0),
         )?;
-        let schedule_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM scheduled_rollouts WHERE release_id = ?1",
-            rusqlite::params![release_id],
-            |row| row.get(0),
-        )?;
-        Ok(rollout_count > 0 || schedule_count > 0)
+        Ok(rollout_count > 0)
     }
 
     /// Delete a release and its entries. Returns true if the release existed.
@@ -1280,20 +927,6 @@ pub struct HealthReportRow {
     pub received_at: String,
 }
 
-/// A rollout policy row as stored in SQLite.
-#[derive(Debug, Clone)]
-pub struct PolicyRow {
-    pub id: String,
-    pub name: String,
-    pub strategy: String,
-    pub batch_sizes: String,
-    pub failure_threshold: String,
-    pub on_failure: String,
-    pub health_timeout_secs: i64,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
 /// A rollout event row as stored in SQLite.
 #[derive(Debug, Clone)]
 pub struct RolloutEventRow {
@@ -1303,27 +936,6 @@ pub struct RolloutEventRow {
     pub detail: String,
     pub actor: String,
     pub created_at: String,
-}
-
-/// A scheduled rollout row as stored in SQLite.
-#[derive(Debug, Clone)]
-pub struct ScheduledRolloutRow {
-    pub id: String,
-    pub scheduled_at: String,
-    pub policy_id: Option<String>,
-    pub release_id: String,
-    pub cache_url: Option<String>,
-    pub strategy: Option<String>,
-    pub batch_sizes: Option<String>,
-    pub failure_threshold: Option<String>,
-    pub on_failure: Option<String>,
-    pub health_timeout_secs: Option<i64>,
-    pub target_tags: Option<String>,
-    pub target_hosts: Option<String>,
-    pub status: String,
-    pub rollout_id: Option<String>,
-    pub created_at: String,
-    pub created_by: String,
 }
 
 /// A release row as stored in SQLite.
@@ -1380,17 +992,12 @@ mod tests {
 
     #[test]
     fn test_migrate_is_idempotent() {
-        let (db, _dir) = make_db();
-        db.migrate().unwrap();
-    }
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Db::new(db_path.to_str().unwrap()).unwrap();
 
-    #[test]
-    fn test_set_and_get_desired_generation() {
-        let (db, _dir) = make_db();
-        db.set_desired_generation("web-01", "/nix/store/abc123")
-            .unwrap();
-        let hash = db.get_desired_generation("web-01").unwrap();
-        assert_eq!(hash, Some("/nix/store/abc123".to_string()));
+        db.migrate().expect("first migrate");
+        db.migrate().expect("second migrate should be a no-op");
     }
 
     #[test]
@@ -1460,14 +1067,6 @@ mod tests {
         let dev_01_reports = db.get_recent_reports("dev-01", 10).unwrap();
         assert_eq!(web_01_reports.len(), 1);
         assert_eq!(dev_01_reports.len(), 1);
-    }
-
-    #[test]
-    fn test_register_machine() {
-        let (db, _dir) = make_db();
-        db.register_machine("web-01", "pending").unwrap();
-        let lc = db.get_machine_lifecycle("web-01").unwrap();
-        assert_eq!(lc, Some("pending".to_string()));
     }
 
     #[test]
@@ -1937,96 +1536,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Policy CRUD tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_create_and_get_policy() {
-        let (db, _dir) = make_db();
-        db.create_policy(
-            "pol-1",
-            "canary-web",
-            "staged",
-            "[\"1\",\"100%\"]",
-            "1",
-            "pause",
-            60,
-        )
-        .unwrap();
-        let policy = db.get_policy_by_name("canary-web").unwrap().unwrap();
-        assert_eq!(policy.name, "canary-web");
-        assert_eq!(policy.strategy, "staged");
-        assert_eq!(policy.health_timeout_secs, 60);
-    }
-
-    #[test]
-    fn test_get_policy_by_name_missing() {
-        let (db, _dir) = make_db();
-        let policy = db.get_policy_by_name("nonexistent").unwrap();
-        assert!(policy.is_none());
-    }
-
-    #[test]
-    fn test_list_policies() {
-        let (db, _dir) = make_db();
-        db.create_policy("pol-1", "p1", "staged", "[]", "1", "pause", 30)
-            .unwrap();
-        db.create_policy("pol-2", "p2", "all_at_once", "[]", "0", "revert", 60)
-            .unwrap();
-        let policies = db.list_policies().unwrap();
-        assert_eq!(policies.len(), 2);
-    }
-
-    #[test]
-    fn test_list_policies_empty() {
-        let (db, _dir) = make_db();
-        let policies = db.list_policies().unwrap();
-        assert!(policies.is_empty());
-    }
-
-    #[test]
-    fn test_delete_policy() {
-        let (db, _dir) = make_db();
-        db.create_policy("pol-1", "temp", "staged", "[]", "1", "pause", 30)
-            .unwrap();
-        assert!(db.get_policy_by_name("temp").unwrap().is_some());
-        let deleted = db.delete_policy("temp").unwrap();
-        assert!(deleted);
-        assert!(db.get_policy_by_name("temp").unwrap().is_none());
-    }
-
-    #[test]
-    fn test_delete_policy_missing() {
-        let (db, _dir) = make_db();
-        let deleted = db.delete_policy("nonexistent").unwrap();
-        assert!(!deleted);
-    }
-
-    #[test]
-    fn test_duplicate_policy_name_fails() {
-        let (db, _dir) = make_db();
-        db.create_policy("pol-1", "unique", "staged", "[]", "1", "pause", 30)
-            .unwrap();
-        assert!(db
-            .create_policy("pol-2", "unique", "staged", "[]", "1", "pause", 30)
-            .is_err());
-    }
-
-    #[test]
-    fn test_update_policy() {
-        let (db, _dir) = make_db();
-        db.create_policy("pol-1", "my-policy", "staged", "[1]", "1", "pause", 30)
-            .unwrap();
-        let updated = db
-            .update_policy("my-policy", "all_at_once", "[]", "0", "revert", 120)
-            .unwrap();
-        assert!(updated);
-        let policy = db.get_policy_by_name("my-policy").unwrap().unwrap();
-        assert_eq!(policy.strategy, "all_at_once");
-        assert_eq!(policy.health_timeout_secs, 120);
-    }
-
-    // -----------------------------------------------------------------------
     // Rollout events tests
     // -----------------------------------------------------------------------
 
@@ -2123,170 +1632,28 @@ mod tests {
         assert!(events[1].id <= events[2].id);
     }
 
-    // -----------------------------------------------------------------------
-    // Scheduled rollout tests
-    // -----------------------------------------------------------------------
-
     #[test]
-    fn test_create_and_list_schedules() {
+    fn test_foreign_keys_enforced() {
         let (db, _dir) = make_db();
-        create_test_release(&db, "/nix/store/abc");
-        db.create_scheduled_rollout(
-            "s-1",
-            "2026-04-06T03:00:00Z",
-            None,
-            "/nix/store/abc",
-            None,
-            Some("staged"),
-            Some("[1]"),
-            Some("1"),
-            Some("pause"),
-            Some(60),
-            Some("[\"web\"]"),
-            None,
-            "admin",
-        )
-        .unwrap();
-        let schedules = db.list_scheduled_rollouts(None, 100).unwrap();
-        assert_eq!(schedules.len(), 1);
-        assert_eq!(schedules[0].status, "pending");
+
+        // Attempt to insert a machine_tag with a machine_id that doesn't exist.
+        // With PRAGMA foreign_keys = ON, this must fail.
+        let conn = db.conn.lock().unwrap();
+        let result = conn.execute(
+            "INSERT INTO machine_tags (machine_id, tag) VALUES (?1, ?2)",
+            rusqlite::params!["nonexistent-machine", "test-tag"],
+        );
+        drop(conn);
+
+        assert!(
+            result.is_err(),
+            "FK constraint should have rejected orphan machine_tag insert"
+        );
+        let err_string = format!("{}", result.unwrap_err());
+        assert!(
+            err_string.contains("FOREIGN KEY") || err_string.contains("foreign key"),
+            "expected FK error, got: {err_string}"
+        );
     }
 
-    #[test]
-    fn test_get_scheduled_rollout() {
-        let (db, _dir) = make_db();
-        create_test_release(&db, "/nix/store/def");
-        db.create_scheduled_rollout(
-            "s-get",
-            "2026-04-06T03:00:00Z",
-            None,
-            "/nix/store/def",
-            None,
-            Some("all_at_once"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "admin",
-        )
-        .unwrap();
-        let schedule = db.get_scheduled_rollout("s-get").unwrap().unwrap();
-        assert_eq!(schedule.id, "s-get");
-        assert_eq!(schedule.release_id, "/nix/store/def");
-        assert_eq!(schedule.status, "pending");
-        assert_eq!(schedule.created_by, "admin");
-    }
-
-    #[test]
-    fn test_get_scheduled_rollout_missing() {
-        let (db, _dir) = make_db();
-        let schedule = db.get_scheduled_rollout("nonexistent").unwrap();
-        assert!(schedule.is_none());
-    }
-
-    #[test]
-    fn test_cancel_schedule() {
-        let (db, _dir) = make_db();
-        create_test_release(&db, "/nix/store/abc");
-        db.create_scheduled_rollout(
-            "s-cancel",
-            "2026-04-06T03:00:00Z",
-            None,
-            "/nix/store/abc",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "admin",
-        )
-        .unwrap();
-        let updated = db
-            .update_scheduled_rollout_status("s-cancel", "cancelled", None)
-            .unwrap();
-        assert!(updated);
-        let schedule = db.get_scheduled_rollout("s-cancel").unwrap().unwrap();
-        assert_eq!(schedule.status, "cancelled");
-    }
-
-    #[test]
-    fn test_list_scheduled_rollouts_filter_by_status() {
-        let (db, _dir) = make_db();
-        create_test_release(&db, "/nix/store/abc");
-        create_test_release(&db, "/nix/store/def");
-        db.create_scheduled_rollout(
-            "s-pending",
-            "2026-04-06T03:00:00Z",
-            None,
-            "/nix/store/abc",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "admin",
-        )
-        .unwrap();
-        db.create_scheduled_rollout(
-            "s-cancelled",
-            "2026-04-07T03:00:00Z",
-            None,
-            "/nix/store/def",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "admin",
-        )
-        .unwrap();
-        db.update_scheduled_rollout_status("s-cancelled", "cancelled", None)
-            .unwrap();
-
-        let pending = db.list_scheduled_rollouts(Some("pending"), 100).unwrap();
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].id, "s-pending");
-
-        let cancelled = db.list_scheduled_rollouts(Some("cancelled"), 100).unwrap();
-        assert_eq!(cancelled.len(), 1);
-        assert_eq!(cancelled[0].id, "s-cancelled");
-    }
-
-    #[test]
-    fn test_update_scheduled_rollout_status_with_rollout_id() {
-        let (db, _dir) = make_db();
-        create_test_release(&db, "/nix/store/abc");
-        db.create_scheduled_rollout(
-            "s-fired",
-            "2026-04-06T03:00:00Z",
-            None,
-            "/nix/store/abc",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "admin",
-        )
-        .unwrap();
-        db.update_scheduled_rollout_status("s-fired", "fired", Some("roll-99"))
-            .unwrap();
-        let schedule = db.get_scheduled_rollout("s-fired").unwrap().unwrap();
-        assert_eq!(schedule.status, "fired");
-        assert_eq!(schedule.rollout_id, Some("roll-99".to_string()));
-    }
 }

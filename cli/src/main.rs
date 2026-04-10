@@ -8,10 +8,8 @@ mod config;
 mod deploy;
 mod host;
 mod machines;
-mod policy;
 mod release;
 mod rollout;
-mod schedule;
 mod status;
 
 #[derive(Parser)]
@@ -116,17 +114,10 @@ enum Commands {
         #[arg(long, conflicts_with = "release", conflicts_with = "push_to")]
         copy: bool,
 
-        /// Use a named rollout policy (policy values serve as defaults)
-        #[arg(long)]
-        policy: Option<String>,
-
         /// Binary cache URL for agents to fetch closures from (e.g. http://cache:5000)
         #[arg(long)]
         cache_url: Option<String>,
 
-        /// Schedule the rollout for a future time (ISO 8601, e.g. "2026-04-06T03:00:00Z")
-        #[arg(long)]
-        schedule_at: Option<String>,
     },
 
     /// Show fleet status from the control plane
@@ -167,18 +158,6 @@ enum Commands {
     Machines {
         #[command(subcommand)]
         action: MachineAction,
-    },
-
-    /// Manage rollout policies
-    Policy {
-        #[command(subcommand)]
-        action: PolicyAction,
-    },
-
-    /// Manage scheduled rollouts
-    Schedule {
-        #[command(subcommand)]
-        action: ScheduleAction,
     },
 
     /// Manage releases
@@ -246,20 +225,6 @@ enum HostAction {
         target: Option<String>,
     },
 
-    /// Provision a host (install NixOS via nixos-anywhere)
-    Provision {
-        /// Host name (must exist in flake)
-        #[arg(long)]
-        hostname: String,
-
-        /// SSH target (e.g. root@192.168.1.42)
-        #[arg(long)]
-        target: String,
-
-        /// Username for post-install verification
-        #[arg(long, default_value = "root")]
-        username: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -286,93 +251,6 @@ enum RolloutAction {
     /// Cancel a rollout
     Cancel {
         /// Rollout ID
-        id: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum PolicyAction {
-    /// Create a new rollout policy
-    Create {
-        /// Policy name (unique)
-        #[arg(long)]
-        name: String,
-
-        /// Rollout strategy: canary, staged, or all-at-once
-        #[arg(long, default_value = "all-at-once")]
-        strategy: String,
-
-        /// Batch sizes (comma-separated, e.g. "1,25%,100%")
-        #[arg(long, value_delimiter = ',')]
-        batch_size: Option<Vec<String>>,
-
-        /// Maximum failures before pausing/reverting
-        #[arg(long, default_value = "1")]
-        failure_threshold: String,
-
-        /// Action on failure: pause or revert
-        #[arg(long, default_value = "pause")]
-        on_failure: String,
-
-        /// Health check timeout in seconds
-        #[arg(long, default_value = "300")]
-        health_timeout: u64,
-    },
-
-    /// List all policies
-    List,
-
-    /// Show policy detail
-    Get {
-        /// Policy name
-        name: String,
-    },
-
-    /// Update an existing policy
-    Update {
-        /// Policy name
-        name: String,
-
-        /// Rollout strategy
-        #[arg(long, default_value = "all-at-once")]
-        strategy: String,
-
-        /// Batch sizes (comma-separated)
-        #[arg(long, value_delimiter = ',')]
-        batch_size: Option<Vec<String>>,
-
-        /// Maximum failures before pausing/reverting
-        #[arg(long, default_value = "1")]
-        failure_threshold: String,
-
-        /// Action on failure: pause or revert
-        #[arg(long, default_value = "pause")]
-        on_failure: String,
-
-        /// Health check timeout in seconds
-        #[arg(long, default_value = "300")]
-        health_timeout: u64,
-    },
-
-    /// Delete a policy (admin only)
-    Delete {
-        /// Policy name
-        name: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum ScheduleAction {
-    /// List scheduled rollouts
-    List {
-        /// Filter by status (pending, triggered, cancelled)
-        #[arg(long)]
-        status: Option<String>,
-    },
-
-    /// Cancel a scheduled rollout
-    Cancel {
-        /// Schedule ID
         id: String,
     },
 }
@@ -421,16 +299,6 @@ enum MachineAction {
         /// Filter by tag
         #[arg(long)]
         tag: Option<String>,
-    },
-
-    /// Add tags to a machine
-    Tag {
-        /// Machine ID
-        id: String,
-
-        /// Tags to add
-        #[arg(required = true)]
-        tags: Vec<String>,
     },
 
     /// Remove a tag from a machine
@@ -551,9 +419,7 @@ async fn main() -> Result<()> {
             push_to,
             push_hook,
             copy,
-            policy,
             cache_url,
-            schedule_at,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
 
@@ -620,42 +486,21 @@ async fn main() -> Result<()> {
                         .collect()
                 };
 
-                // Handle scheduled rollouts
-                if let Some(ref schedule_at_str) = schedule_at {
-                    deploy::deploy_scheduled(
-                        &http_client,
-                        effective_cp_url,
-                        &release_id,
-                        &tags,
-                        &rollout_hosts,
-                        effective_strategy,
-                        batch_size,
-                        &failure_threshold,
-                        &on_failure,
-                        health_timeout,
-                        policy.as_deref(),
-                        effective_cache_url,
-                        schedule_at_str,
-                    )
-                    .await
-                } else {
-                    deploy::deploy_rollout(
-                        &http_client,
-                        effective_cp_url,
-                        &release_id,
-                        &tags,
-                        &rollout_hosts,
-                        effective_strategy,
-                        batch_size,
-                        &failure_threshold,
-                        &on_failure,
-                        health_timeout,
-                        wait,
-                        policy.as_deref(),
-                        effective_cache_url,
-                    )
-                    .await
-                }
+                deploy::deploy_rollout(
+                    &http_client,
+                    effective_cp_url,
+                    &release_id,
+                    &tags,
+                    &rollout_hosts,
+                    effective_strategy,
+                    batch_size,
+                    &failure_threshold,
+                    &on_failure,
+                    health_timeout,
+                    wait,
+                    effective_cache_url,
+                )
+                .await
             }
         }
         Commands::Status { json } => {
@@ -688,11 +533,6 @@ async fn main() -> Result<()> {
                 )
                 .await
             }
-            HostAction::Provision {
-                hostname,
-                target,
-                username,
-            } => host::provision_host(&hostname, &target, &username).await,
         },
         Commands::Rollout { action } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
@@ -708,69 +548,6 @@ async fn main() -> Result<()> {
                 }
                 RolloutAction::Cancel { id } => {
                     rollout::cancel(&http_client, effective_cp_url, &id).await
-                }
-            }
-        }
-        Commands::Policy { action } => {
-            let http_client = client::build_client(&tls, effective_api_key)?;
-            match action {
-                PolicyAction::Create {
-                    name,
-                    strategy,
-                    batch_size,
-                    failure_threshold,
-                    on_failure,
-                    health_timeout,
-                } => {
-                    let parsed_strategy = deploy::parse_strategy(&strategy)?;
-                    let parsed_on_failure = deploy::parse_on_failure(&on_failure)?;
-                    let request = nixfleet_types::rollout::PolicyRequest {
-                        name,
-                        strategy: parsed_strategy,
-                        batch_sizes: batch_size.unwrap_or_else(|| vec!["100%".to_string()]),
-                        failure_threshold,
-                        on_failure: parsed_on_failure,
-                        health_timeout_secs: health_timeout,
-                    };
-                    policy::create(&http_client, effective_cp_url, &request).await
-                }
-                PolicyAction::List => policy::list(&http_client, effective_cp_url).await,
-                PolicyAction::Get { name } => {
-                    policy::get(&http_client, effective_cp_url, &name).await
-                }
-                PolicyAction::Update {
-                    name,
-                    strategy,
-                    batch_size,
-                    failure_threshold,
-                    on_failure,
-                    health_timeout,
-                } => {
-                    let parsed_strategy = deploy::parse_strategy(&strategy)?;
-                    let parsed_on_failure = deploy::parse_on_failure(&on_failure)?;
-                    let request = nixfleet_types::rollout::PolicyRequest {
-                        name: name.clone(),
-                        strategy: parsed_strategy,
-                        batch_sizes: batch_size.unwrap_or_else(|| vec!["100%".to_string()]),
-                        failure_threshold,
-                        on_failure: parsed_on_failure,
-                        health_timeout_secs: health_timeout,
-                    };
-                    policy::update(&http_client, effective_cp_url, &name, &request).await
-                }
-                PolicyAction::Delete { name } => {
-                    policy::delete(&http_client, effective_cp_url, &name).await
-                }
-            }
-        }
-        Commands::Schedule { action } => {
-            let http_client = client::build_client(&tls, effective_api_key)?;
-            match action {
-                ScheduleAction::List { status } => {
-                    schedule::list(&http_client, effective_cp_url, status.as_deref()).await
-                }
-                ScheduleAction::Cancel { id } => {
-                    schedule::cancel(&http_client, effective_cp_url, &id).await
                 }
             }
         }
@@ -830,9 +607,6 @@ async fn main() -> Result<()> {
                 MachineAction::List { tag } => {
                     machines::list(&http_client, effective_cp_url, tag.as_deref()).await
                 }
-                MachineAction::Tag { id, tags } => {
-                    machines::tag(&http_client, effective_cp_url, &id, &tags).await
-                }
                 MachineAction::Untag { id, tag } => {
                     machines::untag(&http_client, effective_cp_url, &id, &tag).await
                 }
@@ -845,14 +619,12 @@ async fn main() -> Result<()> {
             // Bootstrap does not require an API key, but does use mTLS
             let http_client = client::build_client(&tls, "")?;
             let result = bootstrap(&http_client, effective_cp_url, &name, json).await;
-            if let Ok(ref key) = result {
-                // Save API key to credentials file
-                if let Some(key_str) = key {
-                    if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
-                        eprintln!("Warning: failed to save API key: {}", e);
-                    } else {
-                        println!("Saved to {}", config::credentials_path().display());
-                    }
+            // Save API key to credentials file
+            if let Ok(Some(ref key_str)) = result {
+                if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
+                    eprintln!("Warning: failed to save API key: {}", e);
+                } else {
+                    println!("Saved to {}", config::credentials_path().display());
                 }
             }
             result.map(|_| ())

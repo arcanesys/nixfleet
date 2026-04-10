@@ -48,7 +48,6 @@ pub fn build_app(
             "/api/v1/machines/{id}/lifecycle",
             patch(routes::update_lifecycle),
         )
-        .route("/api/v1/machines/{id}/tags", post(routes::set_tags))
         .route(
             "/api/v1/machines/{id}/tags/{tag}",
             axum::routing::delete(routes::remove_tag),
@@ -63,28 +62,6 @@ pub fn build_app(
         .route(
             "/api/v1/rollouts/{id}/cancel",
             post(rollout::routes::cancel_rollout),
-        )
-        .route(
-            "/api/v1/policies",
-            post(rollout::policy::create_policy).get(rollout::policy::list_policies),
-        )
-        .route(
-            "/api/v1/policies/{name}",
-            get(rollout::policy::get_policy)
-                .put(rollout::policy::update_policy)
-                .delete(rollout::policy::delete_policy),
-        )
-        .route(
-            "/api/v1/schedules",
-            post(rollout::schedule::create_schedule).get(rollout::schedule::list_schedules),
-        )
-        .route(
-            "/api/v1/schedules/{id}",
-            get(rollout::schedule::get_schedule),
-        )
-        .route(
-            "/api/v1/schedules/{id}/cancel",
-            post(rollout::schedule::cancel_schedule),
         )
         .route(
             "/api/v1/releases",
