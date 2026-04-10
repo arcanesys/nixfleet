@@ -71,7 +71,39 @@ The release-abstraction cycle (PR #28) revealed that nixfleet's Rust core has ha
 
 ## Category 2: Control-plane HTTP endpoints
 
-_To be filled in Task 4._
+**31 routes total** (2 agent mTLS, 26 admin API key, 1 bootstrap, 2 public). **Only 7 routes have any tests**, all in `control-plane/tests/agent_integration.rs`, and all happy-path only. **`set-generation` confirmed removed** in PR #28 (not in table). Test counts below are `(happy/error/auth)`.
+
+| Route | Method | Auth | Handler | Tests (h/e/a) | Proposed verdict | Rationale |
+|---|---|---|---|---|---|---|
+| `/api/v1/machines/{id}/desired-generation` | GET | mTLS | `routes::get_desired_generation` | 1/1/0 | Test | mTLS-missing negative needed |
+| `/api/v1/machines/{id}/report` | POST | mTLS | `routes::post_report` | 3/1/0 | Test | Bad report shape + auth-missing |
+| `/api/v1/machines` | GET | API key | `routes::list_machines` | 3/0/1 | Test | Error paths untested |
+| `/api/v1/machines/{id}/register` | POST | API key | `routes::register_machine` | 3/0/0 | Test | Auth-missing untested |
+| `/api/v1/machines/{id}/lifecycle` | PATCH | API key | `routes::update_lifecycle` | 2/1/0 | Test | State transition matrix |
+| `/api/v1/machines/{id}/tags` | POST | API key | `routes::set_tags` | 0/0/0 | **Trim** | Redundant with agent auto-sync |
+| `/api/v1/machines/{id}/tags/{tag}` | DELETE | API key | `routes::remove_tag` | 0/0/0 | Test | Only way to remove stale tags |
+| `/api/v1/rollouts` | POST | API key | `rollout::routes::create_rollout` | 0/0/0 | Test | Completely untested |
+| `/api/v1/rollouts` | GET | API key | `rollout::routes::list_rollouts` | 0/0/0 | Test | Pagination untested |
+| `/api/v1/rollouts/{id}` | GET | API key | `rollout::routes::get_rollout` | 0/0/0 | Test | Events timeline untested |
+| `/api/v1/rollouts/{id}/resume` | POST | API key | `rollout::routes::resume_rollout` | 0/0/0 | Test | `vm-fleet.nix` covers happy path indirectly; need direct test |
+| `/api/v1/rollouts/{id}/cancel` | POST | API key | `rollout::routes::cancel_rollout` | 0/0/0 | Test | Cancel untested |
+| `/api/v1/policies` (POST/GET) | POST/GET | API key | `rollout::policy::*` | 0/0/0 | **Delete or Test — user decides** | Depends on Cat 1 policy decision |
+| `/api/v1/policies/{name}` (GET/PUT/DELETE) | GET/PUT/DELETE | API key | `rollout::policy::*` | 0/0/0 | **Delete or Test — user decides** | Same |
+| `/api/v1/schedules` (POST/GET) | POST/GET | API key | `rollout::schedule::*` | 0/0/0 | **Delete or Test — user decides** | Depends on Cat 1 schedule decision |
+| `/api/v1/schedules/{id}` (GET) | GET | API key | `rollout::schedule::get_schedule` | 0/0/0 | **Delete or Test — user decides** | Same |
+| `/api/v1/schedules/{id}/cancel` | POST | API key | `rollout::schedule::cancel_schedule` | 0/0/0 | **Delete or Test — user decides** | Same |
+| `/api/v1/releases` | POST | API key | `release::routes::create_release` | 0/0/0 | Test | Validation + audit write |
+| `/api/v1/releases` | GET | API key | `release::routes::list_releases` | 0/0/0 | Test | Pagination |
+| `/api/v1/releases/{id}` | GET | API key | `release::routes::get_release` | 0/0/0 | Test | 404 path |
+| `/api/v1/releases/{id}` | DELETE | API key | `release::routes::delete_release` | 0/0/0 | Test | 409-when-referenced critical |
+| `/api/v1/releases/{id}/diff/{other}` | GET | API key | `release::routes::diff_releases` | 0/0/0 | Test | Core UX |
+| `/api/v1/audit` | GET | API key | `audit::list_audit_events` | 1/0/0 | Test | Filtering untested |
+| `/api/v1/audit/export` | GET | API key | `audit::export_audit_csv` | 1/0/0 | Test | CSV shape + injection protection (already protected via `escape_csv_field`) |
+| `/api/v1/keys/bootstrap` | POST | none | `routes::bootstrap_api_key` | 0/0/0 | Test | **Critical gap**: 409-on-re-run untested, first-key-is-admin not asserted |
+| `/health` | GET | none | inline | 2/0/0 | Keep | Trivial, already tested |
+| `/metrics` | GET | none | `metrics::metrics_handler` | 0/0/0 | Test | Overlaps Category 11 |
+
+**Observation:** 24 of 31 routes (77%) have zero test coverage. The **bootstrap endpoint** in particular — the only unauthenticated POST — has no test for the 409-conflict-on-re-run invariant, which is the core of its security story.
 
 ## Category 3: Agent behaviors
 
