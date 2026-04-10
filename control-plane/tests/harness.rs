@@ -78,10 +78,19 @@ pub async fn spawn_cp_at(path: Option<&str>) -> Cp {
     let database = Arc::new(db::Db::new(&db_path).expect("db::new"));
     database.migrate().expect("db::migrate");
 
-    // Seed three keys so auth scenarios can drive all three tiers.
-    seed_key(&database, TEST_API_KEY, "integration-admin", "admin");
-    seed_key(&database, TEST_DEPLOY_KEY, "integration-deploy", "deploy");
-    seed_key(&database, TEST_READONLY_KEY, "integration-readonly", "readonly");
+    // Seed three keys so auth scenarios can drive all three tiers. Skip
+    // seeding when the DB already has keys (e.g. F6 hydration scenario
+    // respawns a CP against an existing on-disk DB).
+    if !database.has_api_keys().expect("has_api_keys") {
+        seed_key(&database, TEST_API_KEY, "integration-admin", "admin");
+        seed_key(&database, TEST_DEPLOY_KEY, "integration-deploy", "deploy");
+        seed_key(
+            &database,
+            TEST_READONLY_KEY,
+            "integration-readonly",
+            "readonly",
+        );
+    }
 
     let fleet = Arc::new(RwLock::new(state::FleetState::new()));
 
