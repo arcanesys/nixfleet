@@ -54,17 +54,6 @@ pub mod api {
     /// Path parameters: `{id}` = machine ID, `{tag}` = tag name.
     pub const MACHINE_TAG: &str = "/api/v1/machines/{id}/tags/{tag}";
 
-    /// GET: List scheduled rollouts. POST: Create a scheduled rollout.
-    pub const SCHEDULES: &str = "/api/v1/schedules";
-
-    /// GET: Get scheduled rollout. POST (cancel): Cancel a scheduled rollout.
-    /// Path parameter: `{id}` = scheduled rollout ID.
-    pub const SCHEDULE: &str = "/api/v1/schedules/{id}";
-
-    /// POST: Cancel a scheduled rollout.
-    /// Path parameter: `{id}` = scheduled rollout ID.
-    pub const SCHEDULE_CANCEL: &str = "/api/v1/schedules/{id}/cancel";
-
     /// GET: List releases. POST: Create a new release.
     pub const RELEASES: &str = "/api/v1/releases";
 

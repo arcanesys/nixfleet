@@ -10,7 +10,6 @@ mod host;
 mod machines;
 mod release;
 mod rollout;
-mod schedule;
 mod status;
 
 #[derive(Parser)]
@@ -119,9 +118,6 @@ enum Commands {
         #[arg(long)]
         cache_url: Option<String>,
 
-        /// Schedule the rollout for a future time (ISO 8601, e.g. "2026-04-06T03:00:00Z")
-        #[arg(long)]
-        schedule_at: Option<String>,
     },
 
     /// Show fleet status from the control plane
@@ -162,12 +158,6 @@ enum Commands {
     Machines {
         #[command(subcommand)]
         action: MachineAction,
-    },
-
-    /// Manage scheduled rollouts
-    Schedule {
-        #[command(subcommand)]
-        action: ScheduleAction,
     },
 
     /// Manage releases
@@ -275,22 +265,6 @@ enum RolloutAction {
     /// Cancel a rollout
     Cancel {
         /// Rollout ID
-        id: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum ScheduleAction {
-    /// List scheduled rollouts
-    List {
-        /// Filter by status (pending, triggered, cancelled)
-        #[arg(long)]
-        status: Option<String>,
-    },
-
-    /// Cancel a scheduled rollout
-    Cancel {
-        /// Schedule ID
         id: String,
     },
 }
@@ -470,7 +444,6 @@ async fn main() -> Result<()> {
             push_hook,
             copy,
             cache_url,
-            schedule_at,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
 
@@ -537,40 +510,21 @@ async fn main() -> Result<()> {
                         .collect()
                 };
 
-                // Handle scheduled rollouts
-                if let Some(ref schedule_at_str) = schedule_at {
-                    deploy::deploy_scheduled(
-                        &http_client,
-                        effective_cp_url,
-                        &release_id,
-                        &tags,
-                        &rollout_hosts,
-                        effective_strategy,
-                        batch_size,
-                        &failure_threshold,
-                        &on_failure,
-                        health_timeout,
-                        effective_cache_url,
-                        schedule_at_str,
-                    )
-                    .await
-                } else {
-                    deploy::deploy_rollout(
-                        &http_client,
-                        effective_cp_url,
-                        &release_id,
-                        &tags,
-                        &rollout_hosts,
-                        effective_strategy,
-                        batch_size,
-                        &failure_threshold,
-                        &on_failure,
-                        health_timeout,
-                        wait,
-                        effective_cache_url,
-                    )
-                    .await
-                }
+                deploy::deploy_rollout(
+                    &http_client,
+                    effective_cp_url,
+                    &release_id,
+                    &tags,
+                    &rollout_hosts,
+                    effective_strategy,
+                    batch_size,
+                    &failure_threshold,
+                    &on_failure,
+                    health_timeout,
+                    wait,
+                    effective_cache_url,
+                )
+                .await
             }
         }
         Commands::Status { json } => {
@@ -623,17 +577,6 @@ async fn main() -> Result<()> {
                 }
                 RolloutAction::Cancel { id } => {
                     rollout::cancel(&http_client, effective_cp_url, &id).await
-                }
-            }
-        }
-        Commands::Schedule { action } => {
-            let http_client = client::build_client(&tls, effective_api_key)?;
-            match action {
-                ScheduleAction::List { status } => {
-                    schedule::list(&http_client, effective_cp_url, status.as_deref()).await
-                }
-                ScheduleAction::Cancel { id } => {
-                    schedule::cancel(&http_client, effective_cp_url, &id).await
                 }
             }
         }

@@ -65,18 +65,6 @@ pub fn build_app(
             post(rollout::routes::cancel_rollout),
         )
         .route(
-            "/api/v1/schedules",
-            post(rollout::schedule::create_schedule).get(rollout::schedule::list_schedules),
-        )
-        .route(
-            "/api/v1/schedules/{id}",
-            get(rollout::schedule::get_schedule),
-        )
-        .route(
-            "/api/v1/schedules/{id}/cancel",
-            post(rollout::schedule::cancel_schedule),
-        )
-        .route(
             "/api/v1/releases",
             axum::routing::get(release::routes::list_releases)
                 .post(release::routes::create_release),
