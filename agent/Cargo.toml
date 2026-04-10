@@ -21,7 +21,6 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 async-trait = "0.1"
-rustls-pemfile = "2"
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
 
