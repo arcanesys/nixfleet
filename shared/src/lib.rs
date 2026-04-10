@@ -4,6 +4,7 @@ use std::fmt;
 
 pub mod health;
 pub mod metrics;
+pub mod release;
 pub mod rollout;
 
 /// Well-known API path constants shared between agent and control plane.
@@ -18,10 +19,6 @@ pub mod api {
 
     /// GET: List all known machines and their status.
     pub const MACHINES: &str = "/api/v1/machines";
-
-    /// POST: Set the desired generation for a machine (admin endpoint).
-    /// Path parameter: `{id}` = machine ID.
-    pub const SET_GENERATION: &str = "/api/v1/machines/{id}/set-generation";
 
     /// POST: Pre-register a machine (admin endpoint).
     /// Path parameter: `{id}` = machine ID.
@@ -74,6 +71,17 @@ pub mod api {
     /// POST: Cancel a scheduled rollout.
     /// Path parameter: `{id}` = scheduled rollout ID.
     pub const SCHEDULE_CANCEL: &str = "/api/v1/schedules/{id}/cancel";
+
+    /// GET: List releases. POST: Create a new release.
+    pub const RELEASES: &str = "/api/v1/releases";
+
+    /// GET: Get release detail. DELETE: Delete a release.
+    /// Path parameter: `{id}` = release ID.
+    pub const RELEASE: &str = "/api/v1/releases/{id}";
+
+    /// GET: Diff two releases.
+    /// Path parameters: `{id}` = release A, `{other_id}` = release B.
+    pub const RELEASE_DIFF: &str = "/api/v1/releases/{id}/diff/{other_id}";
 }
 
 /// Machine lifecycle states for fleet management.
@@ -143,6 +151,9 @@ pub struct DesiredGeneration {
     /// Optional cache URL override (per-generation)
     #[serde(default)]
     pub cache_url: Option<String>,
+    /// Suggested poll interval in seconds (control plane hints faster polling during rollouts)
+    #[serde(default)]
+    pub poll_hint: Option<u64>,
 }
 
 /// Report sent to the control plane after each state transition.
@@ -248,11 +259,41 @@ mod tests {
         let gen = DesiredGeneration {
             hash: "/nix/store/def456-nixos-system-web-01-25.05".to_string(),
             cache_url: Some("https://cache.nixos.org".to_string()),
+            poll_hint: None,
         };
         let json = serde_json::to_string(&gen).unwrap();
         let back: DesiredGeneration = serde_json::from_str(&json).unwrap();
         assert_eq!(gen.hash, back.hash);
         assert_eq!(gen.cache_url, back.cache_url);
+        assert_eq!(gen.poll_hint, back.poll_hint);
+    }
+
+    #[test]
+    fn test_desired_generation_with_poll_hint() {
+        let json = r#"{"hash": "/nix/store/abc123-nixos-system", "poll_hint": 5}"#;
+        let gen: DesiredGeneration = serde_json::from_str(json).unwrap();
+        assert_eq!(gen.hash, "/nix/store/abc123-nixos-system");
+        assert_eq!(gen.poll_hint, Some(5));
+        assert!(gen.cache_url.is_none());
+    }
+
+    #[test]
+    fn test_desired_generation_without_poll_hint() {
+        let json = r#"{"hash": "/nix/store/abc123-nixos-system"}"#;
+        let gen: DesiredGeneration = serde_json::from_str(json).unwrap();
+        assert!(gen.poll_hint.is_none());
+    }
+
+    #[test]
+    fn test_desired_generation_poll_hint_roundtrip() {
+        let gen = DesiredGeneration {
+            hash: "/nix/store/xyz-nixos-system".to_string(),
+            cache_url: None,
+            poll_hint: Some(10),
+        };
+        let json = serde_json::to_string(&gen).unwrap();
+        let back: DesiredGeneration = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.poll_hint, Some(10));
     }
 
     #[test]
@@ -260,10 +301,12 @@ mod tests {
         let a = DesiredGeneration {
             hash: "/nix/store/abc123".to_string(),
             cache_url: None,
+            poll_hint: None,
         };
         let b = DesiredGeneration {
             hash: "/nix/store/abc123".to_string(),
             cache_url: None,
+            poll_hint: None,
         };
         assert_eq!(a, b);
     }
@@ -360,6 +403,5 @@ mod tests {
         assert!(api::DESIRED_GENERATION.starts_with("/api/v1/machines/"));
         assert!(api::REPORT.starts_with("/api/v1/machines/"));
         assert!(api::MACHINES.starts_with("/api/v1/machines"));
-        assert!(api::SET_GENERATION.starts_with("/api/v1/machines/"));
     }
 }

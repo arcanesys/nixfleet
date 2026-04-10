@@ -42,9 +42,10 @@ curl http://localhost:8080/health
 - A unique ID (defaults to hostname)
 - Tags for grouping (`web`, `prod`, `eu-west`, etc.)
 - A lifecycle state: `pending` → `provisioning` → `active` ⇄ `maintenance` → `decommissioned`
-- A desired generation (the Nix store path the agent should converge to)
 
-**Rollouts** coordinate fleet-wide deployments across batches with health gates between each batch. See [Rollouts](rollouts.md) for details.
+**Releases** are immutable manifests mapping each host to its built Nix store path. A release captures "what the flake means for each host at a point in time". Created via `nixfleet release create`, they can be inspected, diffed, listed, and referenced by rollouts multiple times (e.g., staging then prod, or rollback to a previous release). See [CLI reference](../../reference/cli.md#release-create).
+
+**Rollouts** coordinate fleet-wide deployments across batches with health gates between each batch. Every rollout references a release — the CP resolves each target machine's store path from the release entries at batch execution time. See [Rollouts](rollouts.md) for details.
 
 **Audit events** record every mutation (deployment, rollback, tag change, lifecycle transition) with actor, timestamp, and detail. Query them with:
 

@@ -9,6 +9,9 @@ pub struct Config {
     pub machine_id: String,
     /// How often to poll the control plane for desired generation
     pub poll_interval: Duration,
+    /// How long to wait before retrying after a failed poll (short backoff
+    /// so transient errors and bootstrap races recover quickly)
+    pub retry_interval: Duration,
     /// Binary cache URL for `nix copy --from` (optional; falls back to control plane default)
     pub cache_url: Option<String>,
     /// Path to the SQLite database for local state persistence
@@ -41,6 +44,7 @@ mod tests {
             control_plane_url: "https://fleet.example.com".to_string(),
             machine_id: "web-01".to_string(),
             poll_interval: Duration::from_secs(300),
+            retry_interval: Duration::from_secs(30),
             cache_url: None,
             db_path: "/var/lib/nixfleet/state.db".to_string(),
             dry_run: false,

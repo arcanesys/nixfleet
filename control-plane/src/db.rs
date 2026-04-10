@@ -154,11 +154,7 @@ impl Db {
     /// Check if any API keys exist in the database.
     pub fn has_api_keys(&self) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM api_keys",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM api_keys", [], |row| row.get(0))?;
         Ok(count > 0)
     }
 
@@ -375,7 +371,7 @@ impl Db {
     pub fn create_rollout(
         &self,
         id: &str,
-        generation_hash: &str,
+        release_id: &str,
         cache_url: Option<&str>,
         strategy: &str,
         batch_sizes: &str,
@@ -384,19 +380,18 @@ impl Db {
         health_timeout: i64,
         target_tags: Option<&str>,
         target_hosts: Option<&str>,
-        previous_generation: Option<&str>,
         created_by: &str,
     ) -> Result<String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO rollouts (id, generation_hash, cache_url, strategy, batch_sizes,
+            "INSERT INTO rollouts (id, release_id, cache_url, strategy, batch_sizes,
              failure_threshold, on_failure, health_timeout, status, target_tags, target_hosts,
-             previous_generation, created_at, updated_at, created_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'created', ?9, ?10, ?11,
-             datetime('now'), datetime('now'), ?12)",
+             created_at, updated_at, created_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'created', ?9, ?10,
+             datetime('now'), datetime('now'), ?11)",
             rusqlite::params![
                 id,
-                generation_hash,
+                release_id,
                 cache_url,
                 strategy,
                 batch_sizes,
@@ -405,7 +400,6 @@ impl Db {
                 health_timeout,
                 target_tags,
                 target_hosts,
-                previous_generation,
                 created_by,
             ],
         )
@@ -435,15 +429,15 @@ impl Db {
     pub fn get_rollout(&self, id: &str) -> Result<Option<RolloutRow>> {
         let conn = self.conn.lock().unwrap();
         let result = conn.query_row(
-            "SELECT id, generation_hash, cache_url, strategy, batch_sizes, failure_threshold,
-             on_failure, health_timeout, status, target_tags, target_hosts, previous_generation,
+            "SELECT id, release_id, cache_url, strategy, batch_sizes, failure_threshold,
+             on_failure, health_timeout, status, target_tags, target_hosts,
              created_at, updated_at, created_by
              FROM rollouts WHERE id = ?1",
             rusqlite::params![id],
             |row| {
                 Ok(RolloutRow {
                     id: row.get(0)?,
-                    generation_hash: row.get(1)?,
+                    release_id: row.get(1)?,
                     cache_url: row.get(2)?,
                     strategy: row.get(3)?,
                     batch_sizes: row.get(4)?,
@@ -453,10 +447,9 @@ impl Db {
                     status: row.get(8)?,
                     target_tags: row.get(9)?,
                     target_hosts: row.get(10)?,
-                    previous_generation: row.get(11)?,
-                    created_at: row.get(12)?,
-                    updated_at: row.get(13)?,
-                    created_by: row.get(14)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    created_by: row.get(13)?,
                 })
             },
         );
@@ -475,8 +468,8 @@ impl Db {
     ) -> Result<Vec<RolloutRow>> {
         let conn = self.conn.lock().unwrap();
         let mut sql = String::from(
-            "SELECT id, generation_hash, cache_url, strategy, batch_sizes, failure_threshold,
-             on_failure, health_timeout, status, target_tags, target_hosts, previous_generation,
+            "SELECT id, release_id, cache_url, strategy, batch_sizes, failure_threshold,
+             on_failure, health_timeout, status, target_tags, target_hosts,
              created_at, updated_at, created_by FROM rollouts WHERE 1=1",
         );
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -500,7 +493,7 @@ impl Db {
             .query_map(param_refs.as_slice(), |row| {
                 Ok(RolloutRow {
                     id: row.get(0)?,
-                    generation_hash: row.get(1)?,
+                    release_id: row.get(1)?,
                     cache_url: row.get(2)?,
                     strategy: row.get(3)?,
                     batch_sizes: row.get(4)?,
@@ -510,10 +503,9 @@ impl Db {
                     status: row.get(8)?,
                     target_tags: row.get(9)?,
                     target_hosts: row.get(10)?,
-                    previous_generation: row.get(11)?,
-                    created_at: row.get(12)?,
-                    updated_at: row.get(13)?,
-                    created_by: row.get(14)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    created_by: row.get(13)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -536,7 +528,7 @@ impl Db {
     pub fn get_rollout_batches(&self, rollout_id: &str) -> Result<Vec<RolloutBatchRow>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, rollout_id, batch_index, machine_ids, status, started_at, completed_at
+            "SELECT id, rollout_id, batch_index, machine_ids, status, started_at, completed_at, previous_generations
              FROM rollout_batches WHERE rollout_id = ?1 ORDER BY batch_index",
         )?;
         let rows = stmt
@@ -549,6 +541,9 @@ impl Db {
                     status: row.get(4)?,
                     started_at: row.get(5)?,
                     completed_at: row.get(6)?,
+                    previous_generations: row
+                        .get::<_, Option<String>>(7)?
+                        .unwrap_or_else(|| "{}".to_string()),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -572,6 +567,20 @@ impl Db {
             .execute(sql, rusqlite::params![batch_id, status])
             .context("failed to update batch status")?;
         Ok(rows > 0)
+    }
+
+    /// Update the previous_generations JSON on a rollout batch.
+    pub fn update_batch_previous_generations(
+        &self,
+        batch_id: &str,
+        previous_generations: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE rollout_batches SET previous_generations = ?1 WHERE id = ?2",
+            rusqlite::params![previous_generations, batch_id],
+        )?;
+        Ok(())
     }
 
     /// Insert a health report.
@@ -815,7 +824,7 @@ impl Db {
         id: &str,
         scheduled_at: &str,
         policy_id: Option<&str>,
-        generation_hash: &str,
+        release_id: &str,
         cache_url: Option<&str>,
         strategy: Option<&str>,
         batch_sizes: Option<&str>,
@@ -828,7 +837,7 @@ impl Db {
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO scheduled_rollouts (id, scheduled_at, policy_id, generation_hash,
+            "INSERT INTO scheduled_rollouts (id, scheduled_at, policy_id, release_id,
              cache_url, strategy, batch_sizes, failure_threshold, on_failure, health_timeout_secs,
              target_tags, target_hosts, created_by)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
@@ -836,7 +845,7 @@ impl Db {
                 id,
                 scheduled_at,
                 policy_id,
-                generation_hash,
+                release_id,
                 cache_url,
                 strategy,
                 batch_sizes,
@@ -860,7 +869,7 @@ impl Db {
     ) -> Result<Vec<ScheduledRolloutRow>> {
         let conn = self.conn.lock().unwrap();
         let mut sql = String::from(
-            "SELECT id, scheduled_at, policy_id, generation_hash, cache_url, strategy,
+            "SELECT id, scheduled_at, policy_id, release_id, cache_url, strategy,
              batch_sizes, failure_threshold, on_failure, health_timeout_secs, target_tags,
              target_hosts, status, rollout_id, created_at, created_by
              FROM scheduled_rollouts WHERE 1=1",
@@ -888,7 +897,7 @@ impl Db {
                     id: row.get(0)?,
                     scheduled_at: row.get(1)?,
                     policy_id: row.get(2)?,
-                    generation_hash: row.get(3)?,
+                    release_id: row.get(3)?,
                     cache_url: row.get(4)?,
                     strategy: row.get(5)?,
                     batch_sizes: row.get(6)?,
@@ -911,7 +920,7 @@ impl Db {
     pub fn get_scheduled_rollout(&self, id: &str) -> Result<Option<ScheduledRolloutRow>> {
         let conn = self.conn.lock().unwrap();
         let result = conn.query_row(
-            "SELECT id, scheduled_at, policy_id, generation_hash, cache_url, strategy,
+            "SELECT id, scheduled_at, policy_id, release_id, cache_url, strategy,
              batch_sizes, failure_threshold, on_failure, health_timeout_secs, target_tags,
              target_hosts, status, rollout_id, created_at, created_by
              FROM scheduled_rollouts WHERE id = ?1",
@@ -921,7 +930,7 @@ impl Db {
                     id: row.get(0)?,
                     scheduled_at: row.get(1)?,
                     policy_id: row.get(2)?,
-                    generation_hash: row.get(3)?,
+                    release_id: row.get(3)?,
                     cache_url: row.get(4)?,
                     strategy: row.get(5)?,
                     batch_sizes: row.get(6)?,
@@ -965,7 +974,7 @@ impl Db {
     pub fn get_due_scheduled_rollouts(&self) -> Result<Vec<ScheduledRolloutRow>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, scheduled_at, policy_id, generation_hash, cache_url, strategy,
+            "SELECT id, scheduled_at, policy_id, release_id, cache_url, strategy,
              batch_sizes, failure_threshold, on_failure, health_timeout_secs, target_tags,
              target_hosts, status, rollout_id, created_at, created_by
              FROM scheduled_rollouts
@@ -978,7 +987,7 @@ impl Db {
                     id: row.get(0)?,
                     scheduled_at: row.get(1)?,
                     policy_id: row.get(2)?,
-                    generation_hash: row.get(3)?,
+                    release_id: row.get(3)?,
                     cache_url: row.get(4)?,
                     strategy: row.get(5)?,
                     batch_sizes: row.get(6)?,
@@ -1051,6 +1060,164 @@ impl Db {
         }
         Ok(None)
     }
+
+    // -----------------------------------------------------------------------
+    // Releases
+    // -----------------------------------------------------------------------
+
+    /// Create a new release with its per-host entries (transactional).
+    pub fn create_release(
+        &self,
+        id: &str,
+        flake_ref: Option<&str>,
+        flake_rev: Option<&str>,
+        cache_url: Option<&str>,
+        host_count: i64,
+        created_by: &str,
+        entries: &[(String, String, String, String)], // (hostname, store_path, platform, tags_json)
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO releases (id, flake_ref, flake_rev, cache_url, host_count, created_at, created_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'), ?6)",
+            rusqlite::params![id, flake_ref, flake_rev, cache_url, host_count, created_by],
+        )?;
+        for (hostname, store_path, platform, tags_json) in entries {
+            tx.execute(
+                "INSERT INTO release_entries (release_id, hostname, store_path, platform, tags)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![id, hostname, store_path, platform, tags_json],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Get a release by id.
+    pub fn get_release(&self, id: &str) -> anyhow::Result<Option<ReleaseRow>> {
+        let conn = self.conn.lock().unwrap();
+        match conn.query_row(
+            "SELECT id, flake_ref, flake_rev, cache_url, host_count, created_at, created_by
+             FROM releases WHERE id = ?1",
+            rusqlite::params![id],
+            |row| {
+                Ok(ReleaseRow {
+                    id: row.get(0)?,
+                    flake_ref: row.get(1)?,
+                    flake_rev: row.get(2)?,
+                    cache_url: row.get(3)?,
+                    host_count: row.get(4)?,
+                    created_at: row.get(5)?,
+                    created_by: row.get(6)?,
+                })
+            },
+        ) {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Get all entries for a release, ordered by hostname.
+    pub fn get_release_entries(&self, release_id: &str) -> anyhow::Result<Vec<ReleaseEntryRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT release_id, hostname, store_path, platform, tags
+             FROM release_entries WHERE release_id = ?1 ORDER BY hostname",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![release_id], |row| {
+                Ok(ReleaseEntryRow {
+                    release_id: row.get(0)?,
+                    hostname: row.get(1)?,
+                    store_path: row.get(2)?,
+                    platform: row.get(3)?,
+                    tags: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Get the release entry for a specific host.
+    pub fn get_release_entry_for_host(
+        &self,
+        release_id: &str,
+        hostname: &str,
+    ) -> anyhow::Result<Option<ReleaseEntryRow>> {
+        let conn = self.conn.lock().unwrap();
+        match conn.query_row(
+            "SELECT release_id, hostname, store_path, platform, tags
+             FROM release_entries WHERE release_id = ?1 AND hostname = ?2",
+            rusqlite::params![release_id, hostname],
+            |row| {
+                Ok(ReleaseEntryRow {
+                    release_id: row.get(0)?,
+                    hostname: row.get(1)?,
+                    store_path: row.get(2)?,
+                    platform: row.get(3)?,
+                    tags: row.get(4)?,
+                })
+            },
+        ) {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// List releases ordered by created_at DESC.
+    pub fn list_releases(&self, limit: i64) -> anyhow::Result<Vec<ReleaseRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, flake_ref, flake_rev, cache_url, host_count, created_at, created_by
+             FROM releases ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![limit], |row| {
+                Ok(ReleaseRow {
+                    id: row.get(0)?,
+                    flake_ref: row.get(1)?,
+                    flake_rev: row.get(2)?,
+                    cache_url: row.get(3)?,
+                    host_count: row.get(4)?,
+                    created_at: row.get(5)?,
+                    created_by: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Check if a release is referenced by any rollout or scheduled rollout.
+    pub fn release_referenced_by_rollout(&self, release_id: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rollout_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM rollouts WHERE release_id = ?1",
+            rusqlite::params![release_id],
+            |row| row.get(0),
+        )?;
+        let schedule_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM scheduled_rollouts WHERE release_id = ?1",
+            rusqlite::params![release_id],
+            |row| row.get(0),
+        )?;
+        Ok(rollout_count > 0 || schedule_count > 0)
+    }
+
+    /// Delete a release and its entries. Returns true if the release existed.
+    pub fn delete_release(&self, id: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM release_entries WHERE release_id = ?1",
+            rusqlite::params![id],
+        )?;
+        let deleted = tx.execute("DELETE FROM releases WHERE id = ?1", rusqlite::params![id])?;
+        tx.commit()?;
+        Ok(deleted > 0)
+    }
 }
 
 /// A report row as stored in SQLite.
@@ -1075,7 +1242,7 @@ pub struct MachineRow {
 #[derive(Debug, Clone)]
 pub struct RolloutRow {
     pub id: String,
-    pub generation_hash: String,
+    pub release_id: String,
     pub cache_url: Option<String>,
     pub strategy: String,
     pub batch_sizes: String,
@@ -1085,7 +1252,6 @@ pub struct RolloutRow {
     pub status: String,
     pub target_tags: Option<String>,
     pub target_hosts: Option<String>,
-    pub previous_generation: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub created_by: String,
@@ -1101,6 +1267,7 @@ pub struct RolloutBatchRow {
     pub status: String,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
+    pub previous_generations: String,
 }
 
 /// A health report row as stored in SQLite.
@@ -1144,7 +1311,7 @@ pub struct ScheduledRolloutRow {
     pub id: String,
     pub scheduled_at: String,
     pub policy_id: Option<String>,
-    pub generation_hash: String,
+    pub release_id: String,
     pub cache_url: Option<String>,
     pub strategy: Option<String>,
     pub batch_sizes: Option<String>,
@@ -1159,6 +1326,28 @@ pub struct ScheduledRolloutRow {
     pub created_by: String,
 }
 
+/// A release row as stored in SQLite.
+#[derive(Debug, Clone)]
+pub struct ReleaseRow {
+    pub id: String,
+    pub flake_ref: Option<String>,
+    pub flake_rev: Option<String>,
+    pub cache_url: Option<String>,
+    pub host_count: i64,
+    pub created_at: String,
+    pub created_by: String,
+}
+
+/// A release entry row (per-host build artifact) as stored in SQLite.
+#[derive(Debug, Clone)]
+pub struct ReleaseEntryRow {
+    pub release_id: String,
+    pub hostname: String,
+    pub store_path: String,
+    pub platform: String,
+    pub tags: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1169,6 +1358,24 @@ mod tests {
         let db = Db::new(db_path.to_str().unwrap()).unwrap();
         db.migrate().unwrap();
         (db, dir)
+    }
+
+    fn create_test_release(db: &Db, release_id: &str) {
+        db.create_release(
+            release_id,
+            Some("test-flake"),
+            Some("abc123"),
+            None,
+            1,
+            "test",
+            &[(
+                "test-host".to_string(),
+                "/nix/store/test".to_string(),
+                "x86_64-linux".to_string(),
+                "[]".to_string(),
+            )],
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1441,10 +1648,11 @@ mod tests {
     #[test]
     fn test_create_and_get_rollout() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "rel-abc123");
         let id = db
             .create_rollout(
                 "roll-1",
-                "/nix/store/abc123",
+                "rel-abc123",
                 Some("http://cache.example.com"),
                 "rolling",
                 "[1, 2]",
@@ -1453,14 +1661,13 @@ mod tests {
                 300,
                 Some("web,production"),
                 None,
-                Some("/nix/store/old"),
                 "apikey:deploy",
             )
             .unwrap();
         assert_eq!(id, "roll-1");
 
         let rollout = db.get_rollout("roll-1").unwrap().unwrap();
-        assert_eq!(rollout.generation_hash, "/nix/store/abc123");
+        assert_eq!(rollout.release_id, "rel-abc123");
         assert_eq!(
             rollout.cache_url,
             Some("http://cache.example.com".to_string())
@@ -1473,10 +1680,6 @@ mod tests {
         assert_eq!(rollout.status, "created");
         assert_eq!(rollout.target_tags, Some("web,production".to_string()));
         assert!(rollout.target_hosts.is_none());
-        assert_eq!(
-            rollout.previous_generation,
-            Some("/nix/store/old".to_string())
-        );
         assert_eq!(rollout.created_by, "apikey:deploy");
     }
 
@@ -1490,6 +1693,7 @@ mod tests {
     #[test]
     fn test_create_and_get_rollout_batches() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
         db.create_rollout(
             "roll-1",
             "/nix/store/abc",
@@ -1499,7 +1703,6 @@ mod tests {
             "1",
             "pause",
             300,
-            None,
             None,
             None,
             "admin",
@@ -1522,6 +1725,7 @@ mod tests {
     #[test]
     fn test_update_rollout_status() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
         db.create_rollout(
             "roll-1",
             "/nix/store/abc",
@@ -1531,7 +1735,6 @@ mod tests {
             "1",
             "pause",
             300,
-            None,
             None,
             None,
             "admin",
@@ -1551,6 +1754,8 @@ mod tests {
     #[test]
     fn test_list_rollouts_by_status() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
+        create_test_release(&db, "/nix/store/def");
         db.create_rollout(
             "roll-1",
             "/nix/store/abc",
@@ -1560,7 +1765,6 @@ mod tests {
             "1",
             "pause",
             300,
-            None,
             None,
             None,
             "admin",
@@ -1575,7 +1779,6 @@ mod tests {
             "1",
             "pause",
             300,
-            None,
             None,
             None,
             "admin",
@@ -1598,6 +1801,7 @@ mod tests {
     #[test]
     fn test_update_batch_status() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
         db.create_rollout(
             "roll-1",
             "/nix/store/abc",
@@ -1607,7 +1811,6 @@ mod tests {
             "1",
             "pause",
             300,
-            None,
             None,
             None,
             "admin",
@@ -1679,6 +1882,7 @@ mod tests {
     #[test]
     fn test_machine_in_active_rollout_positive() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
         db.create_rollout(
             "roll-1",
             "/nix/store/abc",
@@ -1688,7 +1892,6 @@ mod tests {
             "1",
             "pause",
             300,
-            None,
             None,
             None,
             "admin",
@@ -1705,6 +1908,7 @@ mod tests {
     #[test]
     fn test_machine_in_active_rollout_negative() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
         db.create_rollout(
             "roll-1",
             "/nix/store/abc",
@@ -1714,7 +1918,6 @@ mod tests {
             "1",
             "pause",
             300,
-            None,
             None,
             None,
             "admin",
@@ -1804,10 +2007,9 @@ mod tests {
         let (db, _dir) = make_db();
         db.create_policy("pol-1", "unique", "staged", "[]", "1", "pause", 30)
             .unwrap();
-        assert!(
-            db.create_policy("pol-2", "unique", "staged", "[]", "1", "pause", 30)
-                .is_err()
-        );
+        assert!(db
+            .create_policy("pol-2", "unique", "staged", "[]", "1", "pause", 30)
+            .is_err());
     }
 
     #[test]
@@ -1832,6 +2034,7 @@ mod tests {
     fn test_insert_and_get_rollout_events() {
         let (db, _dir) = make_db();
         let rollout_id = "r-test-events";
+        create_test_release(&db, "/nix/store/abc");
         db.create_rollout(
             rollout_id,
             "/nix/store/abc",
@@ -1841,7 +2044,6 @@ mod tests {
             "1",
             "pause",
             60,
-            None,
             None,
             None,
             "executor",
@@ -1870,6 +2072,7 @@ mod tests {
     #[test]
     fn test_get_rollout_events_empty() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
         db.create_rollout(
             "roll-empty",
             "/nix/store/abc",
@@ -1879,7 +2082,6 @@ mod tests {
             "1",
             "pause",
             60,
-            None,
             None,
             None,
             "admin",
@@ -1893,6 +2095,7 @@ mod tests {
     fn test_rollout_events_ordered_asc() {
         let (db, _dir) = make_db();
         let rollout_id = "r-order-test";
+        create_test_release(&db, "/nix/store/abc");
         db.create_rollout(
             rollout_id,
             "/nix/store/abc",
@@ -1902,7 +2105,6 @@ mod tests {
             "1",
             "pause",
             60,
-            None,
             None,
             None,
             "executor",
@@ -1928,6 +2130,7 @@ mod tests {
     #[test]
     fn test_create_and_list_schedules() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
         db.create_scheduled_rollout(
             "s-1",
             "2026-04-06T03:00:00Z",
@@ -1952,6 +2155,7 @@ mod tests {
     #[test]
     fn test_get_scheduled_rollout() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/def");
         db.create_scheduled_rollout(
             "s-get",
             "2026-04-06T03:00:00Z",
@@ -1970,7 +2174,7 @@ mod tests {
         .unwrap();
         let schedule = db.get_scheduled_rollout("s-get").unwrap().unwrap();
         assert_eq!(schedule.id, "s-get");
-        assert_eq!(schedule.generation_hash, "/nix/store/def");
+        assert_eq!(schedule.release_id, "/nix/store/def");
         assert_eq!(schedule.status, "pending");
         assert_eq!(schedule.created_by, "admin");
     }
@@ -1985,6 +2189,7 @@ mod tests {
     #[test]
     fn test_cancel_schedule() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
         db.create_scheduled_rollout(
             "s-cancel",
             "2026-04-06T03:00:00Z",
@@ -2012,6 +2217,8 @@ mod tests {
     #[test]
     fn test_list_scheduled_rollouts_filter_by_status() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
+        create_test_release(&db, "/nix/store/def");
         db.create_scheduled_rollout(
             "s-pending",
             "2026-04-06T03:00:00Z",
@@ -2047,15 +2254,11 @@ mod tests {
         db.update_scheduled_rollout_status("s-cancelled", "cancelled", None)
             .unwrap();
 
-        let pending = db
-            .list_scheduled_rollouts(Some("pending"), 100)
-            .unwrap();
+        let pending = db.list_scheduled_rollouts(Some("pending"), 100).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, "s-pending");
 
-        let cancelled = db
-            .list_scheduled_rollouts(Some("cancelled"), 100)
-            .unwrap();
+        let cancelled = db.list_scheduled_rollouts(Some("cancelled"), 100).unwrap();
         assert_eq!(cancelled.len(), 1);
         assert_eq!(cancelled[0].id, "s-cancelled");
     }
@@ -2063,6 +2266,7 @@ mod tests {
     #[test]
     fn test_update_scheduled_rollout_status_with_rollout_id() {
         let (db, _dir) = make_db();
+        create_test_release(&db, "/nix/store/abc");
         db.create_scheduled_rollout(
             "s-fired",
             "2026-04-06T03:00:00Z",

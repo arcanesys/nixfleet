@@ -10,6 +10,7 @@ pub mod audit;
 pub mod auth;
 pub mod db;
 pub mod metrics;
+pub mod release;
 pub mod rollout;
 pub mod routes;
 pub mod state;
@@ -39,10 +40,6 @@ pub fn build_app(
     // Admin/operator endpoints: authenticated via API key (Bearer token).
     let admin_routes = Router::new()
         .route("/api/v1/machines", get(routes::list_machines))
-        .route(
-            "/api/v1/machines/{id}/set-generation",
-            post(routes::set_desired_generation),
-        )
         .route(
             "/api/v1/machines/{id}/register",
             post(routes::register_machine),
@@ -89,6 +86,20 @@ pub fn build_app(
             "/api/v1/schedules/{id}/cancel",
             post(rollout::schedule::cancel_schedule),
         )
+        .route(
+            "/api/v1/releases",
+            axum::routing::get(release::routes::list_releases)
+                .post(release::routes::create_release),
+        )
+        .route(
+            "/api/v1/releases/{id}",
+            axum::routing::get(release::routes::get_release)
+                .delete(release::routes::delete_release),
+        )
+        .route(
+            "/api/v1/releases/{id}/diff/{other_id}",
+            axum::routing::get(release::routes::diff_releases),
+        )
         .route("/api/v1/audit", get(audit::list_audit_events))
         .route("/api/v1/audit/export", get(audit::export_audit_csv))
         .layer(middleware::from_fn(move |headers, request, next| {
@@ -97,8 +108,8 @@ pub fn build_app(
         }));
 
     // Bootstrap route: no auth required (only works when no keys exist).
-    let bootstrap_routes = Router::new()
-        .route("/api/v1/keys/bootstrap", post(routes::bootstrap_api_key));
+    let bootstrap_routes =
+        Router::new().route("/api/v1/keys/bootstrap", post(routes::bootstrap_api_key));
 
     Router::new()
         .merge(agent_routes)

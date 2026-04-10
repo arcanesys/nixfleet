@@ -73,7 +73,7 @@ pub async fn create_schedule(
         &id,
         &scheduled_at,
         policy_id.as_deref(),
-        &req.generation_hash,
+        &req.release_id,
         req.cache_url.as_deref(),
         req.strategy.as_ref().map(|s| s.to_string()).as_deref(),
         batch_sizes_json.as_deref(),
@@ -93,10 +93,10 @@ pub async fn create_schedule(
         Some(&format!("scheduled_at={}", scheduled_at)),
     );
 
-    let row = db
-        .get_scheduled_rollout(&id)
-        .map_err(internal)?
-        .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "schedule not found after creation".to_string()))?;
+    let row = db.get_scheduled_rollout(&id).map_err(internal)?.ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "schedule not found after creation".to_string(),
+    ))?;
 
     tracing::info!(schedule_id = %id, scheduled_at = %scheduled_at, "Scheduled rollout created");
     Ok((StatusCode::CREATED, Json(row_to_schedule(&row))))
@@ -221,7 +221,7 @@ fn row_to_schedule(row: &ScheduledRolloutRow) -> ScheduledRollout {
         id: row.id.clone(),
         scheduled_at,
         policy_id: row.policy_id.clone(),
-        generation_hash: row.generation_hash.clone(),
+        release_id: row.release_id.clone(),
         cache_url: row.cache_url.clone(),
         strategy,
         batch_sizes,

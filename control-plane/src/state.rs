@@ -99,6 +99,7 @@ pub async fn hydrate_from_db(
         machine.desired_generation = Some(DesiredGeneration {
             hash,
             cache_url: None,
+            poll_hint: None,
         });
     }
     let active_rollouts = db.list_rollouts_by_status(Some("running"), 100)?;
@@ -138,6 +139,7 @@ mod tests {
         state.get_or_create("web-01").desired_generation = Some(DesiredGeneration {
             hash: "/nix/store/abc123".to_string(),
             cache_url: None,
+            poll_hint: None,
         });
         let machine = state.get_or_create("web-01");
         assert!(machine.desired_generation.is_some());

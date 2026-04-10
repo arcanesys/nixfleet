@@ -89,10 +89,12 @@ Fleet repos add their own scopes (dev tools, desktop environments, theming, etc.
 
 The agent + control plane provide fleet-wide deployment orchestration:
 
+- **Releases** — immutable manifests mapping each host to its built store path, enabling heterogeneous fleet deployment where every machine's closure is different
 - **Machine tags** — group machines for targeted operations
-- **Health checks** — declarative systemd, HTTP, and command checks
+- **Health checks** — declarative systemd, HTTP, and command checks, plus a generation gate in the executor that prevents false-positive rollout completion from stale health reports
 - **Rollout strategies** — canary, staged, all-at-once with automatic pause/revert
-- **CLI** — `nixfleet deploy --tag production --strategy canary --wait`
+- **Adaptive polling** — agents react to new rollouts within seconds via `poll_hint` from the control plane
+- **CLI** — `nixfleet deploy --push-to ssh://root@cache --tag production --strategy canary --wait` (builds, pushes to cache, registers a release, triggers a rollout)
 
 ## Deployment
 

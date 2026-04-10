@@ -48,8 +48,8 @@ Pass `--policy <NAME>` to a deploy command to apply the policy's values as defau
 
 ```sh
 nixfleet deploy \
+  --release rel-abc123 \
   --tag prod --tag web \
-  --generation /nix/store/abc123-nixos-system \
   --policy canary-web \
   --wait
 ```
@@ -69,8 +69,8 @@ This means you can use a policy as a baseline and override individual parameters
 ```sh
 # Use the staged-prod policy but extend the health timeout for this deploy
 nixfleet deploy \
+  --release rel-abc123 \
   --tag prod \
-  --generation /nix/store/abc123-nixos-system \
   --policy staged-prod \
   --health-timeout 600
 ```
@@ -81,8 +81,8 @@ Add `--schedule-at` to any rollout deploy to schedule it for a future time. The 
 
 ```sh
 nixfleet deploy \
+  --release rel-abc123 \
   --tag prod \
-  --generation /nix/store/abc123-nixos-system \
   --policy staged-prod \
   --schedule-at "2026-04-06T03:00:00Z"
 ```
@@ -126,26 +126,28 @@ The output includes per-batch and per-machine detail alongside the event timelin
 
 ## Binary cache
 
-When agents need to fetch closures from a binary cache rather than the default Nix substituters, pass `--cache-url`:
+Every release records a `cache_url` (either from the `--push-to` URL used to create it, or an explicit `--cache-url` override). The CP returns this to each agent along with the desired generation, so agents automatically pull from the right cache without any extra configuration.
+
+When you need to override the cache URL per-deploy (e.g., same release, different cache), pass `--cache-url`:
 
 ```sh
 nixfleet deploy \
+  --release rel-abc123 \
   --tag prod \
-  --generation /nix/store/abc123-nixos-system \
   --policy canary-web \
-  --cache-url http://cache.internal:8081 \
+  --cache-url http://cache.internal:5000 \
   --wait
 ```
 
-The control plane passes the cache URL to agents as part of the rollout parameters. Agents add it as a substituter when fetching the closure.
-
 ## Worked example: scheduled canary deploy
 
-Build the closure:
+Build and register a release:
 
 ```sh
-nix build .#nixosConfigurations.web-01.config.system.build.toplevel
-GENERATION=$(readlink -f result)
+nixfleet release create \
+  --hosts 'web-*' \
+  --push-to ssh://root@cache
+# Output: Release rel-abc123 created (12 hosts)
 ```
 
 Create a policy for web production deploys:
@@ -163,8 +165,8 @@ Schedule the deploy for a maintenance window:
 
 ```sh
 nixfleet deploy \
+  --release rel-abc123 \
   --tag prod --tag web \
-  --generation "$GENERATION" \
   --policy web-prod \
   --schedule-at "2026-04-06T03:00:00Z"
 ```

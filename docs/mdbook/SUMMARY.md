@@ -26,7 +26,7 @@
 - [Standard Tools](guide/deploying/standard-tools.md)
 - [Control Plane](guide/deploying/control-plane.md)
 - [Agent](guide/deploying/agent.md)
-- [Binary Cache (Attic)](guide/deploying/attic.md)
+- [Binary Cache](guide/deploying/cache.md)
 - [Rollouts](guide/deploying/rollouts.md)
 - [Rollout Policies](guide/deploying/policies.md)
 
@@ -54,7 +54,7 @@
 - [Control Plane Options](reference/control-plane-options.md)
 - [Secrets Options](reference/secrets-options.md)
 - [Backup Options](reference/backup-options.md)
-- [Attic Options](reference/attic-options.md)
+- [Cache Options](reference/cache-options.md)
 - [MicroVM Host Options](reference/microvm-options.md)
 - [Monitoring Options](reference/monitoring-options.md)
 - [Firewall Scope](reference/firewall-scope.md)

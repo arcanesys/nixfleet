@@ -70,6 +70,7 @@ mod tests {
         let gen = DesiredGeneration {
             hash: "/nix/store/def456-nixos-system-web-01-25.05".to_string(),
             cache_url: Some("https://cache.nixos.org".to_string()),
+            poll_hint: None,
         };
         let json = serde_json::to_string(&gen).unwrap();
         let back: DesiredGeneration = serde_json::from_str(&json).unwrap();

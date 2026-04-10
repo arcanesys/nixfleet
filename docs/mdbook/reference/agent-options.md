@@ -9,8 +9,9 @@ All options under `services.nixfleet-agent`. The module is auto-included by mkHo
 | `enable` | `bool` | `false` | Enable the NixFleet fleet management agent. |
 | `controlPlaneUrl` | `str` | -- (required when enabled) | URL of the NixFleet control plane. Example: `"https://fleet.example.com"`. |
 | `machineId` | `str` | `config.networking.hostName` | Machine identifier reported to the control plane. |
-| `pollInterval` | `int` | `300` | Poll interval in seconds. |
-| `cacheUrl` | `nullOr str` | `null` | Global binary cache URL for fetching closures. Resolution order: (1) per-generation `cache_url` provided by the CP; (2) this option if set; (3) if neither is set, the agent verifies the store path exists locally via `nix path-info` instead of fetching — the path must be pre-pushed to the host out-of-band (e.g., via SSH). Example: `"https://cache.fleet.example.com"`. |
+| `pollInterval` | `int` | `300` | Steady-state poll interval in seconds. The control plane may override this for individual cycles via a `poll_hint` field in the desired-generation response (set to `5` during active rollouts), letting the agent react to new deploys within seconds without reducing the steady-state polling rate. |
+| `retryInterval` | `int` | `30` | Retry interval in seconds after a failed poll (network error, CP not ready, fetch failure, bootstrap race). Shorter than `pollInterval` so the agent recovers quickly from transient failures without flooding the CP. |
+| `cacheUrl` | `nullOr str` | `null` | Global binary cache URL for fetching closures. Resolution order: (1) per-generation `cache_url` from the release entry; (2) this option if set; (3) if neither is set, the agent verifies the store path exists locally via `nix path-info` — the path must be pre-pushed out-of-band. Example: `"http://cache:5000"`. |
 | `dbPath` | `str` | `"/var/lib/nixfleet/state.db"` | Path to the SQLite state database. |
 | `dryRun` | `bool` | `false` | When true, check and fetch but do not apply generations. |
 | `tags` | `listOf str` | `[]` | Tags for grouping this machine in fleet operations. Passed via `NIXFLEET_TAGS` environment variable. |
@@ -89,7 +90,7 @@ Metrics exposed:
 
 | Metric | Description |
 |--------|-------------|
-| `nixfleet_agent_state` | Current state machine state (encoded as a label) |
+| `nixfleet_agent_state` | Current phase of the deploy cycle (idle, checking, fetching, applying, verifying, reporting, rolling_back) encoded as a label |
 | `nixfleet_agent_poll_duration_seconds` | Duration of the last poll cycle |
 | `nixfleet_agent_last_poll_timestamp` | Unix timestamp of the last completed poll |
 | `nixfleet_agent_health_check_duration_seconds` | Duration of the last health check run |
@@ -111,24 +112,30 @@ services.nixfleet-agent = {
 
 ## Systemd service
 
-The agent runs as a systemd service with hardening:
+The agent runs as a privileged root systemd service:
 
 | Setting | Value |
 |---------|-------|
 | Target | `multi-user.target` |
-| After | `network-online.target` |
+| After | `network-online.target`, `nix-daemon.service` |
 | Restart | `always` (30s delay) |
 | StateDirectory | `nixfleet` |
 | NoNewPrivileges | `true` |
-| ProtectHome | `true` |
-| PrivateTmp | `true` |
-| PrivateDevices | `true` |
-| ProtectKernelTunables | `true` |
-| ProtectKernelModules | `true` |
-| ProtectControlGroups | `true` |
-| ReadWritePaths | `/var/lib/nixfleet`, `/nix/var/nix` |
-| ReadOnlyPaths | `/nix/store`, `/run/current-system` |
+| PATH | `${config.nix.package}/bin:${pkgs.systemd}/bin` |
+| Environment | `XDG_CACHE_HOME=/var/lib/nixfleet/.cache` |
+
+**Hardening rationale.** The agent is a privileged system manager whose primary job is to run `switch-to-configuration` — modifying bootloaders, kernel modules, systemd units, user home directories, and filesystem layout. Previous versions applied systemd sandboxing (`PrivateDevices`, `PrivateTmp`, `ProtectKernel*`, `ProtectControlGroups`, `ProtectHome`, `ReadOnlyPaths`), but since `switch-to-configuration` runs as a subprocess it inherited the agent's namespace and broke in multiple ways:
+
+- `PrivateDevices` blocks `blkid` (needed to read `/dev/sda2` for the bootloader UUID during GRUB install)
+- `ProtectHome` makes `/home` and `/root` read-only, breaking user activation scripts
+- `ProtectControlGroups` prevents `systemctl` operations during unit restart
+- `ProtectKernelModules` blocks kernel module changes during kernel upgrades
+
+The threat model is equivalent to `sudo nixos-rebuild switch` running as a daemon — no sandboxing applies. `NoNewPrivileges = true` is kept to prevent setuid escalation.
+
+- `nix` is in `PATH` so `nix copy` and `nix path-info` work inside the service.
+- `XDG_CACHE_HOME` points into the state directory so nix metadata cache (narinfo lookups etc.) persists across reboots on impermanent hosts.
 
 Health check configuration is written to `/etc/nixfleet/health-checks.json` and passed via `--health-config`.
 
-On impermanent hosts, `/var/lib/nixfleet` is automatically persisted.
+On impermanent hosts, `/var/lib/nixfleet` is automatically persisted (including the XDG cache subdirectory).

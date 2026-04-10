@@ -44,7 +44,9 @@ mkHost injects these modules before user-provided `modules`:
 7. Impermanence scope (NixOS part)
 8. Agent service module (disabled by default)
 9. Control plane service module (disabled by default)
-10. Home Manager NixOS module with user config
+10. Cache server service module — harmonia (disabled by default)
+11. Cache client service module — generic substituter config (disabled by default)
+12. Home Manager NixOS module with user config
 
 When `isVm = true`, additionally injects:
 - QEMU disk and hardware config
