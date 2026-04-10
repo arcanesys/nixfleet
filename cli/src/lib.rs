@@ -6,4 +6,5 @@
 //! here as small as possible — if a test can run through the binary via
 //! `assert_cmd`, prefer that.
 
+pub mod config;
 pub mod release;

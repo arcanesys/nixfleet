@@ -22,6 +22,7 @@ Out of Phase 2's original contingent scenarios (C1–C3):
 
 ### CLI gaps surfaced during Phase 2 verification
 
+- [ ] **Env-var precedence in CLI `config::resolve`** — `NIXFLEET_CONTROL_PLANE_URL`, `NIXFLEET_API_KEY`, `NIXFLEET_CA_CERT`, `NIXFLEET_CLIENT_CERT`, `NIXFLEET_CLIENT_KEY` are documented in CLAUDE.md but not enforced in `resolve`. Phase 3 I2 left `i2_env_var_precedence_deferred` as `#[ignore]` pending a Phase 4 fix. Wire env-var layer between credentials and CLI args.
 - [ ] **`nixfleet release delete` subcommand** — `DELETE /api/v1/releases/{id}` exists on the CP (documented in CLAUDE.md, role: admin, returns 409 if referenced by a rollout), but there is no matching CLI subcommand. Phase 2 end-to-end smoke revealed `nixfleet release delete --help` returns `unrecognized subcommand 'delete'`. Add the subcommand to `cli/src/release.rs` and wire it in `cli/src/main.rs`. Test case: Phase 3 scenario `R5` (delete on referenced release → 409) + `R6` (delete on orphan → 204).
 
 ### Agent UX
