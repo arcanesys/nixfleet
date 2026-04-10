@@ -380,7 +380,26 @@ Server side: `control-plane/src/tls.rs`. Client side: `agent/src/tls.rs`. End-to
 
 ## Category 15: DB migrations
 
-_To be filled in Task 17._
+`control-plane/migrations/V1..V10.sql` + `control-plane/src/db.rs::migrate` (refinery-based). V10 is breaking: drops rollouts/batches/events/schedules and recreates them with `release_id` FK.
+
+| Item | File | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|
+| `Db::migrate` entry point | `control-plane/src/db.rs:39-45` | `test_migrate_is_idempotent` — **misleading**: only calls `migrate()` once | **Fix** (trivial) | Call `migrate()` twice, assert `Ok` both times |
+| V1 initial schema | `V1__initial_schema.sql` | Schema shape assumed | Test | |
+| V2 api_keys + role CHECK | `V2__api_keys.sql` | None for CHECK constraint | Test | Insert with invalid role → expect error |
+| V3 audit_events + indexes | `V3__audit_events.sql` | Implicit via audit tests | Test | |
+| V4 machine_tags composite PK + FK | `V4__machine_tags.sql` | None | Test | FK enforcement (see below) |
+| V5 rollouts + rollout_batches | `V5__rollouts.sql` | Later dropped in V10 | Keep — Phase 2 may collapse into V10 | |
+| V6 health_reports | `V6__health_reports.sql` | None | Test | |
+| V7 rollout_policies | `V7__rollout_policies.sql` | None | **Delete or Test — depends on Cat 1** | |
+| V8 rollout_events | `V8__rollout_events.sql` | None | Test | |
+| V9 scheduled_rollouts | `V9__scheduled_rollouts.sql` | None | **Delete or Test — depends on Cat 1** | |
+| V10 releases (breaking rewrite) | `V10__releases.sql` | None | Test | NOT NULL DEFAULT bug happened here — schema shape test would catch regression |
+| Foreign-key enforcement | `db.rs` pragma | **`PRAGMA foreign_keys = ON` not found** — **Fix** | **Fix** | Without this pragma, SQLite does not enforce FK constraints |
+| Schema shape validation | No `sqlite_master` query | None | Test | Add post-migrate test: query expected tables exist with expected columns |
+| Phase 2 migration rewrite | all | — | — | Spec Section 3 allows rewriting in place; tracked in Phase 2 plan |
+
+**Phase 2 explicit action:** add `conn.execute("PRAGMA foreign_keys = ON", [])?` in `Db::migrate` or connection open. This is a **Fix** — without it, V4's `machine_tags` FK to `machines` is silently unenforced.
 
 ## Category 16: Config loading
 
