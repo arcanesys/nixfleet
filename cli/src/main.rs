@@ -225,20 +225,6 @@ enum HostAction {
         target: Option<String>,
     },
 
-    /// Provision a host (install NixOS via nixos-anywhere)
-    Provision {
-        /// Host name (must exist in flake)
-        #[arg(long)]
-        hostname: String,
-
-        /// SSH target (e.g. root@192.168.1.42)
-        #[arg(long)]
-        target: String,
-
-        /// Username for post-install verification
-        #[arg(long, default_value = "root")]
-        username: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -557,11 +543,6 @@ async fn main() -> Result<()> {
                 )
                 .await
             }
-            HostAction::Provision {
-                hostname,
-                target,
-                username,
-            } => host::provision_host(&hostname, &target, &username).await,
         },
         Commands::Rollout { action } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
