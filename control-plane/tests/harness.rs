@@ -1,0 +1,300 @@
+//! Shared test harness for Phase 3 scenario tests.
+//!
+//! Each CP scenario test file (`release_scenarios.rs`, `deploy_scenarios.rs`,
+//! etc.) uses `#[path = "harness.rs"] mod harness;` at the top to pull this
+//! in as a sibling module. That is the standard pattern for shared test
+//! helpers in Rust: integration tests live in `tests/*.rs` and each file is
+//! a separate crate, so a shared module has to be included by path.
+//!
+//! The harness spins up a real `build_app` router on a random port backed
+//! by a fresh temp SQLite DB. Helpers exist to seed API keys, create
+//! releases, create rollouts, and submit fake agent reports. No mocks of
+//! the subject under test.
+
+#![allow(dead_code)] // each test file uses a subset; allow unused helpers
+
+use metrics_exporter_prometheus::PrometheusBuilder;
+use nixfleet_control_plane::{build_app, db, state};
+use nixfleet_types::release::{CreateReleaseRequest, CreateReleaseResponse, ReleaseEntry};
+use nixfleet_types::rollout::{
+    CreateRolloutRequest, CreateRolloutResponse, OnFailure, RolloutDetail, RolloutStatus,
+    RolloutStrategy, RolloutTarget,
+};
+use nixfleet_types::Report;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+pub const TEST_API_KEY: &str = "test-admin-key";
+pub const TEST_READONLY_KEY: &str = "test-readonly-key";
+pub const TEST_DEPLOY_KEY: &str = "test-deploy-key";
+
+/// Everything a scenario needs to drive the CP.
+pub struct Cp {
+    pub base: String,
+    pub admin: reqwest::Client,
+    pub db: Arc<db::Db>,
+    pub fleet: Arc<RwLock<state::FleetState>>,
+    pub tempdir: tempfile::TempDir,
+    pub db_path: String,
+}
+
+/// Spawn a fresh CP. New temp DB, new random port, new in-memory fleet state.
+pub async fn spawn_cp() -> Cp {
+    spawn_cp_at(None).await
+}
+
+/// Spawn a CP reusing an existing db path (for the F6 hydration scenario).
+///
+/// If `path` is `None`, a fresh temp directory is created and the new
+/// `Cp` owns it via its `tempdir` field.
+///
+/// If `path` is `Some`, the caller is responsible for keeping the owning
+/// `TempDir` alive for the full duration of the second spawn. The typical
+/// F6 pattern is:
+///
+/// ```ignore
+/// let cp1 = spawn_cp().await;
+/// let db_path = cp1.db_path.clone();
+/// // ... do things with cp1 ...
+/// let cp2 = spawn_cp_at(Some(&db_path)).await;
+/// // cp1 must remain in scope until cp2 is done so cp1.tempdir is not dropped.
+/// ```
+///
+/// The `tempdir` field on the returned `Cp` in this branch is a fresh
+/// unused temp directory — it exists only to keep the `Cp` shape uniform
+/// and is not load-bearing for the reused db path.
+pub async fn spawn_cp_at(path: Option<&str>) -> Cp {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let db_path = match path {
+        Some(p) => p.to_string(),
+        None => tempdir
+            .path()
+            .join("state.db")
+            .to_string_lossy()
+            .into_owned(),
+    };
+
+    let database = Arc::new(db::Db::new(&db_path).expect("db::new"));
+    database.migrate().expect("db::migrate");
+
+    // Seed three keys so auth scenarios can drive all three tiers.
+    seed_key(&database, TEST_API_KEY, "integration-admin", "admin");
+    seed_key(&database, TEST_DEPLOY_KEY, "integration-deploy", "deploy");
+    seed_key(&database, TEST_READONLY_KEY, "integration-readonly", "readonly");
+
+    let fleet = Arc::new(RwLock::new(state::FleetState::new()));
+
+    let recorder = PrometheusBuilder::new().build_recorder();
+    let handle = Arc::new(recorder.handle());
+    static METRICS_INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    METRICS_INSTALLED.get_or_init(|| {
+        metrics::set_global_recorder(recorder).ok();
+    });
+
+    let app = build_app(fleet.clone(), database.clone(), handle);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "authorization",
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {}", TEST_API_KEY)).unwrap(),
+    );
+    let admin = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap();
+
+    Cp {
+        base: format!("http://{addr}"),
+        admin,
+        db: database,
+        fleet,
+        tempdir,
+        db_path,
+    }
+}
+
+/// A client authenticated with an arbitrary key.
+pub fn client_with_key(raw_key: &str) -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "authorization",
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {raw_key}")).unwrap(),
+    );
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap()
+}
+
+/// A client with no Authorization header at all (for 401 negative tests).
+pub fn client_anonymous() -> reqwest::Client {
+    reqwest::Client::new()
+}
+
+fn seed_key(db: &db::Db, raw: &str, name: &str, role: &str) {
+    let mut hasher = Sha256::new();
+    hasher.update(raw.as_bytes());
+    let key_hash = hex::encode(hasher.finalize());
+    db.insert_api_key(&key_hash, name, role).unwrap();
+}
+
+/// Register a machine in the CP fleet (bypasses the HTTP layer for setup speed).
+pub async fn register_machine(cp: &Cp, machine_id: &str, tags: &[&str]) {
+    cp.db.register_machine(machine_id, "active").unwrap();
+    let tags_owned: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
+    cp.db.set_machine_tags(machine_id, &tags_owned).unwrap();
+    let mut fleet = cp.fleet.write().await;
+    fleet.get_or_create(machine_id);
+}
+
+/// Create a release via `POST /api/v1/releases` with the given entries.
+pub async fn create_release(cp: &Cp, hosts: &[(&str, &str)]) -> String {
+    let entries: Vec<ReleaseEntry> = hosts
+        .iter()
+        .map(|(hostname, store_path)| ReleaseEntry {
+            hostname: (*hostname).to_string(),
+            store_path: (*store_path).to_string(),
+            platform: "x86_64-linux".to_string(),
+            tags: vec![],
+        })
+        .collect();
+    let body = CreateReleaseRequest {
+        flake_ref: Some("test".to_string()),
+        flake_rev: Some("deadbeef".to_string()),
+        cache_url: None,
+        entries,
+    };
+    let resp = cp
+        .admin
+        .post(format!("{}/api/v1/releases", cp.base))
+        .json(&body)
+        .send()
+        .await
+        .expect("create_release request");
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    assert_eq!(status, 201, "create_release failed: {text}");
+    let created: CreateReleaseResponse = serde_json::from_str(&text).unwrap();
+    created.id
+}
+
+/// Create a rollout targeting the given tag, referencing an existing release.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_rollout_for_tag(
+    cp: &Cp,
+    release_id: &str,
+    tag: &str,
+    strategy: RolloutStrategy,
+    batch_sizes: Option<Vec<&str>>,
+    failure_threshold: &str,
+    on_failure: OnFailure,
+    health_timeout: u64,
+) -> String {
+    let body = CreateRolloutRequest {
+        release_id: release_id.to_string(),
+        cache_url: None,
+        strategy,
+        batch_sizes: batch_sizes.map(|v| v.into_iter().map(|s| s.to_string()).collect()),
+        failure_threshold: failure_threshold.to_string(),
+        on_failure,
+        health_timeout: Some(health_timeout),
+        target: RolloutTarget::Tags(vec![tag.to_string()]),
+        policy: None,
+    };
+    let resp = cp
+        .admin
+        .post(format!("{}/api/v1/rollouts", cp.base))
+        .json(&body)
+        .send()
+        .await
+        .expect("create_rollout request");
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    assert_eq!(status, 201, "create_rollout failed: {text}");
+    let created: CreateRolloutResponse = serde_json::from_str(&text).unwrap();
+    created.rollout_id
+}
+
+/// Submit a fake `POST /api/v1/machines/{id}/report` on behalf of an agent.
+pub async fn fake_agent_report(
+    cp: &Cp,
+    machine_id: &str,
+    current_generation: &str,
+    success: bool,
+    message: &str,
+    tags: &[&str],
+) {
+    let report = Report {
+        machine_id: machine_id.to_string(),
+        current_generation: current_generation.to_string(),
+        success,
+        message: message.to_string(),
+        timestamp: chrono::Utc::now(),
+        tags: tags.iter().map(|s| s.to_string()).collect(),
+        health: None,
+    };
+    let resp = cp
+        .admin
+        .post(format!("{}/api/v1/machines/{}/report", cp.base, machine_id))
+        .json(&report)
+        .send()
+        .await
+        .expect("report request");
+    let status = resp.status();
+    assert!(
+        status.is_success(),
+        "report failed ({status}): {}",
+        resp.text().await.unwrap_or_default()
+    );
+}
+
+/// Poll a rollout's `status` field until it matches `want` or the deadline elapses.
+pub async fn wait_rollout_status(
+    cp: &Cp,
+    rollout_id: &str,
+    want: RolloutStatus,
+    within: std::time::Duration,
+) -> RolloutDetail {
+    let deadline = tokio::time::Instant::now() + within;
+    loop {
+        let resp = cp
+            .admin
+            .get(format!("{}/api/v1/rollouts/{}", cp.base, rollout_id))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "GET rollout {rollout_id} failed with HTTP {}",
+            resp.status()
+        );
+        let body = resp.text().await.expect("read rollout body");
+        let detail: RolloutDetail = serde_json::from_str(&body)
+            .unwrap_or_else(|e| panic!("decode RolloutDetail from {body:?}: {e}"));
+        if detail.status == want {
+            return detail;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "rollout {rollout_id} did not reach {want:?} within {within:?}; last status = {:?}",
+                detail.status
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// Run a single executor tick synchronously.
+pub async fn tick_once(cp: &Cp) {
+    nixfleet_control_plane::rollout::executor::test_support::tick_for_tests(&cp.fleet, &cp.db)
+        .await
+        .expect("tick_for_tests");
+}

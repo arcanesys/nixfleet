@@ -490,3 +490,23 @@ mod tests {
         assert_eq!(parse_threshold("100%", 10), 10);
     }
 }
+
+#[doc(hidden)]
+pub mod test_support {
+    //! Synchronous entry point into a single executor tick, for integration tests.
+    //!
+    //! Production code uses `spawn()` which runs `tick` on a 2-second interval.
+    //! Tests want deterministic advancement: one call to this function equals
+    //! one tick, with the same DB queries and state mutations the real loop
+    //! performs. No fake time, no mocking — just synchronous invocation.
+    use super::{tick, Db, FleetState};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    pub async fn tick_for_tests(
+        state: &Arc<RwLock<FleetState>>,
+        db: &Arc<Db>,
+    ) -> anyhow::Result<()> {
+        tick(state, db).await
+    }
+}
