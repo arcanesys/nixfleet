@@ -26,7 +26,7 @@ Every call to `mkHost` automatically includes:
 - Core NixOS module (boot, networking, users, SSH, nix settings)
 - Base scope (CLI packages, conditional on `!isMinimal`)
 - Impermanence scope (btrfs root wipe, persist paths, conditional on `isImpermanent`)
-- Agent and control-plane service modules (included but disabled by default)
+- Agent, control-plane, cache-server (harmonia), and cache client service modules (included but disabled by default)
 - Home Manager with hostSpec, base HM module, and impermanence HM module
 
 **Darwin hosts:**

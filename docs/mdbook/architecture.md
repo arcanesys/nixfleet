@@ -33,7 +33,7 @@ Modules are injected in this order:
 5. **Input modules** -- `disko`, `impermanence` (NixOS only)
 6. **Core module** -- `core/_nixos.nix` or `core/_darwin.nix` (SSH hardening, firewall, base packages, user creation)
 7. **Scopes** -- `_base` (universal CLI tools), `_impermanence` (btrfs root wipe + persistence)
-8. **Service modules** -- `nixfleet/_agent.nix`, `nixfleet/_control-plane.nix` (disabled by default)
+8. **Service modules** -- `nixfleet/_agent.nix`, `nixfleet/_control-plane.nix`, `nixfleet/_cache-server.nix`, `nixfleet/_cache.nix` (all disabled by default)
 9. **VM hardware** -- QEMU disk + hardware config (only when `isVm = true`)
 10. **Home Manager** -- wired for the primary user with HM versions of the above scopes
 11. **Fleet modules** -- the caller's `modules` list (hardware config, disk layout, custom modules)
@@ -71,44 +71,48 @@ optional -- standard `nixos-rebuild` and `nixos-anywhere` work without them.
 
 ### Agent (`nixfleet-agent`)
 
-A systemd daemon on each managed host. Runs a state machine:
+A systemd daemon on each managed host. Every poll tick runs a single sequential deploy cycle to completion:
 
 ```
-Idle -> Checking -> Fetching -> Applying -> Verifying -> Reporting -> Idle
-                                    |            |
-                                    v            v
-                                RollingBack -> Reporting -> Idle
+poll_tick fires
+  -> get_desired_generation (CP returns {hash, cache_url, poll_hint})
+  -> if current == hash: "up-to-date", done
+  -> nix copy --from <cache_url> <hash>    (or nix path-info if no cache)
+  -> switch-to-configuration switch
+  -> run health checks
+  -> POST /report {current_generation, success, message}
+  -> on failure: auto-rollback to previous generation, report failure
 ```
 
-- **Idle**: waits for the poll interval (default 300s)
-- **Checking**: queries the control plane for the desired generation, compares with `/run/current-system`
-- **Fetching**: downloads the closure from the binary cache (`nix copy --from`)
-- **Applying**: runs `switch-to-configuration switch`
-- **Verifying**: executes configured health checks (systemd unit status, HTTP probes)
-- **RollingBack**: reverts to the previous generation on failure
-- **Reporting**: sends success/failure status to the control plane
+The poll interval adapts to the CP's `poll_hint` — typically `5s` during active rollouts and the configured `pollInterval` (default 300s) otherwise. Failed polls reschedule to `retryInterval` (default 30s) to recover quickly from transient errors and bootstrap races.
 
-State is persisted in a local SQLite database (`/var/lib/nixfleet/state.db`).
+A separate health-reporter tick (default 60s) sends periodic health reports to the CP independent of the deploy cycle. Local state is persisted in SQLite (`/var/lib/nixfleet/state.db`); the nix metadata cache lives under `$XDG_CACHE_HOME` inside the state directory.
 
 ### Control Plane (`nixfleet-control-plane`)
 
-An Axum HTTP server that acts as the fleet inventory and coordination hub:
+An Axum HTTP server that acts as the fleet inventory, release registry, and rollout coordinator:
 
-- **Machine registry** -- tracks machine IDs, system state, current/desired generations, tags
-- **Desired generation** -- operators set a target store path per machine; agents poll for it
-- **Rollouts** -- create, resume, cancel coordinated multi-machine deployments
-- **Reports** -- agents POST status reports after each deploy cycle
-- **Audit log** -- records all API mutations with timestamps
-- **Auth** -- API key authentication middleware
+- **Machine registry** -- machine IDs, lifecycle state, tags, current generation (from reports)
+- **Releases** -- immutable manifests mapping each host to its built store path. Created by operators, referenced by rollouts multiple times
+- **Rollouts** -- create, resume, cancel coordinated multi-machine deployments. Each rollout references a release; the CP resolves per-host store paths from release entries at batch execution time
+- **Desired generation** -- set per-machine by the executor during a batch, read by agents via `GET /desired-generation`. The response includes `poll_hint` during active rollouts so agents react within seconds
+- **Generation-gated health** -- the executor only accepts a batch's health reports after verifying the machine's `current_generation` matches the desired store path, preventing false-positive completion from stale reports
+- **Reports** -- agents POST status reports; the CP auto-syncs tags
+- **Audit log** -- records all API mutations
+- **Auth** -- mTLS (transport) + API key (Bearer) for admin endpoints
 
 ### CLI (`nixfleet-cli`)
 
-Operator tool for interacting with the control plane:
+Operator tool for interacting with the control plane. Major commands:
 
-- `nixfleet deploy` -- set desired generation for one or more machines
-- `nixfleet status` -- query fleet inventory and machine state
-- `nixfleet rollout` -- create and manage coordinated rollouts
-- `nixfleet rollback` -- trigger rollback on specific machines
+- `nixfleet init` -- create a `.nixfleet.toml` config file in the fleet repo
+- `nixfleet bootstrap` -- create the first admin API key (auto-saved to `~/.config/nixfleet/credentials.toml`)
+- `nixfleet release create/list/show/diff` -- manage releases
+- `nixfleet deploy --release <ID>` -- trigger a rollout against a release (or build+push+deploy in one command with `--push-to` / `--copy`)
+- `nixfleet status` -- query fleet inventory
+- `nixfleet rollout list/status/resume/cancel` -- manage running rollouts
+- `nixfleet policy` / `nixfleet schedule` -- named presets and scheduled rollouts
+- `nixfleet rollback` -- trigger rollback on a specific machine
 
 ### NixOS integration
 

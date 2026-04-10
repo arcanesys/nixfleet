@@ -69,12 +69,15 @@ Two-node end-to-end test exercising the agent/control-plane cycle:
 
 1. **Control plane** node starts, `nixfleet-control-plane.service` comes up on port 8080
 2. **Agent** node starts with `pollInterval = 2`, `dryRun = true`, pointing at the CP
-3. Test sets a fake desired generation on the CP via its HTTP API
-4. Agent detects the generation mismatch, runs a dry-run cycle, and reports back
-5. Test queries the CP inventory and asserts:
+3. Test creates a release via `POST /api/v1/releases` mapping the agent's hostname to a fake store path, then creates a rollout via `POST /api/v1/rollouts` referencing that release
+4. Rollout executor sets the agent's desired generation from the release entry
+5. Agent polls (within 2s), detects the mismatch, runs a dry-run cycle (skips apply), and reports back with its current generation
+6. Test queries the CP and asserts:
    - The agent appears in the machine list
-   - `system_state == "ok"` (dry-run reports success)
-   - `desired_generation` matches the fake hash that was set
+   - The rollout status reflects the agent's report
+   - The release entry matches the fake store path registered
+
+Note: the legacy `POST /api/v1/machines/{id}/set-generation` endpoint has been removed. The only way to set desired state is via a release + rollout.
 
 ### Infrastructure scope tests (vm-infra.nix)
 

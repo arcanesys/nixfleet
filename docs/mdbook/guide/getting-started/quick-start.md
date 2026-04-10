@@ -140,11 +140,31 @@ Rebuild both hosts to activate the agent and control plane.
 
 ## 4. Deploy to the Fleet
 
-With orchestration enabled, use the NixFleet CLI:
+First-time setup — create a config file and bootstrap the admin API key:
 
 ```bash
-# Build and deploy to all hosts tagged "web", canary strategy
-nixfleet deploy --tag web --strategy canary --generation /nix/store/abc123... --wait
+nixfleet init \
+  --control-plane-url https://cp.example.com:8080 \
+  --ca-cert ./fleet-ca.pem \
+  --cache-url http://cache.example.com:5000 \
+  --push-to ssh://root@cache.example.com
+nixfleet bootstrap
+```
+
+This writes `.nixfleet.toml` to the repo and saves the API key to `~/.config/nixfleet/credentials.toml`. Subsequent commands run with no flags.
+
+Now deploy — the one-command form builds all targeted hosts, pushes them to the cache, registers a release, and triggers a canary rollout:
+
+```bash
+nixfleet deploy --push-to ssh://root@cache.example.com --tag web --strategy canary --wait
+```
+
+Or split it into explicit steps if you want to inspect or replay the release:
+
+```bash
+nixfleet release create --push-to ssh://root@cache.example.com
+# Output: Release rel-abc123 created (2 hosts)
+nixfleet deploy --release rel-abc123 --tag web --strategy canary --wait
 ```
 
 The `--strategy` flag controls rollout behavior:
@@ -152,7 +172,7 @@ The `--strategy` flag controls rollout behavior:
 - `canary` — deploy to one host first, verify health, then continue
 - `staged` — deploy in configurable batch sizes (`--batch-size 1,25%,100%`)
 
-The agent checks health (`http://localhost:80/health`) after each switch. On failure, it automatically rolls back to the previous generation.
+The agent checks health (`http://localhost:80/health`) after each switch. On failure, it automatically rolls back to the previous generation. The control plane verifies each machine reports its NEW `current_generation` before accepting health as proof of successful deployment.
 
 ## 5. Check Fleet Status
 

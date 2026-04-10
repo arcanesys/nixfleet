@@ -22,7 +22,7 @@ The `/persist` filesystem is marked `neededForBoot = true` so it is available du
 
 ## What the framework persists
 
-### System-level (`/persist/system`)
+### System-level (`/persist`)
 
 | Path | Purpose |
 |------|---------|
@@ -42,6 +42,7 @@ The framework persists common user paths. Fleet repos extend this list with thei
 | `.keys` | Encryption/decryption keys |
 | `.local/share/nix` | Nix user state |
 | `.ssh/known_hosts` | SSH known hosts (file) |
+| `.config/nixfleet` | nixfleet CLI credentials (API keys from `nixfleet bootstrap`) |
 
 The framework also persists paths for tools included in the base scope (shell history, plugin state, CLI auth). See `modules/scopes/_impermanence.nix` for the full list.
 

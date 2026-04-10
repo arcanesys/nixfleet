@@ -37,45 +37,27 @@ services.nixfleet-agent = {
 | `enable` | bool | `false` | Enable the agent service |
 | `controlPlaneUrl` | string | — (required) | URL of the control plane |
 | `machineId` | string | `config.networking.hostName` | Machine identifier reported to the CP |
-| `pollInterval` | int | `300` | Seconds between polls for desired generation |
+| `pollInterval` | int | `300` | Steady-state poll interval. Overridden per-cycle by `poll_hint` from the CP during active rollouts (typically to `5s`). |
+| `retryInterval` | int | `30` | Retry interval after a failed poll. Shorter than `pollInterval` so the agent recovers quickly from bootstrap races and transient failures. |
 | `cacheUrl` | string or null | `null` | Binary cache URL for `nix copy --from` |
 | `dbPath` | string | `"/var/lib/nixfleet/state.db"` | SQLite state database path |
 | `dryRun` | bool | `false` | Check and fetch but do not apply generations |
 | `tags` | list of string | `[]` | Tags for grouping in fleet operations |
 | `healthInterval` | int | `60` | Seconds between continuous health reports |
 
-## State machine
+## Deploy cycle
 
-The agent operates as an explicit state machine. Each poll cycle follows this flow:
+On every poll tick the agent runs a single sequential deploy cycle (`run_deploy_cycle`) to completion — no cooperative state machine, no interruptible transitions:
 
-```
-Idle ──(poll timer)──→ Checking ──(mismatch)──→ Fetching ──→ Applying ──→ Verifying ──→ Reporting ──→ Idle
-                          │                        │            │             │
-                          │                        │            ↓             ↓
-                          ↓                        ↓        RollingBack ← (failure)
-                        Idle                     Idle            │
-                     (up-to-date               (fetch            ↓
-                      or error)                error)        Reporting
-                                                                │
-                                                                ↓
-                                                              Idle
-```
+1. **Check** — `GET /api/v1/machines/<id>/desired-generation` returns `{hash, cache_url, poll_hint}`. If `hash` matches `/run/current-system`, the cycle reports "up-to-date" and returns. If `poll_hint` is set (active rollout), the next poll is scheduled at that shorter interval.
+2. **Fetch** — if the generation differs, the agent runs `nix copy --from <cache_url> <hash>`. With no cache URL, it falls back to `nix path-info` to verify the path was pre-pushed out-of-band.
+3. **Apply** — runs `<hash>/bin/switch-to-configuration switch` as a subprocess. The agent is a privileged root service — sandboxing is minimal because `switch-to-configuration` needs access to `/dev`, `/home`, `/root`, cgroups, and kernel modules to do its job.
+4. **Verify** — runs all configured health checks. If any fail, the agent transitions to rollback.
+5. **Report** — posts a `Report` to the CP with `current_generation`, `success`, and `message`. The executor uses `current_generation` to verify the machine has actually applied the new generation before accepting health-gated completion.
 
-**Idle** — Waiting for the next poll interval. Continuous health reports fire during this state.
+On any failure (network, fetch, apply, or verify), the cycle returns `PollOutcome::Failed` and the main loop reschedules the next poll to `retryInterval` (30s by default) instead of the full `pollInterval`. This handles bootstrap races (agent polls before the CP has a release), transient network failures, and flaky fetches.
 
-**Checking** — Queries the control plane for the desired generation and compares it to the current system profile. If they match, skips directly to Reporting with "up-to-date". On mismatch, transitions to Fetching.
-
-**Fetching** — Resolves the closure using one of two paths depending on cache configuration:
-- If a cache URL is available (per-generation `cache_url` from the CP, or the configured `cacheUrl`): fetches via `nix copy --from <cache_url> <store_path>`.
-- If no cache URL is configured: verifies the store path exists locally via `nix path-info`. If the path is missing, the agent transitions to Idle and reports the error. In this mode the store path must be pre-pushed to the host via SSH or another out-of-band mechanism before the agent polls.
-
-**Applying** — Runs `switch-to-configuration switch` to activate the new generation. If the switch command fails, transitions directly to RollingBack.
-
-**Verifying** — Runs all configured health checks against the newly activated system. If every check passes, transitions to Reporting with success. If any check fails, transitions to RollingBack.
-
-**RollingBack** — Switches back to the previous generation. The reason (apply failure or health check failure) is recorded and propagated to the report.
-
-**Reporting** — Sends a status report to the control plane with the current generation, success/failure status, tags, and optionally a health report. Always transitions back to Idle.
+**Periodic health reports** run on a separate `healthInterval` tick (default 60s) independent of the deploy cycle. The executor only counts a health report toward batch completion when the machine's `current_generation` matches the desired store path from the release entry.
 
 ## Health checks
 
@@ -189,4 +171,6 @@ The agent supports mTLS for control plane communication via CLI flags / environm
 | `--client-key` | `NIXFLEET_CLIENT_KEY` | Client private key PEM file |
 | `--allow-insecure` | `NIXFLEET_ALLOW_INSECURE` | Allow HTTP (dev only, default: false) |
 
-The systemd service is hardened with `NoNewPrivileges`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, and restricted filesystem access.
+The systemd service keeps `NoNewPrivileges = true` to prevent setuid escalation, but does **not** apply additional sandboxing (no `ProtectHome`, `PrivateDevices`, `ProtectKernel*`, etc.). The agent runs `switch-to-configuration` as a subprocess which inherits the service's namespace, and sandboxing would break operations that need `/dev` (bootloader UUID via `blkid`), `/home` (user activation), cgroups (systemctl), and kernel module loading. The threat model is equivalent to `sudo nixos-rebuild switch` running as a daemon.
+
+See the [Agent Options](../../reference/agent-options.md#systemd-service) reference for the full rationale.

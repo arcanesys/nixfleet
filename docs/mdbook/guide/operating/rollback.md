@@ -1,6 +1,6 @@
 # Rollback
 
-Three mechanisms exist for rolling back a machine to a previous NixOS generation, from fully automatic to fully manual.
+Four mechanisms exist for rolling back, from fully automatic to fully manual.
 
 ## 1. Automatic (agent health checks)
 
@@ -12,7 +12,13 @@ When the agent applies a new generation, it runs the configured health checks (s
 
 No operator action required. During a rollout, this failure report triggers the rollout's health gate, which may pause or revert the entire rollout depending on `--on-failure` settings.
 
-## 2. Manual via CLI
+## 2. Rollout-level revert (`on_failure = revert`)
+
+When a rollout is created with `--on-failure revert` and a later batch fails, the control plane reads each completed batch's `previous_generations` map (captured at batch start) and sets each machine's desired generation back to the store path it was running BEFORE the rollout started. This is per-machine — each host reverts to its own previous state, not a single shared generation. The rollout status becomes `failed` and agents pull the revert on their next poll (within ~5s due to `poll_hint`).
+
+This is the correct rollback mechanism for heterogeneous fleets where each machine has a unique closure.
+
+## 3. Manual via CLI
 
 ### Via control plane
 
@@ -20,9 +26,7 @@ No operator action required. During a rollout, this failure report triggers the 
 nixfleet rollback --host web-01 --generation /nix/store/abc123-nixos-system
 ```
 
-This tells the control plane to set the desired generation for `web-01` to the specified store path. The agent picks up the change on its next poll and switches to it.
-
-Without `--generation`, the CLI requires `--ssh` mode (the control plane does not track generation history yet).
+This sets the desired generation for `web-01` to the specified store path. The agent picks up the change on its next poll and switches to it. For a fleet-wide rollback, consider creating a release pointing at the old store paths and deploying it normally via `nixfleet deploy --release`.
 
 ### Via SSH
 
@@ -40,7 +44,7 @@ nixfleet rollback --host web-01 --ssh --generation /nix/store/abc123-nixos-syste
 
 This runs `switch-to-configuration switch` directly on the target via SSH, bypassing the control plane entirely.
 
-## 3. Manual via NixOS
+## 4. Manual via NixOS
 
 Standard NixOS rollback mechanisms work regardless of NixFleet.
 
@@ -63,8 +67,9 @@ systemd-boot lists previous generations at boot. Select an older entry to boot i
 
 | Scenario | Mechanism |
 |----------|-----------|
-| Deployment health check fails | Automatic (agent handles it) |
-| Bad deploy discovered after health checks pass | CLI rollback (`--host` + `--generation`) |
-| Control plane is down | SSH rollback or NixOS boot menu |
+| Deployment health check fails | Automatic (agent rolls back per-machine) |
+| Mid-rollout batch failure with `--on-failure revert` | Automatic (CP reverts completed batches from per-machine `previous_generations`) |
+| Bad deploy discovered after health checks pass | Create a release pointing at the old closures, `nixfleet deploy --release <old>` |
+| Control plane is down | SSH rollback (`nixfleet rollback --host <h> --ssh`) or NixOS boot menu |
 | Machine won't boot | Boot menu (select previous generation) |
 | Rollout affecting multiple machines | `nixfleet rollout cancel` + individual rollbacks if needed |

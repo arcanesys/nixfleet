@@ -8,7 +8,7 @@ Day-2 operations for monitoring your fleet through the CLI and control plane.
 nixfleet status
 ```
 
-Shows a summary of all machines known to the control plane: hostname, current generation, desired generation, lifecycle state, last report time, and tags.
+Shows a summary of all machines known to the control plane: hostname, current generation (from the agent's most recent report), desired generation (from the active rollout's release entry, if any), lifecycle state, last report time, and tags.
 
 For machine-readable output:
 
