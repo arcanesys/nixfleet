@@ -267,7 +267,14 @@ All other dependencies have substantial usage (tokio 37 uses, axum 36, reqwest 3
 
 ## Category 9: Background tasks
 
-_To be filled in Task 11._
+Only two `tokio::spawn` sites in the workspace — both in `control-plane/src/main.rs`.
+
+| Task | Location | Purpose | Error handling | Lifetime | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|---|---|---|
+| Rollout executor | `control-plane/src/main.rs:58` → `rollout::executor::spawn` | 2-second interval; processes running rollouts, triggers due schedules | Logs errors via `tracing`, continues loop | Infinite (process lifetime) | Indirect via `vm-fleet.nix` | Test | Direct test for error resilience + generation gate |
+| Health report cleanup | `control-plane/src/main.rs:63` | Hourly interval; deletes health reports older than 24h | `tracing::warn` on error, continues loop | Infinite (process lifetime) | None | Test | Silent failure is a silent data-growth risk |
+
+**No agent-side spawn sites.** The agent's deploy cycle is a single tokio select! loop, not multiple spawned tasks.
 
 ## Category 10: State hydration
 
