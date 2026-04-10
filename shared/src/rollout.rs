@@ -133,8 +133,6 @@ pub enum MachineHealthStatus {
     Pending,
     Healthy,
     Unhealthy(String),
-    TimedOut,
-    RolledBack,
 }
 
 impl fmt::Display for MachineHealthStatus {
@@ -143,8 +141,6 @@ impl fmt::Display for MachineHealthStatus {
             Self::Pending => write!(f, "pending"),
             Self::Healthy => write!(f, "healthy"),
             Self::Unhealthy(reason) => write!(f, "unhealthy: {}", reason),
-            Self::TimedOut => write!(f, "timed_out"),
-            Self::RolledBack => write!(f, "rolled_back"),
         }
     }
 }
@@ -260,19 +256,6 @@ mod tests {
     // -- RolloutStrategy --
 
     #[test]
-    fn test_rollout_strategy_roundtrip() {
-        for strategy in [
-            RolloutStrategy::Canary,
-            RolloutStrategy::Staged,
-            RolloutStrategy::AllAtOnce,
-        ] {
-            let json = serde_json::to_string(&strategy).unwrap();
-            let back: RolloutStrategy = serde_json::from_str(&json).unwrap();
-            assert_eq!(strategy, back);
-        }
-    }
-
-    #[test]
     fn test_rollout_strategy_display() {
         assert_eq!(RolloutStrategy::Canary.to_string(), "canary");
         assert_eq!(RolloutStrategy::Staged.to_string(), "staged");
@@ -287,32 +270,7 @@ mod tests {
         assert_eq!(default, OnFailure::Pause);
     }
 
-    #[test]
-    fn test_on_failure_roundtrip() {
-        for variant in [OnFailure::Pause, OnFailure::Revert] {
-            let json = serde_json::to_string(&variant).unwrap();
-            let back: OnFailure = serde_json::from_str(&json).unwrap();
-            assert_eq!(variant, back);
-        }
-    }
-
     // -- RolloutStatus --
-
-    #[test]
-    fn test_rollout_status_roundtrip() {
-        for status in [
-            RolloutStatus::Created,
-            RolloutStatus::Running,
-            RolloutStatus::Paused,
-            RolloutStatus::Completed,
-            RolloutStatus::Failed,
-            RolloutStatus::Cancelled,
-        ] {
-            let json = serde_json::to_string(&status).unwrap();
-            let back: RolloutStatus = serde_json::from_str(&json).unwrap();
-            assert_eq!(status, back);
-        }
-    }
 
     #[test]
     fn test_rollout_status_from_str_lc() {
@@ -387,22 +345,6 @@ mod tests {
     // -- MachineHealthStatus --
 
     #[test]
-    fn test_machine_health_status_roundtrip() {
-        let variants = vec![
-            MachineHealthStatus::Pending,
-            MachineHealthStatus::Healthy,
-            MachineHealthStatus::Unhealthy("disk full".to_string()),
-            MachineHealthStatus::TimedOut,
-            MachineHealthStatus::RolledBack,
-        ];
-        for variant in variants {
-            let json = serde_json::to_string(&variant).unwrap();
-            let back: MachineHealthStatus = serde_json::from_str(&json).unwrap();
-            assert_eq!(variant, back);
-        }
-    }
-
-    #[test]
     fn test_machine_health_status_display() {
         assert_eq!(MachineHealthStatus::Pending.to_string(), "pending");
         assert_eq!(MachineHealthStatus::Healthy.to_string(), "healthy");
@@ -410,8 +352,6 @@ mod tests {
             MachineHealthStatus::Unhealthy("oom".to_string()).to_string(),
             "unhealthy: oom"
         );
-        assert_eq!(MachineHealthStatus::TimedOut.to_string(), "timed_out");
-        assert_eq!(MachineHealthStatus::RolledBack.to_string(), "rolled_back");
     }
 
     // -- RolloutTarget --

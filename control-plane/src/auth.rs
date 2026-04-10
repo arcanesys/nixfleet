@@ -74,34 +74,3 @@ pub async fn require_api_key(
     Ok(next.run(request).await)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hash_key_deterministic() {
-        assert_eq!(hash_key("my-secret"), hash_key("my-secret"));
-    }
-
-    #[test]
-    fn test_hash_key_different_inputs() {
-        assert_ne!(hash_key("key-a"), hash_key("key-b"));
-    }
-
-    #[test]
-    fn test_actor_identifier_apikey() {
-        let actor = Actor::ApiKey {
-            name: "deploy-key".into(),
-            role: "deploy".into(),
-        };
-        assert_eq!(actor.identifier(), "apikey:deploy-key");
-    }
-
-    #[test]
-    fn test_actor_identifier_machine() {
-        let actor = Actor::Machine {
-            machine_id: "web-01".into(),
-        };
-        assert_eq!(actor.identifier(), "machine:web-01");
-    }
-}

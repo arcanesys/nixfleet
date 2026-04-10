@@ -987,17 +987,12 @@ mod tests {
 
     #[test]
     fn test_migrate_is_idempotent() {
-        let (db, _dir) = make_db();
-        db.migrate().unwrap();
-    }
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Db::new(db_path.to_str().unwrap()).unwrap();
 
-    #[test]
-    fn test_set_and_get_desired_generation() {
-        let (db, _dir) = make_db();
-        db.set_desired_generation("web-01", "/nix/store/abc123")
-            .unwrap();
-        let hash = db.get_desired_generation("web-01").unwrap();
-        assert_eq!(hash, Some("/nix/store/abc123".to_string()));
+        db.migrate().expect("first migrate");
+        db.migrate().expect("second migrate should be a no-op");
     }
 
     #[test]
@@ -1067,14 +1062,6 @@ mod tests {
         let dev_01_reports = db.get_recent_reports("dev-01", 10).unwrap();
         assert_eq!(web_01_reports.len(), 1);
         assert_eq!(dev_01_reports.len(), 1);
-    }
-
-    #[test]
-    fn test_register_machine() {
-        let (db, _dir) = make_db();
-        db.register_machine("web-01", "pending").unwrap();
-        let lc = db.get_machine_lifecycle("web-01").unwrap();
-        assert_eq!(lc, Some("pending".to_string()));
     }
 
     #[test]

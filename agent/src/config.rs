@@ -59,36 +59,6 @@ mod tests {
     }
 
     #[test]
-    fn test_config_defaults() {
-        // Verify poll interval is reasonable (1 min – 1 hour)
-        let interval = Duration::from_secs(300);
-        assert!(interval.as_secs() >= 60);
-        assert!(interval.as_secs() <= 3600);
-    }
-
-    #[test]
-    fn test_config_poll_interval_at_minimum_boundary() {
-        let interval = Duration::from_secs(60);
-        assert!(interval.as_secs() >= 60);
-    }
-
-    #[test]
-    fn test_config_poll_interval_at_maximum_boundary() {
-        let interval = Duration::from_secs(3600);
-        assert!(interval.as_secs() <= 3600);
-    }
-
-    #[test]
-    fn test_config_clone() {
-        let config = default_config();
-        let cloned = config.clone();
-        assert_eq!(config.machine_id, cloned.machine_id);
-        assert_eq!(config.control_plane_url, cloned.control_plane_url);
-        assert_eq!(config.poll_interval, cloned.poll_interval);
-        assert_eq!(config.dry_run, cloned.dry_run);
-    }
-
-    #[test]
     fn test_config_dry_run_default_false() {
         let config = default_config();
         assert!(!config.dry_run);

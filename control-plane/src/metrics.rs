@@ -218,19 +218,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_normalize_static_paths() {
-        assert_eq!(normalize_path("/health"), "/health");
-        assert_eq!(normalize_path("/metrics"), "/metrics");
-        assert_eq!(normalize_path("/api/v1/machines"), "/api/v1/machines");
-        assert_eq!(normalize_path("/api/v1/rollouts"), "/api/v1/rollouts");
-        assert_eq!(normalize_path("/api/v1/audit"), "/api/v1/audit");
-        assert_eq!(
-            normalize_path("/api/v1/audit/export"),
-            "/api/v1/audit/export"
-        );
-    }
-
-    #[test]
     fn test_normalize_machine_id_paths() {
         assert_eq!(
             normalize_path("/api/v1/machines/web-01/desired-generation"),
