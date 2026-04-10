@@ -38,9 +38,7 @@ pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<
             .context("failed to spawn nix path-info")?;
 
         if !output.status.success() {
-            anyhow::bail!(
-                "store path {store_path} not found locally and no cache URL configured"
-            );
+            anyhow::bail!("store path {store_path} not found locally and no cache URL configured");
         }
     }
     Ok(())

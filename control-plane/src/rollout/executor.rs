@@ -52,7 +52,7 @@ async fn tick(state: &Arc<RwLock<FleetState>>, db: &Arc<Db>) -> anyhow::Result<(
 
 /// Check for and trigger any scheduled rollouts whose time has come.
 async fn trigger_due_schedules(
-    state: &Arc<RwLock<FleetState>>,
+    _state: &Arc<RwLock<FleetState>>,
     db: &Arc<Db>,
 ) -> anyhow::Result<()> {
     let due = db.get_due_scheduled_rollouts()?;
@@ -61,38 +61,79 @@ async fn trigger_due_schedules(
         tracing::info!(schedule_id = %schedule.id, "Triggering scheduled rollout");
 
         // Resolve strategy: explicit on schedule > policy > default
-        let (strategy, batch_sizes, failure_threshold, on_failure, health_timeout) =
-            if let Some(ref policy_id) = schedule.policy_id {
-                // Load policy defaults — iterate all policies to find by ID
-                let policies = db.list_policies()?;
-                let policy = policies.iter().find(|p| p.id == *policy_id);
-                if let Some(p) = policy {
-                    (
-                        schedule.strategy.clone().unwrap_or_else(|| p.strategy.clone()),
-                        schedule.batch_sizes.clone().unwrap_or_else(|| p.batch_sizes.clone()),
-                        schedule.failure_threshold.clone().unwrap_or_else(|| p.failure_threshold.clone()),
-                        schedule.on_failure.clone().unwrap_or_else(|| p.on_failure.clone()),
-                        schedule.health_timeout_secs.unwrap_or(p.health_timeout_secs),
-                    )
-                } else {
-                    tracing::warn!(schedule_id = %schedule.id, policy_id, "Policy not found, using schedule values");
-                    (
-                        schedule.strategy.clone().unwrap_or_else(|| "all_at_once".to_string()),
-                        schedule.batch_sizes.clone().unwrap_or_else(|| "[\"100%\"]".to_string()),
-                        schedule.failure_threshold.clone().unwrap_or_else(|| "1".to_string()),
-                        schedule.on_failure.clone().unwrap_or_else(|| "pause".to_string()),
-                        schedule.health_timeout_secs.unwrap_or(300),
-                    )
-                }
-            } else {
+        let (strategy, batch_sizes, failure_threshold, on_failure, health_timeout) = if let Some(
+            ref policy_id,
+        ) =
+            schedule.policy_id
+        {
+            // Load policy defaults — iterate all policies to find by ID
+            let policies = db.list_policies()?;
+            let policy = policies.iter().find(|p| p.id == *policy_id);
+            if let Some(p) = policy {
                 (
-                    schedule.strategy.clone().unwrap_or_else(|| "all_at_once".to_string()),
-                    schedule.batch_sizes.clone().unwrap_or_else(|| "[\"100%\"]".to_string()),
-                    schedule.failure_threshold.clone().unwrap_or_else(|| "1".to_string()),
-                    schedule.on_failure.clone().unwrap_or_else(|| "pause".to_string()),
+                    schedule
+                        .strategy
+                        .clone()
+                        .unwrap_or_else(|| p.strategy.clone()),
+                    schedule
+                        .batch_sizes
+                        .clone()
+                        .unwrap_or_else(|| p.batch_sizes.clone()),
+                    schedule
+                        .failure_threshold
+                        .clone()
+                        .unwrap_or_else(|| p.failure_threshold.clone()),
+                    schedule
+                        .on_failure
+                        .clone()
+                        .unwrap_or_else(|| p.on_failure.clone()),
+                    schedule
+                        .health_timeout_secs
+                        .unwrap_or(p.health_timeout_secs),
+                )
+            } else {
+                tracing::warn!(schedule_id = %schedule.id, policy_id, "Policy not found, using schedule values");
+                (
+                    schedule
+                        .strategy
+                        .clone()
+                        .unwrap_or_else(|| "all_at_once".to_string()),
+                    schedule
+                        .batch_sizes
+                        .clone()
+                        .unwrap_or_else(|| "[\"100%\"]".to_string()),
+                    schedule
+                        .failure_threshold
+                        .clone()
+                        .unwrap_or_else(|| "1".to_string()),
+                    schedule
+                        .on_failure
+                        .clone()
+                        .unwrap_or_else(|| "pause".to_string()),
                     schedule.health_timeout_secs.unwrap_or(300),
                 )
-            };
+            }
+        } else {
+            (
+                schedule
+                    .strategy
+                    .clone()
+                    .unwrap_or_else(|| "all_at_once".to_string()),
+                schedule
+                    .batch_sizes
+                    .clone()
+                    .unwrap_or_else(|| "[\"100%\"]".to_string()),
+                schedule
+                    .failure_threshold
+                    .clone()
+                    .unwrap_or_else(|| "1".to_string()),
+                schedule
+                    .on_failure
+                    .clone()
+                    .unwrap_or_else(|| "pause".to_string()),
+                schedule.health_timeout_secs.unwrap_or(300),
+            )
+        };
 
         // Resolve target machines
         let machine_ids = if let Some(ref tags_json) = schedule.target_tags {
@@ -141,16 +182,6 @@ async fn trigger_due_schedules(
             crate::rollout::batch::effective_batch_sizes(&parsed_strategy, &parsed_sizes);
         let batches = crate::rollout::batch::build_batches(&machine_ids, &effective_sizes);
 
-        // Capture previous generation
-        let previous_generation = {
-            let fleet = state.read().await;
-            fleet
-                .machines
-                .get(&machine_ids[0])
-                .and_then(|m| m.last_report.as_ref())
-                .map(|r| r.current_generation.clone())
-        };
-
         // Create the rollout
         let rollout_id = format!("r-{}", uuid::Uuid::new_v4());
         let target_tags = schedule.target_tags.as_deref();
@@ -158,7 +189,7 @@ async fn trigger_due_schedules(
 
         db.create_rollout(
             &rollout_id,
-            &schedule.generation_hash,
+            &schedule.release_id,
             schedule.cache_url.as_deref(),
             &strategy,
             &serde_json::to_string(&effective_sizes).unwrap_or_default(),
@@ -167,7 +198,6 @@ async fn trigger_due_schedules(
             health_timeout,
             target_tags,
             target_hosts,
-            previous_generation.as_deref(),
             &format!("schedule:{}", schedule.id),
         )?;
 
@@ -190,8 +220,10 @@ async fn trigger_due_schedules(
         let _ = db.insert_rollout_event(
             &rollout_id,
             "status_change",
-            &format!("{{\"from\":\"created\",\"to\":\"running\",\"trigger\":\"schedule:{}\"}}",
-                schedule.id),
+            &format!(
+                "{{\"from\":\"created\",\"to\":\"running\",\"trigger\":\"schedule:{}\"}}",
+                schedule.id
+            ),
             "executor",
         );
 
@@ -254,10 +286,18 @@ async fn process_rollout(
 
     let machine_ids: Vec<String> = serde_json::from_str(&batch.machine_ids)?;
 
+    // Build entry map for generation gating in evaluate_batch
+    let release_entries = db.get_release_entries(&rollout.release_id)?;
+    let entry_map: std::collections::HashMap<String, String> = release_entries
+        .iter()
+        .map(|e| (e.hostname.clone(), e.store_path.clone()))
+        .collect();
+
     match batch.status.as_str() {
         "pending" => deploy_batch(state, db, rollout, batch, &machine_ids).await?,
         "deploying" | "waiting_health" => {
-            evaluate_batch(state, db, rollout, batch, &machine_ids, &batches).await?;
+            evaluate_batch(state, db, rollout, batch, &machine_ids, &batches, &entry_map)
+                .await?;
         }
         _ => {}
     }
@@ -273,20 +313,40 @@ async fn deploy_batch(
     batch: &crate::db::RolloutBatchRow,
     machine_ids: &[String],
 ) -> anyhow::Result<()> {
-    let cache_url = rollout.cache_url.clone();
+    let release_entries = db.get_release_entries(&rollout.release_id)?;
+    let entry_map: std::collections::HashMap<&str, &str> = release_entries
+        .iter()
+        .map(|e| (e.hostname.as_str(), e.store_path.as_str()))
+        .collect();
 
-    // Update DB and in-memory state for each machine
+    let cache_url = rollout.cache_url.clone();
+    let mut previous_gens: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
     {
         let mut fleet = state.write().await;
         for machine_id in machine_ids {
-            db.set_desired_generation(machine_id, &rollout.generation_hash)?;
+            if let Ok(Some(current_hash)) = db.get_desired_generation(machine_id) {
+                previous_gens.insert(machine_id.clone(), current_hash);
+            }
+
+            let store_path = entry_map.get(machine_id.as_str()).ok_or_else(|| {
+                anyhow::anyhow!("machine {} not found in release entries", machine_id)
+            })?;
+
+            db.set_desired_generation(machine_id, store_path)?;
+
             let machine = fleet.get_or_create(machine_id);
             machine.desired_generation = Some(DesiredGeneration {
-                hash: rollout.generation_hash.clone(),
+                hash: store_path.to_string(),
                 cache_url: cache_url.clone(),
+                poll_hint: None,
             });
         }
     }
+
+    let prev_json = serde_json::to_string(&previous_gens).unwrap_or_else(|_| "{}".to_string());
+    db.update_batch_previous_generations(&batch.id, &prev_json)?;
 
     db.update_batch_status(&batch.id, "deploying")?;
 
@@ -325,6 +385,10 @@ async fn deploy_batch(
 }
 
 /// Evaluate health of machines in a deploying/waiting_health batch.
+///
+/// Generation gating: a machine's report is only considered if its `generation`
+/// matches the desired store path from the release. Reports from a previous
+/// generation are treated as "pending" (the machine hasn't applied yet).
 async fn evaluate_batch(
     state: &Arc<RwLock<FleetState>>,
     db: &Arc<Db>,
@@ -332,6 +396,7 @@ async fn evaluate_batch(
     batch: &crate::db::RolloutBatchRow,
     machine_ids: &[String],
     all_batches: &[crate::db::RolloutBatchRow],
+    entry_map: &std::collections::HashMap<String, String>,
 ) -> anyhow::Result<()> {
     let started_at = batch.started_at.as_deref().unwrap_or("");
     if started_at.is_empty() {
@@ -344,27 +409,46 @@ async fn evaluate_batch(
     let mut pending_count = 0usize;
 
     for machine_id in machine_ids {
-        let health_reports = db.get_health_reports_since(machine_id, started_at)?;
-        if !health_reports.is_empty() {
-            if health_reports[0].all_passed {
-                healthy_count += 1;
+        let desired_path = entry_map.get(machine_id).map(|s| s.as_str()).unwrap_or("");
+
+        // Check the latest report to see if the machine has applied the desired generation
+        let recent_reports = db.get_recent_reports(machine_id, 1)?;
+        let report = recent_reports.first();
+
+        let on_desired_gen = report
+            .map(|r| r.generation == desired_path)
+            .unwrap_or(false);
+
+        if !on_desired_gen {
+            // Machine hasn't applied the desired generation yet.
+            // Check if it explicitly failed (report received after batch started, success=false).
+            if let Some(r) = report {
+                if !r.success && r.received_at.as_str() >= started_at {
+                    // Explicit deployment failure on old or wrong generation
+                    unhealthy_count += 1;
+                } else {
+                    // Still on previous generation, waiting for apply
+                    pending_count += 1;
+                }
             } else {
-                unhealthy_count += 1;
+                pending_count += 1;
             }
         } else {
-            // No health report — check regular reports for deployment failure/success
-            let recent_reports = db.get_recent_reports(machine_id, 1)?;
-            if let Some(report) = recent_reports.first() {
-                if report.received_at.as_str() >= started_at {
-                    if report.success {
-                        // Deployment succeeded but no health report yet
-                        pending_count += 1;
-                    } else {
-                        // Deployment explicitly failed
-                        unhealthy_count += 1;
-                    }
+            // Machine is on the desired generation — evaluate health
+            let health_reports = db.get_health_reports_since(machine_id, started_at)?;
+            if !health_reports.is_empty() {
+                if health_reports[0].all_passed {
+                    healthy_count += 1;
                 } else {
+                    unhealthy_count += 1;
+                }
+            } else if let Some(r) = report {
+                if r.success {
+                    // On desired gen and success, but no health report yet
                     pending_count += 1;
+                } else {
+                    // On desired gen but reported failure
+                    unhealthy_count += 1;
                 }
             } else {
                 pending_count += 1;
@@ -538,24 +622,13 @@ fn update_rollouts_active_gauge(db: &Db) {
     metrics::gauge!(m::ROLLOUTS_ACTIVE).set(active as f64);
 }
 
-/// Revert all machines in completed (succeeded) batches to the previous generation.
+/// Revert all machines in completed (succeeded) batches to their previous generations.
 async fn revert_completed_batches(
     state: &Arc<RwLock<FleetState>>,
     db: &Arc<Db>,
     rollout: &crate::db::RolloutRow,
     all_batches: &[crate::db::RolloutBatchRow],
 ) -> anyhow::Result<()> {
-    let previous_gen = match &rollout.previous_generation {
-        Some(gen) if !gen.is_empty() => gen.clone(),
-        _ => {
-            tracing::warn!(
-                rollout_id = %rollout.id,
-                "No previous generation to revert to"
-            );
-            return Ok(());
-        }
-    };
-
     let mut fleet = state.write().await;
 
     for batch in all_batches {
@@ -563,22 +636,35 @@ async fn revert_completed_batches(
             continue;
         }
 
-        let machine_ids: Vec<String> = serde_json::from_str(&batch.machine_ids)?;
+        let previous_gens: std::collections::HashMap<String, String> =
+            serde_json::from_str(&batch.previous_generations).unwrap_or_default();
+        let machine_ids: Vec<String> = serde_json::from_str(&batch.machine_ids).unwrap_or_default();
+
         for machine_id in &machine_ids {
-            db.set_desired_generation(machine_id, &previous_gen)?;
-            let machine = fleet.get_or_create(machine_id);
-            machine.desired_generation = Some(DesiredGeneration {
-                hash: previous_gen.clone(),
-                cache_url: None,
-            });
+            if let Some(prev_path) = previous_gens.get(machine_id) {
+                if let Err(e) = db.set_desired_generation(machine_id, prev_path) {
+                    tracing::error!(machine_id, error = %e, "failed to revert machine");
+                    continue;
+                }
+                let machine = fleet.get_or_create(machine_id);
+                machine.desired_generation = Some(DesiredGeneration {
+                    hash: prev_path.clone(),
+                    cache_url: None,
+                    poll_hint: None,
+                });
+            } else {
+                tracing::warn!(
+                    machine_id,
+                    "no previous generation recorded, skipping revert"
+                );
+            }
         }
 
         tracing::info!(
             rollout_id = %rollout.id,
             batch_id = %batch.id,
             machines = machine_ids.len(),
-            previous_generation = %previous_gen,
-            "Reverted batch machines to previous generation"
+            "Reverted batch machines to previous generations"
         );
     }
 

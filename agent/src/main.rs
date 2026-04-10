@@ -1,6 +1,7 @@
 use clap::Parser;
 use std::time::Duration;
 use tokio::signal;
+use tokio::time::{interval_at, Instant, Interval, MissedTickBehavior};
 use tracing::{error, info, warn};
 
 mod comms;
@@ -8,14 +9,12 @@ mod config;
 mod health;
 mod metrics;
 mod nix;
-mod state;
 mod store;
 mod tls;
 mod types;
 
 use config::Config;
 use health::HealthRunner;
-use state::AgentState;
 use store::Store;
 
 #[derive(Parser)]
@@ -29,9 +28,13 @@ struct Cli {
     #[arg(long, env = "NIXFLEET_MACHINE_ID")]
     machine_id: String,
 
-    /// Poll interval in seconds
+    /// Poll interval in seconds (steady-state)
     #[arg(long, default_value = "300", env = "NIXFLEET_POLL_INTERVAL")]
     poll_interval: u64,
+
+    /// Retry interval in seconds after a failed poll
+    #[arg(long, default_value = "30", env = "NIXFLEET_RETRY_INTERVAL")]
+    retry_interval: u64,
 
     /// Binary cache URL (optional, for nix copy --from)
     #[arg(long, env = "NIXFLEET_CACHE_URL")]
@@ -99,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
         control_plane_url: cli.control_plane_url,
         machine_id: cli.machine_id,
         poll_interval: Duration::from_secs(cli.poll_interval),
+        retry_interval: Duration::from_secs(cli.retry_interval),
         cache_url: cli.cache_url,
         db_path: cli.db_path.clone(),
         dry_run: cli.dry_run,
@@ -123,205 +127,264 @@ async fn main() -> anyhow::Result<()> {
         metrics::init(port);
     }
 
-    // Initialize SQLite store
     let store = Store::new(&cli.db_path)?;
     store.init()?;
 
-    // Create HTTP client for control plane communication
     let client = comms::Client::new(&config)?;
     let health_runner = HealthRunner::from_config_path(&config.health_config_path);
-    let mut agent_state = AgentState::Idle;
 
-    // Continuous health reporter interval — skips missed ticks so we never queue up
-    let mut health_tick = tokio::time::interval(config.health_interval);
-    health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // Consume the first immediate tick so we wait a full interval before the first check
-    health_tick.tick().await;
+    let mut health_tick = build_interval(config.health_interval);
 
-    // Main poll loop — state machine drives all transitions
-    // Graceful shutdown on SIGTERM/SIGINT
+    // Run an initial deploy cycle at startup so the agent checks for pending
+    // deploys right away. The result sets the initial poll_tick interval:
+    //   - Success+hint → fast polling (active rollout)
+    //   - Success      → configured poll_interval
+    //   - Failed       → retry_interval (short) to recover from bootstrap races
+    let initial = run_deploy_cycle(&client, &config, &store, &health_runner).await;
+    let mut poll_tick = build_interval(match initial {
+        PollOutcome::Success { poll_hint: Some(h) } => {
+            info!(poll_hint = h, "Initial poll: adjusting interval from CP hint");
+            Duration::from_secs(h)
+        }
+        PollOutcome::Success { poll_hint: None } => config.poll_interval,
+        PollOutcome::Failed => {
+            info!(retry_in = ?config.retry_interval, "Initial poll failed, scheduling retry");
+            config.retry_interval
+        }
+    });
+
+    // Main event loop — waits for one of: shutdown, health tick, poll tick.
+    // Each branch runs to completion sequentially (no state machine inside select).
     loop {
-        // Check for shutdown signal at each iteration
-        let next_state = tokio::select! {
+        tokio::select! {
             _ = signal::ctrl_c() => {
                 info!("Received shutdown signal, exiting gracefully");
                 break;
             }
-            // Continuous health reporter — only fires when the agent is idle
-            _ = health_tick.tick(), if matches!(agent_state, AgentState::Idle) => {
-                info!("Running periodic health check");
-                let health_report = health_runner.run_all().await;
-                let report = types::Report {
-                    machine_id: config.machine_id.clone(),
-                    current_generation: nix::current_generation().await.unwrap_or_default(),
-                    success: health_report.all_passed,
-                    message: "health-check".to_string(),
-                    timestamp: chrono::Utc::now(),
-                    tags: config.tags.clone(),
-                    health: Some(health_report),
-                };
-                match client.post_report(&report).await {
-                    Ok(()) => info!("Health report sent"),
-                    Err(e) => warn!("Failed to send health report: {e}"),
-                }
-                AgentState::Idle
+            _ = health_tick.tick() => {
+                run_health_report(&client, &config, &health_runner).await;
             }
-            state = async {
-                match agent_state {
-                    AgentState::Idle => {
-                        tokio::time::sleep(config.poll_interval).await;
-                        metrics::record_state_transition("idle", "checking");
-                        AgentState::Checking
+            _ = poll_tick.tick() => {
+                match run_deploy_cycle(&client, &config, &store, &health_runner).await {
+                    PollOutcome::Success { poll_hint: Some(hint) } => {
+                        // CP suggested a faster interval (active rollout)
+                        info!(poll_hint = hint, "Adjusting poll interval from CP hint");
+                        poll_tick = build_interval(Duration::from_secs(hint));
                     }
-                    AgentState::Checking => {
-                        let poll_start = std::time::Instant::now();
-                        let result = client.get_desired_generation(&config.machine_id).await;
-                        metrics::record_poll(poll_start.elapsed());
-                        match result {
-                            Ok(desired) => {
-                                let current = nix::current_generation().await.unwrap_or_default();
-                                metrics::record_generation(&current);
-                                if current == desired.hash {
-                                    info!("Already at desired generation");
-                                    store.log_check(&desired.hash, "up-to-date")
-                                        .unwrap_or_else(|e| warn!("store error: {e}"));
-                                    metrics::record_state_transition("checking", "reporting");
-                                    AgentState::Reporting {
-                                        success: true,
-                                        message: "up-to-date".into(),
-                                    }
-                                } else {
-                                    info!(
-                                        current = %current,
-                                        desired = %desired.hash,
-                                        "Generation mismatch, fetching"
-                                    );
-                                    metrics::record_state_transition("checking", "fetching");
-                                    AgentState::Fetching { desired }
-                                }
-                            }
-                            Err(e) => {
-                                warn!("Failed to check desired generation: {e}");
-                                store.log_error(&format!("check failed: {e}"))
-                                    .unwrap_or_else(|e| warn!("store error: {e}"));
-                                metrics::record_state_transition("checking", "idle");
-                                AgentState::Idle
-                            }
-                        }
+                    PollOutcome::Success { poll_hint: None } => {
+                        // Steady-state — ensure we're on the configured poll_interval.
+                        // (No-op if already there; resets from a prior retry/hint state.)
+                        poll_tick = build_interval(config.poll_interval);
                     }
-                    AgentState::Fetching { desired } => {
-                        // Use per-generation cache URL if provided, else fall back to global config
-                        let cache = desired
-                            .cache_url
-                            .as_deref()
-                            .or(config.cache_url.as_deref());
-                        match nix::fetch_closure(&desired.hash, cache).await {
-                            Ok(()) => {
-                                info!(hash = %desired.hash, "Closure fetched");
-                                if config.dry_run {
-                                    info!("Dry run -- skipping apply");
-                                    metrics::record_state_transition("fetching", "reporting");
-                                    AgentState::Reporting {
-                                        success: true,
-                                        message: "dry-run: would apply".into(),
-                                    }
-                                } else {
-                                    metrics::record_state_transition("fetching", "applying");
-                                    AgentState::Applying { desired }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to fetch closure: {e}");
-                                store.log_error(&format!("fetch failed: {e}"))
-                                    .unwrap_or_else(|e| warn!("store error: {e}"));
-                                metrics::record_state_transition("fetching", "idle");
-                                AgentState::Idle
-                            }
-                        }
-                    }
-                    AgentState::Applying { desired } => match nix::apply_generation(&desired.hash).await {
-                        Ok(()) => {
-                            info!(hash = %desired.hash, "Generation applied");
-                            metrics::record_state_transition("applying", "verifying");
-                            AgentState::Verifying { desired }
-                        }
-                        Err(e) => {
-                            error!("Failed to apply generation: {e}");
-                            metrics::record_state_transition("applying", "rolling_back");
-                            AgentState::RollingBack {
-                                reason: format!("apply failed: {e}"),
-                            }
-                        }
-                    },
-                    AgentState::Verifying { desired } => {
-                        let report = health_runner.run_all().await;
-                        if report.all_passed {
-                            info!("Health checks passed");
-                            store.log_deploy(&desired.hash, true)
-                                .unwrap_or_else(|e| warn!("store error: {e}"));
-                            metrics::record_state_transition("verifying", "reporting");
-                            AgentState::Reporting {
-                                success: true,
-                                message: "deployed".into(),
-                            }
-                        } else {
-                            let failed: Vec<_> = report
-                                .results
-                                .iter()
-                                .filter(|r| !r.is_pass())
-                                .map(|r| r.to_string())
-                                .collect();
-                            warn!(?failed, "Health checks failed after apply");
-                            metrics::record_state_transition("verifying", "rolling_back");
-                            AgentState::RollingBack {
-                                reason: format!("health check failed: {}", failed.join(", ")),
-                            }
-                        }
-                    }
-                    AgentState::RollingBack { reason } => {
-                        warn!(reason = %reason, "Rolling back to previous generation");
-                        match nix::rollback().await {
-                            Ok(()) => {
-                                store.log_rollback(&reason)
-                                    .unwrap_or_else(|e| warn!("store error: {e}"));
-                                metrics::record_state_transition("rolling_back", "reporting");
-                                AgentState::Reporting {
-                                    success: false,
-                                    message: format!("rolled back: {reason}"),
-                                }
-                            }
-                            Err(e) => {
-                                error!("Rollback failed: {e}");
-                                store.log_error(&format!("rollback failed: {e}"))
-                                    .unwrap_or_else(|e| warn!("store error: {e}"));
-                                metrics::record_state_transition("rolling_back", "idle");
-                                AgentState::Idle
-                            }
-                        }
-                    }
-                    AgentState::Reporting { success, message } => {
-                        let report = types::Report {
-                            machine_id: config.machine_id.clone(),
-                            current_generation: nix::current_generation().await.unwrap_or_default(),
-                            success,
-                            message,
-                            timestamp: chrono::Utc::now(),
-                            tags: config.tags.clone(),
-                            health: None,
-                        };
-                        match client.post_report(&report).await {
-                            Ok(()) => info!("Report sent"),
-                            Err(e) => warn!("Failed to send report: {e}"),
-                        }
-                        metrics::record_state_transition("reporting", "idle");
-                        AgentState::Idle
+                    PollOutcome::Failed => {
+                        // Transient error or bootstrap race — retry sooner than full interval.
+                        info!(retry_in = ?config.retry_interval, "Poll failed, scheduling retry");
+                        poll_tick = build_interval(config.retry_interval);
                     }
                 }
-            } => state,
-        };
-        agent_state = next_state;
+            }
+        }
     }
 
     info!("Agent shut down cleanly");
     Ok(())
+}
+
+/// Build a tokio Interval whose first tick fires after `period` (not immediately).
+/// This is critical when rebuilding intervals on retry — we do NOT want an
+/// immediate re-tick that would cause a tight loop on repeated failures.
+fn build_interval(period: Duration) -> Interval {
+    let mut tick = interval_at(Instant::now() + period, period);
+    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    tick
+}
+
+/// Send a periodic health report to the control plane.
+async fn run_health_report(
+    client: &comms::Client,
+    config: &Config,
+    health_runner: &HealthRunner,
+) {
+    info!("Running periodic health check");
+    let health_report = health_runner.run_all().await;
+    let report = types::Report {
+        machine_id: config.machine_id.clone(),
+        current_generation: nix::current_generation().await.unwrap_or_default(),
+        success: health_report.all_passed,
+        message: "health-check".to_string(),
+        timestamp: chrono::Utc::now(),
+        tags: config.tags.clone(),
+        health: Some(health_report),
+    };
+    match client.post_report(&report).await {
+        Ok(()) => info!("Health report sent"),
+        Err(e) => warn!("Failed to send health report: {e}"),
+    }
+}
+
+/// Outcome of a poll cycle — tells the main loop how to schedule the next tick.
+#[derive(Debug)]
+enum PollOutcome {
+    /// Poll succeeded (regardless of whether any work was done).
+    /// If `poll_hint` is set, the CP suggested a faster next poll.
+    Success { poll_hint: Option<u64> },
+    /// Poll failed — network error, auth error, fetch failure, etc.
+    /// The main loop should retry sooner than the configured poll_interval.
+    Failed,
+}
+
+/// Run a full deploy cycle: check → fetch → apply → verify → report.
+/// Returns a PollOutcome telling the main loop how to schedule the next tick.
+async fn run_deploy_cycle(
+    client: &comms::Client,
+    config: &Config,
+    store: &Store,
+    health_runner: &HealthRunner,
+) -> PollOutcome {
+    metrics::record_state_transition("idle", "checking");
+
+    // Check: fetch desired generation from control plane.
+    let poll_start = std::time::Instant::now();
+    let desired = match client.get_desired_generation(&config.machine_id).await {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("Failed to check desired generation: {e}");
+            store
+                .log_error(&format!("check failed: {e}"))
+                .unwrap_or_else(|e| warn!("store error: {e}"));
+            metrics::record_poll(poll_start.elapsed());
+            metrics::record_state_transition("checking", "idle");
+            return PollOutcome::Failed;
+        }
+    };
+    metrics::record_poll(poll_start.elapsed());
+
+    let poll_hint = desired.poll_hint;
+    let current = nix::current_generation().await.unwrap_or_default();
+    metrics::record_generation(&current);
+
+    if current == desired.hash {
+        info!("Already at desired generation");
+        store
+            .log_check(&desired.hash, "up-to-date")
+            .unwrap_or_else(|e| warn!("store error: {e}"));
+        metrics::record_state_transition("checking", "reporting");
+        send_report(client, config, true, "up-to-date").await;
+        return PollOutcome::Success { poll_hint };
+    }
+
+    info!(
+        current = %current,
+        desired = %desired.hash,
+        "Generation mismatch, fetching"
+    );
+
+    // Fetch: pull closure from binary cache (or verify local presence).
+    metrics::record_state_transition("checking", "fetching");
+    let cache = desired
+        .cache_url
+        .as_deref()
+        .or(config.cache_url.as_deref());
+    if let Err(e) = nix::fetch_closure(&desired.hash, cache).await {
+        error!("Failed to fetch closure: {e}");
+        store
+            .log_error(&format!("fetch failed: {e}"))
+            .unwrap_or_else(|e| warn!("store error: {e}"));
+        metrics::record_state_transition("fetching", "idle");
+        // Fetch failure is transient — retry sooner than full poll_interval.
+        return PollOutcome::Failed;
+    }
+    info!(hash = %desired.hash, "Closure fetched");
+
+    if config.dry_run {
+        info!("Dry run -- skipping apply");
+        metrics::record_state_transition("fetching", "reporting");
+        send_report(client, config, true, "dry-run: would apply").await;
+        return PollOutcome::Success { poll_hint };
+    }
+
+    // Apply: switch-to-configuration.
+    metrics::record_state_transition("fetching", "applying");
+    if let Err(e) = nix::apply_generation(&desired.hash).await {
+        error!("Failed to apply generation: {e}");
+        metrics::record_state_transition("applying", "rolling_back");
+        rollback_and_report(client, config, store, &format!("apply failed: {e}")).await;
+        return PollOutcome::Success { poll_hint };
+    }
+    info!(hash = %desired.hash, "Generation applied");
+
+    // Verify: run health checks after apply.
+    metrics::record_state_transition("applying", "verifying");
+    let verify_report = health_runner.run_all().await;
+    if !verify_report.all_passed {
+        let failed: Vec<_> = verify_report
+            .results
+            .iter()
+            .filter(|r| !r.is_pass())
+            .map(|r| r.to_string())
+            .collect();
+        warn!(?failed, "Health checks failed after apply");
+        metrics::record_state_transition("verifying", "rolling_back");
+        rollback_and_report(
+            client,
+            config,
+            store,
+            &format!("health check failed: {}", failed.join(", ")),
+        )
+        .await;
+        return PollOutcome::Success { poll_hint };
+    }
+
+    info!("Health checks passed");
+    store
+        .log_deploy(&desired.hash, true)
+        .unwrap_or_else(|e| warn!("store error: {e}"));
+    metrics::record_state_transition("verifying", "reporting");
+    send_report(client, config, true, "deployed").await;
+
+    PollOutcome::Success { poll_hint }
+}
+
+/// Roll back to the previous generation and report the failure.
+async fn rollback_and_report(
+    client: &comms::Client,
+    config: &Config,
+    store: &Store,
+    reason: &str,
+) {
+    warn!(reason, "Rolling back to previous generation");
+    match nix::rollback().await {
+        Ok(()) => {
+            store
+                .log_rollback(reason)
+                .unwrap_or_else(|e| warn!("store error: {e}"));
+            metrics::record_state_transition("rolling_back", "reporting");
+            send_report(client, config, false, &format!("rolled back: {reason}")).await;
+        }
+        Err(e) => {
+            error!("Rollback failed: {e}");
+            store
+                .log_error(&format!("rollback failed: {e}"))
+                .unwrap_or_else(|e| warn!("store error: {e}"));
+            metrics::record_state_transition("rolling_back", "idle");
+        }
+    }
+}
+
+/// Post a status report to the control plane.
+async fn send_report(client: &comms::Client, config: &Config, success: bool, message: &str) {
+    let report = types::Report {
+        machine_id: config.machine_id.clone(),
+        current_generation: nix::current_generation().await.unwrap_or_default(),
+        success,
+        message: message.to_string(),
+        timestamp: chrono::Utc::now(),
+        tags: config.tags.clone(),
+        health: None,
+    };
+    match client.post_report(&report).await {
+        Ok(()) => info!("Report sent"),
+        Err(e) => warn!("Failed to send report: {e}"),
+    }
+    metrics::record_state_transition("reporting", "idle");
 }

@@ -28,7 +28,13 @@ in {
     pollInterval = lib.mkOption {
       type = lib.types.int;
       default = 300;
-      description = "Poll interval in seconds.";
+      description = "Poll interval in seconds (steady-state).";
+    };
+
+    retryInterval = lib.mkOption {
+      type = lib.types.int;
+      default = 30;
+      description = "Retry interval in seconds after a failed poll.";
     };
 
     cacheUrl = lib.mkOption {
@@ -175,12 +181,22 @@ in {
     systemd.services.nixfleet-agent = {
       description = "NixFleet Fleet Management Agent";
       wantedBy = ["multi-user.target"];
-      after = ["network-online.target"];
+      after = ["network-online.target" "nix-daemon.service"];
       wants = ["network-online.target"];
 
-      environment = lib.mkIf (cfg.tags != []) {
-        NIXFLEET_TAGS = lib.concatStringsSep "," cfg.tags;
-      };
+      # Agent shells out to nix (copy, path-info) and switch-to-configuration
+      path = [config.nix.package pkgs.systemd];
+
+      environment =
+        {
+          # nix shells out and writes its metadata cache (narinfo lookups etc.)
+          # to $XDG_CACHE_HOME (default: ~/.cache). Point it at a writable path
+          # inside the agent's StateDirectory so ProtectHome stays strict.
+          XDG_CACHE_HOME = "/var/lib/nixfleet/.cache";
+        }
+        // lib.optionalAttrs (cfg.tags != []) {
+          NIXFLEET_TAGS = lib.concatStringsSep "," cfg.tags;
+        };
 
       serviceConfig = {
         Type = "simple";
@@ -193,6 +209,8 @@ in {
             (lib.escapeShellArg cfg.machineId)
             "--poll-interval"
             (toString cfg.pollInterval)
+            "--retry-interval"
+            (toString cfg.retryInterval)
             "--db-path"
             (lib.escapeShellArg cfg.dbPath)
             "--health-config"
@@ -227,16 +245,13 @@ in {
         RestartSec = 30;
         StateDirectory = "nixfleet";
 
-        # Hardening
+        # The agent is a privileged system manager: it runs
+        # switch-to-configuration which modifies /boot, /etc, /home, /root,
+        # bootloader, kernel, systemd units, etc. Sandboxing blocks these
+        # operations (subprocess inherits the agent's namespace).
+        # Threat model is equivalent to `sudo nixos-rebuild switch` as a
+        # daemon — no sandboxing applied.
         NoNewPrivileges = true;
-        ProtectHome = true;
-        PrivateTmp = true;
-        PrivateDevices = true;
-        ProtectKernelTunables = true;
-        ProtectKernelModules = true;
-        ProtectControlGroups = true;
-        ReadWritePaths = ["/var/lib/nixfleet" "/nix/var/nix"];
-        ReadOnlyPaths = ["/nix/store" "/run/current-system"];
       };
     };
 

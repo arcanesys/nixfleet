@@ -9,7 +9,7 @@ modules/
 ├── _shared/lib/       # Framework API: mkHost, mkVmApps
 ├── _shared/           # hostSpec options, disk templates
 ├── core/              # Core NixOS/Darwin modules (_nixos.nix, _darwin.nix)
-├── scopes/            # Scope modules (_base, _impermanence, _firewall, _secrets, _backup, _monitoring, nixfleet/_agent, nixfleet/_control-plane, nixfleet/_attic-server, nixfleet/_attic-client, nixfleet/_microvm-host)
+├── scopes/            # Scope modules (_base, _impermanence, _firewall, _secrets, _backup, _monitoring, nixfleet/_agent, nixfleet/_control-plane, nixfleet/_cache-server, nixfleet/_cache, nixfleet/_microvm-host)
 ├── tests/             # Eval tests, VM tests, integration tests
 ├── apps.nix           # Flake apps (validate, build-vm, start-vm, stop-vm, clean-vm, test-vm)
 ├── fleet.nix          # Framework test fleet (8 hosts)
@@ -23,7 +23,7 @@ examples/
 ├── standalone-host/   # Example: single machine in its own repo
 └── batch-hosts/       # Example: 50 edge devices from a template
 docs/
-├── adr/               # Architecture Decision Records (6 ADRs)
+├── adr/               # Architecture Decision Records (8 ADRs)
 └── mdbook/            # Technical reference + user guide (mdbook)
 ```
 
@@ -59,6 +59,14 @@ darwin-rebuild switch --flake .#hostname        # macOS rebuild
 cargo test --workspace             # all Rust tests
 cargo build --workspace            # build all crates
 cargo clippy --workspace           # lint
+
+# Release management
+nixfleet release create --push-to s3://my-fleet-cache  # build all hosts, push to cache, register release
+nixfleet release create --copy                         # build all hosts, copy via SSH, register release
+nixfleet release create --dry-run                 # build and show manifest only
+nixfleet release list                             # list recent releases
+nixfleet release show <RELEASE_ID>                # show release details and per-host entries
+nixfleet release diff <ID_A> <ID_B>               # diff two releases
 ```
 
 ## Framework API
@@ -105,10 +113,10 @@ Scopes are plain NixOS/HM modules auto-included by mkHost. They self-activate vi
 | `secrets` | `nixfleet.secrets.enable = true` | Identity paths, persist, boot ordering, key validation |
 | `backup` | `nixfleet.backup.enable = true` | Systemd timer, hooks, health ping, status reporting; optional `backend` (`"restic"`, `"borgbackup"`) for concrete backup commands |
 | `monitoring` | `nixfleet.monitoring.nodeExporter.enable = true` | Node exporter with fleet-tuned collector defaults |
-| `nixfleet-agent` | `services.nixfleet-agent.enable = true` | Fleet agent systemd service; key options: `metricsPort` (Prometheus listener), `metricsOpenFirewall`, `allowInsecure`. Tags auto-synced to CP via health reports. Verifies store path exists locally via `nix path-info` when no cache URL is configured. |
+| `nixfleet-agent` | `services.nixfleet-agent.enable = true` | Fleet agent systemd service; key options: `metricsPort` (Prometheus listener), `metricsOpenFirewall`, `allowInsecure`. Tags auto-synced to CP via health reports. Verifies store path exists locally via `nix path-info` when no cache URL is configured. Poll interval adapts via `poll_hint` from CP (5s during active rollouts). |
 | `nixfleet-control-plane` | `services.nixfleet-control-plane.enable = true` | Control plane HTTP server; `GET /metrics` always available on listen address; routes split: agent-facing (mTLS, no API key) vs admin (API key required); when `tls.clientCa` is set, all connections require a client certificate (defense-in-depth) |
-| `nixfleet-attic-server` | `services.nixfleet-attic-server.enable = true` | Attic binary cache server; key options: `signingKeyFile`, `storage.type` (`"local"` / `"s3"`), `garbageCollection.schedule`, `openFirewall` |
-| `nixfleet-attic-client` | `services.nixfleet-attic-client.enable = true` | Attic cache client; configures `nix.settings.substituters` + `trusted-public-keys`, installs `attic-client` CLI |
+| `nixfleet-cache-server` | `services.nixfleet-cache-server.enable = true` | Harmonia binary cache server; serves from local Nix store; key options: `port`, `signingKeyFile`, `openFirewall` |
+| `nixfleet-cache` | `services.nixfleet-cache.enable = true` | Binary cache client; configures `nix.settings.substituters` + `trusted-public-keys` |
 | `nixfleet-microvm-host` | `services.nixfleet-microvm-host.enable = true` | MicroVM host with TAP + bridge networking, DHCP (dnsmasq), NAT; microVMs participate in fleet as first-class members |
 
 Fleet repos add opinionated scopes (dev tools, desktop environments, theming, etc.) as plain NixOS/HM modules.
@@ -116,6 +124,9 @@ Fleet repos add opinionated scopes (dev tools, desktop environments, theming, et
 ## CLI
 
 ```bash
+# Initialize CLI config
+nixfleet init --control-plane-url https://lab:8080 --ca-cert modules/_config/fleet-ca.pem
+
 # Bootstrap first API key
 API_KEY=$(nixfleet bootstrap \
   --control-plane-url https://cp:8080 \
@@ -125,9 +136,10 @@ API_KEY=$(nixfleet bootstrap \
 nixfleet status
 nixfleet machines list --tag web
 
-# Rollout
-nixfleet deploy --tag web --generation /nix/store/... --strategy staged --batch-size 1,100% --wait
-nixfleet deploy --tag web --generation /nix/store/... --policy production-canary --wait
+# Deploy via control plane (requires a release)
+nixfleet deploy --release rel-abc123 --tag web --strategy canary --wait
+nixfleet deploy --push-to s3://my-fleet-cache --tag web --strategy canary --wait  # implicit release creation
+nixfleet deploy --copy --tag web --strategy staged --wait              # implicit release, SSH copy
 
 # Rollout management
 nixfleet rollout list
@@ -143,7 +155,7 @@ nixfleet policy update production-canary --health-timeout 300
 nixfleet policy delete production-canary
 
 # Scheduled rollouts
-nixfleet deploy --tag web --generation /nix/store/... --policy production-canary --schedule-at "2026-04-06T03:00:00Z"
+nixfleet deploy --release rel-abc123 --tag web --policy production-canary --schedule-at "2026-04-06T03:00:00Z"
 nixfleet schedule list
 nixfleet schedule cancel <SCHED-ID>
 ```
@@ -161,6 +173,46 @@ Every rollout state transition (created → running → paused → completed, ba
 ### Scheduled Rollouts
 
 One-shot deferred rollout creation. Use `--schedule-at` with ISO 8601 timestamp. The executor checks for due schedules every 2 seconds and creates the rollout automatically. Schedules can reference a policy.
+
+### Rollout Executor & Generation Gating
+
+The rollout executor verifies that each agent's `current_generation` matches the release entry before accepting health reports during batch evaluation. This ensures agents deployed from the same release can be evaluated together for health status. Mismatched generations are flagged as out-of-sync and paused until manually resumed or the rollout is cancelled.
+
+### Configuration
+
+The CLI reads settings from three sources (highest priority wins):
+
+1. CLI flags (`--control-plane-url`, `--api-key`, etc.)
+2. Environment variables (`NIXFLEET_API_KEY`, `NIXFLEET_CA_CERT`, etc.)
+3. `~/.config/nixfleet/credentials.toml` — API keys (auto-saved by `nixfleet bootstrap`)
+4. `.nixfleet.toml` — connection settings (created by `nixfleet init`, committed to fleet repo)
+
+#### `.nixfleet.toml` example
+
+```toml
+[control-plane]
+url = "https://lab:8080"
+ca-cert = "modules/_config/fleet-ca.pem"
+
+[tls]
+client-cert = "/run/agenix/agent-${HOSTNAME}-cert"
+client-key = "/run/agenix/agent-${HOSTNAME}-key"
+
+[cache]
+url = "http://lab:5000"
+push-to = "ssh://root@lab"
+
+[deploy]
+strategy = "staged"
+health-timeout = 300
+```
+
+Setup:
+
+```sh
+nixfleet init --control-plane-url https://lab:8080 --ca-cert modules/_config/fleet-ca.pem
+nixfleet bootstrap    # auto-saves API key to ~/.config/nixfleet/credentials.toml
+```
 
 ## Control Plane API
 
@@ -182,6 +234,11 @@ curl -X POST https://cp:8080/api/v1/keys/bootstrap \
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| POST | `/api/v1/releases` | deploy | Create a release from a manifest |
+| GET | `/api/v1/releases` | readonly | List releases (paginated, newest first) |
+| GET | `/api/v1/releases/{id}` | readonly | Get release with entries |
+| GET | `/api/v1/releases/{id}/diff/{other_id}` | readonly | Diff two releases |
+| DELETE | `/api/v1/releases/{id}` | admin | Delete a release (only if no rollout references it) |
 | POST | `/api/v1/policies` | deploy | Create a rollout policy |
 | GET | `/api/v1/policies` | readonly | List all policies |
 | GET | `/api/v1/policies/{name}` | readonly | Get policy by name |
@@ -192,7 +249,7 @@ curl -X POST https://cp:8080/api/v1/keys/bootstrap \
 | GET | `/api/v1/schedules/{id}` | readonly | Get a scheduled rollout |
 | POST | `/api/v1/schedules/{id}/cancel` | deploy | Cancel a scheduled rollout |
 
-The `POST /api/v1/rollouts` endpoint now accepts an optional `policy` field (policy name) and the `GET /api/v1/rollouts/{id}` response now includes `policy_id` and `events` (timeline).
+The `POST /api/v1/rollouts` endpoint requires a `release_id` field and accepts an optional `policy` field (policy name). The `GET /api/v1/rollouts/{id}` response includes `policy_id` and `events` (timeline).
 
 ### Agent tag sync
 
@@ -237,16 +294,16 @@ See `examples/` for standalone-host, batch-hosts, and client-fleet patterns.
 
 ## Architecture
 
-- **mkHost** is a closure over framework inputs (nixpkgs, home-manager, disko, impermanence, attic, microvm)
+- **mkHost** is a closure over framework inputs (nixpkgs, home-manager, disko, impermanence, microvm)
 - It calls `nixosSystem`/`darwinSystem` directly, injecting core modules and scopes
 - **Scopes** are plain NixOS/HM modules (`_`-prefixed for import-tree exclusion) that self-activate via hostSpec flags
-- **Service modules** (agent, CP, attic-server, attic-client, microvm-host) are auto-included by mkHost, disabled by default
+- **Service modules** (agent, CP, cache-server, cache, microvm-host) are auto-included by mkHost, disabled by default
 - **hostSpec** provides base options; fleet repos extend with their own flags via plain NixOS modules
 - **Framework inputs via specialArgs:** mkHost passes framework inputs (nixpkgs, home-manager, disko, etc.) to modules via `specialArgs = { inherit inputs; }`. Fleet repos access these as `inputs` in their modules. Fleet-specific customization uses hostSpec extensions and plain NixOS modules, not a separate input namespace.
 
 ## Critical Rules
 
-- **Framework vs fleet:** Opinionated modules (graphical, dev, theming, dotfiles) belong in fleet repos. The framework provides lib + core + base/impermanence/agent/CP/attic/microvm.
+- **Framework vs fleet:** Opinionated modules (graphical, dev, theming, dotfiles) belong in fleet repos. The framework provides lib + core + base/impermanence/agent/CP/cache/microvm.
 - **Plain modules:** Scopes are plain NixOS/HM modules. They self-activate with `lib.mkIf hS.<flag>`.
 - **Scope-aware impermanence:** Persist paths live alongside their program definitions, not centralized.
 - **hostSpec extension:** Fleet repos extend `hostSpec` with their own flags via plain NixOS modules.

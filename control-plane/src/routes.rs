@@ -11,19 +11,25 @@ use crate::AppState;
 ///
 /// Returns the desired generation for a machine, or 404 if not set.
 pub async fn get_desired_generation(
-    State((state, _db)): State<AppState>,
+    State((state, db)): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<DesiredGeneration>, StatusCode> {
     if id.len() > 256 {
         return Err(StatusCode::BAD_REQUEST);
     }
     let fleet = state.read().await;
-    fleet
+    let mut gen = fleet
         .machines
         .get(&id)
         .and_then(|m| m.desired_generation.clone())
-        .map(Json)
-        .ok_or(StatusCode::NOT_FOUND)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // Hint faster polling when the machine is part of an active rollout
+    if let Ok(Some(_)) = db.machine_in_active_rollout(&id) {
+        gen.poll_hint = Some(5);
+    }
+
+    Ok(Json(gen))
 }
 
 /// POST /api/v1/machines/{id}/report
@@ -121,70 +127,6 @@ pub async fn post_report(
         crate::metrics::update_fleet_gauges(&fleet);
     }
 
-    Ok(StatusCode::OK)
-}
-
-/// Request body for setting a desired generation.
-#[derive(Debug, Deserialize)]
-pub struct SetGenerationRequest {
-    pub hash: String,
-    #[serde(default)]
-    pub cache_url: Option<String>,
-}
-
-/// POST /api/v1/machines/{id}/set-generation
-///
-/// Admin endpoint to set the desired generation for a machine.
-pub async fn set_desired_generation(
-    State((state, db)): State<AppState>,
-    Extension(actor): Extension<Actor>,
-    Path(id): Path<String>,
-    Json(req): Json<SetGenerationRequest>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    if !actor.has_role(&["deploy", "admin"]) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "deploy or admin role required".to_string(),
-        ));
-    }
-
-    // Check for active rollout conflict
-    if let Ok(Some(rollout_id)) = db.machine_in_active_rollout(&id) {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("machine {id} is in active rollout {rollout_id}"),
-        ));
-    }
-
-    // Persist to database
-    db.set_desired_generation(&id, &req.hash).map_err(|e| {
-        tracing::error!(error = %e, machine_id = %id, "Failed to persist generation");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to persist generation".to_string(),
-        )
-    })?;
-
-    // Update in-memory state
-    let mut fleet = state.write().await;
-    let machine = fleet.get_or_create(&id);
-    machine.desired_generation = Some(DesiredGeneration {
-        hash: req.hash.clone(),
-        cache_url: req.cache_url,
-    });
-
-    let _ = db.insert_audit_event(
-        &actor.identifier(),
-        "set_generation",
-        &id,
-        Some(&format!("hash={}", req.hash)),
-    );
-
-    tracing::info!(
-        machine_id = %id,
-        hash = %req.hash,
-        "Desired generation set"
-    );
     Ok(StatusCode::OK)
 }
 
@@ -501,12 +443,10 @@ pub async fn bootstrap_api_key(
     State((_, db)): State<AppState>,
     Json(req): Json<BootstrapKeyRequest>,
 ) -> Result<Json<BootstrapKeyResponse>, (StatusCode, String)> {
-    if db.has_api_keys().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("db error: {e}"),
-        )
-    })? {
+    if db
+        .has_api_keys()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+    {
         return Err((
             StatusCode::CONFLICT,
             "API keys already exist. Use an admin key to create more.".to_string(),
@@ -556,25 +496,4 @@ pub struct BootstrapKeyResponse {
     pub key: String,
     pub name: String,
     pub role: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_set_generation_request_deserialization() {
-        let json = r#"{"hash": "/nix/store/abc123-nixos-system"}"#;
-        let req: SetGenerationRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.hash, "/nix/store/abc123-nixos-system");
-        assert!(req.cache_url.is_none());
-    }
-
-    #[test]
-    fn test_set_generation_request_with_cache_url() {
-        let json = r#"{"hash": "/nix/store/abc123", "cache_url": "https://cache.example.com"}"#;
-        let req: SetGenerationRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.hash, "/nix/store/abc123");
-        assert_eq!(req.cache_url, Some("https://cache.example.com".to_string()));
-    }
 }
