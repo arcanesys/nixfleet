@@ -155,7 +155,46 @@ Rollout executor at `control-plane/src/rollout/executor.rs` + `batch.rs` + `poli
 
 ## Category 5: Shared types
 
-_To be filled in Task 7._
+`shared/` = `nixfleet-types`. External ref counts are from grep across `agent/`, `control-plane/`, `cli/` (excluding `shared/src/` itself).
+
+| Type | File | External refs | Dead variants | Proposed verdict | Rationale |
+|---|---|---|---|---|---|
+| `MachineLifecycle` | `lib.rs` | 11 | none | Keep | Core state machine |
+| `DesiredGeneration` | `lib.rs` | 18 | — | Keep | Includes `poll_hint` |
+| `Report` | `lib.rs` | 28 | — | Keep | Core agent→CP type |
+| `MachineStatus` | `lib.rs` | 11 | — | Keep | Inventory view |
+| `AuditEvent` | `lib.rs` | 5 | — | Keep | Compliance |
+| `RolloutStrategy` | `rollout.rs` | 27 | none | Keep | Core type |
+| `OnFailure` | `rollout.rs` | 13 | none | Keep | Core type |
+| `RolloutStatus` | `rollout.rs` | 2 (+`is_active`, `from_str_lc`) | String-round-tripped, not pattern-matched externally | Keep | Serialized via string in DB — refs are low but the type is load-bearing |
+| `BatchStatus` | `rollout.rs` | 6 | none | Keep | |
+| `MachineHealthStatus` | `rollout.rs` | 5 | **`TimedOut`, `RolledBack` — 0 external refs** | **Trim** | Two dead variants — remove |
+| `RolloutTarget` | `rollout.rs` | 12 | none | Keep | |
+| `RolloutPolicy` | `rollout.rs` | 10 | — | **Delete — depends on Cat 1** | Tied to policy subsystem |
+| `PolicyRequest` | `rollout.rs` | 8 | — | **Delete — depends on Cat 1** | Same |
+| `RolloutEvent` | `rollout.rs` | 7 | — | Keep | Timeline |
+| `ScheduleStatus` | `rollout.rs` | 3 | none | **Delete — depends on Cat 1** | |
+| `ScheduledRollout` | `rollout.rs` | 4 | — | **Delete — depends on Cat 1** | |
+| `CreateScheduleRequest` | `rollout.rs` | 4 | — | **Delete — depends on Cat 1** | |
+| `CreateRolloutRequest` | `rollout.rs` | 6 | — | Keep | |
+| `CreateRolloutResponse` | `rollout.rs` | 3 | — | Keep | |
+| `BatchSummary` | `rollout.rs` | 3 | — | Keep | |
+| `BatchDetail` | `rollout.rs` | 2 | — | Keep | |
+| `RolloutDetail` | `rollout.rs` | 2 | — | Keep | |
+| `HealthCheckResult` | `health.rs` | 25 | none (Pass/Fail both used) | Keep | |
+| `HealthReport` | `health.rs` | 6 | — | Keep | |
+| `Release` | `release.rs` | 46 | — | Keep | PR #28 core |
+| `ReleaseEntry` | `release.rs` | 10 | — | Keep | PR #28 core |
+| `CreateReleaseRequest` | `release.rs` | 4 | — | Keep | |
+| `CreateReleaseResponse` | `release.rs` | 5 | — | Keep | |
+| `ReleaseDiff` | `release.rs` | 6 | — | Keep | |
+| `ReleaseDiffEntry` | `release.rs` | 2 | — | Keep | |
+
+**Dead variants to trim in Phase 2:**
+- `MachineHealthStatus::TimedOut` — 0 external refs
+- `MachineHealthStatus::RolledBack` — 0 external refs
+
+(Both are defined in `shared/src/rollout.rs` but never pattern-matched outside the crate. They were API artifacts from earlier design iterations.)
 
 ## Category 6: Dependencies
 
