@@ -478,7 +478,17 @@ Evidence:
 
 ## Category 19: Comms layer
 
-_To be filled in Task 21._
+`agent/src/comms.rs` — HTTP client for agent→CP calls. 30-second global timeout, HTTPS enforcement unless `allow_insecure=true`, mTLS via `reqwest::Identity`.
+
+| Function | Endpoint | Retry | Timeout | TLS | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|---|---|---|
+| `Client::new` (setup) | N/A | N/A | 30s global | mTLS (Identity from cert+key) | `test_client_new_strips_trailing_slash`, `test_reject_http_url_in_production`, `test_allow_http_url_with_insecure_flag`, `test_https_url_always_allowed` (`comms.rs:141-197`) | Keep | Well-covered |
+| `get_desired_generation(machine_id)` | `GET /api/v1/machines/{id}/desired-generation` | None (agent-side retry via `retry_interval` in main.rs) | 30s | Inherited | `test_api_url_construction_desired_generation`; `vm-fleet.nix` integration | Test | Error handling (network failure, 500 response, mTLS rejection) |
+| `post_report(report)` | `POST /api/v1/machines/{id}/report` | None (failures logged as warn) | 30s | Inherited | `test_api_url_construction_report`; `vm-fleet.nix` integration | Test | Error handling (network failure, 500 response, retry behavior) |
+
+**Gap:** comms does not expose a `register` function — registration is done via the CLI `machines register` command, not by the agent itself. The plan's expected row for `register` is incorrect; removed from table.
+
+**Retry semantics:** the agent's retry logic lives in `main.rs`, not `comms.rs`. On `PollOutcome::Failed`, the agent rebuilds its poll interval as `retry_interval` (30s default). The comms client itself is stateless.
 
 ## Summary statistics
 
