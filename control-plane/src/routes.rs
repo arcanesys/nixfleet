@@ -369,42 +369,6 @@ pub async fn update_lifecycle(
     Ok(StatusCode::OK)
 }
 
-/// POST /api/v1/machines/{id}/tags
-///
-/// Set all tags for a machine (replaces existing tags).
-pub async fn set_tags(
-    State((state, db)): State<AppState>,
-    Extension(actor): Extension<Actor>,
-    Path(id): Path<String>,
-    Json(tags): Json<Vec<String>>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    if !actor.has_role(&["admin"]) {
-        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
-    }
-
-    db.set_machine_tags(&id, &tags).map_err(|e| {
-        tracing::error!(error = %e, machine_id = %id, "Failed to set tags");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to set tags".to_string(),
-        )
-    })?;
-
-    let mut fleet = state.write().await;
-    let machine = fleet.get_or_create(&id);
-    machine.tags = tags.clone();
-
-    let _ = db.insert_audit_event(
-        &actor.identifier(),
-        "set_tags",
-        &id,
-        Some(&format!("tags={}", tags.join(","))),
-    );
-
-    tracing::info!(machine_id = %id, tags = ?tags, "Tags set");
-    Ok(StatusCode::OK)
-}
-
 /// DELETE /api/v1/machines/{id}/tags/{tag}
 ///
 /// Remove a single tag from a machine.

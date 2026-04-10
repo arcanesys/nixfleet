@@ -301,16 +301,6 @@ enum MachineAction {
         tag: Option<String>,
     },
 
-    /// Add tags to a machine
-    Tag {
-        /// Machine ID
-        id: String,
-
-        /// Tags to add
-        #[arg(required = true)]
-        tags: Vec<String>,
-    },
-
     /// Remove a tag from a machine
     Untag {
         /// Machine ID
@@ -616,9 +606,6 @@ async fn main() -> Result<()> {
             match action {
                 MachineAction::List { tag } => {
                     machines::list(&http_client, effective_cp_url, tag.as_deref()).await
-                }
-                MachineAction::Tag { id, tags } => {
-                    machines::tag(&http_client, effective_cp_url, &id, &tags).await
                 }
                 MachineAction::Untag { id, tag } => {
                     machines::untag(&http_client, effective_cp_url, &id, &tag).await

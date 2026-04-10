@@ -48,7 +48,6 @@ pub fn build_app(
             "/api/v1/machines/{id}/lifecycle",
             patch(routes::update_lifecycle),
         )
-        .route("/api/v1/machines/{id}/tags", post(routes::set_tags))
         .route(
             "/api/v1/machines/{id}/tags/{tag}",
             axum::routing::delete(routes::remove_tag),
