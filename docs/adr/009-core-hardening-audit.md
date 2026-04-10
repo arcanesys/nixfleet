@@ -293,7 +293,27 @@ Only two `tokio::spawn` sites in the workspace — both in `control-plane/src/ma
 
 ## Category 11: Prometheus metrics emission
 
-_To be filled in Task 13._
+**Surprise result:** contrary to the Phase 1 plan's pre-filled guess, **`AGENT_STATE` is NOT dead**. PR #28 removed `agent/src/state.rs` (the state machine module) but kept the metric — it's still emitted from 17 transition sites in `agent/src/main.rs` tracking the linear deploy cycle (idle → checking → fetching → applying → verifying → reporting → rolling_back → idle).
+
+13 metric constants, all actively emitted. Zero dead metrics.
+
+| Metric | Declared in | Emission sites | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|---|
+| `FLEET_SIZE` (`nixfleet_fleet_size`) | `shared/src/metrics.rs:7` | 1 (`control-plane/src/metrics.rs:80`) | None | Test | Core gauge |
+| `MACHINES_BY_LIFECYCLE` (`nixfleet_machines_by_lifecycle`) | `shared/src/metrics.rs:8` | 5 (`control-plane/src/metrics.rs:107-113`) | None | Test | 5 variants all emitted |
+| `MACHINE_LAST_SEEN_TIMESTAMP` (`..._seconds`) | `shared/src/metrics.rs:9` | 1 (`control-plane/src/metrics.rs:99-103`) | None | Test | |
+| `HTTP_REQUESTS_TOTAL` (`nixfleet_http_requests_total`) | `shared/src/metrics.rs:10` | 1 (middleware `control-plane/src/metrics.rs:55-61`) | None | Test | Middleware correctness — path normalization already covered (Category 7 keeps `test_normalize_machine_id_paths`) |
+| `HTTP_REQUEST_DURATION_SECONDS` | `shared/src/metrics.rs:11` | 1 (`control-plane/src/metrics.rs:63-68`) | None | Test | |
+| `ROLLOUTS_ACTIVE` (`nixfleet_rollouts_active`) | `shared/src/metrics.rs:12` | 1 (`executor.rs:622`) | None | Test | |
+| `ROLLOUTS_TOTAL` (`nixfleet_rollouts_total`) | `shared/src/metrics.rs:13` | 3 (`executor.rs:281` completed, `:573` paused, `:596` failed) | None | Test | Terminal-state counters |
+| `AGENT_STATE` (`nixfleet_agent_state`) | `shared/src/metrics.rs:16` | **17** sites in `agent/src/main.rs` | None | Test | **Not dead** — still emitted after PR #28 |
+| `AGENT_POLL_DURATION_SECONDS` | `shared/src/metrics.rs:17` | 1 (`agent/src/metrics.rs:23`) | None | Test | |
+| `AGENT_LAST_POLL_TIMESTAMP_SECONDS` | `shared/src/metrics.rs:18` | 1 (`agent/src/metrics.rs:24`) | None | Test | |
+| `AGENT_HEALTH_CHECK_DURATION_SECONDS` | `shared/src/metrics.rs:19-20` | 1 (`agent/src/metrics.rs:29-33`) | None | Test | |
+| `AGENT_HEALTH_CHECK_STATUS` | `shared/src/metrics.rs:21` | 1 (`agent/src/metrics.rs:35-39`) | None | Test | |
+| `AGENT_GENERATION_INFO` | `shared/src/metrics.rs:22` | 1 (`agent/src/metrics.rs:44`) | None | Test | |
+
+**All 13 metrics need a `Test` verdict** — each should have an end-to-end assertion that the metric is present in `/metrics` output with the expected shape after the triggering action.
 
 ## Category 12: Audit logging
 
