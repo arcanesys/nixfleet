@@ -1,8 +1,16 @@
--- Release abstraction for heterogeneous fleet deployment.
--- Breaking migration: drops and recreates rollouts, rollout_batches,
--- and rollout_events tables.
+-- Release abstraction + rollout machinery.
+--
+-- Squashed form of the historical sequence:
+--   V5 (rollouts + batches)   — pre-release-abstraction
+--   V8 (rollout_events)       — timeline table added
+--   V10 (releases)            — breaking migration that dropped+recreated
+--                               rollouts/batches/events with release_id linkage
+--
+-- Phase 2 of the core hardening cycle (see docs/adr/009) squashed these into
+-- a single migration so a fresh DB lands directly in the final shape without
+-- the intermediate DROP+CREATE breadcrumbs.
 
--- New tables ---------------------------------------------------------------
+-- Releases ------------------------------------------------------------------
 
 CREATE TABLE releases (
     id          TEXT PRIMARY KEY,
@@ -24,11 +32,7 @@ CREATE TABLE release_entries (
 );
 CREATE INDEX idx_release_entries_release ON release_entries(release_id);
 
--- Recreate rollouts (generation_hash -> release_id) ------------------------
-
-DROP TABLE IF EXISTS rollout_events;
-DROP TABLE IF EXISTS rollout_batches;
-DROP TABLE IF EXISTS rollouts;
+-- Rollouts (release_id -> per-host store paths) ----------------------------
 
 CREATE TABLE rollouts (
     id                  TEXT PRIMARY KEY,
@@ -46,6 +50,7 @@ CREATE TABLE rollouts (
     updated_at          TEXT NOT NULL,
     created_by          TEXT NOT NULL
 );
+CREATE INDEX idx_rollouts_status ON rollouts(status);
 
 CREATE TABLE rollout_batches (
     id                      TEXT PRIMARY KEY,
@@ -57,6 +62,7 @@ CREATE TABLE rollout_batches (
     completed_at            TEXT,
     previous_generations    TEXT DEFAULT '{}'
 );
+CREATE INDEX idx_rollout_batches_rollout ON rollout_batches(rollout_id);
 
 CREATE TABLE rollout_events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,8 +72,8 @@ CREATE TABLE rollout_events (
     actor       TEXT NOT NULL DEFAULT 'system',
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX idx_rollout_events_rollout ON rollout_events(rollout_id);
 
--- The `generations` table is KEPT — it is the mechanism for the CP to communicate
--- desired state to agents. The executor writes per-host store paths to it when
--- starting a batch. What is removed is the public POST /set-generation endpoint
--- (direct generation push is replaced by release-based rollouts).
+-- The `generations` table is KEPT (created in V1) — it is the mechanism
+-- for the CP to communicate desired state to agents. The executor writes
+-- per-host store paths to it when starting a batch.
