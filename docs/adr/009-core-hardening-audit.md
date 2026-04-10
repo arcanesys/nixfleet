@@ -346,7 +346,16 @@ Only two `tokio::spawn` sites in the workspace — both in `control-plane/src/ma
 
 ## Category 13: TLS / mTLS
 
-_To be filled in Task 15._
+Server side: `control-plane/src/tls.rs`. Client side: `agent/src/tls.rs`. End-to-end mTLS is exercised by `modules/tests/vm-fleet.nix` (fleet CA + CP server cert + 3 agent client certs) but no negative tests exist.
+
+| Item | File | Purpose | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|---|
+| `build_server_config` | `control-plane/src/tls.rs` | Load cert+key; if `client_ca_path` set, install `WebPkiClientVerifier` (mTLS required) | `test_build_server_config_missing_cert_fails`; `vm-fleet.nix` happy path | Test | Add negative tests: malformed cert PEM, malformed key PEM, missing CA file |
+| `load_client_identity` | `agent/src/tls.rs` | Load PEM cert+key, build reqwest `Identity` | `test_load_missing_cert_fails`; `vm-fleet.nix` happy path | Test | Same negative tests (malformed key, etc.) |
+| Agent mTLS enforcement (transport layer) | `control-plane/src/lib.rs` (agent_routes) | Agent routes require client cert when `client_ca_path` is set | `vm-fleet.nix` happy path only | Test | **Critical negative test**: connection without client cert → rejected |
+| CA cert mismatch rejection | reqwest / rustls | Client cert signed by different CA → rejected | None | Test | Negative test |
+
+**Integration coverage gap:** `vm-fleet.nix` proves the happy path works end-to-end, but it cannot prove that mTLS enforcement *rejects* bad clients. A Rust harness test with an intentionally misconfigured client is required.
 
 ## Category 14: Auth middleware
 
