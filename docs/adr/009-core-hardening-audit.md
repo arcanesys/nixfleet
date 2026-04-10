@@ -440,7 +440,27 @@ Current tests are mostly tautological (flagged in Category 7). Real config assem
 
 ## Category 17: Agent health check subsystem
 
-_To be filled in Task 19._
+**Surprise result:** contrary to the Phase 1 plan's pre-filled "Delete or Test — user decides" guess, **the health check subsystem is fully wired in and actively used**.
+
+Evidence:
+- `agent/src/main.rs:134` instantiates `HealthRunner::from_config_path(cli.health_config)`
+- `agent/src/main.rs:209` invokes `run_all` as part of the periodic health report
+- `agent/src/main.rs:318` invokes `run_all` post-apply (verify phase — gates deploy success)
+- `vm-fleet.nix` validates this live: `db-01` is configured with failing health checks, which causes the rollout to pause via the generation gate
+
+| Item | File | Wired in? | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|---|
+| `HealthRunner` struct | `agent/src/health/mod.rs:17-91` | **Yes** — wired into deploy cycle + periodic report | Unit tests in `health/config.rs` (4 tests) + `vm-fleet.nix` integration | Keep | Integration-covered |
+| `HealthRunner::from_config_path` | `health/mod.rs:26-34` | **Yes** — `main.rs:134` | Integration only | Test | Error path: missing config file, malformed JSON |
+| `HealthRunner::run_all` | `health/mod.rs:63-91` | **Yes** — called at `main.rs:209` and `:318` | `vm-fleet.nix` db-01 failure path | Test | Direct test for mixed pass/fail aggregation |
+| `CommandChecker` | `health/command.rs` | Yes (from config) | `test_parse_full_config` | Test | Real command execution + exit code assertions |
+| `HttpChecker` | `health/http.rs` | Yes (`vm-fleet.nix` web nodes use it) | `test_parse_full_config` | Test | Real HTTP call + status assertions |
+| `SystemdChecker` | `health/systemd.rs` | Yes | `test_parse_full_config` | Test | Real systemctl is-active |
+| `SystemdFallback` (default when no checks configured) | `health/systemd.rs:58-101` | **Yes** — installed when config is empty | None | Test | Silent fallback is a risk if config loading quietly fails |
+| `load_config` + serde structs | `health/config.rs` | Yes | 4 unit tests (mostly serde roundtrip — Category 7 flagged as tautological) | Test (replace tautological tests with real ones) | |
+| Post-switch invocation | `agent/src/main.rs:316-336` | **Yes** | `vm-fleet.nix` gate | Test | Direct test for "failure → rollback" path |
+
+**Verdict change from plan's guess:** this category is **Keep/Test**, not `Delete`. It's a working, wired-in subsystem. Tests should replace the tautological serde-roundtrip tests with real behavior tests.
 
 ## Category 18: Nix interaction layer
 
