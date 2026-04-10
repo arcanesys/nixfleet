@@ -130,7 +130,28 @@ Agent code at `agent/src/main.rs` + supporting modules. Every behavior is **"val
 
 ## Category 4: Executor features
 
-_To be filled in Task 6._
+Rollout executor at `control-plane/src/rollout/executor.rs` + `batch.rs` + `policy.rs` + `schedule.rs`. Unit tests exist for **batch sizing** (`batch.rs:74-129`, 7 tests) and **threshold parsing** (`executor.rs:679-694`). Nothing else has a direct test.
+
+| Feature | Code | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|
+| Canary strategy | `batch.rs:64` + `executor.rs:176` | `batch.rs::test_canary_batch_sizes`, `test_build_batches_canary_20_machines`; `vm-fleet.nix` web tag | Keep | Unit + integration |
+| Staged strategy | `batch.rs:66-69` + `executor.rs:177` | `batch.rs::test_build_batches_staged` | Test | Executor path untested (unit test covers batching only) |
+| All-at-once strategy | `batch.rs:65` + `executor.rs:178` | `batch.rs::test_build_batches_all_at_once`; `vm-fleet.nix` db tag (pause path) | Test | Happy path untested directly |
+| Batch creation & sizing | `batch.rs:4-47` (`build_batches`, `parse_batch_size`) | 7 unit tests | Keep | Well-covered |
+| Batch deployment | `executor.rs:308-384` (`deploy_batch`) | Indirect only | Test | Sets desired + stores previous_gens — core write path |
+| Batch health evaluation | `executor.rs:387-614` (`evaluate_batch`) | Indirect | Test | Complex: generation gate + timeout + threshold |
+| Health gate (generation match) | `executor.rs:418-420` | None | Test | **PR #28 critical bug source** — must have direct test |
+| Health timeout | `executor.rs:461-497` | None | Test | Time-based path |
+| Failure threshold | `executor.rs:9-20` + `:500` | `test_parse_threshold_*` (parser only) | Test | Evaluation path untested |
+| `on_failure=pause` | `executor.rs:553-575` | `vm-fleet.nix` db tag | Keep (integration) → Test | Direct test for state transition |
+| `on_failure=revert` | `executor.rs:576-598` + `:626-672` (`revert_completed_batches`) | None | Test | Per-machine revert via `previous_generations` untested |
+| Release entry lookup | `executor.rs:289-294` (`get_release_entries`, `entry_map`) | None | Test | PR #28 addition, invariant-bearing |
+| Per-machine `previous_generations` | `executor.rs:323-350` | None | Test | Heterogeneous revert — phase 3 scenario F2 |
+| Policy reference resolution | `executor.rs:64-115` (via `trigger_due_schedules`) | None | **Delete or Test — depends on Cat 1** | Tied to policy subsystem decision |
+| Schedule processing | `executor.rs:53-249` (`trigger_due_schedules`) | None | **Delete or Test — depends on Cat 1** | Tied to schedule subsystem decision |
+| Rollout completion | `executor.rs:264-284` | Indirect | Test | Terminal state transition |
+
+**Note on updated metrics:** `ROLLOUTS_ACTIVE` (`executor.rs:622`) and `ROLLOUTS_TOTAL` (completed/paused/failed at `:281`, `:573`, `:596`) are emitted from the executor — tested under Category 11.
 
 ## Category 5: Shared types
 
