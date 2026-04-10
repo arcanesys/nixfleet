@@ -198,7 +198,24 @@ Rollout executor at `control-plane/src/rollout/executor.rs` + `batch.rs` + `poli
 
 ## Category 6: Dependencies
 
-_To be filled in Task 8._
+**Tool output:** `cargo machete` not run (dev shell install deferred — manual inspection only). All verdicts below are from grep-based use-count inspection.
+
+### Delete candidates
+
+| Crate | Dependency | Uses in src/ | Proposed verdict | Rationale |
+|---|---|---|---|---|
+| agent | `async-trait` | **0** | **Delete** | Declared but never used in src |
+| agent | `tempfile` | **0** | **Delete** | Dev-only convention; move to `[dev-dependencies]` or drop |
+| control-plane | `tempfile` | **0** | **Delete** | Same |
+| shared | `serde_json` | **0** | **Delete** | Declared in shared but unused at lib level |
+
+### Keep (all crates)
+
+All other dependencies have substantial usage (tokio 37 uses, axum 36, reqwest 35, serde/serde_json 12/117, clap 3, tracing 80, rusqlite 76, anyhow 64, chrono 29, metrics 40, etc.). See Phase 2 plan for the full per-dep grep table.
+
+**Note on `clap` usage = 3 in agent/control-plane:** these are arg-parsing entry-point imports only (which is correct — the daemons don't need heavy CLI parsing). Keep as-is.
+
+**Refinement in Phase 2:** run `cargo machete` inside `nix develop` (not globally) to reconfirm, then submit the deletions as a single commit.
 
 ## Category 7: Tautological tests
 
