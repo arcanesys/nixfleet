@@ -464,7 +464,17 @@ Evidence:
 
 ## Category 18: Nix interaction layer
 
-_To be filled in Task 20._
+`agent/src/nix.rs`. 4 public functions; unit tests exist for path/generation parsing logic but subprocess interaction is only covered by `vm-fleet.nix`.
+
+| Function | File:line | Subprocess | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|---|
+| `current_generation` | `nix.rs:7-12` | `tokio::fs::read_link("/run/current-system")` | Unit: path construction (`nix.rs:118-127`); integration: used in `main.rs:263`, `:378`, `:212` | Keep | Trivial, adequately covered |
+| `fetch_closure(store_path, cache_url)` | `nix.rs:19-45` | `nix copy --from <url>` OR `nix path-info` (fallback) | Unit: command construction (`nix.rs:187-192`); `vm-fleet.nix` integration | Test | Direct test with failing subprocess to verify error path |
+| `apply_generation(store_path)` | `nix.rs:50-65` | `<store_path>/bin/switch-to-configuration switch` | Unit: path construction (`nix.rs:136-142`); `vm-fleet.nix` integration | Test | **Sandboxing bugs hid here** — direct test with mocked subprocess |
+| `rollback` | `nix.rs:70-113` | `nix-env --list-generations` + parse + `switch-to-configuration switch` | Unit: generation parsing (`nix.rs:153-178`); triggered from `main.rs:356` on failure | Test | Direct test for the "no previous generation" edge case |
+| `store` helpers | `agent/src/store.rs` | — (sqlite state store) | None (was tied to removed state machine) | Test | Verify store schema + CRUD roundtrip after PR #28 simplification |
+
+**Note:** there is no separate `path_info` function as the plan guessed — the path-info fallback is inlined inside `fetch_closure` at `nix.rs:19-45`. The audit structure should reflect this.
 
 ## Category 19: Comms layer
 
