@@ -219,7 +219,34 @@ All other dependencies have substantial usage (tokio 37 uses, axum 36, reqwest 3
 
 ## Category 7: Tautological tests
 
-_To be filled in Task 9._
+~22 tests identified across the workspace. **A tautological test is worse than no test** — it lights up green while the feature is broken. All verdicts are **Delete**. If the targeted behavior is important, a real test gets written under Category 4/11/etc.
+
+| Test | File:line | Pattern | Proposed verdict | Rationale |
+|---|---|---|---|---|
+| `test_config_defaults` | `agent/src/config.rs:62` | Creates a `Duration::from_secs(300)` then asserts `.as_secs() >= 60` — tests nothing about config | Delete | No config loading involved |
+| `test_config_poll_interval_at_minimum_boundary` | `agent/src/config.rs:70` | Asserts `60 >= 60` | Delete | Self-referential |
+| `test_config_poll_interval_at_maximum_boundary` | `agent/src/config.rs:76` | Asserts `3600 <= 3600` | Delete | Self-referential |
+| `test_config_clone` | `agent/src/config.rs:82` | Clones struct, asserts field equals | Delete | Tests `Clone` derive, not behavior |
+| `test_parse_full_config` | `agent/src/health/config.rs:69` | Serde round-trip, asserts parsed == input | Delete | No behavior |
+| `test_parse_empty_config` | `agent/src/health/config.rs:87` | Serde round-trip of `{}` | Delete | No behavior |
+| `test_defaults_applied` | `agent/src/health/config.rs:96` | Asserts default function returns a hardcoded value | Delete | No behavior |
+| `test_camel_case_from_nix` | `agent/src/health/config.rs:112` | Serde round-trip | Delete | No behavior |
+| `test_report_serialization` | `shared/src/lib.rs:205` | Serde round-trip | Delete | No behavior |
+| `test_report_failure_serialization` | `shared/src/lib.rs:224` | Serde round-trip | Delete | No behavior |
+| `test_desired_generation_serialization_roundtrip` | `shared/src/lib.rs:69` | Serde round-trip | Delete | No behavior |
+| `test_lifecycle_from_str` | `shared/src/lib.rs` | Parse + reverse, no input variation | Delete | Trivial enum roundtrip |
+| `test_lifecycle_valid_transitions` | `shared/src/lib.rs` | Enum method with one case | Delete (or merge into real transition matrix test) | Single input, no variation |
+| `test_normalize_static_paths` | `control-plane/src/metrics.rs` | Normalizes `/health` → `/health` | Delete | Identity function |
+| `test_normalize_machine_id_paths` | `control-plane/src/metrics.rs` | Tests one machine-id path | Keep (marginal) → Test | Actual behavior but single-case; expand or delete |
+| `test_hash_key_deterministic` | `control-plane/src/auth.rs` | Hash same input twice, assert equal | Delete | Tests SHA256 determinism (stdlib invariant) |
+| `test_actor_identifier_apikey` | `control-plane/src/auth.rs` | Formats enum, asserts string | Delete | Tests `Display` impl |
+| `test_canary_batch_sizes` | `control-plane/src/rollout/batch.rs` | Lookup table assertion | Keep | Fine — single simple thing it tests is correct |
+| `test_build_batches_canary_20_machines` | `control-plane/src/rollout/batch.rs` | Builds batches for one fixed input | Keep | Real but thin — expand in Phase 4 |
+| `test_migrate_is_idempotent` | `control-plane/src/db.rs:1382` | Name claims idempotency but only calls `migrate()` **once** | **Fix** (trivial) — call migrate twice, verify no error; then Keep | Misleading test; easy to fix |
+| `test_set_and_get_desired_generation` | `control-plane/src/db.rs:1388` | CRUD round-trip | Delete (or replace with property test) | Tests rusqlite round-trip, not business logic |
+| `test_register_machine` | `control-plane/src/db.rs` | CRUD round-trip | Delete (or replace) | Same |
+
+**Summary:** ~18 to delete, 1 to fix (`test_migrate_is_idempotent`), 3 to keep as-is or lightly expand.
 
 ## Category 8: `#[allow(dead_code)]` escapes
 
