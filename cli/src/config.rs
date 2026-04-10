@@ -450,4 +450,21 @@ url = "https://lab:8080"
         );
         assert_eq!(resolved.control_plane_url, Some("https://lab:8080".to_string()));
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_api_key_sets_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+
+        save_api_key("https://test.example.com", "nfk-testkey").unwrap();
+
+        let path = credentials_path();
+        let metadata = std::fs::metadata(&path).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "credentials file must be 0o600, got {mode:o}");
+    }
 }

@@ -30,6 +30,9 @@ impl Db {
         // Enable WAL mode for better concurrent read performance
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
 
+        // Enforce referential integrity (SQLite disables FK checks by default)
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -1625,6 +1628,30 @@ mod tests {
         // Events are ordered ASC — IDs should be non-decreasing
         assert!(events[0].id <= events[1].id);
         assert!(events[1].id <= events[2].id);
+    }
+
+    #[test]
+    fn test_foreign_keys_enforced() {
+        let (db, _dir) = make_db();
+
+        // Attempt to insert a machine_tag with a machine_id that doesn't exist.
+        // With PRAGMA foreign_keys = ON, this must fail.
+        let conn = db.conn.lock().unwrap();
+        let result = conn.execute(
+            "INSERT INTO machine_tags (machine_id, tag) VALUES (?1, ?2)",
+            rusqlite::params!["nonexistent-machine", "test-tag"],
+        );
+        drop(conn);
+
+        assert!(
+            result.is_err(),
+            "FK constraint should have rejected orphan machine_tag insert"
+        );
+        let err_string = format!("{}", result.unwrap_err());
+        assert!(
+            err_string.contains("FOREIGN KEY") || err_string.contains("foreign key"),
+            "expected FK error, got: {err_string}"
+        );
     }
 
 }

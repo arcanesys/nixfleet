@@ -433,6 +433,13 @@ pub async fn bootstrap_api_key(
         )
     })?;
 
+    let _ = db.insert_audit_event(
+        "system:bootstrap",
+        "bootstrap",
+        name,
+        Some("first admin key created"),
+    );
+
     tracing::info!(name = %name, "Bootstrap API key created");
 
     Ok(Json(BootstrapKeyResponse {
