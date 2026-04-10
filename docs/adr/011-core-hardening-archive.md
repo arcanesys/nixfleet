@@ -26,6 +26,16 @@ All archive branches point at the same SHA: the last commit on `main` before the
 | `archive/unused-deps` | `Cargo.toml` state before `cargo machete` cleanup | `git checkout archive/unused-deps -- agent/Cargo.toml control-plane/Cargo.toml shared/Cargo.toml` |
 | `archive/dead-machine-health-variants` | `MachineHealthStatus::TimedOut`, `MachineHealthStatus::RolledBack` variants | `git checkout archive/dead-machine-health-variants -- shared/src/rollout.rs` |
 
+## Removed content summary
+
+The Phase 2 deletion across `cli/`, `control-plane/`, `shared/`, and `agent/`:
+
+```
+ 33 files changed, 201 insertions(+), 2741 deletions(-)
+```
+
+Net change: Phase 2 removes far more than it adds (deletions dominate). The insertions are confined to fixes, RBAC wiring, and test coverage; the bulk of the diff is code removal.
+
 ## Consequences
 
 - Removed code is recoverable but intentionally excluded from `main` history.

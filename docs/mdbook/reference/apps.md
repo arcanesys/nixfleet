@@ -158,4 +158,4 @@ Cleans up temp directory and disk on exit unless `--keep` is specified.
 
 
 
-> **Note:** Provisioning real hardware is done via the CLI: `nixfleet host provision --hostname <HOST> --target <USER@IP>`. See the [CLI reference](cli.md#host-provision).
+> **Note:** Provisioning real hardware is done via standard NixOS tooling: `nixos-anywhere --flake .#hostname root@ip`. See [Standard Tools](../guide/deploying/standard-tools.md).
