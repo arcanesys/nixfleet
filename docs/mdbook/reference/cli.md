@@ -65,6 +65,7 @@ nixfleet deploy [FLAGS]
 | `--tag <TAG>` | string (repeatable) | -- | Target machines by tag (rollout mode) |
 | `--dry-run` | bool | `false` | Build closures and show plan, do not push or register |
 | `--ssh` | bool | `false` | SSH fallback mode: build locally, copy via SSH, run `switch-to-configuration` (no CP needed) |
+| `--target <SSH>` | string | -- | SSH target override (e.g., `root@192.168.1.10`). Only valid with `--ssh` and a single host. |
 | `--flake <REF>` | string | `.` | Flake reference |
 | `--strategy <STRATEGY>` | string | `all-at-once` | Rollout strategy: `canary`, `staged`, `all-at-once` |
 | `--batch-size <SIZES>` | string (comma-separated) | -- | Batch sizes (e.g., `1,25%,100%`) |

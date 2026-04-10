@@ -141,6 +141,10 @@ nixfleet deploy --release rel-abc123 --tag web --strategy canary --wait
 nixfleet deploy --push-to s3://my-fleet-cache --tag web --strategy canary --wait  # implicit release creation
 nixfleet deploy --copy --tag web --strategy staged --wait              # implicit release, SSH copy
 
+# Direct SSH deploy (no control plane needed)
+nixfleet deploy --hosts web-02 --ssh                                          # deploy via SSH (resolves hostname)
+nixfleet deploy --hosts web-02 --ssh --target root@192.168.1.10               # deploy via SSH to specific IP
+
 # Rollout management
 nixfleet rollout list
 nixfleet rollout status <ID>       # includes events timeline
