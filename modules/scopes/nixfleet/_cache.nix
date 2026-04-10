@@ -1,23 +1,21 @@
-# NixOS module to configure a host as an Attic binary cache client.
-# Adds the cache to nix substituters and installs the attic CLI.
+# NixOS module to configure a host as a binary cache client.
+# Adds the cache to nix substituters and trusted-public-keys.
 # Auto-included by mkHost (disabled by default).
 {
   config,
   lib,
-  pkgs,
-  inputs,
   ...
 }: let
-  cfg = config.services.nixfleet-attic-client;
+  cfg = config.services.nixfleet-cache;
   types = lib.types;
 in {
-  options.services.nixfleet-attic-client = {
-    enable = lib.mkEnableOption "NixFleet Attic binary cache client";
+  options.services.nixfleet-cache = {
+    enable = lib.mkEnableOption "NixFleet binary cache client";
 
     cacheUrl = lib.mkOption {
       type = types.str;
       example = "https://cache.fleet.example.com";
-      description = "URL of the Attic cache server.";
+      description = "URL of the binary cache server.";
     };
 
     publicKey = lib.mkOption {
@@ -32,9 +30,5 @@ in {
       substituters = [cfg.cacheUrl];
       trusted-public-keys = [cfg.publicKey];
     };
-
-    environment.systemPackages = [
-      inputs.attic.packages.${pkgs.system}.attic-client
-    ];
   };
 }

@@ -11,8 +11,8 @@
   coreNixos = ../../core/_nixos.nix;
   agentModule = ../../scopes/nixfleet/_agent.nix;
   controlPlaneModule = ../../scopes/nixfleet/_control-plane.nix;
-  atticServerModule = ../../scopes/nixfleet/_attic-server.nix;
-  atticClientModule = ../../scopes/nixfleet/_attic-client.nix;
+  cacheServerModule = ../../scopes/nixfleet/_cache-server.nix;
+  cacheModule = ../../scopes/nixfleet/_cache.nix;
 in {
   # Build a runCommand that prints PASS/FAIL for each assertion and fails on first failure.
   mkEvalCheck = pkgs: name: assertions:
@@ -73,9 +73,8 @@ in {
         monitoringScope.nixos
         agentModule
         controlPlaneModule
-        atticServerModule
-        atticClientModule
-        # Inject inputs into module args so attic (and other input-dependent) modules work
+        cacheServerModule
+        cacheModule
         {_module.args.inputs = inputs;}
       ]
       ++ nixosModules

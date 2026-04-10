@@ -264,49 +264,41 @@
             }
           ];
 
-        # --- Attic server: listen port, firewall, impermanence ---
-        eval-attic-server = let
-          cfg = nixosCfg "attic-test";
+        # --- Cache server: port, firewall, signing key ---
+        eval-cache-server = let
+          cfg = nixosCfg "cache-test";
         in
-          mkEvalCheck "attic-server" [
+          mkEvalCheck "cache-server" [
             {
-              check = cfg.services.nixfleet-attic-server.enable;
-              msg = "attic-test should have attic server enabled";
+              check = cfg.services.nixfleet-cache-server.enable;
+              msg = "cache-test should have cache server enabled";
             }
             {
-              check = builtins.elem 8081 cfg.networking.firewall.allowedTCPPorts;
-              msg = "attic-test should have port 8081 in firewall";
+              check = builtins.elem 5000 cfg.networking.firewall.allowedTCPPorts;
+              msg = "cache-test should have port 5000 in firewall";
             }
             {
-              check = cfg.services.nixfleet-attic-server.signingKeyFile == "/run/secrets/attic-signing-key";
-              msg = "attic-test should have signing key file set";
-            }
-            {
-              check = cfg.services.nixfleet-attic-server.storage.type == "local";
-              msg = "attic-test should default to local storage";
-            }
-            {
-              check = builtins.elem "/var/lib/nixfleet-attic" cfg.environment.persistence."/persist".directories;
-              msg = "attic-test should persist /var/lib/nixfleet-attic (impermanent host)";
+              check = cfg.services.nixfleet-cache-server.signingKeyFile == "/run/secrets/cache-signing-key";
+              msg = "cache-test should have signing key file set";
             }
           ];
 
-        # --- Attic client: substituters and trusted keys ---
-        eval-attic-client = let
-          cfg = nixosCfg "attic-test";
+        # --- Cache client: substituters and trusted keys ---
+        eval-cache = let
+          cfg = nixosCfg "cache-test";
         in
-          mkEvalCheck "attic-client" [
+          mkEvalCheck "cache" [
             {
-              check = cfg.services.nixfleet-attic-client.enable;
-              msg = "attic-test should have attic client enabled";
+              check = cfg.services.nixfleet-cache.enable;
+              msg = "cache-test should have cache client enabled";
             }
             {
-              check = builtins.elem "http://localhost:8081" cfg.nix.settings.substituters;
-              msg = "attic client should add cache URL to substituters";
+              check = builtins.elem "http://localhost:5000" cfg.nix.settings.substituters;
+              msg = "cache client should add cache URL to substituters";
             }
             {
-              check = builtins.elem "attic-test:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" cfg.nix.settings.trusted-public-keys;
-              msg = "attic client should add public key to trusted-public-keys";
+              check = builtins.elem "cache-test:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" cfg.nix.settings.trusted-public-keys;
+              msg = "cache client should add public key to trusted-public-keys";
             }
           ];
 

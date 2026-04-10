@@ -140,27 +140,23 @@ in {
       ];
     };
 
-    # attic-test: exercises Attic binary cache server + client
-    attic-test = mkHost {
-      hostName = "attic-test";
+    # cache-test: exercises harmonia binary cache server + client
+    cache-test = mkHost {
+      hostName = "cache-test";
       platform = "x86_64-linux";
       isVm = true;
-      hostSpec =
-        orgDefaults
-        // {
-          isImpermanent = true;
-        };
+      hostSpec = orgDefaults;
       modules = [
         {
-          services.nixfleet-attic-server = {
+          services.nixfleet-cache-server = {
             enable = true;
-            signingKeyFile = "/run/secrets/attic-signing-key";
+            signingKeyFile = "/run/secrets/cache-signing-key";
             openFirewall = true;
           };
-          services.nixfleet-attic-client = {
+          services.nixfleet-cache = {
             enable = true;
-            cacheUrl = "http://localhost:8081";
-            publicKey = "attic-test:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+            cacheUrl = "http://localhost:5000";
+            publicKey = "cache-test:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
           };
         }
       ];

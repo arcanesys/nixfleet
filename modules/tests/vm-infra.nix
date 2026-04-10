@@ -121,21 +121,21 @@
           '';
         };
 
-        # --- vm-attic-server: Attic binary cache server starts and responds ---
-        vm-attic-server = let
+        # --- vm-cache-server: harmonia binary cache server starts and responds ---
+        vm-cache-server = let
           # Generate a signing key at build time for the test
-          signingKeyFile = pkgs.runCommand "attic-test-signing-key" {} ''
+          signingKeyFile = pkgs.runCommand "cache-test-signing-key" {} ''
             ${pkgs.nix}/bin/nix-store --generate-binary-cache-key test-cache "$out" /dev/null
           '';
         in
           pkgs.testers.nixosTest {
-            name = "vm-attic-server";
+            name = "vm-cache-server";
 
             nodes.server = mkTestNode {
               hostSpecValues = defaultTestSpec // {hostName = "server";};
               extraModules = [
                 {
-                  services.nixfleet-attic-server = {
+                  services.nixfleet-cache-server = {
                     enable = true;
                     signingKeyFile = "${signingKeyFile}";
                   };
@@ -143,35 +143,25 @@
               ];
             };
 
-            nodes.client = mkTestNode {
-              hostSpecValues = defaultTestSpec // {hostName = "client";};
-            };
-
             testScript = ''
-              server.start()
-              client.start()
-
               server.wait_for_unit("multi-user.target")
-              server.wait_for_unit("nixfleet-attic-server.service")
-              server.wait_for_open_port(8081)
+              server.wait_for_unit("nixfleet-cache-server.service")
+              server.wait_for_open_port(5000)
 
-              # Attic server should respond on port 8081
-              server.succeed("curl -sf http://localhost:8081/")
-
-              # Storage directory should be created by StateDirectory=
-              server.succeed("test -d /var/lib/nixfleet-attic")
+              # Harmonia should respond with nix-cache-info
+              server.succeed("curl -sf http://localhost:5000/nix-cache-info")
             '';
           };
 
-        # --- vm-attic-client: Attic client configures Nix substituters and installs CLI ---
-        vm-attic-client = pkgs.testers.nixosTest {
-          name = "vm-attic-client";
+        # --- vm-cache: cache client configures Nix substituters ---
+        vm-cache = pkgs.testers.nixosTest {
+          name = "vm-cache";
 
           nodes.machine = mkTestNode {
             hostSpecValues = defaultTestSpec;
             extraModules = [
               {
-                services.nixfleet-attic-client = {
+                services.nixfleet-cache = {
                   enable = true;
                   cacheUrl = "http://cache.example.com";
                   publicKey = "test-cache:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
@@ -188,9 +178,6 @@
 
             # Nix trusted-public-keys should include the signing key
             machine.succeed("nix show-config | grep trusted-public-keys | grep test-cache")
-
-            # attic CLI should be available
-            machine.succeed("which attic")
           '';
         };
 
