@@ -619,14 +619,12 @@ async fn main() -> Result<()> {
             // Bootstrap does not require an API key, but does use mTLS
             let http_client = client::build_client(&tls, "")?;
             let result = bootstrap(&http_client, effective_cp_url, &name, json).await;
-            if let Ok(ref key) = result {
-                // Save API key to credentials file
-                if let Some(key_str) = key {
-                    if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
-                        eprintln!("Warning: failed to save API key: {}", e);
-                    } else {
-                        println!("Saved to {}", config::credentials_path().display());
-                    }
+            // Save API key to credentials file
+            if let Ok(Some(ref key_str)) = result {
+                if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
+                    eprintln!("Warning: failed to save API key: {}", e);
+                } else {
+                    println!("Saved to {}", config::credentials_path().display());
                 }
             }
             result.map(|_| ())

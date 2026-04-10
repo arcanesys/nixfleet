@@ -716,6 +716,8 @@ impl Db {
     // -----------------------------------------------------------------------
 
     /// Create a new release with its per-host entries (transactional).
+    // CRUD function arguments map directly to table columns; refactoring is busywork
+    #[allow(clippy::too_many_arguments)]
     pub fn create_release(
         &self,
         id: &str,
