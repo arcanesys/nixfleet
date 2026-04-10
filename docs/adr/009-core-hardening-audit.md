@@ -1,8 +1,22 @@
 # ADR 009 — Core Hardening Audit (Phase 1 Decision Table)
 
 **Date:** 2026-04-10
-**Status:** Draft — pending row-by-row user approval
+**Status:** Approved
 **Cycle:** Core hardening (spec: `docs/superpowers/specs/2026-04-10-core-hardening-cycle-design.md`)
+
+## User overrides (applied 2026-04-10)
+
+The following decisions were made at the row-by-row review. Tables below reflect the final verdicts.
+
+| Subsystem / finding | Decision | Affects categories |
+|---|---|---|
+| **Policy subsystem** (CRUD + CP routes + executor resolution + migration V7 + types) | **Delete — archive to `archive/policy-subsystem`** | 1, 2, 4, 5, 12, 15 |
+| **Schedule subsystem** (CRUD + CP routes + `trigger_due_schedules` + migration V9 + types) | **Delete — archive to `archive/schedule-subsystem`** | 1, 2, 4, 5, 12, 15 |
+| **`nixfleet host provision`** (thin `nixos-anywhere` wrapper) | **Delete — archive to `archive/host-provision`** | 1 |
+| **Auth RBAC** (`Actor::has_role` declared but never called) | **Fix: wire `has_role(&[...])` into every admin route** — readonly/deploy/admin tiers become enforced; role × endpoint matrix tests mandatory in Phase 4 | 14 |
+| **`machines tag` / `POST /machines/{id}/tags` (`set_tags`)** | **Trim** — delete manual POST; rely on agent auto-sync; keep `DELETE /tags/{tag}` for stale cleanup | 1, 2, 12 |
+| **Hydration: `state.rs:105-106` rollouts load** | **Investigate** — Phase 2 reads executor code path and records final decision in a new ADR note | 10 |
+| **Fix bundling** | All Fix items (PRAGMA foreign_keys, bootstrap audit write, `save_api_key` 0o600 test, `test_migrate_is_idempotent` fix, mTLS both-or-neither validation) bundled into Phase 2 alongside deletions | — |
 
 ## Context
 
@@ -59,13 +73,13 @@ The release-abstraction cycle (PR #28) revealed that nixfleet's Rust core has ha
 | `rollout status` | `cli/src/rollout.rs` | None | Test | Events timeline |
 | `rollout resume` | `cli/src/rollout.rs` | `vm-fleet.nix` covers resume path | Keep | Integration tested |
 | `rollout cancel` | `cli/src/rollout.rs` | None | Test | Untested critical path |
-| `policy create` / `list` / `get` / `update` / `delete` | `cli/src/policy.rs` | None | **Delete or Test — user decides** | Ergonomic preset layer; real operator story unclear |
-| `schedule list` / `cancel` | `cli/src/schedule.rs` | None | **Delete or Test — user decides** | Deferred rollouts without a real operator story |
+| `policy create` / `list` / `get` / `update` / `delete` | `cli/src/policy.rs` | None | **Delete** (archive/policy-subsystem) | User decision: policy subsystem cut |
+| `schedule list` / `cancel` | `cli/src/schedule.rs` | None | **Delete** (archive/schedule-subsystem) | User decision: schedule subsystem cut |
 | `deploy` (CP path) | `cli/src/deploy.rs` | `vm-fleet.nix` happy path | Keep | Integration tested |
 | `deploy --ssh` | `cli/src/deploy.rs` | None | Test | Bypass path, must work without CP |
 | `rollback` (SSH-only) | `cli/src/main.rs:884` inline | None | Test | Core rollback path; explicitly documents post-PR #28 SSH-only constraint |
 | `host add` | `cli/src/host.rs` | None | Test | Registers machine in CP fleet |
-| `host provision` | `cli/src/host.rs` | None | **Delete or Test — user decides** | Thin wrapper around nixos-anywhere; value-add is a question |
+| `host provision` | `cli/src/host.rs` | None | **Delete** (archive/host-provision) | User decision: thin wrapper, operators use nixos-anywhere directly |
 
 **Key observation:** CLI is the operator's primary interface and has 0% coverage. Phase 3 scenarios + Phase 4 per-subcommand checklist together must get this to full coverage.
 
@@ -87,11 +101,11 @@ The release-abstraction cycle (PR #28) revealed that nixfleet's Rust core has ha
 | `/api/v1/rollouts/{id}` | GET | API key | `rollout::routes::get_rollout` | 0/0/0 | Test | Events timeline untested |
 | `/api/v1/rollouts/{id}/resume` | POST | API key | `rollout::routes::resume_rollout` | 0/0/0 | Test | `vm-fleet.nix` covers happy path indirectly; need direct test |
 | `/api/v1/rollouts/{id}/cancel` | POST | API key | `rollout::routes::cancel_rollout` | 0/0/0 | Test | Cancel untested |
-| `/api/v1/policies` (POST/GET) | POST/GET | API key | `rollout::policy::*` | 0/0/0 | **Delete or Test — user decides** | Depends on Cat 1 policy decision |
-| `/api/v1/policies/{name}` (GET/PUT/DELETE) | GET/PUT/DELETE | API key | `rollout::policy::*` | 0/0/0 | **Delete or Test — user decides** | Same |
-| `/api/v1/schedules` (POST/GET) | POST/GET | API key | `rollout::schedule::*` | 0/0/0 | **Delete or Test — user decides** | Depends on Cat 1 schedule decision |
-| `/api/v1/schedules/{id}` (GET) | GET | API key | `rollout::schedule::get_schedule` | 0/0/0 | **Delete or Test — user decides** | Same |
-| `/api/v1/schedules/{id}/cancel` | POST | API key | `rollout::schedule::cancel_schedule` | 0/0/0 | **Delete or Test — user decides** | Same |
+| `/api/v1/policies` (POST/GET) | POST/GET | API key | `rollout::policy::*` | 0/0/0 | **Delete** (archive/policy-subsystem) | Subsystem cut |
+| `/api/v1/policies/{name}` (GET/PUT/DELETE) | GET/PUT/DELETE | API key | `rollout::policy::*` | 0/0/0 | **Delete** (archive/policy-subsystem) | Subsystem cut |
+| `/api/v1/schedules` (POST/GET) | POST/GET | API key | `rollout::schedule::*` | 0/0/0 | **Delete** (archive/schedule-subsystem) | Subsystem cut |
+| `/api/v1/schedules/{id}` (GET) | GET | API key | `rollout::schedule::get_schedule` | 0/0/0 | **Delete** (archive/schedule-subsystem) | Subsystem cut |
+| `/api/v1/schedules/{id}/cancel` | POST | API key | `rollout::schedule::cancel_schedule` | 0/0/0 | **Delete** (archive/schedule-subsystem) | Subsystem cut |
 | `/api/v1/releases` | POST | API key | `release::routes::create_release` | 0/0/0 | Test | Validation + audit write |
 | `/api/v1/releases` | GET | API key | `release::routes::list_releases` | 0/0/0 | Test | Pagination |
 | `/api/v1/releases/{id}` | GET | API key | `release::routes::get_release` | 0/0/0 | Test | 404 path |
@@ -147,8 +161,8 @@ Rollout executor at `control-plane/src/rollout/executor.rs` + `batch.rs` + `poli
 | `on_failure=revert` | `executor.rs:576-598` + `:626-672` (`revert_completed_batches`) | None | Test | Per-machine revert via `previous_generations` untested |
 | Release entry lookup | `executor.rs:289-294` (`get_release_entries`, `entry_map`) | None | Test | PR #28 addition, invariant-bearing |
 | Per-machine `previous_generations` | `executor.rs:323-350` | None | Test | Heterogeneous revert — phase 3 scenario F2 |
-| Policy reference resolution | `executor.rs:64-115` (via `trigger_due_schedules`) | None | **Delete or Test — depends on Cat 1** | Tied to policy subsystem decision |
-| Schedule processing | `executor.rs:53-249` (`trigger_due_schedules`) | None | **Delete or Test — depends on Cat 1** | Tied to schedule subsystem decision |
+| Policy reference resolution | `executor.rs:64-115` (via `trigger_due_schedules`) | None | **Delete** (archive/policy-subsystem) | Subsystem cut |
+| Schedule processing | `executor.rs:53-249` (`trigger_due_schedules`) | None | **Delete** (archive/schedule-subsystem) | Subsystem cut |
 | Rollout completion | `executor.rs:264-284` | Indirect | Test | Terminal state transition |
 
 **Note on updated metrics:** `ROLLOUTS_ACTIVE` (`executor.rs:622`) and `ROLLOUTS_TOTAL` (completed/paused/failed at `:281`, `:573`, `:596`) are emitted from the executor — tested under Category 11.
@@ -170,12 +184,12 @@ Rollout executor at `control-plane/src/rollout/executor.rs` + `batch.rs` + `poli
 | `BatchStatus` | `rollout.rs` | 6 | none | Keep | |
 | `MachineHealthStatus` | `rollout.rs` | 5 | **`TimedOut`, `RolledBack` — 0 external refs** | **Trim** | Two dead variants — remove |
 | `RolloutTarget` | `rollout.rs` | 12 | none | Keep | |
-| `RolloutPolicy` | `rollout.rs` | 10 | — | **Delete — depends on Cat 1** | Tied to policy subsystem |
-| `PolicyRequest` | `rollout.rs` | 8 | — | **Delete — depends on Cat 1** | Same |
+| `RolloutPolicy` | `rollout.rs` | 10 | — | **Delete** (archive/policy-subsystem) | Subsystem cut |
+| `PolicyRequest` | `rollout.rs` | 8 | — | **Delete** (archive/policy-subsystem) | Subsystem cut |
 | `RolloutEvent` | `rollout.rs` | 7 | — | Keep | Timeline |
-| `ScheduleStatus` | `rollout.rs` | 3 | none | **Delete — depends on Cat 1** | |
-| `ScheduledRollout` | `rollout.rs` | 4 | — | **Delete — depends on Cat 1** | |
-| `CreateScheduleRequest` | `rollout.rs` | 4 | — | **Delete — depends on Cat 1** | |
+| `ScheduleStatus` | `rollout.rs` | 3 | none | **Delete** (archive/schedule-subsystem) | Subsystem cut |
+| `ScheduledRollout` | `rollout.rs` | 4 | — | **Delete** (archive/schedule-subsystem) | Subsystem cut |
+| `CreateScheduleRequest` | `rollout.rs` | 4 | — | **Delete** (archive/schedule-subsystem) | Subsystem cut |
 | `CreateRolloutRequest` | `rollout.rs` | 6 | — | Keep | |
 | `CreateRolloutResponse` | `rollout.rs` | 3 | — | Keep | |
 | `BatchSummary` | `rollout.rs` | 3 | — | Keep | |
@@ -286,7 +300,7 @@ Only two `tokio::spawn` sites in the workspace — both in `control-plane/src/ma
 | Machines + lifecycle | `state.rs:79-86` → `db.list_machines()` | in-memory `FleetState::machines` | None | Test | |
 | Machine tags | `state.rs:88-93` → `db.get_machine_tags()` | per-machine tag sync | None | Test | |
 | Desired generations | `state.rs:96-104` → `db.list_desired_generations()` | `machine.desired_generation` | None | Test | |
-| Active/paused rollouts | `state.rs:105-106` → `db.list_rollouts_by_status(...)` | **NOTE**: loaded but info-logged only, NOT stored in FleetState | None | Test or **Fix** | Executor re-queries these from DB — verify this is intentional, not a bug |
+| Active/paused rollouts | `state.rs:105-106` → `db.list_rollouts_by_status(...)` | **NOTE**: loaded but info-logged only, NOT stored in FleetState | None | **Investigate** | User decision: Phase 2 reads executor code path, records final verdict in a new ADR note (diagnostic-only vs forgotten TODO) |
 | `FleetState::new` + `get_or_create` | `state.rs:118-156` | N/A | `test_fleet_state_new_is_empty`, `test_get_or_create_inserts_new`, `test_get_or_create_returns_existing` | Keep | Adequate |
 
 **Concern flagged:** the rollouts listing at `state.rs:105-106` is loaded and logged but not stored. If this was meant to warm FleetState caches, it's a bug. If it's just diagnostic logging, add a `// diagnostic only` comment in Phase 2. Investigate before writing the test.
@@ -326,13 +340,13 @@ Only two `tokio::spawn` sites in the workspace — both in `control-plane/src/ma
 | Post machine report | `routes::post_report:119` | Yes (`"report"`) | Test | Assert audit row present after POST |
 | Register machine | `routes::register_machine:271` | Yes (`"register"`) | Test | |
 | Update lifecycle | `routes::update_lifecycle:348` | Yes (`"update_lifecycle"`) | Test | |
-| Set tags | `routes::set_tags:397` | Yes (`"set_tags"`) | **Trim** | Tied to Cat 2 trim of `POST /machines/{id}/tags` |
+| Set tags | `routes::set_tags:397` | Yes (`"set_tags"`) | **Trim** | Handler removed with `POST /machines/{id}/tags` |
 | Remove tag | `routes::remove_tag:432` | Yes (`"remove_tag"`) | Test | |
 | Create rollout | `rollout::routes::create_rollout:243` | Yes (`"rollout.created"`) | Test | |
 | Resume rollout | `rollout::routes::resume_rollout:424` | Yes (`"rollout.resumed"`) | Test | |
 | Cancel rollout | `rollout::routes::cancel_rollout:482` | Yes (`"rollout.cancelled"`) | Test | |
-| Create/Update/Delete policy | `rollout::policy::*` | Yes | **Delete or Test — depends on Cat 1** | |
-| Create/Cancel schedule | `rollout::schedule::*` | Yes | **Delete or Test — depends on Cat 1** | |
+| Create/Update/Delete policy | `rollout::policy::*` | Yes | **Delete** (archive/policy-subsystem) | Subsystem cut |
+| Create/Cancel schedule | `rollout::schedule::*` | Yes | **Delete** (archive/schedule-subsystem) | Subsystem cut |
 | Create release | `release::routes::create_release:59` | Yes (`"create_release"`) | Test | |
 | Delete release | `release::routes::delete_release:234` | Yes (`"delete_release"`) | Test | |
 | Bootstrap API key | `routes::bootstrap_api_key:442` | **No** (bootstrap is unauthenticated first-time setup) | **Fix** | Add audit write with actor=`"system:bootstrap"` so the first-key creation is traceable; then test |
@@ -372,11 +386,14 @@ Server side: `control-plane/src/tls.rs`. Client side: `agent/src/tls.rs`. End-to
 | Bootstrap idempotency (409 on re-run) | `routes::bootstrap_api_key` | None | **Fix** + Test | Test the `has_api_keys() == false` guard |
 | Role × endpoint matrix | multiple handlers | None | **Fix** + Test | Add `actor.has_role(&["deploy"])` calls to deploy-level routes (create_rollout, create_release, etc.); readonly must not be allowed to POST |
 
-**Critical finding:** RBAC is half-built. The enum exists, the DB constraint exists, but no route enforces roles. Phase 2 must either:
-- **Option A:** Wire `actor.has_role(...)` into every mutating handler (verdict: **Fix** + Test)
-- **Option B:** Collapse roles into a single "admin" level and drop the `role` column entirely (verdict: **Trim**)
+**Critical finding:** RBAC is half-built. The enum exists, the DB constraint exists, but no route enforces roles.
 
-**User decision needed at review time** — this is a structural call, not a test gap.
+**User decision:** Wire RBAC (Option A — **Fix + Test**). Phase 2 adds `actor.has_role(&[...])` calls to every admin route with role tiers:
+- **readonly** — GET endpoints only (list/show/diff)
+- **deploy** — readonly + POST/PUT/DELETE on rollouts, releases, machines (registration, lifecycle)
+- **admin** — full access including key bootstrap (though bootstrap remains unauthenticated)
+
+Phase 4 adds the role × endpoint matrix test: for each role, for each endpoint, assert 200 or 403 as expected.
 
 ## Category 15: DB migrations
 
@@ -391,9 +408,9 @@ Server side: `control-plane/src/tls.rs`. Client side: `agent/src/tls.rs`. End-to
 | V4 machine_tags composite PK + FK | `V4__machine_tags.sql` | None | Test | FK enforcement (see below) |
 | V5 rollouts + rollout_batches | `V5__rollouts.sql` | Later dropped in V10 | Keep — Phase 2 may collapse into V10 | |
 | V6 health_reports | `V6__health_reports.sql` | None | Test | |
-| V7 rollout_policies | `V7__rollout_policies.sql` | None | **Delete or Test — depends on Cat 1** | |
+| V7 rollout_policies | `V7__rollout_policies.sql` | None | **Delete** (archive/policy-subsystem) | Subsystem cut — Phase 2 may collapse into V10 rewrite |
 | V8 rollout_events | `V8__rollout_events.sql` | None | Test | |
-| V9 scheduled_rollouts | `V9__scheduled_rollouts.sql` | None | **Delete or Test — depends on Cat 1** | |
+| V9 scheduled_rollouts | `V9__scheduled_rollouts.sql` | None | **Delete** (archive/schedule-subsystem) | Subsystem cut — Phase 2 may collapse into V10 rewrite |
 | V10 releases (breaking rewrite) | `V10__releases.sql` | None | Test | NOT NULL DEFAULT bug happened here — schema shape test would catch regression |
 | Foreign-key enforcement | `db.rs` pragma | **`PRAGMA foreign_keys = ON` not found** — **Fix** | **Fix** | Without this pragma, SQLite does not enforce FK constraints |
 | Schema shape validation | No `sqlite_master` query | None | Test | Add post-migrate test: query expected tables exist with expected columns |
@@ -494,14 +511,15 @@ Evidence:
 
 **Total items inventoried:** ~180 rows across 19 categories (CLI: 22, CP routes: 27, agent behaviors: 14, executor: 16, shared types: 29, deps: 4 delete candidates, tautological tests: 22, dead_code escapes: 3, background tasks: 2, hydration: 6, metrics: 13, audit: 16, TLS: 4, auth: 8, migrations: 14, config: 19, health: 9, nix: 5, comms: 3).
 
-**Proposed verdict distribution** (approximate, via grep):
+**Final verdict distribution** (post user overrides, approximate):
 
 - **Keep:** ~51 (already tested or trivially correct)
 - **Test:** ~126 (real integration test needed)
-- **Delete:** ~24 (remove with archive branch)
-- **Trim:** ~4 (prune dead variant / redundant surface)
+- **Delete:** ~37 (remove with archive branch — includes the three cut subsystems)
+- **Trim:** ~5 (`MachineHealthStatus::TimedOut`/`::RolledBack`, `set_tags` surface, tautological tests)
 - **Fix:** ~10 (trivial bug + test in Phase 2)
-- **Delete or Test — user decides:** ~15 (policy subsystem, schedule subsystem, host provision)
+- **Investigate:** 1 (Category 10: hydration rollout load — Phase 2 decides)
+- **Delete or Test — user decides:** **0** (all resolved)
 
 **Categories where the plan's pre-filled guess turned out wrong:**
 
@@ -517,20 +535,31 @@ Evidence:
 4. **Category 15 (migrations):** `PRAGMA foreign_keys = ON` is missing — silently unenforced FK constraints throughout.
 5. **Category 16 (config):** `save_api_key` enforces mode `0o600` but no test asserts it.
 
-**Deletion candidates (archive branches to create in Phase 2):**
+**Deletion candidates (archive branches to create in Phase 2) — all confirmed:**
 
-- `archive/policy-subsystem` — if policies are cut (Cat 1, 2, 4, 5, 12, 15)
-- `archive/schedule-subsystem` — if schedules are cut (Cat 1, 2, 4, 5, 12, 15)
-- `archive/host-provision` — if `nixfleet host provision` is cut (Cat 1)
+- `archive/policy-subsystem` — **confirmed cut** (Cat 1, 2, 4, 5, 12, 15)
+- `archive/schedule-subsystem` — **confirmed cut** (Cat 1, 2, 4, 5, 12, 15)
+- `archive/host-provision` — **confirmed cut** (Cat 1)
+- `archive/tag-set-endpoint` — `POST /machines/{id}/tags` manual override (Cat 2)
 - `archive/tautological-tests` — ~18 deleted tests preserved for reference
 - `archive/unused-deps` — `async-trait`, `tempfile`×2, `shared::serde_json`
 - `archive/dead-machine-health-variants` — `MachineHealthStatus::TimedOut`, `::RolledBack`
 
 **Estimated scope for Phase 2 (Delete + Trim + Fix):**
 
-- ~20–40 files deleted or modified (varies wildly by user decision on policy/schedule/host provision)
-- Migration files: V7/V9 deleted or rewritten if policies/schedules cut; PRAGMA fix added to `db.rs`
-- Archive branches: 4–6
+- **Delete subsystems:** policy (CLI + routes + executor + types + V7 migration), schedule (CLI + routes + executor + types + V9 migration), host provision (CLI module), `POST /machines/{id}/tags` handler
+- **Fix items** (bundled per user decision):
+  - `PRAGMA foreign_keys = ON` in `db.rs::migrate`
+  - Bootstrap endpoint audit write (actor=`system:bootstrap`)
+  - `save_api_key` 0o600 test
+  - `test_migrate_is_idempotent` — actually call migrate twice
+  - Agent mTLS config validation (both cert + key set or neither)
+- **Wire RBAC:** `actor.has_role(&[...])` on every admin route (readonly/deploy/admin tiers)
+- **Investigate:** `state.rs:105-106` rollouts load — Phase 2 records decision in ADR note
+- **Migration rewrite:** spec Section 3 allows in-place rewriting; Phase 2 may collapse V5-V9 into a clean V10 base
+- **Archive branches created:** 7
+- **Files deleted (est.):** ~15–25 (policy/schedule modules, handler blocks, migration files)
+- **Files modified (est.):** ~20–30 (imports, route wiring, docs)
 
 **Estimated scope for Phase 3 (Scenario tests):**
 
@@ -549,12 +578,13 @@ Evidence:
 
 _Pre-assigned; not yet pushed. Phase 2 creates them at the last main commit before deletion._
 
-- `archive/policy-subsystem` — if user decides to delete
-- `archive/schedule-subsystem` — if user decides to delete
-- `archive/host-provision` — if user decides to delete
+- `archive/policy-subsystem` — **confirmed**
+- `archive/schedule-subsystem` — **confirmed**
+- `archive/host-provision` — **confirmed**
+- `archive/tag-set-endpoint` — **confirmed** (only the manual POST handler)
 - `archive/tautological-tests` — ~18 deleted test functions
-- `archive/unused-deps` — dep removals
-- `archive/dead-machine-health-variants` — 2 dead enum variants
+- `archive/unused-deps` — `async-trait`, `tempfile`×2, `shared::serde_json`
+- `archive/dead-machine-health-variants` — `MachineHealthStatus::TimedOut`, `::RolledBack`
 
 **All archive branches point to the same SHA** (last main commit before Phase 2 cut). Resurrection: `git checkout archive/<name> -- path/to/files`.
 
