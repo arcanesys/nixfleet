@@ -359,7 +359,24 @@ Server side: `control-plane/src/tls.rs`. Client side: `agent/src/tls.rs`. End-to
 
 ## Category 14: Auth middleware
 
-_To be filled in Task 16._
+`control-plane/src/auth.rs` — `require_api_key` middleware + `Actor` enum + `hash_key`. **Critical gap found**: roles are defined in the DB (`readonly` / `deploy` / `admin`) with a `CHECK` constraint, but **`Actor::has_role` is never called from any route handler** — RBAC is declared but not enforced.
+
+| Item | Code | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|
+| `hash_key` (SHA256) | `auth.rs:11-15` | `test_hash_key_deterministic`, `test_hash_key_different_inputs` | Delete (tautological) + Keep logic | Stdlib SHA256 determinism doesn't need a test |
+| `Actor` enum + `identifier()` | `auth.rs:19-40` | `test_actor_identifier_apikey`, `test_actor_identifier_machine` | Delete (tautological) | Tests `Display` impl |
+| `Actor::has_role` | `auth.rs:34-39` | None | **Fix** + Test | **Never called** — must be wired into admin routes before Phase 3 scenarios |
+| `require_api_key` middleware | `auth.rs:44-75` | `test_unauthenticated_request_rejected` (happy + one negative) | Test | Direct test for: missing header, malformed Bearer, unknown token, insufficient role |
+| `Actor::Machine` bypass | `auth.rs` | None | Test | Machine actor (from mTLS) must not reach admin routes |
+| Bootstrap role = admin | `routes::bootstrap_api_key:442` | None | **Fix** + Test | **Assert**: first key's role is `"admin"`, not configurable |
+| Bootstrap idempotency (409 on re-run) | `routes::bootstrap_api_key` | None | **Fix** + Test | Test the `has_api_keys() == false` guard |
+| Role × endpoint matrix | multiple handlers | None | **Fix** + Test | Add `actor.has_role(&["deploy"])` calls to deploy-level routes (create_rollout, create_release, etc.); readonly must not be allowed to POST |
+
+**Critical finding:** RBAC is half-built. The enum exists, the DB constraint exists, but no route enforces roles. Phase 2 must either:
+- **Option A:** Wire `actor.has_role(...)` into every mutating handler (verdict: **Fix** + Test)
+- **Option B:** Collapse roles into a single "admin" level and drop the `role` column entirely (verdict: **Trim**)
+
+**User decision needed at review time** — this is a structural call, not a test gap.
 
 ## Category 15: DB migrations
 
