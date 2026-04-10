@@ -303,7 +303,6 @@ pub async fn deploy_rollout(
     on_failure: &str,
     health_timeout: u64,
     wait: bool,
-    policy: Option<&str>,
     cache_url: Option<&str>,
 ) -> Result<()> {
     let parsed_strategy = parse_strategy(strategy)?;
@@ -319,7 +318,7 @@ pub async fn deploy_rollout(
         on_failure: parsed_on_failure,
         health_timeout: Some(health_timeout),
         target,
-        policy: policy.map(|s| s.to_string()),
+        policy: None,
     };
 
     let url = format!("{}/api/v1/rollouts", cp_url);
@@ -385,7 +384,6 @@ pub async fn deploy_scheduled(
     failure_threshold: &str,
     on_failure: &str,
     health_timeout: u64,
-    policy: Option<&str>,
     cache_url: Option<&str>,
     schedule_at_str: &str,
 ) -> Result<()> {
@@ -401,7 +399,7 @@ pub async fn deploy_scheduled(
 
     let request = CreateScheduleRequest {
         scheduled_at,
-        policy: policy.map(|s| s.to_string()),
+        policy: None,
         release_id: release_id.to_string(),
         cache_url: cache_url.map(|s| s.to_string()),
         strategy: parsed_strategy,

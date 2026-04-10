@@ -65,16 +65,6 @@ pub fn build_app(
             post(rollout::routes::cancel_rollout),
         )
         .route(
-            "/api/v1/policies",
-            post(rollout::policy::create_policy).get(rollout::policy::list_policies),
-        )
-        .route(
-            "/api/v1/policies/{name}",
-            get(rollout::policy::get_policy)
-                .put(rollout::policy::update_policy)
-                .delete(rollout::policy::delete_policy),
-        )
-        .route(
             "/api/v1/schedules",
             post(rollout::schedule::create_schedule).get(rollout::schedule::list_schedules),
         )

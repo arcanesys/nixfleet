@@ -60,80 +60,26 @@ async fn trigger_due_schedules(
     for schedule in due {
         tracing::info!(schedule_id = %schedule.id, "Triggering scheduled rollout");
 
-        // Resolve strategy: explicit on schedule > policy > default
-        let (strategy, batch_sizes, failure_threshold, on_failure, health_timeout) = if let Some(
-            ref policy_id,
-        ) =
-            schedule.policy_id
-        {
-            // Load policy defaults — iterate all policies to find by ID
-            let policies = db.list_policies()?;
-            let policy = policies.iter().find(|p| p.id == *policy_id);
-            if let Some(p) = policy {
-                (
-                    schedule
-                        .strategy
-                        .clone()
-                        .unwrap_or_else(|| p.strategy.clone()),
-                    schedule
-                        .batch_sizes
-                        .clone()
-                        .unwrap_or_else(|| p.batch_sizes.clone()),
-                    schedule
-                        .failure_threshold
-                        .clone()
-                        .unwrap_or_else(|| p.failure_threshold.clone()),
-                    schedule
-                        .on_failure
-                        .clone()
-                        .unwrap_or_else(|| p.on_failure.clone()),
-                    schedule
-                        .health_timeout_secs
-                        .unwrap_or(p.health_timeout_secs),
-                )
-            } else {
-                tracing::warn!(schedule_id = %schedule.id, policy_id, "Policy not found, using schedule values");
-                (
-                    schedule
-                        .strategy
-                        .clone()
-                        .unwrap_or_else(|| "all_at_once".to_string()),
-                    schedule
-                        .batch_sizes
-                        .clone()
-                        .unwrap_or_else(|| "[\"100%\"]".to_string()),
-                    schedule
-                        .failure_threshold
-                        .clone()
-                        .unwrap_or_else(|| "1".to_string()),
-                    schedule
-                        .on_failure
-                        .clone()
-                        .unwrap_or_else(|| "pause".to_string()),
-                    schedule.health_timeout_secs.unwrap_or(300),
-                )
-            }
-        } else {
-            (
-                schedule
-                    .strategy
-                    .clone()
-                    .unwrap_or_else(|| "all_at_once".to_string()),
-                schedule
-                    .batch_sizes
-                    .clone()
-                    .unwrap_or_else(|| "[\"100%\"]".to_string()),
-                schedule
-                    .failure_threshold
-                    .clone()
-                    .unwrap_or_else(|| "1".to_string()),
-                schedule
-                    .on_failure
-                    .clone()
-                    .unwrap_or_else(|| "pause".to_string()),
-                schedule.health_timeout_secs.unwrap_or(300),
-            )
-        };
+        // Resolve strategy: explicit on schedule > default
+        let (strategy, batch_sizes, failure_threshold, on_failure, health_timeout) = (
+            schedule
+                .strategy
+                .clone()
+                .unwrap_or_else(|| "all_at_once".to_string()),
+            schedule
+                .batch_sizes
+                .clone()
+                .unwrap_or_else(|| "[\"100%\"]".to_string()),
+            schedule
+                .failure_threshold
+                .clone()
+                .unwrap_or_else(|| "1".to_string()),
+            schedule
+                .on_failure
+                .clone()
+                .unwrap_or_else(|| "pause".to_string()),
+            schedule.health_timeout_secs.unwrap_or(300),
+        );
 
         // Resolve target machines
         let machine_ids = if let Some(ref tags_json) = schedule.target_tags {
@@ -200,11 +146,6 @@ async fn trigger_due_schedules(
             target_hosts,
             &format!("schedule:{}", schedule.id),
         )?;
-
-        // Set policy_id if applicable
-        if let Some(ref policy_id) = schedule.policy_id {
-            let _ = db.set_rollout_policy_id(&rollout_id, policy_id);
-        }
 
         // Create batches
         for (i, batch_machines) in batches.iter().enumerate() {

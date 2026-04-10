@@ -158,47 +158,6 @@ pub enum RolloutTarget {
 }
 
 // ---------------------------------------------------------------------------
-// Policy types
-// ---------------------------------------------------------------------------
-
-/// A named rollout policy (reusable preset).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RolloutPolicy {
-    pub id: String,
-    pub name: String,
-    pub strategy: RolloutStrategy,
-    pub batch_sizes: Vec<String>,
-    pub failure_threshold: String,
-    pub on_failure: OnFailure,
-    pub health_timeout_secs: u64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-/// Request body to create or update a rollout policy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicyRequest {
-    pub name: String,
-    pub strategy: RolloutStrategy,
-    #[serde(default = "default_batch_sizes")]
-    pub batch_sizes: Vec<String>,
-    #[serde(default = "default_failure_threshold")]
-    pub failure_threshold: String,
-    #[serde(default)]
-    pub on_failure: OnFailure,
-    #[serde(default = "default_health_timeout")]
-    pub health_timeout_secs: u64,
-}
-
-fn default_batch_sizes() -> Vec<String> {
-    vec!["100%".to_string()]
-}
-
-fn default_health_timeout() -> u64 {
-    300
-}
-
-// ---------------------------------------------------------------------------
 // Rollout event types
 // ---------------------------------------------------------------------------
 

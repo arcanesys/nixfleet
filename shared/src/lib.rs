@@ -54,13 +54,6 @@ pub mod api {
     /// Path parameters: `{id}` = machine ID, `{tag}` = tag name.
     pub const MACHINE_TAG: &str = "/api/v1/machines/{id}/tags/{tag}";
 
-    /// GET: List all policies. POST: Create a new policy.
-    pub const POLICIES: &str = "/api/v1/policies";
-
-    /// GET: Get policy by name. PUT: Update policy. DELETE: Delete policy.
-    /// Path parameter: `{name}` = policy name.
-    pub const POLICY: &str = "/api/v1/policies/{name}";
-
     /// GET: List scheduled rollouts. POST: Create a scheduled rollout.
     pub const SCHEDULES: &str = "/api/v1/schedules";
 

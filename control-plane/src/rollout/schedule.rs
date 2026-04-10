@@ -30,25 +30,11 @@ pub async fn create_schedule(
         ));
     }
 
-    // Validate policy exists if specified
-    let policy_id = if let Some(ref policy_name) = req.policy {
-        let policy = db
-            .get_policy_by_name(policy_name)
-            .map_err(internal)?
-            .ok_or((
-                StatusCode::BAD_REQUEST,
-                format!("policy not found: {policy_name}"),
-            ))?;
-        Some(policy.id)
-    } else {
-        None
-    };
-
-    // Must have either a policy or explicit strategy
-    if policy_id.is_none() && req.strategy.is_none() {
+    // Strategy is required
+    if req.strategy.is_none() {
         return Err((
             StatusCode::BAD_REQUEST,
-            "either --policy or --strategy is required".to_string(),
+            "--strategy is required".to_string(),
         ));
     }
 
@@ -72,7 +58,7 @@ pub async fn create_schedule(
     db.create_scheduled_rollout(
         &id,
         &scheduled_at,
-        policy_id.as_deref(),
+        None,
         &req.release_id,
         req.cache_url.as_deref(),
         req.strategy.as_ref().map(|s| s.to_string()).as_deref(),
