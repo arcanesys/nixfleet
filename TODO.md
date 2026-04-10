@@ -4,14 +4,16 @@ Future work discovered during implementation. Grouped by target phase.
 
 ## Phase 3 — scenario tests
 
-The next planned cycle of work. See:
-- Spec: `docs/superpowers/specs/2026-04-10-core-hardening-cycle-design.md` Section 4
-- Plan: to be written at the start of the Phase 3 session
+**Status:** in progress (branch `hardening/core-scenarios`, plan `docs/superpowers/plans/2026-04-10-core-hardening-phase-3-scenarios.md`).
+
+### Phase 3 bugs surfaced
+
+_Track every bug a scenario exposes here. Format: `- [<status>] <one-liner> — <scenario id> — <commit or issue link>`._
 
 Out of Phase 2's original contingent scenarios (C1–C3):
 - **C1 (policy create + rollout)** — dropped; policy subsystem was deleted in Phase 2
 - **C2 (schedule creation + executor pickup)** — dropped; schedule subsystem was deleted in Phase 2
-- **C3 (agent health check subsystem)** — still pending the Phase 1 audit verdict; include if the subsystem survives
+- **C3 (agent health check subsystem)** — kept; folded into Task 22b (`vm-fleet-revert`) which requires post-apply `run_all` to trigger the revert path
 
 ## Phase 4 — checklist coverage
 
