@@ -40,7 +40,34 @@ The release-abstraction cycle (PR #28) revealed that nixfleet's Rust core has ha
 
 ## Category 1: CLI subcommands
 
-_To be filled in Task 3._
+**Enumeration confirmed via `cli/src/main.rs` + per-subcommand files.** 27 subcommands total, **0% test coverage** (no integration tests, no unit tests). All handlers exist, parse args correctly, and make HTTP calls — but no behavior test would catch a broken call.
+
+| Subcommand | File | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|
+| `init` | `cli/src/main.rs:201` → `config::write_config_file` | None | Test | Core UX, must work on first run |
+| `bootstrap` | `cli/src/main.rs:191` → inline `bootstrap()` | None | Test | Security-critical, creates first admin key |
+| `status` | `cli/src/status.rs` | None | Test | Read path, low effort |
+| `machines list` | `cli/src/machines.rs` | None | Test | Read path |
+| `machines register` | `cli/src/machines.rs` | None | Test | Write path |
+| `machines tag` | `cli/src/machines.rs` | None | **Trim** | Redundant with agent auto-sync (tags flow from NixOS config → health report) |
+| `machines untag` | `cli/src/machines.rs` | None | Test | Only path to remove stale tags |
+| `release create` | `cli/src/release.rs` | Indirect via PR #28 validation | Keep (indirect) → Test | End-to-end validated live; still needs unit test |
+| `release list` | `cli/src/release.rs` | None | Test | Fill gap |
+| `release show` | `cli/src/release.rs` | None | Test | Fill gap |
+| `release diff` | `cli/src/release.rs` | None | Test | Core UX |
+| `rollout list` | `cli/src/rollout.rs` | None | Test | Fill gap |
+| `rollout status` | `cli/src/rollout.rs` | None | Test | Events timeline |
+| `rollout resume` | `cli/src/rollout.rs` | `vm-fleet.nix` covers resume path | Keep | Integration tested |
+| `rollout cancel` | `cli/src/rollout.rs` | None | Test | Untested critical path |
+| `policy create` / `list` / `get` / `update` / `delete` | `cli/src/policy.rs` | None | **Delete or Test — user decides** | Ergonomic preset layer; real operator story unclear |
+| `schedule list` / `cancel` | `cli/src/schedule.rs` | None | **Delete or Test — user decides** | Deferred rollouts without a real operator story |
+| `deploy` (CP path) | `cli/src/deploy.rs` | `vm-fleet.nix` happy path | Keep | Integration tested |
+| `deploy --ssh` | `cli/src/deploy.rs` | None | Test | Bypass path, must work without CP |
+| `rollback` (SSH-only) | `cli/src/main.rs:884` inline | None | Test | Core rollback path; explicitly documents post-PR #28 SSH-only constraint |
+| `host add` | `cli/src/host.rs` | None | Test | Registers machine in CP fleet |
+| `host provision` | `cli/src/host.rs` | None | **Delete or Test — user decides** | Thin wrapper around nixos-anywhere; value-add is a question |
+
+**Key observation:** CLI is the operator's primary interface and has 0% coverage. Phase 3 scenarios + Phase 4 per-subcommand checklist together must get this to full coverage.
 
 ## Category 2: Control-plane HTTP endpoints
 
