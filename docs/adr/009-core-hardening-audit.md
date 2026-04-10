@@ -107,7 +107,26 @@ The release-abstraction cycle (PR #28) revealed that nixfleet's Rust core has ha
 
 ## Category 3: Agent behaviors
 
-_To be filled in Task 5._
+Agent code at `agent/src/main.rs` + supporting modules. Every behavior is **"validated live" via `vm-fleet.nix`** but **none has a direct unit or harness test**. The state-machine bug (fixed in PR #28) proves this layer is under-tested.
+
+| Behavior | Code location | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|
+| Poll loop cadence | `agent/src/main.rs:136-187` (`run_deploy_cycle` + tokio select!) | `vm-fleet.nix` integration only | Test | Main-loop bug hid here for months |
+| Deploy: Check phase | `agent/src/main.rs:244-274` | Integration only | Test | Cycle completeness |
+| Deploy: Fetch phase | `agent/src/main.rs:282-296` → `nix::fetch_closure` | Integration only | Test | Failure paths critical |
+| Deploy: Apply phase | `agent/src/main.rs:306-314` → `nix::apply_generation` | Integration only | Test | Sandboxing bugs hid here |
+| Deploy: Verify phase (post-apply health) | `agent/src/main.rs:316-336` | `vm-fleet.nix` gate on db-01 | Keep (integration-only) → Test | Gate is tested; health check hookup needs direct test |
+| Deploy: Report phase | `agent/src/main.rs:374-390` → `comms::post_report` | Integration only | Test | Generation gate depends on this |
+| Health reporting (periodic) | `agent/src/main.rs:210-223` (60s interval) | Integration only | Test | Tag sync ride-along |
+| Automatic rollback on apply failure | `agent/src/main.rs:308-312` | Integration: `vm-fleet.nix` apply-fail scenario | Test | Direct test for error path |
+| Automatic rollback on health gate failure | `agent/src/main.rs:318-335` | Integration: `vm-fleet.nix` db-01 unhealthy | Keep (integration-only) → Test | Direct test desirable |
+| Retry on poll failure | `agent/src/main.rs:248-258` + `:179-182` (`retry_interval` rebuild) | Integration only | Test | Bootstrap race handling |
+| Tag auto-sync via health report | `agent/src/main.rs:210-223` → `comms::post_report` | None | Test | Self-managing invariant; bug would be silent |
+| Metrics endpoint (port binding, emission) | `agent/src/metrics.rs:7-12`, bound at `agent/src/main.rs:126-128` | None | Test | Overlaps Category 11 |
+| `nix path-info` verification (no cache) | `agent/src/nix.rs:19-45` (fallback branch) | Integration only | Test | Cache-less verification path |
+| Adaptive polling via `poll_hint` | `agent/src/main.rs:144-154` + `:169-184` | None | Test | `poll_hint` propagation from CP |
+
+**Verdict summary:** all behaviors are currently `Test` — every single row needs a direct test that would fail if the behavior broke. The only reason any of these would be `Keep` is if a Phase 3 scenario already directly exercises them (which none do today).
 
 ## Category 4: Executor features
 
