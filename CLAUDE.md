@@ -23,8 +23,9 @@ examples/
 ├── standalone-host/   # Example: single machine in its own repo
 └── batch-hosts/       # Example: 50 edge devices from a template
 docs/
-├── adr/               # Architecture Decision Records (8 ADRs)
+├── adr/               # Architecture Decision Records
 └── mdbook/            # Technical reference + user guide (mdbook)
+TODO.md                # Discovered work, grouped by target phase
 ```
 
 ## Commands
