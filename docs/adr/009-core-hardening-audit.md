@@ -278,7 +278,18 @@ Only two `tokio::spawn` sites in the workspace — both in `control-plane/src/ma
 
 ## Category 10: State hydration
 
-_To be filled in Task 12._
+`control-plane/src/state.rs::hydrate_from_db` is called at startup (`main.rs:55`). Hydrates 4 categories of in-memory state. Unit tests exist for the `FleetState` struct operations but **none for `hydrate_from_db` itself**.
+
+| Item | Code | What's hydrated | Current test | Proposed verdict | Rationale |
+|---|---|---|---|---|---|
+| `hydrate_from_db` (top-level) | `control-plane/src/state.rs:79-106` | async entrypoint | None | Test | F6 scenario in spec (CP restart mid-rollout) depends on this |
+| Machines + lifecycle | `state.rs:79-86` → `db.list_machines()` | in-memory `FleetState::machines` | None | Test | |
+| Machine tags | `state.rs:88-93` → `db.get_machine_tags()` | per-machine tag sync | None | Test | |
+| Desired generations | `state.rs:96-104` → `db.list_desired_generations()` | `machine.desired_generation` | None | Test | |
+| Active/paused rollouts | `state.rs:105-106` → `db.list_rollouts_by_status(...)` | **NOTE**: loaded but info-logged only, NOT stored in FleetState | None | Test or **Fix** | Executor re-queries these from DB — verify this is intentional, not a bug |
+| `FleetState::new` + `get_or_create` | `state.rs:118-156` | N/A | `test_fleet_state_new_is_empty`, `test_get_or_create_inserts_new`, `test_get_or_create_returns_existing` | Keep | Adequate |
+
+**Concern flagged:** the rollouts listing at `state.rs:105-106` is loaded and logged but not stored. If this was meant to warm FleetState caches, it's a bug. If it's just diagnostic logging, add a `// diagnostic only` comment in Phase 2. Investigate before writing the test.
 
 ## Category 11: Prometheus metrics emission
 
