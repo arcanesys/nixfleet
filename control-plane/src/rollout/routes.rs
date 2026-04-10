@@ -291,7 +291,7 @@ pub async fn get_rollout(
     let events = db.get_rollout_events(&rollout.id).unwrap_or_default();
 
     Ok(Json(row_to_detail_with_events(
-        &rollout, &batches, &events, None,
+        &rollout, &batches, &events,
     )))
 }
 
@@ -430,15 +430,14 @@ pub async fn cancel_rollout(
 
 /// Convert database rows into a RolloutDetail response type.
 fn row_to_detail(rollout: &RolloutRow, batch_rows: &[RolloutBatchRow]) -> RolloutDetail {
-    row_to_detail_with_events(rollout, batch_rows, &[], None)
+    row_to_detail_with_events(rollout, batch_rows, &[])
 }
 
-/// Convert database rows into a RolloutDetail response type, with events and policy_id.
+/// Convert database rows into a RolloutDetail response type, with events.
 fn row_to_detail_with_events(
     rollout: &RolloutRow,
     batch_rows: &[RolloutBatchRow],
     event_rows: &[crate::db::RolloutEventRow],
-    policy_id: Option<String>,
 ) -> RolloutDetail {
     let strategy: RolloutStrategy = serde_json::from_str(&format!("\"{}\"", rollout.strategy))
         .unwrap_or(RolloutStrategy::Staged);
@@ -505,7 +504,6 @@ fn row_to_detail_with_events(
         created_at,
         updated_at,
         created_by: rollout.created_by.clone(),
-        policy_id,
         events,
     }
 }

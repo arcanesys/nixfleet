@@ -239,8 +239,6 @@ pub struct RolloutDetail {
     pub updated_at: DateTime<Utc>,
     pub created_by: String,
     #[serde(default)]
-    pub policy_id: Option<String>,
-    #[serde(default)]
     pub events: Vec<RolloutEvent>,
 }
 
@@ -470,7 +468,6 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             created_by: "admin".to_string(),
-            policy_id: None,
             events: vec![],
         };
         let json = serde_json::to_string(&detail).unwrap();
@@ -486,7 +483,6 @@ mod tests {
         assert_eq!(back.batches[0].machine_health.len(), 2);
         assert!(back.batches[0].started_at.is_some());
         assert!(back.batches[0].completed_at.is_none());
-        assert!(back.policy_id.is_none());
         assert!(back.events.is_empty());
     }
 }
