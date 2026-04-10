@@ -115,34 +115,6 @@ async fn build_host(flake: &str, host: &str) -> Result<String> {
     Ok(store_path)
 }
 
-/// Push desired generation to the control plane.
-async fn push_to_control_plane(
-    client: &reqwest::Client,
-    cp_url: &str,
-    host: &str,
-    store_path: &str,
-) -> Result<()> {
-    let url = format!("{}/api/v1/machines/{}/set-generation", cp_url, host);
-
-    let resp = client
-        .post(&url)
-        .json(&serde_json::json!({ "hash": store_path }))
-        .send()
-        .await
-        .context(format!("Failed to reach control plane for {}", host))?;
-
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {} for {}: {}",
-            resp.status(),
-            host,
-            resp.text().await.unwrap_or_default()
-        );
-    }
-
-    Ok(())
-}
-
 /// Deploy via SSH fallback: nix-copy-closure + switch-to-configuration.
 async fn deploy_via_ssh(host: &str, store_path: &str) -> Result<()> {
     tracing::info!(host, store_path, "Copying closure via SSH");
@@ -181,12 +153,12 @@ async fn deploy_via_ssh(host: &str, store_path: &str) -> Result<()> {
 }
 
 pub async fn run(
-    client: &reqwest::Client,
-    cp_url: &str,
+    _client: &reqwest::Client,
+    _cp_url: &str,
     pattern: &str,
     flake: &str,
     dry_run: bool,
-    ssh: bool,
+    _ssh: bool,
 ) -> Result<()> {
     println!("Discovering hosts from {}...", flake);
     let all_hosts = discover_hosts(flake).await?;
@@ -236,35 +208,21 @@ pub async fn run(
         return Ok(());
     }
 
-    // Deploy successful builds
+    // Deploy successful builds via SSH
     let mut success_count = 0;
     let mut fail_count = 0;
 
     for host in &targets {
         if let Some(Ok(store_path)) = results.get(host) {
-            if ssh {
-                print!("  Deploying {} via SSH... ", host);
-                match deploy_via_ssh(host, store_path).await {
-                    Ok(()) => {
-                        println!("OK");
-                        success_count += 1;
-                    }
-                    Err(e) => {
-                        println!("FAILED: {}", e);
-                        fail_count += 1;
-                    }
+            print!("  Deploying {} via SSH... ", host);
+            match deploy_via_ssh(host, store_path).await {
+                Ok(()) => {
+                    println!("OK");
+                    success_count += 1;
                 }
-            } else {
-                print!("  Pushing {} to control plane... ", host);
-                match push_to_control_plane(client, cp_url, host, store_path).await {
-                    Ok(()) => {
-                        println!("OK");
-                        success_count += 1;
-                    }
-                    Err(e) => {
-                        println!("FAILED: {}", e);
-                        fail_count += 1;
-                    }
+                Err(e) => {
+                    println!("FAILED: {}", e);
+                    fail_count += 1;
                 }
             }
         } else {
@@ -321,8 +279,7 @@ fn resolve_target(tags: &[String], hosts: &[String]) -> Result<RolloutTarget> {
 pub async fn deploy_rollout(
     client: &reqwest::Client,
     cp_url: &str,
-    _api_key: &str,
-    generation_hash: &str,
+    release_id: &str,
     tags: &[String],
     hosts: &[String],
     strategy: &str,
@@ -339,7 +296,7 @@ pub async fn deploy_rollout(
     let target = resolve_target(tags, hosts)?;
 
     let request = CreateRolloutRequest {
-        generation_hash: generation_hash.to_string(),
+        release_id: release_id.to_string(),
         cache_url: cache_url.map(|s| s.to_string()),
         strategy: parsed_strategy,
         batch_sizes,
@@ -405,7 +362,7 @@ pub async fn deploy_rollout(
 pub async fn deploy_scheduled(
     client: &reqwest::Client,
     cp_url: &str,
-    generation_hash: &str,
+    release_id: &str,
     tags: &[String],
     hosts: &[String],
     strategy: &str,
@@ -430,7 +387,7 @@ pub async fn deploy_scheduled(
     let request = CreateScheduleRequest {
         scheduled_at,
         policy: policy.map(|s| s.to_string()),
-        generation_hash: generation_hash.to_string(),
+        release_id: release_id.to_string(),
         cache_url: cache_url.map(|s| s.to_string()),
         strategy: parsed_strategy,
         batch_sizes,
