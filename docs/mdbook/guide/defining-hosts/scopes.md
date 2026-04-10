@@ -13,7 +13,7 @@ A scope is a set of NixOS and/or HM modules grouped by concern. Each scope wraps
 in {
   config = lib.mkIf hS.isImpermanent {
     # Only evaluated when isImpermanent = true
-    environment.persistence."/persist/system" = { ... };
+    environment.persistence."/persist" = { ... };
   };
 }
 ```
@@ -32,6 +32,7 @@ These ship with NixFleet and are auto-included by mkHost.
 | **nixfleet-control-plane** | `services.nixfleet-control-plane.enable` | Systemd service for the fleet control plane HTTP server. Optional firewall opening. `GET /metrics` always available; routes split: agent-facing (mTLS, no API key) vs admin (API key required). |
 | **nixfleet-cache-server** | `services.nixfleet-cache-server.enable` | Thin wrapper around upstream `services.harmonia.cache`. Serves directly from `/nix/store` — no separate storage, no push protocol. Signs on-the-fly with the host's Nix signing key. The primary binary cache for nixfleet release workflows. |
 | **nixfleet-cache** | `services.nixfleet-cache.enable` | Generic binary cache substituter configuration. Adds `cacheUrl` to `nix.settings.substituters` and `publicKey` to `trusted-public-keys`. Cache-agnostic — works with harmonia, nix-serve, Cachix, S3, or any Nix binary cache. |
+| **nixfleet-microvm-host** | `services.nixfleet-microvm-host.enable` | MicroVM host with TAP + bridge networking, DHCP via dnsmasq, NAT. MicroVMs participate in the fleet as first-class members (same agent, same orchestration). |
 | **firewall** | `!isMinimal` | Enables nftables, SSH rate limiting (5 connections/min), and drop logging. Auto-activates on all non-minimal hosts. |
 | **secrets** | `nixfleet.secrets.enable` | Computes `resolvedIdentityPaths` from hostSpec (host key primary, user key fallback on workstations). Handles impermanence persistence and boot ordering. Fleet repos wire the actual backend (agenix, sops-nix). |
 | **backup** | `nixfleet.backup.enable` | Systemd timer, pre/post hooks, health check pings, and status reporting. Fleet repos supply the actual backup command (restic, borgbackup, etc.). |

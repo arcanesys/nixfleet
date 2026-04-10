@@ -186,21 +186,24 @@ nixfleet status [FLAGS]
 
 ## rollback
 
-Rollback a host to a previous generation.
+Rollback a single machine to a previous generation via SSH. This is an SSH-only operation — it runs `switch-to-configuration switch` directly on the target, bypassing the control plane.
 
 ```sh
-nixfleet rollback --host <HOST> [FLAGS]
+nixfleet rollback --host <HOST> --ssh [FLAGS]
 ```
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--host <HOST>` | string | -- (required) | Target host name |
-| `--generation <PATH>` | string | -- | Store path to roll back to (default: previous) |
-| `--ssh` | bool | `false` | SSH fallback mode |
+| `--ssh` | bool | `false` | **Required.** SSH mode |
+| `--generation <PATH>` | string | -- | Store path to roll back to (default: previous generation from `system-1-link`) |
 
-Without `--generation` in SSH mode, queries the target for `system-1-link`.
+Running without `--ssh` exits with an error explaining the alternatives (see below).
 
-For rollout-level rollback (reverting a batch across multiple machines), use `nixfleet rollout cancel` combined with `--on-failure revert` on the rollout. The control plane stores `previous_generations` per batch (captured at batch start) and reverts each machine to its own previous store path.
+**For control-plane-driven rollback**, there is no direct endpoint — `POST /machines/{id}/set-generation` was removed with the release abstraction. Use one of:
+
+1. **Rollout-level revert** — Create the originating rollout with `--on-failure revert`. The CP reverts completed batches using each batch's `previous_generations` (captured at batch start), restoring every machine to its own prior store path.
+2. **Deploy an older release** — Check out a previous flake commit, `nixfleet release create --push-to <cache>`, then `nixfleet deploy --release <old-id>`. Uses normal rollout semantics (health gates, batching, etc.).
 
 ---
 

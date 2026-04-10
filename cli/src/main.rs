@@ -874,86 +874,76 @@ async fn main() -> Result<()> {
 }
 
 async fn rollback(
-    client: &reqwest::Client,
-    cp_url: &str,
+    _client: &reqwest::Client,
+    _cp_url: &str,
     host: &str,
     generation: Option<String>,
     ssh: bool,
 ) -> Result<()> {
+    if !ssh {
+        bail!(
+            "nixfleet rollback requires --ssh mode.\n\
+             \n\
+             The control-plane rollback path (via the removed set-generation endpoint)\n\
+             no longer exists. For a control-plane-driven rollback, either:\n\
+             \n\
+               - Create a release pointing at the previous closures and deploy it:\n\
+                 nixfleet release create --flake <old-rev> --push-to <cache>\n\
+                 nixfleet deploy --release <id> --hosts {host}\n\
+             \n\
+               - Use --on-failure revert on the originating rollout, which reverts\n\
+                 machines from the previous_generations stored per batch.\n\
+             \n\
+             Or use --ssh to rollback this machine directly over SSH."
+        );
+    }
+
     let store_path = match generation {
         Some(path) => path,
         None => {
-            if ssh {
-                // Get previous generation via SSH
-                let output = tokio::process::Command::new("ssh")
-                    .args([
-                        &format!("root@{}", host),
-                        "readlink",
-                        "-f",
-                        "/nix/var/nix/profiles/system-1-link",
-                    ])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .output()
-                    .await
-                    .context("Failed to query previous generation via SSH")?;
+            // Get previous generation via SSH
+            let output = tokio::process::Command::new("ssh")
+                .args([
+                    &format!("root@{}", host),
+                    "readlink",
+                    "-f",
+                    "/nix/var/nix/profiles/system-1-link",
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .context("Failed to query previous generation via SSH")?;
 
-                if !output.status.success() {
-                    bail!(
-                        "Failed to get previous generation: {}",
-                        String::from_utf8_lossy(&output.stderr)
-                    );
-                }
-                String::from_utf8(output.stdout)?.trim().to_string()
-            } else {
-                bail!("--generation is required when not using --ssh mode (control plane does not track generation history yet)");
+            if !output.status.success() {
+                bail!(
+                    "Failed to get previous generation: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
+            String::from_utf8(output.stdout)?.trim().to_string()
         }
     };
 
     println!("Rolling back {} to {}", host, store_path);
 
-    if ssh {
-        // SSH rollback: switch to the specified profile
-        let switch_output = tokio::process::Command::new("ssh")
-            .args([
-                &format!("root@{}", host),
-                &format!("{}/bin/switch-to-configuration", store_path),
-                "switch",
-            ])
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-            .await
-            .context("SSH switch-to-configuration failed")?;
+    // SSH rollback: switch to the specified profile on the target
+    let switch_output = tokio::process::Command::new("ssh")
+        .args([
+            &format!("root@{}", host),
+            &format!("{}/bin/switch-to-configuration", store_path),
+            "switch",
+        ])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .await
+        .context("SSH switch-to-configuration failed")?;
 
-        if !switch_output.success() {
-            bail!("Rollback failed on {}", host);
-        }
-        println!("Rollback complete on {}", host);
-    } else {
-        // Control plane mode: set the desired generation to the rollback target
-        let url = format!("{}/api/v1/machines/{}/set-generation", cp_url, host);
-
-        let resp = client
-            .post(&url)
-            .json(&serde_json::json!({ "hash": store_path }))
-            .send()
-            .await
-            .context("Failed to reach control plane")?;
-
-        if !resp.status().is_success() {
-            bail!(
-                "Control plane returned {}: {}",
-                resp.status(),
-                resp.text().await.unwrap_or_default()
-            );
-        }
-        println!(
-            "Desired generation set to {} for {} (agent will pick up on next poll)",
-            store_path, host
-        );
+    if !switch_output.success() {
+        bail!("Rollback failed on {}", host);
     }
+    println!("Rollback complete on {}", host);
 
     Ok(())
 }

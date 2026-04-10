@@ -18,31 +18,36 @@ When a rollout is created with `--on-failure revert` and a later batch fails, th
 
 This is the correct rollback mechanism for heterogeneous fleets where each machine has a unique closure.
 
-## 3. Manual via CLI
+## 3. Manual via CLI (SSH mode)
 
-### Via control plane
-
-```sh
-nixfleet rollback --host web-01 --generation /nix/store/abc123-nixos-system
-```
-
-This sets the desired generation for `web-01` to the specified store path. The agent picks up the change on its next poll and switches to it. For a fleet-wide rollback, consider creating a release pointing at the old store paths and deploying it normally via `nixfleet deploy --release`.
-
-### Via SSH
+`nixfleet rollback` is an SSH-only operation — it switches a single machine to a previous generation directly over SSH, bypassing the control plane.
 
 ```sh
+# Rollback to the previous generation (reads from system-1-link on the target)
 nixfleet rollback --host web-01 --ssh
-```
 
-Without `--generation`, this queries the target machine for its previous generation profile (`system-1-link`) and switches to it over SSH.
-
-With an explicit generation:
-
-```sh
+# Rollback to a specific store path
 nixfleet rollback --host web-01 --ssh --generation /nix/store/abc123-nixos-system
 ```
 
-This runs `switch-to-configuration switch` directly on the target via SSH, bypassing the control plane entirely.
+This runs `switch-to-configuration switch` on the target via SSH. Useful when the control plane is unreachable, for one-off emergency rollbacks, or during bootstrap before the agent is running.
+
+### Control-plane-driven rollback
+
+There is no `set-generation`-based rollback endpoint anymore. For a CP-driven rollback, either:
+
+1. **Roll back within an active rollout** — if the failing rollout was created with `--on-failure revert`, the CP automatically reverts completed batches to each machine's `previous_generations` (captured at batch start). This is mechanism #2 above.
+
+2. **Deploy an older release** — build and register a release from a previous flake commit, then deploy it with `nixfleet deploy --release <old-id>`:
+
+   ```sh
+   git checkout <old-commit>
+   nixfleet release create --push-to ssh://root@cache
+   git checkout -
+   nixfleet deploy --release <old-id> --tag prod --wait
+   ```
+
+   This uses the normal rollout machinery (health gates, per-host store paths, etc.).
 
 ## 4. Manual via NixOS
 
