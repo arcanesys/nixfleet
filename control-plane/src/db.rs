@@ -308,14 +308,20 @@ impl Db {
     }
 
     /// Get machine IDs that have ALL given tags (AND logic).
+    ///
+    /// Only returns machines whose lifecycle is `active`. Decommissioned (or
+    /// otherwise non-active) machines are excluded so rollout targeting queries
+    /// never accidentally pick them up.
     pub fn get_machines_by_tags(&self, tags: &[String]) -> Result<Vec<String>> {
         if tags.is_empty() {
             return Ok(Vec::new());
         }
         let placeholders: Vec<String> = (1..=tags.len()).map(|i| format!("?{}", i)).collect();
         let sql = format!(
-            "SELECT machine_id FROM machine_tags WHERE tag IN ({}) \
-             GROUP BY machine_id HAVING COUNT(DISTINCT tag) = ?{}",
+            "SELECT mt.machine_id FROM machine_tags mt \
+             INNER JOIN machines m ON m.machine_id = mt.machine_id \
+             WHERE mt.tag IN ({}) AND m.lifecycle = 'active' \
+             GROUP BY mt.machine_id HAVING COUNT(DISTINCT mt.tag) = ?{}",
             placeholders.join(", "),
             tags.len() + 1
         );

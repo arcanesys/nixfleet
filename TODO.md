@@ -16,6 +16,7 @@ Out of Phase 2's original contingent scenarios (C1–C3):
 - **C3 (agent health check subsystem)** — kept; folded into Task 22b (`vm-fleet-revert`) which requires post-apply `run_all` to trigger the revert path
 
 - [x] **`get_recent_reports` non-deterministic tiebreaker** — F4 — fixed in this branch. `ORDER BY received_at DESC` was not enough when two reports arrived in the same wall-clock second (TEXT column with `datetime('now')` second precision). Added `id DESC` secondary sort so "latest wins" is deterministic under sub-second collisions.
+- [x] **`get_machines_by_tags` did not filter by lifecycle** — M1 — fixed in this branch. The query joined only `machine_tags`, so a decommissioned machine still tagged `web` was returned as a rollout target. Added an `INNER JOIN machines` with `m.lifecycle = 'active'` so only active machines are targetable. ADR 009 Category 1 `Test` verdict cleared.
 
 ## Phase 4 — checklist coverage
 
