@@ -24,7 +24,9 @@
       vm-fleet-tag-sync = import ./_vm-fleet-scenarios/tag-sync.nix {
         inherit pkgs mkTestNode defaultTestSpec mkTlsCerts;
       };
-      # Task 19: vm-fleet-release = import ./_vm-fleet-scenarios/release.nix { ... };
+      vm-fleet-release = import ./_vm-fleet-scenarios/release.nix {
+        inherit pkgs lib mkTestNode defaultTestSpec mkTlsCerts;
+      };
       # Task 20: vm-fleet-bootstrap = ...
       # Task 21: vm-fleet-deploy-ssh = ...
       # Task 22a: vm-fleet-apply-failure = ...
