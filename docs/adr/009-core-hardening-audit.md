@@ -492,7 +492,71 @@ Evidence:
 
 ## Summary statistics
 
-_To be filled after all categories are populated._
+**Total items inventoried:** ~180 rows across 19 categories (CLI: 22, CP routes: 27, agent behaviors: 14, executor: 16, shared types: 29, deps: 4 delete candidates, tautological tests: 22, dead_code escapes: 3, background tasks: 2, hydration: 6, metrics: 13, audit: 16, TLS: 4, auth: 8, migrations: 14, config: 19, health: 9, nix: 5, comms: 3).
+
+**Proposed verdict distribution** (approximate, via grep):
+
+- **Keep:** ~51 (already tested or trivially correct)
+- **Test:** ~126 (real integration test needed)
+- **Delete:** ~24 (remove with archive branch)
+- **Trim:** ~4 (prune dead variant / redundant surface)
+- **Fix:** ~10 (trivial bug + test in Phase 2)
+- **Delete or Test — user decides:** ~15 (policy subsystem, schedule subsystem, host provision)
+
+**Categories where the plan's pre-filled guess turned out wrong:**
+
+1. **Category 8 (dead_code escapes):** plan expected dead code; all 3 escapes are false positives (serde + CLI arg usage hidden from compiler). Verdict: Keep (with explanatory comments).
+2. **Category 11 (metrics):** plan expected `AGENT_STATE` to be dead after PR #28; it's still emitted from 17 transition sites in `agent/src/main.rs`. Verdict: Test, not Delete.
+3. **Category 17 (health check subsystem):** plan expected "Delete or Test — user decides"; the subsystem is fully wired into the agent deploy cycle and validated live by `vm-fleet.nix`. Verdict: Keep / Test.
+
+**Categories where new Fix items surfaced:**
+
+1. **Category 10 (hydration):** `state.rs:105-106` loads rollouts but does not store them in FleetState — investigate whether this is diagnostic-only or a forgotten TODO.
+2. **Category 12 (audit):** bootstrap endpoint does not write an audit event for the first-key creation — add actor=`"system:bootstrap"` write.
+3. **Category 14 (auth):** `Actor::has_role` is never called from any route — RBAC is declared but not enforced. **Structural decision needed** (wire it up vs drop roles entirely).
+4. **Category 15 (migrations):** `PRAGMA foreign_keys = ON` is missing — silently unenforced FK constraints throughout.
+5. **Category 16 (config):** `save_api_key` enforces mode `0o600` but no test asserts it.
+
+**Deletion candidates (archive branches to create in Phase 2):**
+
+- `archive/policy-subsystem` — if policies are cut (Cat 1, 2, 4, 5, 12, 15)
+- `archive/schedule-subsystem` — if schedules are cut (Cat 1, 2, 4, 5, 12, 15)
+- `archive/host-provision` — if `nixfleet host provision` is cut (Cat 1)
+- `archive/tautological-tests` — ~18 deleted tests preserved for reference
+- `archive/unused-deps` — `async-trait`, `tempfile`×2, `shared::serde_json`
+- `archive/dead-machine-health-variants` — `MachineHealthStatus::TimedOut`, `::RolledBack`
+
+**Estimated scope for Phase 2 (Delete + Trim + Fix):**
+
+- ~20–40 files deleted or modified (varies wildly by user decision on policy/schedule/host provision)
+- Migration files: V7/V9 deleted or rewritten if policies/schedules cut; PRAGMA fix added to `db.rs`
+- Archive branches: 4–6
+
+**Estimated scope for Phase 3 (Scenario tests):**
+
+- ~40 scenarios from spec Section 4 (release lifecycle, deploy, failure, rollback, restart, tag sync)
+- Rust harness: ~20 scenarios
+- VM fleet: ~20 scenarios
+
+**Estimated scope for Phase 4 (Per-item checklist):**
+
+- ~22 CLI subcommands × 1 test each
+- ~27 CP routes × 3 tests (happy/error/auth)
+- ~14 executor transitions × 2 tests
+- ~13 metrics × 1 assertion
+
+## Archive branch list
+
+_Pre-assigned; not yet pushed. Phase 2 creates them at the last main commit before deletion._
+
+- `archive/policy-subsystem` — if user decides to delete
+- `archive/schedule-subsystem` — if user decides to delete
+- `archive/host-provision` — if user decides to delete
+- `archive/tautological-tests` — ~18 deleted test functions
+- `archive/unused-deps` — dep removals
+- `archive/dead-machine-health-variants` — 2 dead enum variants
+
+**All archive branches point to the same SHA** (last main commit before Phase 2 cut). Resurrection: `git checkout archive/<name> -- path/to/files`.
 
 ## Archive branch list
 
