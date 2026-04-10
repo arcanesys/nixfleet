@@ -317,7 +317,32 @@ Only two `tokio::spawn` sites in the workspace — both in `control-plane/src/ma
 
 ## Category 12: Audit logging
 
-_To be filled in Task 14._
+**15 of 16 mutating endpoints write audit entries**, with the bootstrap endpoint as the sole exception (audit write would be circular — it creates the first actor). Audit writes include actor / action / target / detail-JSON. CSV export is already injection-protected via `escape_csv_field`.
+
+### Mutation → audit coverage
+
+| Mutation | Handler | Audits written? | Proposed verdict | Rationale |
+|---|---|---|---|---|
+| Post machine report | `routes::post_report:119` | Yes (`"report"`) | Test | Assert audit row present after POST |
+| Register machine | `routes::register_machine:271` | Yes (`"register"`) | Test | |
+| Update lifecycle | `routes::update_lifecycle:348` | Yes (`"update_lifecycle"`) | Test | |
+| Set tags | `routes::set_tags:397` | Yes (`"set_tags"`) | **Trim** | Tied to Cat 2 trim of `POST /machines/{id}/tags` |
+| Remove tag | `routes::remove_tag:432` | Yes (`"remove_tag"`) | Test | |
+| Create rollout | `rollout::routes::create_rollout:243` | Yes (`"rollout.created"`) | Test | |
+| Resume rollout | `rollout::routes::resume_rollout:424` | Yes (`"rollout.resumed"`) | Test | |
+| Cancel rollout | `rollout::routes::cancel_rollout:482` | Yes (`"rollout.cancelled"`) | Test | |
+| Create/Update/Delete policy | `rollout::policy::*` | Yes | **Delete or Test — depends on Cat 1** | |
+| Create/Cancel schedule | `rollout::schedule::*` | Yes | **Delete or Test — depends on Cat 1** | |
+| Create release | `release::routes::create_release:59` | Yes (`"create_release"`) | Test | |
+| Delete release | `release::routes::delete_release:234` | Yes (`"delete_release"`) | Test | |
+| Bootstrap API key | `routes::bootstrap_api_key:442` | **No** (bootstrap is unauthenticated first-time setup) | **Fix** | Add audit write with actor=`"system:bootstrap"` so the first-key creation is traceable; then test |
+
+### Audit query endpoints
+
+| Endpoint | Current test | Proposed verdict | Rationale |
+|---|---|---|---|
+| `GET /api/v1/audit` | `test_audit_trail_on_register` (1 happy path) | Test | Filtering by actor/action/target untested |
+| `GET /api/v1/audit/export` (CSV) | `test_audit_csv_export` (1 happy path) | Test | Injection protection already implemented (`escape_csv_field`); add negative test with `=HYPERLINK(...)` payload |
 
 ## Category 13: TLS / mTLS
 
