@@ -39,6 +39,51 @@ impl Actor {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_has_role_sufficient() {
+        let actor = Actor::ApiKey {
+            name: "deploy-key".into(),
+            role: "deploy".into(),
+        };
+        assert!(actor.has_role(&["deploy", "admin"]));
+        assert!(actor.has_role(&["readonly", "deploy", "admin"]));
+    }
+
+    #[test]
+    fn test_has_role_insufficient() {
+        let actor = Actor::ApiKey {
+            name: "readonly-key".into(),
+            role: "readonly".into(),
+        };
+        assert!(!actor.has_role(&["deploy", "admin"]));
+        assert!(!actor.has_role(&["admin"]));
+    }
+
+    #[test]
+    fn test_has_role_machine_actor_always_denied() {
+        let actor = Actor::Machine {
+            machine_id: "web-01".into(),
+        };
+        assert!(!actor.has_role(&["readonly"]));
+        assert!(!actor.has_role(&["deploy"]));
+        assert!(!actor.has_role(&["admin"]));
+        assert!(!actor.has_role(&["readonly", "deploy", "admin"]));
+    }
+
+    #[test]
+    fn test_has_role_empty_allowed_is_denied() {
+        let actor = Actor::ApiKey {
+            name: "admin-key".into(),
+            role: "admin".into(),
+        };
+        assert!(!actor.has_role(&[]));
+    }
+}
+
 /// Middleware: require valid API key in Authorization: Bearer header.
 /// If an Actor is already set (e.g. from mTLS), pass through.
 pub async fn require_api_key(
