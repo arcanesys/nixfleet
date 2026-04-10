@@ -250,7 +250,20 @@ All other dependencies have substantial usage (tokio 37 uses, axum 36, reqwest 3
 
 ## Category 8: `#[allow(dead_code)]` escapes
 
-_To be filled in Task 10._
+**Surprise result:** 3 escapes found, **all 3 are false positives** (the fields are populated via serde from Nix-generated JSON or via CLI args, and the compiler can't see that usage).
+
+| Location | Protected code | Actually used? | Proposed verdict | Rationale |
+|---|---|---|---|---|
+| `agent/src/health/config.rs:23` | `HttpConfig::interval: i64` | **Yes** — serde alias from Nix camelCase; asserted in tests at `:103`, `:114`, `:120` | Keep (+ comment) | Add a brief `// populated via serde alias from Nix config` comment so the escape is self-explanatory |
+| `agent/src/health/config.rs:36` | `CommandConfig::interval: i64` | **Yes** — same pattern, asserted in tests at `:107`, `:120` | Keep (+ comment) | Same |
+| `agent/src/config.rs:18` | `Config::db_path: String` | **Yes** — `agent/src/main.rs` reads `cli.db_path` and passes to `Store::new` | Keep (+ comment) | Add `// set from CLI arg in main.rs` comment |
+
+**Verdict:** all 3 stay, with a comment annotation added in Phase 2 to make the escape self-documenting. **Zero actual dead code** under these escapes.
+
+**Phase 2 action:** replace the bare `#[allow(dead_code)]` with an annotated form like:
+```rust
+#[allow(dead_code)] // populated via serde alias from Nix config
+```
 
 ## Category 9: Background tasks
 
