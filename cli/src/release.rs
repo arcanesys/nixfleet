@@ -174,7 +174,7 @@ fn flake_revision(flake: &str) -> Option<String> {
 
 /// `nixfleet release create`
 /// Run a push hook command for a store path, optionally on a remote host via SSH.
-fn run_push_hook(push_to_host: Option<&str>, hook_cmd: &str, store_path: &str) -> Result<()> {
+pub fn run_push_hook(push_to_host: Option<&str>, hook_cmd: &str, store_path: &str) -> Result<()> {
     let cmd = hook_cmd.replace("{}", store_path);
     println!("  hook: {}", cmd);
     let status = match push_to_host {
@@ -194,7 +194,7 @@ fn run_push_hook(push_to_host: Option<&str>, hook_cmd: &str, store_path: &str) -
 }
 
 /// Extract SSH host from a URL like ssh://root@host or ssh://host.
-fn extract_ssh_host(url: &str) -> Option<String> {
+pub fn extract_ssh_host(url: &str) -> Option<String> {
     url.strip_prefix("ssh://").map(|rest| rest.trim_end_matches('/').to_string())
 }
 

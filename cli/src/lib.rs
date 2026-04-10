@@ -5,7 +5,5 @@
 //! helpers without shelling out to the compiled binary. Keep the surface
 //! here as small as possible — if a test can run through the binary via
 //! `assert_cmd`, prefer that.
-//!
-//! Task 1 creates this file as an empty stub so the `[lib]` declaration
-//! in `Cargo.toml` parses. Task 2 widens the release helpers and adds
-//! `pub mod release;`. Task 16 adds `pub mod config;`.
+
+pub mod release;
