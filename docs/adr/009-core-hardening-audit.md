@@ -403,7 +403,40 @@ Server side: `control-plane/src/tls.rs`. Client side: `agent/src/tls.rs`. End-to
 
 ## Category 16: Config loading
 
-_To be filled in Task 18._
+### CLI config (`cli/src/config.rs`)
+
+Existing tests cover the basics but miss the permission-bearing and security-bearing paths.
+
+| Function | Current test | Real vs tautological | Proposed verdict | Rationale |
+|---|---|---|---|---|
+| `expand_env_vars` | `test_expand_env_vars`, `test_expand_env_vars_missing`, `test_expand_env_vars_no_vars` | Real | Keep | Solid unit coverage |
+| `resolve_path` | `test_resolve_path_absolute`, `test_resolve_path_relative` | Real | Keep | |
+| `load_config_file` | `test_parse_config_file` | Real | Keep | |
+| `load_credentials` | `test_parse_credentials_file` | Real | Keep | |
+| `resolve` precedence (CLI > credentials > config file) | `test_resolve_cli_overrides_config`, `test_resolve_default_cli_values_dont_override` | Real (partial) | Test | Missing: env var precedence, credentials precedence when CLI override changes URL |
+| `resolve_var` (`gethostname()` fallback for HOSTNAME/HOST) | None | — | Test | **`${HOSTNAME}` with zsh (no env export) bug motivation** |
+| `find_config_file` (walk-up) | None | — | Test | Walk-up from nested dir |
+| `save_api_key` (mode `0o600`) | None | — | **Fix** + Test | **Critical**: permission invariant is the core security story of the credentials file. Fix = wrap in a test that calls `save_api_key` and asserts `metadata.permissions().mode() & 0o777 == 0o600` on Unix |
+| `write_config_file` | None | — | Test | Init flow uses this |
+| Env var precedence (`NIXFLEET_*`) | None | — | Test | Documented in CLAUDE.md; not enforced in tests |
+
+### Agent config (`agent/src/config.rs`)
+
+Current tests are mostly tautological (flagged in Category 7). Real config assembly happens in `agent/src/main.rs`, not `config.rs`.
+
+| Item | Current test | Proposed verdict | Rationale |
+|---|---|---|---|
+| Config defaults | `test_config_defaults` | Delete (tautological) | Asserts `60 >= 60` — covered in Cat 7 |
+| `poll_interval` boundary | `test_config_poll_interval_at_*_boundary` | Delete (tautological) | Same |
+| `Clone` impl | `test_config_clone` | Delete | Covered in Cat 7 |
+| `dry_run` default | `test_config_dry_run_default_false` | Keep (real, thin) | |
+| `cache_url` default | `test_config_cache_url_default_none` | Keep | |
+| `db_path` default | `test_config_db_path_default` | Keep | |
+| `retry_interval` default (PR #28 addition) | None | Test | |
+| mTLS client cert/key mutual requirement | None | **Fix** + Test | Both fields must be set or neither — currently no validation |
+| Environment variable loading | None | Test | Config assembly from env vars in main.rs is untested |
+
+**Cross-category note:** the `${HOSTNAME}` bug (Category 16) and the `save_api_key` permission bug (Category 16) are both the kind of silent-security failure that justifies this whole cycle.
 
 ## Category 17: Agent health check subsystem
 
