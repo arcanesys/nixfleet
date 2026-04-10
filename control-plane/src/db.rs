@@ -352,7 +352,7 @@ impl Db {
             "SELECT machine_id, generation, success, message, received_at
              FROM reports
              WHERE machine_id = ?1
-             ORDER BY received_at DESC
+             ORDER BY received_at DESC, id DESC
              LIMIT ?2",
         )?;
         let rows = stmt
