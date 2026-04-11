@@ -17,7 +17,11 @@
   pkgs,
   mkTestNode,
   defaultTestSpec,
+  mkCpNode,
+  mkAgentNode,
   mkTlsCerts,
+  tlsCertsModule,
+  ...
 }: let
   testCerts = mkTlsCerts {hostnames = ["operator" "web-01" "web-02"];};
 
@@ -26,46 +30,19 @@ in
   pkgs.testers.nixosTest {
     name = "vm-fleet-bootstrap";
 
-    nodes.cp = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "cp";
-        };
-      extraModules = [
-        ({pkgs, ...}: {
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/cp-cert.pem".source = "${testCerts}/cp-cert.pem";
-          environment.etc."nixfleet-tls/cp-key.pem".source = "${testCerts}/cp-key.pem";
+    nodes.cp = mkCpNode {inherit testCerts;};
 
-          services.nixfleet-control-plane = {
-            enable = true;
-            openFirewall = true;
-            tls = {
-              cert = "/etc/nixfleet-tls/cp-cert.pem";
-              key = "/etc/nixfleet-tls/cp-key.pem";
-              clientCa = "/etc/nixfleet-tls/ca.pem";
-            };
-          };
-          environment.systemPackages = [pkgs.sqlite pkgs.python3];
-        })
-      ];
-    };
-
+    # The operator node is a plain client running the nixfleet CLI.
+    # It isn't a CP or an agent so it uses the low-level mkTestNode
+    # directly plus the shared tlsCertsModule helper.
     nodes.operator = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "operator";
-        };
+      hostSpecValues = defaultTestSpec // {hostName = "operator";};
       extraModules = [
+        (tlsCertsModule {
+          inherit testCerts;
+          certPrefix = "operator";
+        })
         {
-          security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/operator-cert.pem".source = "${testCerts}/operator-cert.pem";
-          environment.etc."nixfleet-tls/operator-key.pem".source = "${testCerts}/operator-key.pem";
-
           environment.systemPackages = [
             nixfleetCli
             pkgs.curl
@@ -76,66 +53,16 @@ in
       ];
     };
 
-    nodes."web-01" = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "web-01";
-        };
-      extraModules = [
-        {
-          security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/web-01-cert.pem".source = "${testCerts}/web-01-cert.pem";
-          environment.etc."nixfleet-tls/web-01-key.pem".source = "${testCerts}/web-01-key.pem";
-
-          services.nixfleet-agent = {
-            enable = true;
-            controlPlaneUrl = "https://cp:8080";
-            machineId = "web-01";
-            pollInterval = 2;
-            healthInterval = 5;
-            dryRun = true;
-            tags = ["web"];
-            tls = {
-              clientCert = "/etc/nixfleet-tls/web-01-cert.pem";
-              clientKey = "/etc/nixfleet-tls/web-01-key.pem";
-            };
-          };
-        }
-      ];
+    nodes."web-01" = mkAgentNode {
+      inherit testCerts;
+      hostName = "web-01";
+      tags = ["web"];
     };
 
-    nodes."web-02" = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "web-02";
-        };
-      extraModules = [
-        {
-          security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/web-02-cert.pem".source = "${testCerts}/web-02-cert.pem";
-          environment.etc."nixfleet-tls/web-02-key.pem".source = "${testCerts}/web-02-key.pem";
-
-          services.nixfleet-agent = {
-            enable = true;
-            controlPlaneUrl = "https://cp:8080";
-            machineId = "web-02";
-            pollInterval = 2;
-            healthInterval = 5;
-            dryRun = true;
-            tags = ["web"];
-            tls = {
-              clientCert = "/etc/nixfleet-tls/web-02-cert.pem";
-              clientKey = "/etc/nixfleet-tls/web-02-key.pem";
-            };
-          };
-        }
-      ];
+    nodes."web-02" = mkAgentNode {
+      inherit testCerts;
+      hostName = "web-02";
+      tags = ["web"];
     };
 
     testScript = ''

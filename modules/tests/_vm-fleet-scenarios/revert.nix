@@ -63,132 +63,40 @@
 #     first batch reach `succeeded`.
 {
   pkgs,
-  mkTestNode,
-  defaultTestSpec,
+  mkCpNode,
+  mkAgentNode,
   mkTlsCerts,
+  testPrelude,
   ...
 }: let
   testCerts = mkTlsCerts {hostnames = ["web-01" "web-02"];};
+
+  failFlagHealthCheck = {
+    name = "fail-flag";
+    command = "test ! -f /var/lib/fail-next-health";
+    interval = 2;
+    timeout = 2;
+  };
+
+  mkWebAgent = hostName:
+    mkAgentNode {
+      inherit testCerts hostName;
+      tags = ["web"];
+      healthInterval = 3;
+      healthChecks.command = [failFlagHealthCheck];
+    };
 in
   pkgs.testers.nixosTest {
     name = "vm-fleet-revert";
 
-    nodes.cp = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "cp";
-        };
-      extraModules = [
-        ({pkgs, ...}: {
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/cp-cert.pem".source = "${testCerts}/cp-cert.pem";
-          environment.etc."nixfleet-tls/cp-key.pem".source = "${testCerts}/cp-key.pem";
-
-          services.nixfleet-control-plane = {
-            enable = true;
-            openFirewall = true;
-            tls = {
-              cert = "/etc/nixfleet-tls/cp-cert.pem";
-              key = "/etc/nixfleet-tls/cp-key.pem";
-              clientCa = "/etc/nixfleet-tls/ca.pem";
-            };
-          };
-          environment.systemPackages = [pkgs.sqlite pkgs.python3];
-        })
-      ];
-    };
-
-    nodes."web-01" = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "web-01";
-        };
-      extraModules = [
-        {
-          security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/web-01-cert.pem".source = "${testCerts}/web-01-cert.pem";
-          environment.etc."nixfleet-tls/web-01-key.pem".source = "${testCerts}/web-01-key.pem";
-
-          services.nixfleet-agent = {
-            enable = true;
-            controlPlaneUrl = "https://cp:8080";
-            machineId = "web-01";
-            pollInterval = 2;
-            healthInterval = 3;
-            dryRun = true;
-            tags = ["web"];
-            tls = {
-              clientCert = "/etc/nixfleet-tls/web-01-cert.pem";
-              clientKey = "/etc/nixfleet-tls/web-01-key.pem";
-            };
-            healthChecks.command = [
-              {
-                name = "fail-flag";
-                command = "test ! -f /var/lib/fail-next-health";
-                interval = 2;
-                timeout = 2;
-              }
-            ];
-          };
-        }
-      ];
-    };
-
-    nodes."web-02" = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "web-02";
-        };
-      extraModules = [
-        {
-          security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/web-02-cert.pem".source = "${testCerts}/web-02-cert.pem";
-          environment.etc."nixfleet-tls/web-02-key.pem".source = "${testCerts}/web-02-key.pem";
-
-          services.nixfleet-agent = {
-            enable = true;
-            controlPlaneUrl = "https://cp:8080";
-            machineId = "web-02";
-            pollInterval = 2;
-            healthInterval = 3;
-            dryRun = true;
-            tags = ["web"];
-            tls = {
-              clientCert = "/etc/nixfleet-tls/web-02-cert.pem";
-              clientKey = "/etc/nixfleet-tls/web-02-key.pem";
-            };
-            healthChecks.command = [
-              {
-                name = "fail-flag";
-                command = "test ! -f /var/lib/fail-next-health";
-                interval = 2;
-                timeout = 2;
-              }
-            ];
-          };
-        }
-      ];
-    };
+    nodes.cp = mkCpNode {inherit testCerts;};
+    nodes."web-01" = mkWebAgent "web-01";
+    nodes."web-02" = mkWebAgent "web-02";
 
     testScript = ''
       import json
 
-      TEST_KEY = "test-admin-key"
-      KEY_HASH = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9"
-      AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
-      CURL = (
-          "curl -sf --cacert /etc/nixfleet-tls/ca.pem "
-          "--cert /etc/nixfleet-tls/cp-cert.pem "
-          "--key /etc/nixfleet-tls/cp-key.pem"
-      )
-      API = "https://localhost:8080"
+      ${testPrelude {}}
 
       # ------------------------------------------------------------------
       # Phase 1 — Start CP, seed admin API key
@@ -196,12 +104,7 @@ in
       cp.start()
       cp.wait_for_unit("nixfleet-control-plane.service")
       cp.wait_for_open_port(8080)
-
-      cp.succeed(
-          f"sqlite3 /var/lib/nixfleet-cp/state.db "
-          f"\"INSERT INTO api_keys (key_hash, name, role) "
-          f"VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
-      )
+      seed_admin_key(cp)
 
       # ------------------------------------------------------------------
       # Phase 2 — Start both agents. Flag file is NOT present yet, so

@@ -28,10 +28,11 @@
     mkAgentNode = args:
       helpers.mkAgentNode ({inherit mkTestNode defaultTestSpec;} // args);
     testPrelude = helpers.testPrelude;
+    tlsCertsModule = helpers.tlsCertsModule;
 
     scenarioArgs = {
       inherit pkgs lib mkTestNode defaultTestSpec mkTlsCerts;
-      inherit mkCpNode mkAgentNode testPrelude;
+      inherit mkCpNode mkAgentNode testPrelude tlsCertsModule;
     };
 
     subtests = {

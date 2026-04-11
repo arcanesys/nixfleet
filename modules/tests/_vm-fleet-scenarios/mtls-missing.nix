@@ -16,46 +16,22 @@
   pkgs,
   mkTestNode,
   defaultTestSpec,
+  mkCpNode,
   mkTlsCerts,
+  ...
 }: let
   testCerts = mkTlsCerts {hostnames = ["unauth"];};
 in
   pkgs.testers.nixosTest {
     name = "vm-fleet-mtls-missing";
 
-    nodes.cp = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "cp";
-        };
-      extraModules = [
-        ({pkgs, ...}: {
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/cp-cert.pem".source = "${testCerts}/cp-cert.pem";
-          environment.etc."nixfleet-tls/cp-key.pem".source = "${testCerts}/cp-key.pem";
+    nodes.cp = mkCpNode {inherit testCerts;};
 
-          services.nixfleet-control-plane = {
-            enable = true;
-            openFirewall = true;
-            tls = {
-              cert = "/etc/nixfleet-tls/cp-cert.pem";
-              key = "/etc/nixfleet-tls/cp-key.pem";
-              # The subject of the test: clientCa set => mTLS required.
-              clientCa = "/etc/nixfleet-tls/ca.pem";
-            };
-          };
-          environment.systemPackages = [pkgs.sqlite];
-        })
-      ];
-    };
-
+    # The unauth node is a plain client (no agent). mkAgentNode would
+    # install services.nixfleet-agent which we explicitly don't want;
+    # keep the inline module.
     nodes.unauth = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "unauth";
-        };
+      hostSpecValues = defaultTestSpec // {hostName = "unauth";};
       extraModules = [
         {
           security.pki.certificateFiles = ["${testCerts}/ca.pem"];

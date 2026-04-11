@@ -43,6 +43,23 @@ in {
   # inputs/hostSpecModule already applied) and a `defaultTestSpec`, then
   # expose a narrow, scenario-facing API.
   #
+  # Wire up /etc/nixfleet-tls/{ca,<certPrefix>-cert,<certPrefix>-key}.pem
+  # on a node from a testCerts derivation. Scenarios with "operator" or
+  # "builder" style nodes (clients that need the fleet CA + a client
+  # cert but don't run agent/CP services) can embed this module directly.
+  #
+  # Usage: `extraModules = [ (tlsCertsModule { inherit testCerts; certPrefix = "operator"; }) ... ];`
+  tlsCertsModule = {
+    testCerts,
+    certPrefix,
+    trustCa ? true,
+  }: {
+    security.pki.certificateFiles = lib.optional trustCa "${testCerts}/ca.pem";
+    environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
+    environment.etc."nixfleet-tls/${certPrefix}-cert.pem".source = "${testCerts}/${certPrefix}-cert.pem";
+    environment.etc."nixfleet-tls/${certPrefix}-key.pem".source = "${testCerts}/${certPrefix}-key.pem";
+  };
+
   # Common shared-test constants.
   testConstants = {
     # Seeded admin API key for CP tests. Plain bearer token for the CLI /
@@ -145,6 +162,12 @@ in {
     pollInterval ? 2,
     healthInterval ? 5,
     healthChecks ? {},
+    # Escape hatch for per-scenario nixfleet-agent options that aren't
+    # worth a dedicated parameter (e.g. retryInterval, allowInsecure).
+    # Merged into services.nixfleet-agent via lib.recursiveUpdate; the
+    # default-value keys above still apply, but anything the caller
+    # supplies here wins.
+    agentExtraConfig ? {},
     extraAgentModules ? [],
     extraModules ? [],
   }: let
@@ -152,6 +175,15 @@ in {
       if machineId == null
       then hostName
       else machineId;
+    baseAgentConfig = {
+      enable = true;
+      inherit controlPlaneUrl dryRun pollInterval healthInterval tags healthChecks;
+      machineId = resolvedMachineId;
+      tls = {
+        clientCert = "/etc/nixfleet-tls/${hostName}-cert.pem";
+        clientKey = "/etc/nixfleet-tls/${hostName}-key.pem";
+      };
+    };
   in
     mkTestNode {
       hostSpecValues = defaultTestSpec // {inherit hostName;};
@@ -164,15 +196,7 @@ in {
             environment.etc."nixfleet-tls/${hostName}-cert.pem".source = "${testCerts}/${hostName}-cert.pem";
             environment.etc."nixfleet-tls/${hostName}-key.pem".source = "${testCerts}/${hostName}-key.pem";
 
-            services.nixfleet-agent = {
-              enable = true;
-              inherit controlPlaneUrl dryRun pollInterval healthInterval tags healthChecks;
-              machineId = resolvedMachineId;
-              tls = {
-                clientCert = "/etc/nixfleet-tls/${hostName}-cert.pem";
-                clientKey = "/etc/nixfleet-tls/${hostName}-key.pem";
-              };
-            };
+            services.nixfleet-agent = lib.recursiveUpdate baseAgentConfig agentExtraConfig;
           }
         ]
         ++ extraAgentModules

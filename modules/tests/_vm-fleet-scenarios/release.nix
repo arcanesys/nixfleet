@@ -20,7 +20,10 @@
   lib,
   mkTestNode,
   defaultTestSpec,
+  mkCpNode,
   mkTlsCerts,
+  tlsCertsModule,
+  ...
 }: let
   testCerts = mkTlsCerts {hostnames = ["builder" "cache" "agent"];};
 
@@ -96,31 +99,7 @@ in
   pkgs.testers.nixosTest {
     name = "vm-fleet-release";
 
-    nodes.cp = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "cp";
-        };
-      extraModules = [
-        ({pkgs, ...}: {
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/cp-cert.pem".source = "${testCerts}/cp-cert.pem";
-          environment.etc."nixfleet-tls/cp-key.pem".source = "${testCerts}/cp-key.pem";
-
-          services.nixfleet-control-plane = {
-            enable = true;
-            openFirewall = true;
-            tls = {
-              cert = "/etc/nixfleet-tls/cp-cert.pem";
-              key = "/etc/nixfleet-tls/cp-key.pem";
-              clientCa = "/etc/nixfleet-tls/ca.pem";
-            };
-          };
-          environment.systemPackages = [pkgs.sqlite pkgs.python3];
-        })
-      ];
-    };
+    nodes.cp = mkCpNode {inherit testCerts;};
 
     nodes.cache = mkTestNode {
       hostSpecValues =
@@ -175,18 +154,13 @@ in
     };
 
     nodes.builder = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "builder";
-        };
+      hostSpecValues = defaultTestSpec // {hostName = "builder";};
       extraModules = [
+        (tlsCertsModule {
+          inherit testCerts;
+          certPrefix = "builder";
+        })
         {
-          security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/builder-cert.pem".source = "${testCerts}/builder-cert.pem";
-          environment.etc."nixfleet-tls/builder-key.pem".source = "${testCerts}/builder-key.pem";
-
           environment.systemPackages = [
             nixfleetCli
             pkgs.openssh
@@ -217,18 +191,13 @@ in
     };
 
     nodes.agent = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "agent";
-        };
+      hostSpecValues = defaultTestSpec // {hostName = "agent";};
       extraModules = [
+        (tlsCertsModule {
+          inherit testCerts;
+          certPrefix = "agent";
+        })
         {
-          security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/agent-cert.pem".source = "${testCerts}/agent-cert.pem";
-          environment.etc."nixfleet-tls/agent-key.pem".source = "${testCerts}/agent-key.pem";
-
           services.nixfleet-cache = {
             enable = true;
             cacheUrl = "http://cache:5000";

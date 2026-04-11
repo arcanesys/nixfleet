@@ -27,84 +27,30 @@
 #      somehow inherited from prior state.
 {
   pkgs,
-  mkTestNode,
-  defaultTestSpec,
+  mkCpNode,
+  mkAgentNode,
   mkTlsCerts,
+  testPrelude,
+  ...
 }: let
   testCerts = mkTlsCerts {hostnames = ["agent"];};
 in
   pkgs.testers.nixosTest {
     name = "vm-fleet-poll-retry";
 
-    nodes.cp = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "cp";
-        };
-      extraModules = [
-        ({pkgs, ...}: {
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/cp-cert.pem".source = "${testCerts}/cp-cert.pem";
-          environment.etc."nixfleet-tls/cp-key.pem".source = "${testCerts}/cp-key.pem";
+    nodes.cp = mkCpNode {inherit testCerts;};
 
-          services.nixfleet-control-plane = {
-            enable = true;
-            openFirewall = true;
-            tls = {
-              cert = "/etc/nixfleet-tls/cp-cert.pem";
-              key = "/etc/nixfleet-tls/cp-key.pem";
-              clientCa = "/etc/nixfleet-tls/ca.pem";
-            };
-          };
-          environment.systemPackages = [pkgs.sqlite pkgs.python3];
-        })
-      ];
-    };
-
-    nodes.agent = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "agent";
-        };
-      extraModules = [
-        {
-          security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/agent-cert.pem".source = "${testCerts}/agent-cert.pem";
-          environment.etc."nixfleet-tls/agent-key.pem".source = "${testCerts}/agent-key.pem";
-
-          services.nixfleet-agent = {
-            enable = true;
-            controlPlaneUrl = "https://cp:8080";
-            machineId = "agent";
-            pollInterval = 5;
-            # Short retry interval so the VM test can observe multiple
-            # retry cycles within a reasonable wall-clock budget.
-            retryInterval = 5;
-            healthInterval = 5;
-            dryRun = true;
-            tls = {
-              clientCert = "/etc/nixfleet-tls/agent-cert.pem";
-              clientKey = "/etc/nixfleet-tls/agent-key.pem";
-            };
-          };
-        }
-      ];
+    nodes.agent = mkAgentNode {
+      inherit testCerts;
+      hostName = "agent";
+      pollInterval = 5;
+      # Short retry interval so the VM test can observe multiple retry
+      # cycles within a reasonable wall-clock budget.
+      agentExtraConfig.retryInterval = 5;
     };
 
     testScript = ''
-      TEST_KEY = "test-admin-key"
-      KEY_HASH = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9"
-      AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
-      CURL = (
-          "curl -sf --cacert /etc/nixfleet-tls/ca.pem "
-          "--cert /etc/nixfleet-tls/cp-cert.pem "
-          "--key /etc/nixfleet-tls/cp-key.pem"
-      )
-      API = "https://localhost:8080"
+      ${testPrelude {}}
 
       # ------------------------------------------------------------------
       # Phase 1 — Start the agent BEFORE the cp. The agent's first poll
@@ -136,11 +82,7 @@ in
       cp.wait_for_unit("nixfleet-control-plane.service")
       cp.wait_for_open_port(8080)
 
-      cp.succeed(
-          f"sqlite3 /var/lib/nixfleet-cp/state.db "
-          f"\"INSERT INTO api_keys (key_hash, name, role) "
-          f"VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
-      )
+      seed_admin_key(cp)
 
       # ------------------------------------------------------------------
       # Phase 3 — Negative check: the cp is reachable, admin auth works,

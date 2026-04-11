@@ -19,8 +19,13 @@
       inherit inputs;
       hostSpecModule = ../_shared/host-spec-module.nix;
     };
-
     defaultTestSpec = helpers.defaultTestSpec;
+
+    mkCpNode = args:
+      helpers.mkCpNode ({inherit mkTestNode defaultTestSpec;} // args);
+    mkAgentNode = args:
+      helpers.mkAgentNode ({inherit mkTestNode defaultTestSpec;} // args);
+    testPrelude = helpers.testPrelude;
 
     # Shared modules for web agent nodes (nginx health endpoint + node exporter)
     webAgentModules = [
@@ -49,82 +54,16 @@
     # Build-time TLS certificates: fleet CA + CP server cert + 3 agent client certs.
     # Deterministic — no runtime setup needed.
     testCerts = mkTlsCerts {hostnames = ["web-01" "web-02" "db-01"];};
-
-    # Helper: build an agent node with TLS, tags, and optional extra modules.
-    mkAgentNode = {
-      hostName,
-      tags,
-      healthChecks ? {},
-      extraAgentModules ? [],
-    }:
-      mkTestNode {
-        hostSpecValues =
-          defaultTestSpec
-          // {
-            inherit hostName;
-          };
-        extraModules =
-          [
-            {
-              # Trust the fleet CA so the agent can verify the CP's TLS cert
-              security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-
-              environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-              environment.etc."nixfleet-tls/${hostName}-cert.pem".source = "${testCerts}/${hostName}-cert.pem";
-              environment.etc."nixfleet-tls/${hostName}-key.pem".source = "${testCerts}/${hostName}-key.pem";
-
-              services.nixfleet-agent = {
-                enable = true;
-                controlPlaneUrl = "https://cp:8080";
-                machineId = hostName;
-                pollInterval = 2;
-                healthInterval = 5;
-                dryRun = true;
-                inherit tags;
-                tls = {
-                  clientCert = "/etc/nixfleet-tls/${hostName}-cert.pem";
-                  clientKey = "/etc/nixfleet-tls/${hostName}-key.pem";
-                };
-                inherit healthChecks;
-              };
-            }
-          ]
-          ++ extraAgentModules;
-      };
   in
     lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
         vm-fleet = pkgs.testers.nixosTest {
           name = "vm-fleet";
 
-          nodes.cp = mkTestNode {
-            hostSpecValues =
-              defaultTestSpec
-              // {
-                hostName = "cp";
-              };
-            extraModules = [
-              ({pkgs, ...}: {
-                environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-                environment.etc."nixfleet-tls/cp-cert.pem".source = "${testCerts}/cp-cert.pem";
-                environment.etc."nixfleet-tls/cp-key.pem".source = "${testCerts}/cp-key.pem";
-
-                services.nixfleet-control-plane = {
-                  enable = true;
-                  openFirewall = true;
-                  tls = {
-                    cert = "/etc/nixfleet-tls/cp-cert.pem";
-                    key = "/etc/nixfleet-tls/cp-key.pem";
-                    clientCa = "/etc/nixfleet-tls/ca.pem";
-                  };
-                };
-
-                environment.systemPackages = [pkgs.sqlite pkgs.python3];
-              })
-            ];
-          };
+          nodes.cp = mkCpNode {inherit testCerts;};
 
           nodes.web-01 = mkAgentNode {
+            inherit testCerts;
             hostName = "web-01";
             tags = ["web"];
             healthChecks = webHealthChecks;
@@ -132,6 +71,7 @@
           };
 
           nodes.web-02 = mkAgentNode {
+            inherit testCerts;
             hostName = "web-02";
             tags = ["web"];
             healthChecks = webHealthChecks;
@@ -139,6 +79,7 @@
           };
 
           nodes.db-01 = mkAgentNode {
+            inherit testCerts;
             hostName = "db-01";
             tags = ["db"];
             healthChecks.http = [
@@ -153,21 +94,14 @@
           testScript = ''
             import json
 
-            TEST_KEY = "test-admin-key"
-            KEY_HASH = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9"
-            AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
-            CURL = "curl -sf --cacert /etc/nixfleet-tls/ca.pem --cert /etc/nixfleet-tls/cp-cert.pem --key /etc/nixfleet-tls/cp-key.pem"
-            API = "https://localhost:8080"
+            ${testPrelude {}}
 
             # --- Phase 1: Start CP, bootstrap API key ---
             cp.start()
             cp.wait_for_unit("nixfleet-control-plane.service")
             cp.wait_for_open_port(8080)
 
-            cp.succeed(
-                f"sqlite3 /var/lib/nixfleet-cp/state.db "
-                f"\"INSERT INTO api_keys (key_hash, name, role) VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
-            )
+            seed_admin_key(cp)
 
             # --- Phase 2: Register all agents with their tags ---
             for host, tags in [("web-01", ["web"]), ("web-02", ["web"]), ("db-01", ["db"])]:

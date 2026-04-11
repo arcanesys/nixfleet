@@ -10,95 +10,35 @@
 # your topology, and replace the testScript body with your phases.
 {
   pkgs,
-  mkTestNode,
-  defaultTestSpec,
+  mkCpNode,
+  mkAgentNode,
   mkTlsCerts,
+  testPrelude,
+  ...
 }: let
   testCerts = mkTlsCerts {hostnames = ["tagged"];};
 in
   pkgs.testers.nixosTest {
     name = "vm-fleet-tag-sync";
 
-    nodes.cp = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "cp";
-        };
-      extraModules = [
-        ({pkgs, ...}: {
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/cp-cert.pem".source = "${testCerts}/cp-cert.pem";
-          environment.etc."nixfleet-tls/cp-key.pem".source = "${testCerts}/cp-key.pem";
+    nodes.cp = mkCpNode {inherit testCerts;};
 
-          services.nixfleet-control-plane = {
-            enable = true;
-            openFirewall = true;
-            tls = {
-              cert = "/etc/nixfleet-tls/cp-cert.pem";
-              key = "/etc/nixfleet-tls/cp-key.pem";
-              clientCa = "/etc/nixfleet-tls/ca.pem";
-            };
-          };
-          environment.systemPackages = [pkgs.sqlite pkgs.python3];
-        })
-      ];
-    };
-
-    nodes.tagged = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "tagged";
-        };
-      extraModules = [
-        {
-          # Trust the fleet CA
-          security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/tagged-cert.pem".source = "${testCerts}/tagged-cert.pem";
-          environment.etc."nixfleet-tls/tagged-key.pem".source = "${testCerts}/tagged-key.pem";
-
-          services.nixfleet-agent = {
-            enable = true;
-            controlPlaneUrl = "https://cp:8080";
-            machineId = "tagged";
-            pollInterval = 2;
-            healthInterval = 5;
-            dryRun = true;
-            # THE SUBJECT OF THE TEST: these tags must reach the CP
-            # via the agent's periodic report.
-            tags = ["web" "canary" "eu-west"];
-            tls = {
-              clientCert = "/etc/nixfleet-tls/tagged-cert.pem";
-              clientKey = "/etc/nixfleet-tls/tagged-key.pem";
-            };
-          };
-        }
-      ];
+    nodes.tagged = mkAgentNode {
+      inherit testCerts;
+      hostName = "tagged";
+      # THE SUBJECT OF THE TEST: these tags must reach the CP via the
+      # agent's periodic report.
+      tags = ["web" "canary" "eu-west"];
     };
 
     testScript = ''
-      TEST_KEY = "test-admin-key"
-      KEY_HASH = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9"
-      AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
-      CURL = (
-          "curl -sf --cacert /etc/nixfleet-tls/ca.pem "
-          "--cert /etc/nixfleet-tls/cp-cert.pem "
-          "--key /etc/nixfleet-tls/cp-key.pem"
-      )
-      API = "https://localhost:8080"
+      ${testPrelude {}}
 
       # --- Phase 1: Start CP, seed the admin API key ---
       cp.start()
       cp.wait_for_unit("nixfleet-control-plane.service")
       cp.wait_for_open_port(8080)
-
-      cp.succeed(
-          f"sqlite3 /var/lib/nixfleet-cp/state.db "
-          f"\"INSERT INTO api_keys (key_hash, name, role) VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
-      )
+      seed_admin_key(cp)
 
       # --- Phase 2: Start the tagged agent; wait for it to register ---
       tagged.start()
