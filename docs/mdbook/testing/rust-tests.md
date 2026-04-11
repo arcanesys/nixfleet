@@ -116,6 +116,14 @@ the three pre-seeded role keys.
 | `audit_scenarios.rs` | AU1 audit log writes for rollout lifecycle events, AU2 CSV-injection escaping for untrusted actor values. |
 | `metrics_scenarios.rs` | ME1 `/metrics` exposure + counter updates, ME2 gauge accuracy. |
 | `infra_scenarios.rs` | I1 migrations idempotency (run V1..V6 twice, no errors), Phase-2-archived tables absent. |
+| `cn_validation_scenarios.rs` | Phase 4 mTLS CN validation middleware: no extension / empty extension / matching CN / mismatched CN. |
+| `route_coverage_machines.rs` | Phase 4 § 5 #2 — happy + error + auth coverage for the machines route family (6 routes). |
+| `route_coverage_rollouts.rs` | Phase 4 § 5 #2 — same for the rollouts family (5 routes). |
+| `route_coverage_releases.rs` | Phase 4 § 5 #2 — same for the releases family (5 routes). |
+| `route_coverage_misc.rs` | Phase 4 § 5 #2 — same for audit + bootstrap + public health/metrics. |
+| `executor_transition_scenarios.rs` | Phase 4 § 5 #4 — explicit positive + negative coverage for every executor state transition (Created→Running, Running→Completed, Running→Cancelled, Paused→Cancelled, Cancelled terminal). |
+| `auth_matrix.rs` | Phase 4 § 5 #8 — role × endpoint auth matrix for every admin route + invalid bearer + missing prefix. |
+| `migrations_scenarios.rs` | Phase 4 § 5 #9 — fresh DB schema shape, refinery_schema_history exists, idempotent on second migrate, every expected table is queryable. |
 
 ### Scenario files — cli
 
@@ -123,7 +131,9 @@ the three pre-seeded role keys.
 |---|---|
 | `release_hook_scenarios.rs` | CLI-side of R3 — `release create --push-hook "..."` expands `{}` to the store path and runs the hook under `sh -c`. |
 | `rollback_cli_scenarios.rs` | RB2 CLI dispatch — `nixfleet rollback --host <h> --generation <g>` constructs the right SSH invocation. |
-| `config_scenarios.rs` | I2 env-var precedence (**currently `#[ignore]`** pending a Phase 4 fix for `cli::config::resolve`), I3 `HOSTNAME` fallback path. |
+| `config_scenarios.rs` | I2 CLI/credentials/file precedence + I2 env-var precedence (`NIXFLEET_*` overrides credentials, lose to CLI flags) + I3 `HOSTNAME` fallback path. |
+| `subcommand_coverage.rs` | Phase 4 § 5 #1 — direct CLI test for every leaf subcommand (init, bootstrap, status, host add, machines list/untag/register, rollout list/status/cancel, release list/show/diff). |
+| `release_delete_scenarios.rs` | Phase 4 — `nixfleet release delete` CLI dispatch (204 → exit 0, 409 → exit 1, 404 → exit 1). |
 
 ## Tests deliberately NOT in Rust
 
@@ -137,17 +147,34 @@ the three pre-seeded role keys.
 
 ## Known gaps
 
-- **I2 env-var precedence**: `#[ignore]` pending a fix in
-  `cli/src/config.rs::resolve` to layer env-vars between CLI flags and
-  `.nixfleet.toml`. Logged in `TODO.md` as a Phase 4 followup.
-- **Agent-side `poll_hint` honouring**: the CP emits the hint correctly
-  (P1, P2 in `polling_scenarios.rs`) but verifying the agent actually
-  schedules its next poll earlier requires either fake time
-  (`tokio::time::pause()`) which does not work across OS processes, or
-  extracting the loop into `agent/src/lib.rs` as a pub async fn so an
-  in-process `#[tokio::test]` can drive it. The refactor is deferred to
-  a testability cycle (spec Section 6 R1 forbids testability refactors
-  inside the hardening cycle).
+(All previously listed gaps were closed in Phase 4. New gaps surfacing
+during operation should be added here and tracked in `TODO.md`.)
+
+## Coverage baseline
+
+NixFleet measures Rust coverage with `cargo llvm-cov`. The baseline is
+captured at the close of each hardening cycle. Per the cycle DoD, this
+is a measurement, not a gate — used to catch obvious regressions.
+
+To regenerate:
+
+```sh
+cargo install cargo-llvm-cov  # if not already installed
+cargo llvm-cov --workspace --html
+# Output in target/llvm-cov/html/index.html
+```
+
+### 2026-04-11 (end of core hardening cycle, Phase 4)
+
+| Crate | Lines | Branches |
+|---|---|---|
+| `nixfleet-cli` | TBD | TBD |
+| `nixfleet-control-plane` | TBD | TBD |
+| `nixfleet-agent` | TBD | TBD |
+| `nixfleet-types` | TBD | TBD |
+
+(filled in after the user runs Task 29's `cargo llvm-cov` block and
+reports the per-crate numbers)
 
 ## Adding a new Rust scenario
 

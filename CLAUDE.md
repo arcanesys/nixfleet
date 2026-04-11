@@ -14,9 +14,9 @@ modules/
 ├── apps.nix           # Flake apps (validate, build-vm, start-vm, stop-vm, clean-vm, test-vm)
 ├── fleet.nix          # Framework test fleet (8 hosts)
 └── flake-module.nix   # Framework exports (lib.mkHost, nixosModules, diskoTemplates)
-agent/                 # Rust: nixfleet-agent (sequential deploy cycle daemon)
-control-plane/         # Rust: nixfleet-control-plane (Axum HTTP server)
-cli/                   # Rust: nixfleet CLI (deploy, status, rollback)
+agent/                 # Rust: nixfleet-agent (sequential deploy cycle daemon — main.rs is a thin wrapper around lib.rs::run_loop)
+control-plane/         # Rust: nixfleet-control-plane (Axum HTTP server, MtlsAcceptor for peer-cert injection, auth_cn middleware for CN validation)
+cli/                   # Rust: nixfleet CLI (deploy, status, rollback, release delete)
 shared/                # Rust: nixfleet-types (shared data types)
 examples/
 ├── client-fleet/      # Example: fleet consuming mkHost via flake-parts
