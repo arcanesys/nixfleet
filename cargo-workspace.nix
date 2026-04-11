@@ -3,25 +3,22 @@
   rustPlatform,
 }:
 # Single workspace build that produces every NixFleet binary in one
-# `cargo build` + `cargo test` pass. Replaces three previously-separate
-# `rustPlatform.buildRustPackage` derivations (agent, control-plane,
-# cli) that each re-ran `cargo test --workspace` from scratch in the
-# nix sandbox — triple work for identical source trees.
+# `cargo build` + `cargo test` pass, sharing sandbox test work across
+# the agent, control plane, and CLI binaries.
 #
 # `packages.nixfleet-{agent,control-plane,cli}` in `agent-package.nix`
-# all point at this same derivation, so `nix build .#packages.*` on
-# any of the three is a cache hit after the first build.
+# all alias this derivation, so `nix build .#packages.*` on any of the
+# three produces a single workspace build plus cheap symlink wrappers.
 #
-# The output contains three binaries:
+# Output binaries:
 #   $out/bin/nixfleet-agent
 #   $out/bin/nixfleet-control-plane
 #   $out/bin/nixfleet            (the CLI binary name, not nixfleet-cli)
 rustPlatform.buildRustPackage {
   pname = "nixfleet-workspace";
   version = "0.1.0";
-  # Same scoped fileset every per-crate derivation used. Editing files
-  # outside the Rust workspace (docs, Nix modules, TODO.md) does not
-  # invalidate the build hash.
+  # Scoped fileset: editing files outside the Rust workspace (docs,
+  # Nix modules, TODO.md) does not invalidate the build hash.
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [
@@ -37,15 +34,13 @@ rustPlatform.buildRustPackage {
 
   # No `cargoBuildFlags` — build the whole workspace in one invocation.
   # No `cargoTestFlags` — `cargo test` at the workspace root runs every
-  # crate's tests, which is what the validate script used to get by
-  # calling three separate package builds sequentially.
+  # crate's tests, which is the point of unifying the build.
 
   meta = {
     description = "NixFleet workspace (agent + control-plane + CLI)";
     license = lib.licenses.asl20;
-    # The convention for `mainProgram` is the primary CLI. Any of the
-    # three binaries is a valid entry point, but the operator-facing
-    # CLI is the one users typically run.
+    # `mainProgram` is the operator CLI. Each alias in agent-package.nix
+    # overrides this per-binary via its own wrapper derivation.
     mainProgram = "nixfleet";
   };
 }

@@ -10,8 +10,8 @@
 # only one that exercises the real `fetch → apply → verify` code path end
 # to end. Other fetch-path coverage is indirect (vm-fleet-release proves
 # `nix copy` + harmonia; vm-fleet-bootstrap proves the happy-path report
-# cycle). The "pre-seeded path + up-to-date report" case that used to live
-# here was dropped as trivially duplicated by vm-nixfleet and vm-fleet-*.
+# cycle). The happy "pre-seeded path + up-to-date report" case is
+# covered by vm-nixfleet and vm-fleet-* and not duplicated here.
 #
 # Uses the shared _lib/helpers.nix infrastructure (same as the
 # _vm-fleet-scenarios/*.nix files) instead of inlining its own openssl

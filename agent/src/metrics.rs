@@ -46,16 +46,15 @@ pub fn record_generation(hash: &str) {
 
 #[cfg(test)]
 mod tests {
-    //! Spec § 5 #6 — every metric in `shared/src/metrics.rs` must
-    //! have an emission assertion. The 7 CP-side constants are
-    //! covered by `control-plane/tests/metrics_scenarios.rs::ME1`;
-    //! the 6 agent-side constants are covered here using a thread-
-    //! local `DebuggingRecorder` so the test does not fight with the
-    //! global metrics recorder installed by `metrics::init()`.
+    //! Every agent-side metric in `shared/src/metrics.rs` must have
+    //! at least one emission assertion. These tests use a thread-local
+    //! `DebuggingRecorder` so they do not fight the global metrics
+    //! recorder installed by `metrics::init()`. CP-side metrics are
+    //! covered by `control-plane/tests/metrics_scenarios.rs::me1_*`.
     //!
     //! Source of truth: importing `nixfleet_types::metrics as m`
-    //! means renaming a constant in shared/src/metrics.rs will
-    //! refuse to compile here rather than silently skipping a check.
+    //! means renaming a constant in `shared/src/metrics.rs` fails
+    //! compilation here rather than silently skipping a check.
 
     use super::*;
     use metrics_util::debugging::DebuggingRecorder;

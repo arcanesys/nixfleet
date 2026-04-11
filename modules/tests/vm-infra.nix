@@ -163,9 +163,9 @@
               # services.harmonia.cache — the actual systemd unit is
               # `harmonia.service`, not `nixfleet-cache-server.service`.
               # Use a bounded wait_until_succeeds so a regression in
-              # the signing-key LoadCredential path (see TODO.md Phase
-              # 3 bug log / commit 5d4ab30) produces an informative
-              # failure rather than an opaque wait_for_unit hang.
+              # the signing-key LoadCredential path produces an
+              # informative failure rather than an opaque
+              # wait_for_unit hang.
               try:
                   server.wait_until_succeeds(
                       "systemctl is-active harmonia.service", timeout=60

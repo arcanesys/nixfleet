@@ -148,10 +148,10 @@ async fn f5_failure_threshold_30_percent_pauses_on_4_of_10() {
 ///   1. Rollout reaches `paused` because the agent reported unhealthy on
 ///      the desired generation.
 ///   2. Operator clears the underlying problem and POSTs `/resume`.
-///   3. The executor's next tick reads `recent_reports[0]` and used to
-///      flip the batch back to `failed` immediately on the STALE
-///      unhealthy report from before resume — defeating the resume
-///      before the agent had a chance to send a fresh healthy report.
+///   3. The executor's next tick reads `recent_reports[0]` and must
+///      NOT flip the batch back to `failed` from the stale
+///      pre-resume unhealthy report — that would defeat the resume
+///      before the agent could send a fresh healthy report.
 ///
 /// The `received_at < started_at` filter in
 /// `executor.rs::evaluate_batch::on_desired_gen` treats a stale report
@@ -192,7 +192,7 @@ async fn f_stale_resume_does_not_reflip_on_pre_resume_report() {
     // datetime('now') is second-precision, so without a backdate the
     // failure report and the resume tick may share the same wall-clock
     // second and the stale-filter check `received_at < started_at`
-    // would not trigger — masking both the bug and the fix.
+    // would not exercise the filter branch at all.
     //
     // We open a fresh rusqlite connection on the harness's db_path
     // (no public accessor on Db; this is the integration-test escape
@@ -239,13 +239,12 @@ async fn f_stale_resume_does_not_reflip_on_pre_resume_report() {
     //           deploy_batch, which sets started_at=NOW and the batch
     //           to "deploying". No evaluation happens this tick.
     //   tick B: process_rollout finds the batch in "deploying" and
-    //           calls evaluate_batch. THIS is where the bug manifests:
-    //           with the buggy executor the (backdated) unhealthy
-    //           report flips the batch back to failed immediately.
-    //           With the fix, the report is recognised as stale
-    //           (received_at < started_at) and treated as pending,
-    //           so the batch transitions to "waiting_health" and the
-    //           rollout stays Running.
+    //           calls evaluate_batch. The (backdated) unhealthy report
+    //           must be recognised as stale (received_at < started_at)
+    //           and treated as pending, so the batch transitions to
+    //           "waiting_health" and the rollout stays Running. Without
+    //           the filter, the backdated report would flip the batch
+    //           straight back to failed.
     harness::tick_once(&cp).await;
     harness::tick_once(&cp).await;
 

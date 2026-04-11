@@ -218,7 +218,7 @@ nixfleet rollback --host <HOST> --ssh [FLAGS]
 
 Running without `--ssh` exits with an error explaining the alternatives (see below).
 
-**For control-plane-driven rollback**, there is no direct endpoint — `POST /machines/{id}/set-generation` was removed with the release abstraction. Use one of:
+**For control-plane-driven rollback**, there is no direct endpoint. The rollback model is release-based, so use one of:
 
 1. **Rollout-level revert** — Create the originating rollout with `--on-failure revert`. The CP reverts completed batches using each batch's `previous_generations` (captured at batch start), restoring every machine to its own prior store path.
 2. **Deploy an older release** — Check out a previous flake commit, `nixfleet release create --push-to <cache>`, then `nixfleet deploy --release <old-id>`. Uses normal rollout semantics (health gates, batching, etc.).

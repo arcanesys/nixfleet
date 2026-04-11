@@ -144,10 +144,10 @@ in
       # "known caveats" note at the top of the file for why this is
       # required under dryRun=true.
       #
-      # Yes, both agents (web-01 and web-02) have their own distinct
+      # Both agents (web-01 and web-02) have their own distinct
       # toplevel closures because nixosTest builds a separate system
-      # derivation per node, so the two entries still have DIFFERENT
-      # store paths — we just stop lying about what those paths are.
+      # derivation per node, so the two release entries MUST point
+      # at each node's real toplevel rather than a shared placeholder.
       # ------------------------------------------------------------------
       web_01_toplevel = web_01.succeed("readlink -f /run/current-system").strip()
       web_02_toplevel = web_02.succeed("readlink -f /run/current-system").strip()

@@ -2,7 +2,8 @@
 {config, ...}: let
   mkHost = config.flake.lib.mkHost;
 
-  # Organization defaults (replaces mkOrg)
+  # Organization defaults — a plain `let` binding, spread into each
+  # host's `hostSpec` below.
   acme = {
     userName = "deploy";
     timeZone = "America/New_York";

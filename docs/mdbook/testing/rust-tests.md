@@ -174,11 +174,11 @@ cargo llvm-cov --workspace --html
 cargo llvm-cov --package nixfleet-control-plane --html
 cargo llvm-cov --package nixfleet-agent --test run_loop_scenarios --html
 
-# Diff against a baseline (e.g. pre-refactor):
-cargo llvm-cov --workspace --summary-only > /tmp/post.txt
+# Diff the branch under review against main:
+cargo llvm-cov --workspace --summary-only > /tmp/branch.txt
 git checkout main
-cargo llvm-cov --workspace --summary-only > /tmp/pre.txt
-diff /tmp/pre.txt /tmp/post.txt
+cargo llvm-cov --workspace --summary-only > /tmp/main.txt
+diff /tmp/main.txt /tmp/branch.txt
 ```
 
 The html output is the primary operator experience. `--summary-only`

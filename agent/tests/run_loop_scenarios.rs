@@ -7,13 +7,12 @@
 //! next poll? When the hint clears, does it revert to the configured
 //! `poll_interval`?
 //!
-//! Implementation note: an earlier draft used `tokio::test(start_paused)`
-//! + `tokio::time::advance` for deterministic cadence. That deadlocked
-//! against reqwest's I/O timers and wiremock's listener acceptor under
-//! paused time, so this revision uses real time with sub-second
-//! intervals. The contract is the same: configured `poll_interval` is
-//! set MUCH longer than the hint, and the test asserts the observed
-//! poll cadence matches the hint, not the configured interval.
+//! Cadence is asserted in real time with sub-second intervals.
+//! `tokio::test(start_paused)` + `tokio::time::advance` deadlock against
+//! reqwest's I/O timers and wiremock's listener under paused time, so
+//! the test must use real time. The contract is the same: configured
+//! `poll_interval` is set MUCH longer than the hint, and the test
+//! asserts the observed cadence matches the hint.
 
 use nixfleet_agent::Config;
 use std::time::Duration;
