@@ -13,7 +13,22 @@
   controlPlaneModule = ../../scopes/nixfleet/_control-plane.nix;
   cacheServerModule = ../../scopes/nixfleet/_cache-server.nix;
   cacheModule = ../../scopes/nixfleet/_cache.nix;
+
+  # Common shared-test constants — lives in the `let` scope (not as a
+  # top-level attribute of the returned set) so `testPrelude` below
+  # can reference it via plain identifier lookup. Re-exported via
+  # `inherit` in the returned attrset so callers can still read
+  # `helpers.testConstants.apiKey` / `helpers.testConstants.apiKeyHash`.
+  testConstants = {
+    # Seeded admin API key for CP tests. Plain bearer token for the
+    # CLI / curl, and the SHA-256 hash of it for the DB seed via
+    # sqlite3 INSERT.
+    apiKey = "test-admin-key";
+    apiKeyHash = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9";
+  };
 in {
+  inherit testConstants;
+
   # Build a runCommand that prints PASS/FAIL for each assertion and fails on first failure.
   mkEvalCheck = pkgs: name: assertions:
     pkgs.runCommand "eval-test-${name}" {} (
@@ -58,14 +73,6 @@ in {
     environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
     environment.etc."nixfleet-tls/${certPrefix}-cert.pem".source = "${testCerts}/${certPrefix}-cert.pem";
     environment.etc."nixfleet-tls/${certPrefix}-key.pem".source = "${testCerts}/${certPrefix}-key.pem";
-  };
-
-  # Common shared-test constants.
-  testConstants = {
-    # Seeded admin API key for CP tests. Plain bearer token for the CLI /
-    # curl, and the SHA-256 hash of it for the DB seed via sqlite3 INSERT.
-    apiKey = "test-admin-key";
-    apiKeyHash = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9";
   };
 
   # Python preamble injected at the top of every scenario testScript.
