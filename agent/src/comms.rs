@@ -43,7 +43,17 @@ impl Client {
     /// Poll the control plane for the desired generation.
     ///
     /// GET /api/v1/machines/{machine_id}/desired-generation
-    pub async fn get_desired_generation(&self, machine_id: &str) -> Result<DesiredGeneration> {
+    ///
+    /// Returns:
+    /// - `Ok(Some(DesiredGeneration))` — CP has a desired generation set
+    /// - `Ok(None)` — CP returned 404 (no generation set yet, common on
+    ///   fresh-DB and first-boot conditions). NOT an error.
+    /// - `Err(...)` — network failure, TLS failure, or any non-404
+    ///   non-2xx status from the CP.
+    pub async fn get_desired_generation(
+        &self,
+        machine_id: &str,
+    ) -> Result<Option<DesiredGeneration>> {
         let url = format!(
             "{}/api/v1/machines/{}/desired-generation",
             self.base_url, machine_id
@@ -55,7 +65,17 @@ impl Client {
             .get(&url)
             .send()
             .await
-            .context("failed to reach control plane")?
+            .context("failed to reach control plane")?;
+
+        // 404 is the documented "no generation set yet" response and is
+        // expected on fresh CP DBs / first-boot. Distinguish it here so
+        // the caller can log INFO instead of WARN and avoid the retry
+        // storm. See `agent/src/main.rs::run_deploy_cycle`.
+        if resp.status().as_u16() == 404 {
+            return Ok(None);
+        }
+
+        let resp = resp
             .error_for_status()
             .context("control plane returned error status")?;
 
@@ -64,7 +84,7 @@ impl Client {
             .await
             .context("failed to parse desired generation response")?;
 
-        Ok(desired)
+        Ok(Some(desired))
     }
 
     /// Report status back to the control plane.
@@ -201,5 +221,81 @@ mod tests {
         let base = "https://fleet.example.com";
         let url = format!("{}/api/v1/machines/{}/desired-generation", base, "web-01");
         assert!(!url.contains("//api"));
+    }
+
+    /// 404 from the CP must map to `Ok(None)` so the agent can log INFO
+    /// and stay on the configured poll_interval. Without this, the agent
+    /// spams WARN ("control plane returned error status") on every poll
+    /// against a fresh-DB CP and busy-loops on the retry interval.
+    #[tokio::test]
+    async fn get_desired_generation_returns_none_on_404() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/machines/web-01/desired-generation"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let cfg = test_config(&server.uri());
+        let client = Client::new(&cfg).unwrap();
+        let result = client.get_desired_generation("web-01").await;
+
+        match result {
+            Ok(None) => {} // expected
+            other => panic!("404 must map to Ok(None); got {other:?}"),
+        }
+    }
+
+    /// 200 with a valid body must map to `Ok(Some(_))` carrying the
+    /// parsed DesiredGeneration.
+    #[tokio::test]
+    async fn get_desired_generation_returns_some_on_200() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/machines/web-01/desired-generation"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "hash": "/nix/store/abc-system",
+                "cache_url": null,
+                "poll_hint": null
+            })))
+            .mount(&server)
+            .await;
+
+        let cfg = test_config(&server.uri());
+        let client = Client::new(&cfg).unwrap();
+        let result = client.get_desired_generation("web-01").await.unwrap();
+
+        let desired = result.expect("expected Some(DesiredGeneration), got None");
+        assert_eq!(desired.hash, "/nix/store/abc-system");
+        assert!(desired.poll_hint.is_none());
+    }
+
+    /// Other non-2xx statuses (e.g. 500) must still surface as Err so
+    /// the poll loop logs WARN and uses the retry interval.
+    #[tokio::test]
+    async fn get_desired_generation_returns_err_on_500() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/machines/web-01/desired-generation"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let cfg = test_config(&server.uri());
+        let client = Client::new(&cfg).unwrap();
+        let result = client.get_desired_generation("web-01").await;
+        assert!(
+            result.is_err(),
+            "500 must surface as Err, not Ok(None); got {result:?}"
+        );
     }
 }

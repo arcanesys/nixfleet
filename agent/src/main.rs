@@ -247,9 +247,22 @@ async fn run_deploy_cycle(
     metrics::record_state_transition("idle", "checking");
 
     // Check: fetch desired generation from control plane.
+    //
+    // The CP returns 404 ("no generation set yet") on fresh-DB / first-
+    // boot conditions; that maps to `Ok(None)` and is NOT an error.
+    // We log INFO, return Success with no poll_hint, and let the loop
+    // schedule the next tick at the configured `poll_interval` (the
+    // steady-state interval) — NOT the retry interval. Real errors
+    // (network, TLS, 5xx) still go through the WARN + Failed path.
     let poll_start = std::time::Instant::now();
     let desired = match client.get_desired_generation(&config.machine_id).await {
-        Ok(d) => d,
+        Ok(Some(d)) => d,
+        Ok(None) => {
+            info!("No desired generation set yet (CP returned 404); steady-state poll");
+            metrics::record_poll(poll_start.elapsed());
+            metrics::record_state_transition("checking", "idle");
+            return PollOutcome::Success { poll_hint: None };
+        }
         Err(e) => {
             warn!("Failed to check desired generation: {e}");
             store
