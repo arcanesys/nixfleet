@@ -71,3 +71,89 @@ impl Check for CommandChecker {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    /// Process-wide lock serializing tests that mutate `PATH`. cargo test
+    /// runs tests in parallel; std::env mutations are global so two
+    /// concurrent tests touching PATH would race. Every PATH-mutating
+    /// test below acquires this lock.
+    fn path_env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Regression guard for c49932f: when systemd starts the agent unit
+    /// the default service PATH does not include `/run/current-system/sw/bin`,
+    /// so a relative `Command::new("sh")` fails with ENOENT before the
+    /// shell even parses the command. Pinning the absolute path
+    /// `/bin/sh` (which on NixOS is a symlink managed by
+    /// environment.binsh) keeps CommandChecker working under that
+    /// minimal env. This test asserts the property by setting PATH to
+    /// `/var/empty` (which contains no `sh`) and verifying the checker
+    /// still returns Pass — that can only happen if Command::new uses
+    /// the absolute path.
+    #[tokio::test]
+    async fn command_checker_runs_with_pathological_path_env() {
+        let _guard = path_env_lock();
+
+        let checker = CommandChecker {
+            name: "echo".to_string(),
+            command: "echo ok".to_string(),
+            timeout_secs: 5,
+        };
+
+        // We have to await across the env-mutating block; can't use
+        // with_empty_path's sync closure directly. Inline the swap.
+        let saved = std::env::var_os("PATH");
+        std::env::set_var("PATH", "/var/empty");
+        let result = checker.run().await;
+        match saved {
+            Some(p) => std::env::set_var("PATH", p),
+            None => std::env::remove_var("PATH"),
+        }
+
+        assert!(
+            matches!(result, HealthCheckResult::Pass { .. }),
+            "CommandChecker must succeed when PATH excludes sh's directory \
+             (the absolute /bin/sh fix from c49932f); got {result:?}"
+        );
+    }
+
+    /// Negative companion: a command that genuinely fails must surface
+    /// as Fail with the exit-code branch, not silently as Pass and not
+    /// as the spawn-error branch.
+    #[tokio::test]
+    async fn command_checker_returns_fail_on_nonzero_exit() {
+        let _guard = path_env_lock();
+
+        let checker = CommandChecker {
+            name: "fail".to_string(),
+            command: "exit 1".to_string(),
+            timeout_secs: 5,
+        };
+
+        let saved = std::env::var_os("PATH");
+        std::env::set_var("PATH", "/var/empty");
+        let result = checker.run().await;
+        match saved {
+            Some(p) => std::env::set_var("PATH", p),
+            None => std::env::remove_var("PATH"),
+        }
+
+        match result {
+            HealthCheckResult::Fail { message, .. } => {
+                assert!(
+                    message.contains("exit code 1"),
+                    "expected exit-code branch in failure message; got {message:?}"
+                );
+            }
+            other => panic!("expected Fail, got {other:?}"),
+        }
+    }
+}
