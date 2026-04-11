@@ -44,7 +44,7 @@ async fn f6_cp_restart_mid_rollout_resumes_from_db() {
         "web",
         RolloutStrategy::AllAtOnce,
         None,
-        "1",
+        "0",
         OnFailure::Pause,
         60,
     )

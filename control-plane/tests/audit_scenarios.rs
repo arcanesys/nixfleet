@@ -52,7 +52,7 @@ async fn au1_mutations_write_audit_events() {
         "web",
         RolloutStrategy::AllAtOnce,
         None,
-        "1",
+        "0",
         OnFailure::Pause,
         60,
     )

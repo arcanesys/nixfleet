@@ -24,7 +24,7 @@ async fn f4_generation_mismatch_counted_as_pending_then_accepted() {
         "web",
         RolloutStrategy::AllAtOnce,
         None,
-        "1",
+        "0",
         OnFailure::Pause,
         60,
     )
@@ -160,4 +160,181 @@ async fn f5_failure_threshold_30_percent_pauses_on_4_of_10() {
             .any(|e| e.event_type == "status_change" && e.detail.contains("paused")),
         "rollout must have a status_change event recording the pause"
     );
+}
+
+/// F-stale-resume — regression guard for 51ba108.
+///
+/// Sequence:
+///   1. Rollout reaches `paused` because the agent reported unhealthy on
+///      the desired generation.
+///   2. Operator clears the underlying problem and POSTs `/resume`.
+///   3. The executor's next tick reads `recent_reports[0]` and used to
+///      flip the batch back to `failed` immediately on the STALE
+///      unhealthy report from before resume — defeating the resume
+///      before the agent had a chance to send a fresh healthy report.
+///
+/// The fix in `executor.rs::evaluate_batch` adds a `received_at <
+/// started_at` filter to the `on_desired_gen` fallback branch so a
+/// stale report is treated as pending instead of unhealthy. This test
+/// pins that fix.
+///
+/// Test design notes:
+///   * `on_desired_gen=true` is what triggers the fallback branch we
+///     care about, so the agent must report on the matching gen path.
+///   * `update_batch_status(deploying)` resets `started_at`, so any
+///     report inserted BEFORE resume has `received_at < started_at`
+///     post-resume. The harness's `fake_agent_report` writes
+///     `received_at = datetime('now')` so the inserted report's
+///     timestamp is genuinely earlier than the resume tick's
+///     `started_at`.
+#[tokio::test]
+async fn f_stale_resume_does_not_reflip_on_pre_resume_report() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "web-01", &["web"]).await;
+    let release_id =
+        harness::create_release(&cp, &[("web-01", "/nix/store/fstale-web-01")]).await;
+    let rollout_id = harness::create_rollout_for_tag(
+        &cp,
+        &release_id,
+        "web",
+        RolloutStrategy::AllAtOnce,
+        None,
+        "0",
+        OnFailure::Pause,
+        60,
+    )
+    .await;
+
+    // Tick once: pending → deploying.
+    harness::tick_once(&cp).await;
+
+    // Stage 1: agent reports failure on the desired gen → batch fails →
+    // rollout pauses (on_failure=Pause).
+    harness::fake_agent_report(
+        &cp,
+        "web-01",
+        "/nix/store/fstale-web-01",
+        false,
+        "boom",
+        &["web"],
+    )
+    .await;
+    cp.db
+        .insert_health_report("web-01", "{\"fail\":true}", false)
+        .unwrap();
+    harness::tick_once(&cp).await;
+
+    let _ = harness::wait_rollout_status(
+        &cp,
+        &rollout_id,
+        RolloutStatus::Paused,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+
+    // Stage 2: backdate the existing reports so they are guaranteed to
+    // be older than the post-resume started_at. SQLite's
+    // datetime('now') is second-precision, so without a backdate the
+    // failure report and the resume tick may share the same wall-clock
+    // second and the stale-filter check `received_at < started_at`
+    // would not trigger — masking both the bug and the fix.
+    //
+    // We open a fresh rusqlite connection on the harness's db_path
+    // (no public accessor on Db; this is the integration-test escape
+    // hatch). Backdating by 10 seconds is far more than needed and
+    // gives a comfortable margin for slow CI.
+    {
+        let conn = rusqlite::Connection::open(&cp.db_path).unwrap();
+        conn.execute(
+            "UPDATE reports SET received_at = datetime('now', '-10 seconds') \
+             WHERE machine_id = 'web-01'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE health_reports SET received_at = datetime('now', '-10 seconds') \
+             WHERE machine_id = 'web-01'",
+            [],
+        )
+        .unwrap();
+    }
+
+    // Stage 3: operator resumes via the HTTP API. This calls
+    // update_batch_status(deploying) which resets the batch's started_at
+    // to NOW, making the (now-backdated) failure report stale relative
+    // to the new batch evaluation window.
+    let resume = cp
+        .admin
+        .post(format!(
+            "{}/api/v1/rollouts/{}/resume",
+            cp.base, rollout_id
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        resume.status().is_success(),
+        "resume must succeed; got {}",
+        resume.status()
+    );
+
+    // Two ticks WITHOUT inserting a fresh report:
+    //   tick A: process_rollout finds the batch in "pending" state
+    //           (resume_rollout reset failed → pending) and calls
+    //           deploy_batch, which sets started_at=NOW and the batch
+    //           to "deploying". No evaluation happens this tick.
+    //   tick B: process_rollout finds the batch in "deploying" and
+    //           calls evaluate_batch. THIS is where the bug manifests:
+    //           with the buggy executor the (backdated) unhealthy
+    //           report flips the batch back to failed immediately.
+    //           With the fix, the report is recognised as stale
+    //           (received_at < started_at) and treated as pending,
+    //           so the batch transitions to "waiting_health" and the
+    //           rollout stays Running.
+    harness::tick_once(&cp).await;
+    harness::tick_once(&cp).await;
+
+    let detail: nixfleet_types::rollout::RolloutDetail = serde_json::from_str(
+        &cp.admin
+            .get(format!("{}/api/v1/rollouts/{}", cp.base, rollout_id))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !matches!(detail.status, RolloutStatus::Paused),
+        "rollout must NOT re-pause on stale pre-resume report; got {:?}",
+        detail.status
+    );
+
+    // Stage 3: now insert a fresh healthy report and tick again. The
+    // batch should reach `succeeded` and the rollout should complete.
+    harness::fake_agent_report(
+        &cp,
+        "web-01",
+        "/nix/store/fstale-web-01",
+        true,
+        "ok",
+        &["web"],
+    )
+    .await;
+    cp.db
+        .insert_health_report("web-01", "{}", true)
+        .unwrap();
+    // Two ticks: first to flip the batch to `succeeded`, second to
+    // promote the rollout to `completed`.
+    harness::tick_once(&cp).await;
+    harness::tick_once(&cp).await;
+
+    let _ = harness::wait_rollout_status(
+        &cp,
+        &rollout_id,
+        RolloutStatus::Completed,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
 }

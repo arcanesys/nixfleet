@@ -115,7 +115,7 @@ fn me1_metrics_populated_after_rollout_cycle() {
             "web",
             RolloutStrategy::AllAtOnce,
             None,
-            "1",
+            "0",
             OnFailure::Pause,
             60,
         )

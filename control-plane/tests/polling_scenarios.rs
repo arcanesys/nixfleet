@@ -22,7 +22,7 @@ async fn p1_poll_hint_present_when_rollout_active() {
         "web",
         RolloutStrategy::AllAtOnce,
         None,
-        "1",
+        "0",
         OnFailure::Pause,
         60,
     )

@@ -20,7 +20,7 @@ async fn rb4_redeploy_old_release_as_forward_rollback() {
         "web",
         RolloutStrategy::AllAtOnce,
         None,
-        "1",
+        "0",
         OnFailure::Pause,
         60,
     )
@@ -45,7 +45,7 @@ async fn rb4_redeploy_old_release_as_forward_rollback() {
         "web",
         RolloutStrategy::AllAtOnce,
         None,
-        "1",
+        "0",
         OnFailure::Pause,
         60,
     )

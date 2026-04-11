@@ -34,7 +34,7 @@ async fn d2_staged_strategy_completes_sequentially() {
         "web",
         RolloutStrategy::Staged,
         Some(vec!["2", "2", "2"]),
-        "1",
+        "0",
         OnFailure::Pause,
         60,
     )
@@ -118,7 +118,7 @@ async fn d3_all_at_once_single_batch_completes() {
         "api",
         RolloutStrategy::AllAtOnce,
         None,
-        "1",
+        "0",
         OnFailure::Pause,
         60,
     )

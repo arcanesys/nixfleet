@@ -107,7 +107,7 @@ async fn r5_delete_referenced_release_returns_409() {
         "web",
         RolloutStrategy::AllAtOnce,
         None,
-        "1",
+        "0",
         OnFailure::Pause,
         30,
     )
