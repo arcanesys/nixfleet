@@ -52,7 +52,7 @@
                   enable = true;
                   openFirewall = true;
                 };
-                environment.systemPackages = [pkgs.sqlite];
+                environment.systemPackages = [pkgs.sqlite pkgs.python3];
               })
             ];
           };
