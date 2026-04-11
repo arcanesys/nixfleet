@@ -260,7 +260,24 @@ in
       cp.wait_for_open_port(8080)
       cache.wait_for_unit("sshd.service")
       cache.wait_for_open_port(22)
-      cache.wait_for_unit("harmonia.service")
+
+      # Bounded wait for harmonia with a diagnostic dump on failure — the
+      # upstream module uses systemd LoadCredential= and failures there
+      # (exit 243) are silent to `wait_for_unit` which blocks forever.
+      try:
+          cache.wait_until_succeeds(
+              "systemctl is-active harmonia.service", timeout=90
+          )
+      except Exception:
+          status = cache.execute("systemctl status harmonia.service --no-pager")[1]
+          journal = cache.execute(
+              "journalctl -u harmonia.service --no-pager -n 80"
+          )[1]
+          print("=== harmonia status ===")
+          print(status)
+          print("=== harmonia journal (last 80 lines) ===")
+          print(journal)
+          raise
       cache.wait_for_open_port(5000)
 
       # Seed the admin API key on the CP via direct SQLite insert.
