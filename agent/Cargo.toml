@@ -8,6 +8,14 @@ repository = "https://github.com/your-org/nixfleet"
 homepage = "https://github.com/your-org/nixfleet"
 authors = ["nixfleet contributors"]
 
+[lib]
+name = "nixfleet_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nixfleet-agent"
+path = "src/main.rs"
+
 [dependencies]
 nixfleet-types = { path = "../shared" }
 tokio = { version = "1", features = ["full"] }
