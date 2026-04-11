@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 
 pub mod audit;
 pub mod auth;
+pub mod auth_cn;
 pub mod db;
 pub mod metrics;
 pub mod release;
@@ -30,12 +31,20 @@ pub fn build_app(
 
     // Agent-facing endpoints: authenticated via mTLS at the transport layer.
     // No API key middleware — agents don't carry bearer tokens.
+    //
+    // Defense-in-depth: cn_matches_path_machine_id rejects with 403
+    // when the peer cert's CN does not match the {id} path segment, so
+    // a leaked agent cert cannot impersonate a different agent. The
+    // middleware is a no-op when no peer cert is present (raw HTTP
+    // test harness or mTLS not configured), so existing tests are
+    // unaffected.
     let agent_routes = Router::new()
         .route(
             "/api/v1/machines/{id}/desired-generation",
             get(routes::get_desired_generation),
         )
-        .route("/api/v1/machines/{id}/report", post(routes::post_report));
+        .route("/api/v1/machines/{id}/report", post(routes::post_report))
+        .layer(middleware::from_fn(auth_cn::cn_matches_path_machine_id));
 
     // Admin/operator endpoints: authenticated via API key (Bearer token).
     let admin_routes = Router::new()

@@ -30,6 +30,13 @@ rand = "0.9"
 uuid = { version = "1", features = ["v4"] }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
+# CN validation in auth_cn — pure-Rust x509 parser, no native deps.
+x509-parser = "0.16"
+# Direct imports needed by the auth_cn::MtlsAcceptor wrapper.
+tokio-rustls = "0.26"
+tower-service = "0.3"
+rustls-pki-types = "1"
+http = "1"
 
 [dev-dependencies]
 tempfile = "3"
@@ -39,3 +46,7 @@ chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 sha2 = "0.10"
 hex = "0.4"
+# CN validation tests synthesize a self-signed cert with a known CN
+# to drive the auth_cn middleware end-to-end via tower::oneshot.
+rcgen = "0.13"
+tower = { version = "0.5", features = ["util"] }
