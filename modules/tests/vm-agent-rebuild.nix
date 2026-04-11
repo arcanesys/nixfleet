@@ -65,8 +65,6 @@
           };
 
           testScript = ''
-            import json
-
             ${helpers.testPrelude {}}
 
             # --- Step 1: Start CP, seed admin API key, register agent ---
