@@ -36,6 +36,18 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Rustls 0.23 requires an explicit process-level CryptoProvider
+    // when more than one crypto backend is compiled into the binary.
+    // Our direct `rustls = "0.23"` dependency pulls in `aws-lc-rs`
+    // (its default feature) while `reqwest` with `rustls-tls` pulls
+    // in `ring`. Without this call, the first `ServerConfig::builder()`
+    // call in `tls::build_server_config` panics with
+    // "Could not automatically determine the process-level
+    // CryptoProvider from Rustls crate features".
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("install default rustls CryptoProvider");
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
