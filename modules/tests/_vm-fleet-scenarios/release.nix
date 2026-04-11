@@ -456,11 +456,22 @@ in
       assert "nixfleet-release-web-01" in store_path, \
           f"unexpected store path: {store_path}"
 
-      # Positive: the closure is on the cache node after `nix copy`.
-      cache.succeed(f"test -e {store_path}")
+      # Positive: the closure is registered in the CACHE node's Nix DB
+      # after `nix copy --to ssh://root@cache`.
+      #
+      # We cannot use `test -e {store_path}` here because nixosTest
+      # mounts the host /nix/store read-only on every VM via 9p, so
+      # any store path referenced anywhere in the test eval is
+      # visible as a FILE on every node regardless of whether the
+      # copy step ever ran. The Nix DATABASE (per-VM, not shared)
+      # is the load-bearing signal: `nix-store -q --references`
+      # fails for paths not registered in the local DB even when
+      # the files exist via the 9p layer.
+      cache.succeed(f"nix-store -q --references {store_path} >/dev/null")
 
-      # Negative: the closure was NOT pushed to the cp node.
-      cp.fail(f"test -e {store_path}")
+      # Negative: the closure was NOT registered on the cp node's
+      # Nix DB — nix copy pushed only to the cache, not to cp.
+      cp.fail(f"nix-store -q --references {store_path}")
 
       # --- Phase 3: R2 — agent fetches from http://cache:5000 ---
       agent.wait_for_unit("multi-user.target")
@@ -470,8 +481,10 @@ in
           "grep -E '^substituters.*cache:5000' /etc/nix/nix.conf"
       )
 
-      # Negative: the closure is NOT on the agent before the fetch.
-      agent.fail(f"test -e {store_path}")
+      # Negative: the closure is NOT in the agent's Nix DB before the
+      # fetch (the 9p layer makes `test -e` invariant, so DB check
+      # is the only load-bearing signal).
+      agent.fail(f"nix-store -q --references {store_path}")
 
       # Fetch via substitution from the harmonia cache. The cache signs
       # paths on the fly using the pre-generated signing key, and the
@@ -481,7 +494,7 @@ in
           f"nix copy --no-check-sigs --from http://cache:5000 {store_path}"
       )
 
-      # Positive: the closure is now on the agent.
-      agent.succeed(f"test -e {store_path}")
+      # Positive: the closure is now registered in the agent's Nix DB.
+      agent.succeed(f"nix-store -q --references {store_path} >/dev/null")
     '';
   }
