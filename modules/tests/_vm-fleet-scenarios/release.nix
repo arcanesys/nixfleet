@@ -336,11 +336,40 @@ in
       assert which_nix != "/run/current-system/sw/bin/nix", \
           f"shim not prepended to PATH, got {which_nix!r}"
 
+      # Pre-flight smoke test: make sure `nix copy --to ssh://root@cache`
+      # actually works before invoking the CLI end-to-end. The shim
+      # delegates `nix copy` to /run/current-system/sw/bin/nix, and that
+      # invokes ssh under the hood. If ssh auth/keys/known_hosts are
+      # misconfigured we want to see a clear error here, not a silent
+      # hang inside cli::release::create.
+      print("### smoke: ssh root@cache true")
+      rc, out = builder.execute(
+          "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "
+          "-o ConnectTimeout=10 root@cache true",
+          timeout=30,
+      )
+      if rc != 0:
+          print("=== ssh smoke failed ===")
+          print(out)
+          raise Exception(f"ssh root@cache true returned {rc}")
+      print("### smoke: nix copy --to ssh://root@cache <web01Closure>")
+      rc, out = builder.execute(
+          "/run/current-system/sw/bin/nix copy --to ssh://root@cache "
+          + "${web01Closure}",
+          timeout=60,
+      )
+      if rc != 0:
+          print("=== nix copy smoke failed ===")
+          print(out)
+          raise Exception(f"nix copy returned {rc}")
+      print("### smoke tests passed")
+
       # --- Phase 2: R1 — nixfleet release create --push-to ssh://root@cache ---
       # The real cli::release::create runs; the shim returns canned
       # nix eval / nix build output; `nix copy` is delegated to real nix
       # and pushes the closure to the cache over SSH.
-      builder.succeed(
+      print("### running nixfleet release create")
+      rc, out = builder.execute(
           "bash -lc '"
           "export NIXFLEET_API_KEY=" + TEST_KEY + " && "
           "nixfleet "
@@ -351,9 +380,16 @@ in
           "release create "
           "--flake /tmp/fake-flake "
           "--hosts web-01 "
-          "--push-to ssh://root@cache"
-          "'"
+          "--push-to ssh://root@cache 2>&1"
+          "'",
+          timeout=120,
       )
+      if rc != 0:
+          print("=== nixfleet release create FAILED ===")
+          print(out)
+          raise Exception(f"nixfleet release create returned {rc}")
+      print("### nixfleet release create output:")
+      print(out)
 
       # Positive: the CP now has exactly one release.
       releases = json.loads(
