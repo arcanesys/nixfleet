@@ -103,14 +103,13 @@ the three pre-seeded role keys.
 
 | File | Covers |
 |---|---|
-| `agent_integration.rs` | Pre-Phase-3 baseline agent ↔ CP end-to-end tests (28 functions). |
 | `release_scenarios.rs` | R3 push-hook invocation, R4 release list pagination, R5 referenced release delete → 409, R6 orphan release delete → 204. |
 | `deploy_scenarios.rs` | D2 canary strategy happy path, D3 staged strategy happy path. |
 | `failure_scenarios.rs` | F4 generation-gate filters stale-gen reports, F5 `failure_threshold = "30%"` pauses on 4 of 10, F-stale-resume pins the resume → stale-report filter fix (51ba108), F-paused-cancel covers Paused → Cancelled. |
 | `hydration_scenarios.rs` | F6 CP restart mid-rollout resumes from DB (ADR 010) — cp1 stages a rollout, cp2 hydrates from the shared SQLite file and drives it to completion, proving `FleetState` is re-queried per tick. |
 | `rollback_scenarios.rs` | RB3 rollback via CP API, RB4 rollback edge cases. |
 | `polling_scenarios.rs` | P1 CP emits `poll_hint = 5` during active rollouts, P2 `poll_hint` clears after rollout completes. Note: the agent-side loop honouring the hint is deferred. |
-| `machine_scenarios.rs` | M1 `get_machines_by_tags` lifecycle filter (decommissioned agents excluded), M2 tag propagation via health reports. |
+| `machine_scenarios.rs` | M1 `get_machines_by_tags` lifecycle filter (decommissioned excluded), M2 tag propagation via health reports, M3 direct desired-gen ↔ report cycle, M4 `success=false` → `system_state=error`, M5 multi-machine desired-gen isolation, M6 `Pending → Active` auto-transition, M7 `Active ↔ Maintenance` round trip. |
 | `auth_scenarios.rs` | A1 bootstrap conflict (409), A2 anonymous admin → 401 + public /health stays open, A4 readonly/deploy role enforcement on POST /rollouts and READ_ONLY on GET /releases+/rollouts, A5 bearer-token shape errors (invalid token / missing Bearer prefix → 401). |
 | `audit_scenarios.rs` | AU1 audit log writes for rollout lifecycle events, AU2 CSV-injection escaping for untrusted actor values. |
 | `metrics_scenarios.rs` | ME1 `/metrics` exposure + counter updates, ME2 gauge accuracy. |
