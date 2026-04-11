@@ -1,185 +1,118 @@
 //! Phase 4 § 5 #8 — auth role × endpoint matrix.
 //!
-//! Builds a comprehensive matrix asserting that every admin route
-//! returns the right HTTP status for every role tier (admin, deploy,
-//! readonly, anonymous). Role gates are scattered across handlers; this
-//! file is the single place that exercises every cell.
+//! Asserts that every admin route returns the right HTTP status for
+//! every role tier (admin / deploy / readonly / anonymous). Role gates
+//! are scattered across handlers; this file is the single place that
+//! exercises every cell.
 //!
-//! Pre-existing coverage:
+//! Pre-existing coverage this builds on (not duplicated here):
 //!   - `Actor::has_role` unit matrix in `control-plane/src/auth.rs`
-//!   - A1 / A2 / A4 in `auth_scenarios.rs` (anonymous → 401, role
-//!     enforcement on POST /rollouts)
-//!   - Task 13/14 + cn_validation_scenarios.rs for the agent-route
-//!     mTLS CN validation layer
+//!   - A1 / A2 / A4 in `auth_scenarios.rs` (bootstrap 409, anonymous
+//!     admin → 401, readonly cannot POST rollout)
+//!   - `route_coverage_{machines,rollouts,releases,misc}.rs` tests for
+//!     per-route happy + error paths
+//!   - `cn_validation_scenarios.rs` for the agent-route mTLS CN layer
 //!
-//! What this file adds: explicit per-route matrix entries for every
-//! ROUTE × ROLE pair the route_coverage_*.rs files don't already
-//! exhaustively cover.
+//! What this file adds: explicit 4-role fan-out for every admin route
+//! so that "readonly can GET /rollouts" (which route_coverage doesn't
+//! test — it only does anonymous→401) and "deploy cannot PATCH a
+//! lifecycle" are pinned as first-class assertions.
 
 #[path = "harness.rs"]
 mod harness;
 
 use harness::{client_anonymous, client_with_key, TEST_API_KEY, TEST_DEPLOY_KEY, TEST_READONLY_KEY};
-use reqwest::Method;
 use serde_json::json;
 
-/// Status sets — represent the expected response per role for a route.
-#[derive(Debug, Clone, Copy)]
-struct ExpectedAuth {
-    admin: u16,
-    deploy: u16,
-    readonly: u16,
-    anonymous: u16,
-}
-
-/// Read-only routes accessible to admin/deploy/readonly, 401 for anon.
-/// This is the only shape driven through `run_matrix_row` below. The
-/// deploy-or-admin and admin-only shapes are exercised by dedicated
-/// tests further down in this file because those routes require
-/// state setup (release_id / rollout_id) that doesn't fit the
-/// generic helper.
-const READ_ONLY: ExpectedAuth = ExpectedAuth {
-    admin: 200,
-    deploy: 200,
-    readonly: 200,
-    anonymous: 401,
-};
-
-/// Run a single (method, path, body, expected) row against all four
-/// role clients on a fresh CP. Each row is its own test so failures
-/// are easy to attribute.
-async fn run_matrix_row(
-    method: Method,
-    path_template: &str,
-    body: Option<serde_json::Value>,
-    expected: ExpectedAuth,
-    seeded_machine: bool,
-) {
-    let cp = harness::spawn_cp().await;
-    if seeded_machine {
-        // Some routes need an existing machine to return 200 instead
-        // of a 4xx that would mask the auth check. Pre-seed via the
-        // HTTP register endpoint so fleet state has matching tags.
-        cp.admin
-            .post(format!("{}/api/v1/machines/web-01/register", cp.base))
-            .json(&json!({"tags": ["web"]}))
-            .send()
-            .await
-            .unwrap();
-    }
-
-    let path = path_template.replace("{base}", &cp.base);
-
-    let admin = client_with_key(TEST_API_KEY);
-    let deploy = client_with_key(TEST_DEPLOY_KEY);
-    let readonly = client_with_key(TEST_READONLY_KEY);
-    let anon = client_anonymous();
-
-    for (label, client, expected_status) in [
-        ("admin", &admin, expected.admin),
-        ("deploy", &deploy, expected.deploy),
-        ("readonly", &readonly, expected.readonly),
-        ("anon", &anon, expected.anonymous),
-    ] {
-        let mut req = client.request(method.clone(), &path);
-        if let Some(ref b) = body {
-            req = req.json(b);
-        }
+/// Run a prepared fan-out: each tuple is (role_label, prepared
+/// request builder, expected HTTP status). Used by every fan-out
+/// test in this file so the loop shape is written once and each
+/// caller only spells out the 4 per-role tuples.
+async fn assert_role_responses(cases: Vec<(&'static str, reqwest::RequestBuilder, u16)>) {
+    for (label, req, expected) in cases {
         let resp = req.send().await.unwrap();
         assert_eq!(
             resp.status().as_u16(),
-            expected_status,
-            "{label} {method} {path}: expected {expected_status}, got {}",
+            expected,
+            "{label}: expected {expected}, got {}",
             resp.status().as_u16()
         );
     }
+}
+
+/// Convenience: the 4 role clients in their conventional order.
+/// Used by every fan-out test.
+fn four_clients() -> (
+    reqwest::Client,
+    reqwest::Client,
+    reqwest::Client,
+    reqwest::Client,
+) {
+    (
+        client_with_key(TEST_API_KEY),
+        client_with_key(TEST_DEPLOY_KEY),
+        client_with_key(TEST_READONLY_KEY),
+        client_anonymous(),
+    )
 }
 
 // =====================================================================
 // READ_ONLY routes (admin/deploy/readonly = 200, anon = 401)
 // =====================================================================
 
+/// Drive a single GET against all four role clients with the expected
+/// READ_ONLY shape (admin/deploy/readonly = 200, anon = 401). Caller
+/// supplies only the path.
+async fn assert_read_only_get(path_template: &str) {
+    let cp = harness::spawn_cp().await;
+    let path = path_template.replace("{base}", &cp.base);
+    let (admin, deploy, readonly, anon) = four_clients();
+    assert_role_responses(vec![
+        ("admin GET", admin.get(&path), 200),
+        ("deploy GET", deploy.get(&path), 200),
+        ("readonly GET", readonly.get(&path), 200),
+        ("anon GET", anon.get(&path), 401),
+    ])
+    .await;
+}
+
 #[tokio::test]
 async fn matrix_get_machines() {
-    run_matrix_row(
-        Method::GET,
-        "{base}/api/v1/machines",
-        None,
-        READ_ONLY,
-        false,
-    )
-    .await;
+    assert_read_only_get("{base}/api/v1/machines").await;
 }
 
 #[tokio::test]
 async fn matrix_get_rollouts() {
-    run_matrix_row(
-        Method::GET,
-        "{base}/api/v1/rollouts",
-        None,
-        READ_ONLY,
-        false,
-    )
-    .await;
+    assert_read_only_get("{base}/api/v1/rollouts").await;
 }
 
 #[tokio::test]
 async fn matrix_get_releases() {
-    run_matrix_row(
-        Method::GET,
-        "{base}/api/v1/releases",
-        None,
-        READ_ONLY,
-        false,
-    )
-    .await;
+    assert_read_only_get("{base}/api/v1/releases").await;
 }
 
 #[tokio::test]
 async fn matrix_get_audit() {
-    run_matrix_row(
-        Method::GET,
-        "{base}/api/v1/audit",
-        None,
-        READ_ONLY,
-        false,
-    )
-    .await;
+    assert_read_only_get("{base}/api/v1/audit").await;
 }
 
 #[tokio::test]
 async fn matrix_get_audit_export() {
-    run_matrix_row(
-        Method::GET,
-        "{base}/api/v1/audit/export",
-        None,
-        READ_ONLY,
-        false,
-    )
-    .await;
+    assert_read_only_get("{base}/api/v1/audit/export").await;
 }
 
 // =====================================================================
 // DEPLOY_OR_ADMIN routes (readonly = 403, anon = 401)
 // =====================================================================
 //
-// POST /rollouts and the resume/cancel routes are deploy-or-admin.
-// They need a real release_id and rollout_id, so we don't go through
-// the run_matrix_row helper. Direct tests below.
+// POST /rollouts has two success cases (admin + deploy both 201) and
+// needs per-role (machine, tag, release) triples so the already-active
+// rollout 409 doesn't mask the auth check.
 
 #[tokio::test]
 async fn matrix_post_rollouts_role_check() {
-    // Each role hits a different (machine, tag, release) so the
-    // already-active-rollout 409 doesn't conflict with the auth check.
     let cp = harness::spawn_cp().await;
 
-    let admin = client_with_key(TEST_API_KEY);
-    let deploy = client_with_key(TEST_DEPLOY_KEY);
-    let readonly = client_with_key(TEST_READONLY_KEY);
-    let anon = client_anonymous();
-
-    // Pre-register four machines under four distinct tags so each
-    // role's rollout has its own scope.
     for (id, tag) in [
         ("ar-admin", "tag-admin"),
         ("ar-deploy", "tag-deploy"),
@@ -207,99 +140,61 @@ async fn matrix_post_rollouts_role_check() {
         })
     };
 
-    let resp = admin
-        .post(format!("{}/api/v1/rollouts", cp.base))
-        .json(&mk_body(&r_admin, "tag-admin"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 201, "admin must succeed");
-
-    let resp = deploy
-        .post(format!("{}/api/v1/rollouts", cp.base))
-        .json(&mk_body(&r_deploy, "tag-deploy"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 201, "deploy must succeed");
-
-    let resp = readonly
-        .post(format!("{}/api/v1/rollouts", cp.base))
-        .json(&mk_body(&r_readonly, "tag-readonly"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
-
-    let resp = anon
-        .post(format!("{}/api/v1/rollouts", cp.base))
-        .json(&mk_body(&r_anon, "tag-anon"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    let url = format!("{}/api/v1/rollouts", cp.base);
+    let (admin, deploy, readonly, anon) = four_clients();
+    assert_role_responses(vec![
+        (
+            "admin POST /rollouts",
+            admin.post(&url).json(&mk_body(&r_admin, "tag-admin")),
+            201,
+        ),
+        (
+            "deploy POST /rollouts",
+            deploy.post(&url).json(&mk_body(&r_deploy, "tag-deploy")),
+            201,
+        ),
+        (
+            "readonly POST /rollouts",
+            readonly
+                .post(&url)
+                .json(&mk_body(&r_readonly, "tag-readonly")),
+            403,
+        ),
+        (
+            "anon POST /rollouts",
+            anon.post(&url).json(&mk_body(&r_anon, "tag-anon")),
+            401,
+        ),
+    ])
+    .await;
 }
 
 // =====================================================================
-// ADMIN_ONLY routes (deploy and readonly = 403, anon = 401)
+// ADMIN_ONLY routes (admin = 2xx, deploy/readonly = 403, anon = 401)
 // =====================================================================
-//
-// Admin-only routes:
-//   - POST   /api/v1/machines/{id}/register
-//   - PATCH  /api/v1/machines/{id}/lifecycle
-//   - DELETE /api/v1/machines/{id}/tags/{tag}
-//   - DELETE /api/v1/releases/{id}
 
 #[tokio::test]
 async fn matrix_post_machines_register_admin_only() {
-    // Each role hits a different machine ID so the 200 case doesn't
-    // 409 on the second attempt.
+    // Each role hits a different machine id so the admin success case
+    // doesn't poison subsequent 403/401 assertions with a 409 conflict.
     let cp = harness::spawn_cp().await;
-    let admin = client_with_key(TEST_API_KEY);
-    let deploy = client_with_key(TEST_DEPLOY_KEY);
-    let readonly = client_with_key(TEST_READONLY_KEY);
-    let anon = client_anonymous();
-
     let body = json!({"tags": []});
-
-    let resp = admin
-        .post(format!("{}/api/v1/machines/m-admin/register", cp.base))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 201, "admin must succeed");
-
-    let resp = deploy
-        .post(format!("{}/api/v1/machines/m-deploy/register", cp.base))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
-
-    let resp = readonly
-        .post(format!("{}/api/v1/machines/m-readonly/register", cp.base))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
-
-    let resp = anon
-        .post(format!("{}/api/v1/machines/m-anon/register", cp.base))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    let (admin, deploy, readonly, anon) = four_clients();
+    let mk_url = |id: &str| format!("{}/api/v1/machines/{id}/register", cp.base);
+    assert_role_responses(vec![
+        ("admin", admin.post(mk_url("m-admin")).json(&body), 201),
+        ("deploy", deploy.post(mk_url("m-deploy")).json(&body), 403),
+        ("readonly", readonly.post(mk_url("m-readonly")).json(&body), 403),
+        ("anon", anon.post(mk_url("m-anon")).json(&body), 401),
+    ])
+    .await;
 }
 
 #[tokio::test]
 async fn matrix_patch_machine_lifecycle_admin_only() {
     let cp = harness::spawn_cp().await;
-    // Pre-register all four machines as admin so the role tests
-    // exercise the auth check, not 404.
+    // Pre-register 4 machines as admin so each role's request hits an
+    // existing machine (exercises the auth check, not 404).
     let admin = client_with_key(TEST_API_KEY);
     for id in ["lc-admin", "lc-deploy", "lc-readonly", "lc-anon"] {
         admin
@@ -311,128 +206,52 @@ async fn matrix_patch_machine_lifecycle_admin_only() {
     }
 
     let body = json!({"lifecycle": "decommissioned"});
-
-    // admin → 200
-    let resp = admin
-        .patch(format!("{}/api/v1/machines/lc-admin/lifecycle", cp.base))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-
-    // deploy → 403
-    let resp = client_with_key(TEST_DEPLOY_KEY)
-        .patch(format!("{}/api/v1/machines/lc-deploy/lifecycle", cp.base))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
-
-    // readonly → 403
-    let resp = client_with_key(TEST_READONLY_KEY)
-        .patch(format!("{}/api/v1/machines/lc-readonly/lifecycle", cp.base))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
-
-    // anon → 401
-    let resp = client_anonymous()
-        .patch(format!("{}/api/v1/machines/lc-anon/lifecycle", cp.base))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    let (admin, deploy, readonly, anon) = four_clients();
+    let mk_url = |id: &str| format!("{}/api/v1/machines/{id}/lifecycle", cp.base);
+    assert_role_responses(vec![
+        ("admin", admin.patch(mk_url("lc-admin")).json(&body), 200),
+        ("deploy", deploy.patch(mk_url("lc-deploy")).json(&body), 403),
+        (
+            "readonly",
+            readonly.patch(mk_url("lc-readonly")).json(&body),
+            403,
+        ),
+        ("anon", anon.patch(mk_url("lc-anon")).json(&body), 401),
+    ])
+    .await;
 }
 
 #[tokio::test]
 async fn matrix_delete_release_admin_only() {
     let cp = harness::spawn_cp().await;
 
-    // Pre-create four releases (one per role) so the role test
-    // exercises the auth check, not 404.
+    // Pre-create 4 releases (one per role) so the admin success deletes
+    // a different row than the 403/401 attempts touch.
     let r_admin = harness::create_release(&cp, &[("web-01", "/nix/store/del-admin")]).await;
     let r_deploy = harness::create_release(&cp, &[("web-01", "/nix/store/del-deploy")]).await;
     let r_readonly = harness::create_release(&cp, &[("web-01", "/nix/store/del-readonly")]).await;
     let r_anon = harness::create_release(&cp, &[("web-01", "/nix/store/del-anon")]).await;
 
-    let admin = client_with_key(TEST_API_KEY);
-    let resp = admin
-        .delete(format!("{}/api/v1/releases/{}", cp.base, r_admin))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 204);
-
-    let resp = client_with_key(TEST_DEPLOY_KEY)
-        .delete(format!("{}/api/v1/releases/{}", cp.base, r_deploy))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
-
-    let resp = client_with_key(TEST_READONLY_KEY)
-        .delete(format!("{}/api/v1/releases/{}", cp.base, r_readonly))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
-
-    let resp = client_anonymous()
-        .delete(format!("{}/api/v1/releases/{}", cp.base, r_anon))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    let (admin, deploy, readonly, anon) = four_clients();
+    let mk_url = |id: &str| format!("{}/api/v1/releases/{id}", cp.base);
+    assert_role_responses(vec![
+        ("admin", admin.delete(mk_url(&r_admin)), 204),
+        ("deploy", deploy.delete(mk_url(&r_deploy)), 403),
+        ("readonly", readonly.delete(mk_url(&r_readonly)), 403),
+        ("anon", anon.delete(mk_url(&r_anon)), 401),
+    ])
+    .await;
 }
 
 // =====================================================================
-// Public routes (no auth required, all four roles → 200)
+// Bearer token error paths
 // =====================================================================
-
-#[tokio::test]
-async fn matrix_get_health_no_auth() {
-    let cp = harness::spawn_cp().await;
-    for client in [
-        client_with_key(TEST_API_KEY),
-        client_with_key(TEST_DEPLOY_KEY),
-        client_with_key(TEST_READONLY_KEY),
-        client_anonymous(),
-    ] {
-        let resp = client
-            .get(format!("{}/health", cp.base))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200);
-    }
-}
-
-#[tokio::test]
-async fn matrix_get_metrics_no_auth() {
-    let cp = harness::spawn_cp().await;
-    for client in [
-        client_with_key(TEST_API_KEY),
-        client_with_key(TEST_DEPLOY_KEY),
-        client_with_key(TEST_READONLY_KEY),
-        client_anonymous(),
-    ] {
-        let resp = client
-            .get(format!("{}/metrics", cp.base))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200);
-    }
-}
-
-// =====================================================================
-// Invalid bearer token returns 401 (not 403)
-// =====================================================================
+//
+// Public routes (/health, /metrics) are covered by
+// `route_coverage_misc.rs::health_returns_ok_without_auth` and
+// `metrics_route_returns_200_without_auth`. No need to re-test them
+// here through a 4-role fan-out — the auth layer is not on those
+// routes at all.
 
 #[tokio::test]
 async fn invalid_bearer_token_returns_401() {

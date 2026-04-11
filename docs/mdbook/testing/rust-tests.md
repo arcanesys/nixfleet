@@ -117,10 +117,7 @@ the three pre-seeded role keys.
 | `metrics_scenarios.rs` | ME1 `/metrics` exposure + counter updates, ME2 gauge accuracy. |
 | `infra_scenarios.rs` | I1 migrations idempotency (run V1..V6 twice, no errors), Phase-2-archived tables absent. |
 | `cn_validation_scenarios.rs` | Phase 4 mTLS CN validation middleware: no extension / empty extension / matching CN / mismatched CN. |
-| `route_coverage_machines.rs` | Phase 4 § 5 #2 — happy + error + auth coverage for the machines route family (6 routes). |
-| `route_coverage_rollouts.rs` | Phase 4 § 5 #2 — same for the rollouts family (5 routes). |
-| `route_coverage_releases.rs` | Phase 4 § 5 #2 — same for the releases family (5 routes). |
-| `route_coverage_misc.rs` | Phase 4 § 5 #2 — same for audit + bootstrap + public health/metrics. |
+| `route_coverage.rs` | Phase 4 § 5 #2 — happy + error + auth coverage for every admin route, grouped by family via section headers (machines / rollouts / releases / audit+bootstrap+public). ~50 tests. |
 | `executor_transition_scenarios.rs` | Phase 4 § 5 #4 — explicit positive + negative coverage for every executor state transition (Created→Running, Running→Completed, Running→Cancelled, Paused→Cancelled, Cancelled terminal). |
 | `auth_matrix.rs` | Phase 4 § 5 #8 — role × endpoint auth matrix for every admin route + invalid bearer + missing prefix. |
 | `migrations_scenarios.rs` | Phase 4 § 5 #9 — fresh DB schema shape, refinery_schema_history exists, idempotent on second migrate, every expected table is queryable. |

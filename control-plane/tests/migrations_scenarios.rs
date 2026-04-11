@@ -33,7 +33,7 @@ const EXPECTED_TABLES: &[&str] = &[
 ];
 
 #[test]
-fn fresh_db_migrate_produces_expected_schema() {
+fn fresh_db_migrate_produces_expected_schema_and_every_table_is_queryable() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("fresh.db");
     let database = db::Db::new(db_path.to_str().unwrap()).unwrap();
@@ -65,6 +65,19 @@ fn fresh_db_migrate_produces_expected_schema() {
         "post-migrate schema shape drift: a migration was added/removed \
          without updating EXPECTED_TABLES in this test (or vice versa)"
     );
+
+    // Smoke-check that every expected table actually accepts SELECT.
+    // Catches mis-spelled names, missing primary keys, and incorrect
+    // migration ordering that would let sqlite_master list a table
+    // that can't be queried.
+    for table in EXPECTED_TABLES {
+        let count: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap_or_else(|e| panic!("SELECT COUNT(*) FROM {table} failed: {e}"));
+        assert_eq!(count, 0, "fresh table {table} must be empty");
+    }
 }
 
 #[test]
@@ -123,23 +136,6 @@ fn migrate_is_idempotent_two_calls_in_a_row() {
     assert_eq!(tables, expected);
 }
 
-/// Smoke test: every expected table accepts at least an empty SELECT.
-/// Catches mis-spelled table names, missing primary keys, or incorrect
-/// migration ordering.
-#[test]
-fn every_expected_table_is_queryable() {
-    let tmp = tempfile::tempdir().unwrap();
-    let db_path = tmp.path().join("query.db");
-    let database = db::Db::new(db_path.to_str().unwrap()).unwrap();
-    database.migrate().unwrap();
-
-    let conn = Connection::open(&db_path).unwrap();
-    for table in EXPECTED_TABLES {
-        let count: i64 = conn
-            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-                row.get(0)
-            })
-            .unwrap_or_else(|e| panic!("SELECT COUNT(*) FROM {table} failed: {e}"));
-        assert_eq!(count, 0, "fresh table {table} must be empty");
-    }
-}
+// (SELECT-queryability is folded into
+// fresh_db_migrate_produces_expected_schema_and_every_table_is_queryable
+// above to avoid spinning up a second tempdir/db for the same assertion.)

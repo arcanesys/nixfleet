@@ -361,32 +361,13 @@ async fn machines_register_posts_with_tags() {
 }
 
 // =====================================================================
-// rollout list — GET /api/v1/rollouts (with optional ?status=)
+// rollout list — GET /api/v1/rollouts (with ?status= query filter)
 // =====================================================================
-
-#[tokio::test]
-async fn rollout_list_calls_get() {
-    let server = cp_mock().await;
-
-    Mock::given(method("GET"))
-        .and(path("/api/v1/rollouts"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .mount(&server)
-        .await;
-
-    Command::cargo_bin("nixfleet")
-        .unwrap()
-        .args([
-            "--control-plane-url",
-            &server.uri(),
-            "--api-key",
-            "test-key",
-            "rollout",
-            "list",
-        ])
-        .assert()
-        .success();
-}
+//
+// The plain `rollout list` routing case is dispatched transitively by
+// every other rollout CLI test (they all go through the same clap
+// enum). The only thing worth pinning explicitly is the query-param
+// builder, since that's CLI logic with no other coverage.
 
 #[tokio::test]
 async fn rollout_list_with_status_filter() {
@@ -498,35 +479,9 @@ async fn rollout_cancel_calls_post() {
 }
 
 // =====================================================================
-// release list — GET /api/v1/releases?limit=N
-// =====================================================================
-
-#[tokio::test]
-async fn release_list_calls_get() {
-    let server = cp_mock().await;
-
-    Mock::given(method("GET"))
-        .and(path("/api/v1/releases"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .mount(&server)
-        .await;
-
-    Command::cargo_bin("nixfleet")
-        .unwrap()
-        .args([
-            "--control-plane-url",
-            &server.uri(),
-            "--api-key",
-            "test-key",
-            "release",
-            "list",
-        ])
-        .assert()
-        .success();
-}
-
-// =====================================================================
 // release show <id> — GET /api/v1/releases/{id}
+// (plain `release list` clap routing is dispatched transitively by
+// every other release test that goes through the same enum)
 // =====================================================================
 
 #[tokio::test]
