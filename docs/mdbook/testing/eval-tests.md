@@ -1,7 +1,11 @@
 # Eval Tests
 
-Eval tests (Tier 1) assert configuration properties at Nix evaluation time. They
-run instantly and catch structural mistakes before anything is built.
+Eval tests (Tier C in the [testing overview](overview.md)) assert configuration
+properties at Nix evaluation time. They run instantly and catch structural
+mistakes before anything is built.
+
+> For the full test tier map (eval / integration / VM / Rust) see the
+> [Testing Overview](overview.md). This page documents only the eval checks.
 
 ## How to run
 
