@@ -60,6 +60,12 @@
   # owner=harmonia mode=0400.
   testSigningKey = pkgs.runCommand "nixfleet-test-cache-signing-key" {} ''
     mkdir -p $out
+    # nix-store --generate-binary-cache-key tries to touch
+    # /nix/var/nix/profiles at startup, which is forbidden in the
+    # build sandbox. Redirect its state dir into the build tmpdir so
+    # it writes there instead.
+    export NIX_STATE_DIR="$TMPDIR/nix-state"
+    mkdir -p "$NIX_STATE_DIR"
     ${pkgs.nix}/bin/nix-store --generate-binary-cache-key \
       nixfleet-test-cache \
       $out/signing.secret \
