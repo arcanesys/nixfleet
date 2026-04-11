@@ -230,7 +230,16 @@ in
       web_01.wait_for_unit("nixfleet-agent.service")
       web_02.wait_for_unit("nixfleet-agent.service")
 
-      cp.wait_until_succeeds(
+      # Poll from the OPERATOR node because CURL_BASE references the
+      # operator's client cert at /etc/nixfleet-tls/operator-cert.pem —
+      # that file doesn't exist on cp. Running the wait on cp would make
+      # curl fail at TLS setup (empty stdout → JSONDecodeError), looking
+      # like the agents never registered even when they did.
+      #
+      # This is also the correct real-workflow path: in production an
+      # operator runs `nixfleet machines list` from their workstation,
+      # not from inside the control plane.
+      operator.wait_until_succeeds(
           f"{CURL_BASE} {AUTH} {API}/api/v1/machines "
           f"| python3 -c \"import sys,json; "
           f"ms=json.load(sys.stdin); "
@@ -308,7 +317,9 @@ in
       rollout = json.loads(rollout_resp)
       rollout_id = rollout["rollout_id"]
 
-      cp.wait_until_succeeds(
+      # Same reason as Phase 4: poll from operator, not cp — CURL_BASE
+      # references operator cert paths.
+      operator.wait_until_succeeds(
           f"{CURL_BASE} {AUTH} {API}/api/v1/rollouts/{rollout_id} "
           f"| python3 -c \"import sys,json; r=json.load(sys.stdin); "
           f"assert r['status'] == 'completed', "
