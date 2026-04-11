@@ -34,9 +34,11 @@
         inherit pkgs lib mkTestNode defaultTestSpec mkTlsCerts;
       };
       vm-fleet-apply-failure = import ./_vm-fleet-scenarios/apply-failure.nix {
-        inherit pkgs lib mkTestNode defaultTestSpec mkTlsCerts;
+        inherit pkgs mkTestNode defaultTestSpec mkTlsCerts;
       };
-      # Task 22b: vm-fleet-revert = ...
+      vm-fleet-revert = import ./_vm-fleet-scenarios/revert.nix {
+        inherit pkgs mkTestNode defaultTestSpec mkTlsCerts;
+      };
       # Task 22c: vm-fleet-timeout = ...
       # Task 23: vm-fleet-poll-retry = ...
       # Task 24: vm-fleet-mtls-missing = ...
