@@ -210,9 +210,16 @@ in
           f"expected target in deploy output, got: {deploy_out!r}"
 
       # --- Phase 4: Positive assertions on the target ---
-      # The stub closure was transferred via nix-copy-closure.
-      target.succeed("test -e ${stubPath}")
-      target.succeed("test -x ${stubPath}/bin/switch-to-configuration")
+      # Prove that `nix-copy-closure --to root@target` actually registered
+      # the stub path in target's LOCAL Nix database. We cannot use
+      # `test -e ${stubPath}` as a proof because nixosTest mounts the host
+      # /nix/store read-only on every VM via 9p, so the store-path files
+      # are visible on every node regardless of whether `nix-copy-closure`
+      # ran. The Nix *database* (/nix/var/nix/db/db.sqlite) is VM-local,
+      # though, so `nix path-info` is a load-bearing check: if the copy
+      # step was skipped, the path would be visible as a file but missing
+      # from the DB and `nix path-info` would fail.
+      target.succeed("nix-store -q --references ${stubPath} >/dev/null")
 
       # The stub's `switch-to-configuration switch` was actually invoked
       # over SSH — it wrote the marker file. This proves the full
