@@ -45,6 +45,7 @@
       vm-fleet-timeout = import ./_vm-fleet-scenarios/timeout.nix scenarioArgs;
       vm-fleet-poll-retry = import ./_vm-fleet-scenarios/poll-retry.nix scenarioArgs;
       vm-fleet-mtls-missing = import ./_vm-fleet-scenarios/mtls-missing.nix scenarioArgs;
+      vm-fleet-mtls-cn-mismatch = import ./_vm-fleet-scenarios/mtls-cn-mismatch.nix scenarioArgs;
       vm-fleet-rollback-ssh = import ./_vm-fleet-scenarios/rollback-ssh.nix scenarioArgs;
     };
   in
