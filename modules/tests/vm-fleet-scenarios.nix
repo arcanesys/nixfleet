@@ -55,6 +55,7 @@
       vm-fleet-mtls-missing = import ./_vm-fleet-scenarios/mtls-missing.nix scenarioArgs;
       vm-fleet-mtls-cn-mismatch = import ./_vm-fleet-scenarios/mtls-cn-mismatch.nix scenarioArgs;
       vm-fleet-rollback-ssh = import ./_vm-fleet-scenarios/rollback-ssh.nix scenarioArgs;
+      vm-fleet-agent-rebuild = import ./_vm-fleet-scenarios/agent-rebuild.nix scenarioArgs;
     };
   in
     lib.optionalAttrs (system == "x86_64-linux") {

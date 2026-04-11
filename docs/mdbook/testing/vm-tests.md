@@ -112,6 +112,17 @@ independently buildable VM subtest under
 `modules/tests/vm-fleet-scenarios.nix` exposes each one as
 `.#checks.<system>.vm-fleet-<name>`.
 
+### `vm-fleet-agent-rebuild`
+
+The only VM test in the suite that runs with `dryRun = false` — it is
+the proof that the agent's real `fetch → apply → verify` pipeline
+works end-to-end. CP tells the agent to deploy a fabricated store path
+that does NOT exist anywhere with no cache URL configured; the agent
+must log `"not found locally and no cache URL configured"` and leave
+`/run/current-system` untouched. Indirect fetch-path coverage still
+exists (`vm-fleet-release` for `nix copy` + harmonia, `vm-fleet-bootstrap`
+for the happy-path report cycle).
+
 ### `vm-fleet-tag-sync`
 
 Real agent with `tags = ["web" "canary" "eu-west"]` in NixOS config. Asserts
