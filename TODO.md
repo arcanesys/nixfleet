@@ -72,34 +72,126 @@ Rust-tier unit or integration test so the regression is caught at
 
 Phase 3 ended with a large shared-helpers refactor (`bf53857`) that touched
 every VM scenario file and the `vm-fleet.nix` headline test. Before merging
-the `hardening/core-scenarios` branch, the full test suite needs to be
-re-run end-to-end from the refactored state:
+the `hardening/core-scenarios` branch the test suite needs both a
+**semantic equivalence audit** (does each refactored test still assert the
+same thing the pre-refactor inline version did) and a **runtime
+verification** (do the builds actually go green).
 
-- [ ] `nix run .#validate -- --all` passes end to end (eval tier +
-      every `vm-*` check discovered dynamically + `cargo test --workspace`).
-      Equivalent to running every bullet below in one shot.
-- [ ] Eval tier green (unblocked after `0066b2c` fixed the `testConstants`
-      scoping regression, not yet re-verified).
-- [ ] All 10 `vm-fleet-*` scenario subtests green against the refactored
-      `mkCpNode` / `mkAgentNode` / `testPrelude` / `tlsCertsModule` helpers.
-- [ ] `vm-fleet.nix` green against the refactored helpers (local
-      `mkAgentNode` wrapper was removed in favour of the shared one).
-- [ ] `vm-core` / `vm-minimal` / `vm-infra` / `vm-nixfleet` /
-      `vm-agent-rebuild` green (unchanged by the refactor but not run
-      this session).
-- [ ] `integration-mock-client` green (unchanged but not run).
-- [ ] `cargo test --workspace` green after the executor stale-report
-      filter (`51ba108`) and the `CommandChecker` absolute-`sh` fix
-      (`c49932f`). See the "test hardening follow-ups" above for
-      specific scenarios worth double-checking.
+### Helper defaults (`modules/tests/_lib/helpers.nix`)
 
-If any of the VM refactor substitutions produces a regression, the likely
-fault is a default parameter on `mkAgentNode` / `mkCpNode` not matching
-the previous inline config. The defaults in `modules/tests/_lib/helpers.nix`
-are: `pollInterval=2, healthInterval=5, dryRun=true, tags=[], controlPlaneUrl="https://cp:8080"`.
-Any scenario whose pre-refactor inline config diverged from these and
-didn't pass an explicit override in the refactored call is a candidate
-for the regression.
+| Helper | Parameter | Default | Notes |
+|---|---|---|---|
+| `mkCpNode` | `hostName` | `"cp"` | Also used as `certPrefix` unless overridden |
+| `mkCpNode` | `certPrefix` | `"cp"` | |
+| `mkCpNode` | `extraModules` | `[]` | |
+| `mkAgentNode` | `machineId` | `hostName` | |
+| `mkAgentNode` | `controlPlaneUrl` | `"https://cp:8080"` | |
+| `mkAgentNode` | `tags` | `[]` | |
+| `mkAgentNode` | `dryRun` | `true` | |
+| `mkAgentNode` | `pollInterval` | `2` | |
+| `mkAgentNode` | `healthInterval` | `5` | |
+| `mkAgentNode` | `healthChecks` | `{}` | |
+| `mkAgentNode` | `agentExtraConfig` | `{}` | `lib.recursiveUpdate`-merged into `services.nixfleet-agent`, wins on collision |
+| `mkAgentNode` | `extraAgentModules` | `[]` | Prepended to agent node modules |
+| `mkAgentNode` | `extraModules` | `[]` | Appended after agent modules |
+
+### Semantic equivalence audit (already done in this session)
+
+For each refactored file the pre-refactor inline config was diffed against
+the post-refactor helper call. Fields listed below are the ones where the
+pre-refactor inline config diverged from the helper default and therefore
+require an explicit override in the refactored call. All rows are
+confirmed **✓ matched** unless flagged.
+
+| File | Divergent field (pre) | Post-refactor handling | Verdict |
+|---|---|---|---|
+| `tag-sync.nix` | — all defaults | — | ✓ |
+| `bootstrap.nix` (web-01/02) | — all defaults | — | ✓ |
+| `bootstrap.nix` (operator) | N/A (not an agent) | `mkTestNode + tlsCertsModule { certPrefix="operator"; }` + inline `systemPackages` | ✓ |
+| `apply-failure.nix` | `healthInterval = 3` | `healthInterval = 3` explicit, `healthChecks.command` preserved in call | ✓ |
+| `revert.nix` (both) | `healthInterval = 3` | Local `mkWebAgent` wrapper passes `healthInterval = 3` + `healthChecks.command` | ✓ |
+| `poll-retry.nix` | `pollInterval = 5, retryInterval = 5` | `pollInterval = 5` explicit, `agentExtraConfig.retryInterval = 5` | ✓ |
+| `timeout.nix` | `healthInterval = 3`, `wantedBy = lib.mkForce []`, `environment.systemPackages = [web01Closure]` | `healthInterval = 3` explicit, `extraAgentModules = [(_: { systemd.services.nixfleet-agent.wantedBy = lib.mkForce []; environment.systemPackages = [web01Closure]; })]` | ✓ |
+| `mtls-missing.nix` (cp) | — all defaults | `mkCpNode` | ✓ |
+| `mtls-missing.nix` (unauth) | N/A (client-only node, no agent service) | Kept inline with `mkTestNode + tlsCertsModule { certPrefix="unauth"; }` | ✓ |
+| `release.nix` (cp) | — all defaults | `mkCpNode` | ✓ |
+| `release.nix` (cache) | N/A (harmonia + sshd scenario-unique) | Kept inline | ✓ |
+| `release.nix` (builder) | N/A (client with CLI + nix-shim) | `mkTestNode + tlsCertsModule { certPrefix="builder"; }` + inline for `systemPackages` + `sessionVariables.PATH = lib.mkBefore ["${nixShim}/bin"]` + `environment.etc."ssh-builder-key"` | ✓ |
+| `release.nix` (agent) | N/A (`services.nixfleet-cache` consumer, NOT a fleet agent) | `mkTestNode + tlsCertsModule { certPrefix="agent"; }` + inline `services.nixfleet-cache` | ✓ — using `mkAgentNode` here would have been wrong (it enables `services.nixfleet-agent` which this node does not want) |
+| `vm-fleet.nix` (web-01/02) | `tags=["web"]`, `healthChecks = webHealthChecks`, `extraAgentModules = webAgentModules` (nginx + node exporter) | Same args passed to shared `mkAgentNode` | ✓ |
+| `vm-fleet.nix` (db-01) | `tags=["db"]`, `healthChecks.http = [{url = "http://localhost:9999/health"; ...}]` | Same args | ✓ |
+
+### Runtime verification (NOT yet done)
+
+The equivalence audit above is static; it does not prove the tests still
+execute correctly at runtime. Still required:
+
+- [ ] **`nix run .#validate -- --all`** passes end to end. This is the
+      one-command shorthand for every check below.
+- [ ] **Eval tier** — every `eval-*` check green (unblocked after `0066b2c`).
+- [ ] **`vm-fleet-tag-sync`** — agent tags reach the CP via health report.
+      Load-bearing: `machine_tags` table rows match the NixOS-declared list.
+- [ ] **`vm-fleet-bootstrap`** — first `nixfleet bootstrap` call succeeds
+      and seeds an admin API key; a second call returns 409. Load-bearing:
+      two-agent rollout reaches `completed` post-bootstrap.
+- [ ] **`vm-fleet-release`** — `nixfleet release create --push-to ssh://` runs
+      end-to-end; the store path is registered in the cache node's Nix DB
+      (not just visible via 9p); the agent substitutes it from harmonia.
+- [ ] **`vm-fleet-deploy-ssh`** — `nixfleet deploy --ssh --target` runs
+      without any CP in the topology; `nix-store -q --references <stub>`
+      succeeds on the target (DB registration proof, not 9p visibility).
+- [ ] **`vm-fleet-apply-failure`** — F1 pause via command health check +
+      resume → completed via the executor stale-report filter fix
+      (`51ba108`) and the `CommandChecker` absolute-`sh` fix (`c49932f`).
+      If Phase 9 times out at `paused`, one of those two fixes regressed.
+- [ ] **`vm-fleet-revert`** — staged 2-batch rollout with `on_failure=revert`.
+      Load-bearing: `previous_generations` on the succeeded batch is a
+      non-empty JSON map and the executor walks it to restore the earlier
+      generation. Verify the local `mkWebAgent` wrapper produces identical
+      nodes for web-01 and web-02.
+- [ ] **`vm-fleet-timeout`** — agent unit is NEVER started
+      (`wantedBy = []`); batch times out on `pending_count > 0` elapsed
+      `health_timeout`. Check that web01Closure is still reachable in
+      the system closure via `extraAgentModules` after the refactor.
+- [ ] **`vm-fleet-poll-retry`** — agent starts before CP, first poll fails,
+      agent retries at `retryInterval = 5` via `agentExtraConfig`, CP comes
+      up, agent registers. Check the journal for the retry log line.
+- [ ] **`vm-fleet-mtls-missing`** — curl without `--cert` fails at TLS
+      handshake; positive control with valid client cert succeeds.
+- [ ] **`vm-fleet-rollback-ssh`** — `nixfleet rollback --ssh --generation
+      <G1>` runs after a `deploy --ssh` of G2; marker file reflects G1.
+- [ ] **`vm-fleet`** — 4-node Tier A fleet test with canary on web tag and
+      all-at-once on db tag, pause/resume, metrics. Load-bearing: the
+      local `mkAgentNode` that existed pre-refactor is now the shared one
+      and `webAgentModules` (nginx + node exporter) are still wired via
+      `extraAgentModules`.
+- [ ] **`vm-core`** / **`vm-minimal`** / **`vm-infra`** / **`vm-nixfleet`**
+      — unchanged by the refactor but not run this session. The
+      infrastructure tests inside `vm-infra.nix` include `vm-cache-server`
+      and `vm-backup-restic` which were also picked up by dynamic
+      discovery for the first time.
+- [ ] **`vm-agent-rebuild`** — now uses release + rollout after the
+      pre-existing bitrot fix (`eda4315`). Load-bearing: Test B
+      "no-cache pre-seeded" reports up-to-date when the release entry
+      equals the agent's current toplevel; Test C "missing path guard"
+      logs the `fetch_closure` error and does NOT advance the
+      `/run/current-system` symlink.
+- [ ] **`integration-mock-client`** — simulates a consumer flake importing
+      `nixfleet.lib.mkHost`. Unchanged but not run.
+- [ ] **`cargo test --workspace`** — all unit + integration tests, with
+      particular attention to:
+   - `control-plane/tests/failure_scenarios.rs` (F4, F5, F6) after the
+     executor stale-report filter change. The filter only fires in the
+     `on_desired_gen` branch's fallback, which F4/F5/F6 do not exercise
+     directly, but confirm no collateral breakage.
+   - Any new Rust-tier guard added for the two bugs (see the "test
+     hardening follow-ups" section above — currently deferred).
+
+If any test fails, the semantic audit above narrows the suspect to either
+a scenario-specific override that got lost in translation or a
+runtime-only concern (executor timing, cache eviction, QEMU flakiness).
+Re-check the audit row for the failing scenario first — if the row is
+`✓` the fault is runtime, not refactor.
 
 ## Phase 4 — checklist coverage
 
