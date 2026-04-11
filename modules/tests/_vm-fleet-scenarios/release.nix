@@ -191,13 +191,19 @@ in
             nixfleetCli
             pkgs.openssh
             pkgs.jq
-            # nixShim is installed as a regular package providing /bin/nix;
-            # the sessionVariable below ensures it appears before the real
-            # nix in PATH.
-            nixShim
           ];
 
-          # Prepend the shim's bin dir to PATH so `nix` resolves to the shim.
+          # Prepend the shim's bin dir to PATH so `nix` resolves to the
+          # shim. We deliberately do NOT add nixShim to systemPackages —
+          # that would create a collision at /run/current-system/sw/bin/nix
+          # with the real nix binary (also in systemPackages via the NixOS
+          # nix module). On collision, one of them silently wins in
+          # buildEnv; if the shim wins, its fallback branch
+          # `exec /run/current-system/sw/bin/nix "$@"` becomes an infinite
+          # exec loop of the shim calling itself. The string interpolation
+          # in `${nixShim}/bin` below pulls nixShim into the system closure
+          # as a runtime dependency without installing it at the colliding
+          # /run/current-system/sw path.
           environment.sessionVariables.PATH =
             lib.mkBefore ["${nixShim}/bin"];
 

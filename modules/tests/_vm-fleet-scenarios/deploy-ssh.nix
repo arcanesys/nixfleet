@@ -93,18 +93,18 @@ in
             nixfleetCli
             pkgs.openssh
             pkgs.jq
-            # The shim is installed as a regular package providing /bin/nix;
-            # the sessionVariable below ensures it appears before the real
-            # nix in PATH so the CLI's `nix eval` / `nix build` calls are
-            # intercepted.
-            nixShim
             # Make the stub closure present on the operator store so
-            # nix-copy-closure has something to transfer. (writeShellApplication
-            # inside nixShim does pull it in transitively via string
-            # interpolation, but the explicit package reference is clearer.)
+            # nix-copy-closure has something to transfer.
             stubToplevel
           ];
 
+          # Prepend the shim's bin dir to PATH so `nix` resolves to the
+          # shim. Do NOT add nixShim to systemPackages — that collides
+          # with the real nix at /run/current-system/sw/bin/nix and, if
+          # the shim wins the collision, its fallback branch causes an
+          # infinite exec loop. The string interpolation below pulls
+          # nixShim into the closure without installing it at the
+          # colliding path.
           environment.sessionVariables.PATH =
             lib.mkBefore ["${nixShim}/bin"];
 

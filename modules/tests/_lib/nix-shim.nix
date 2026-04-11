@@ -38,6 +38,16 @@ in
     runtimeInputs = [];
     # The shim is called as `nix <subcommand> <args...>`. We dispatch on $1.
     # grep usage is deliberate: the arg shapes we match are stable and narrow.
+    #
+    # CRITICAL: fall-through paths MUST call the real nix by its immutable
+    # store path (`${pkgs.nix}/bin/nix`), not `/run/current-system/sw/bin/nix`.
+    # The shim is installed via `environment.systemPackages`, which means
+    # its own bin/nix lives under `/run/current-system/sw/bin/nix` — the
+    # SAME path that the system's real nix binary was supposed to occupy.
+    # On systems where the shim wins the path collision, delegating to
+    # `/run/current-system/sw/bin/nix` is an infinite exec loop of the
+    # shim calling itself. Hardcoding `${pkgs.nix}/bin/nix` sidesteps the
+    # collision entirely.
     text = ''
       cmd="''${1:-}"
       case "$cmd" in
@@ -90,7 +100,7 @@ in
           ;;
         copy)
           # Delegate to the real nix — we want the actual binary-cache transfer.
-          exec /run/current-system/sw/bin/nix "$@"
+          exec ${pkgs.nix}/bin/nix "$@"
           ;;
         flake)
           # nix flake metadata ... --json  (used by flake_revision)
@@ -99,7 +109,7 @@ in
           ;;
         *)
           # Unknown subcommand — pass through to real nix.
-          exec /run/current-system/sw/bin/nix "$@"
+          exec ${pkgs.nix}/bin/nix "$@"
           ;;
       esac
     '';

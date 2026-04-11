@@ -94,7 +94,6 @@ in
           environment.systemPackages = [
             nixfleetCli
             pkgs.openssh
-            nixShim
             # Both stubs must be in the operator's store so nix-copy-closure
             # can transfer G2 (deploy path) and the rollback CLI can
             # reference G1's path as an existing store path.
@@ -102,6 +101,10 @@ in
             stubG2
           ];
 
+          # Prepend the shim's bin dir to PATH so `nix` resolves to the
+          # shim. Do NOT add nixShim to systemPackages — it would collide
+          # with the real nix at /run/current-system/sw/bin/nix. String
+          # interpolation below still pulls nixShim into the closure.
           environment.sessionVariables.PATH =
             lib.mkBefore ["${nixShim}/bin"];
 
