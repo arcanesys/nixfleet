@@ -353,16 +353,21 @@ in
           print(out)
           raise Exception(f"ssh root@cache true returned {rc}")
       print("### smoke: nix copy --to ssh://root@cache <web01Closure>")
+      # nix copy over SSH performs a full store protocol handshake via
+      # `nix-daemon --stdio` on the remote, which is CPU/I-O heavy on a
+      # shared-host VM. The 60s we tried first was too tight — 300s
+      # gives enough headroom on a busy nixosTest host.
       rc, out = builder.execute(
           "/run/current-system/sw/bin/nix copy --to ssh://root@cache "
-          + "${web01Closure}",
-          timeout=60,
+          + "${web01Closure} 2>&1",
+          timeout=300,
       )
       if rc != 0:
           print("=== nix copy smoke failed ===")
           print(out)
           raise Exception(f"nix copy returned {rc}")
       print("### smoke tests passed")
+      print(out)
 
       # --- Phase 2: R1 — nixfleet release create --push-to ssh://root@cache ---
       # The real cli::release::create runs; the shim returns canned
@@ -382,7 +387,7 @@ in
           "--hosts web-01 "
           "--push-to ssh://root@cache 2>&1"
           "'",
-          timeout=120,
+          timeout=480,
       )
       if rc != 0:
           print("=== nixfleet release create FAILED ===")

@@ -32,6 +32,7 @@
 #   exactly the RB1 "agent did not advance to the failing generation"
 #   guarantee.
 {
+  pkgs,
   mkTestNode,
   defaultTestSpec,
   mkTlsCerts,
