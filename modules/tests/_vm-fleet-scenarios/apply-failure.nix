@@ -279,69 +279,21 @@ in
       # ------------------------------------------------------------------
       web_01.succeed("rm -f /var/lib/fail-next-health")
 
-      # Verify the file is actually gone on the agent node. If
-      # something (systemd-tmpfiles, state-directory activation,
-      # whatever) is recreating it, the health check will keep
-      # failing forever.
-      print("### post-rm file check on web-01:")
-      rc, out = web_01.execute("ls -la /var/lib/fail-next-health 2>&1; echo rc=$?")
-      print(out)
-
-      # Dump the actual health-checks config that the agent is reading.
-      print("### /etc/nixfleet/health-checks.json on web-01:")
-      print(web_01.succeed("cat /etc/nixfleet/health-checks.json"))
-
-      # Run the exact command the CommandChecker runs, under the same
-      # `sh -c` wrapper, and report its exit code. This lets us
-      # distinguish a product bug (CommandChecker mis-invoking sh) from
-      # a shell-semantics surprise (`test ! -f` behaving unexpectedly
-      # under the specific sh the agent uses).
-      print("### manual check: sh -c 'test ! -f /var/lib/fail-next-health':")
-      rc, out = web_01.execute(
-          "sh -c 'test ! -f /var/lib/fail-next-health'; echo exit=$?"
-      )
-      print(f"rc={rc} out={out!r}")
-
       # Wait for a HEALTH report (not a deploy-cycle report) with
-      # all_passed=1. The `reports` table is populated by BOTH
-      # run_deploy_cycle (always success=true under dryRun) and
-      # run_health_report (success=health_report.all_passed), so
-      # polling `reports.success=1` is trivially satisfied by the
-      # deploy cycle and tells us nothing about health. Poll the
-      # `health_reports` table directly — it is only populated by
-      # run_health_report.
-      try:
-          cp.wait_until_succeeds(
-              "sqlite3 /var/lib/nixfleet-cp/state.db "
-              "\"SELECT all_passed FROM health_reports WHERE machine_id='web-01' "
-              "ORDER BY received_at DESC, id DESC LIMIT 1\" | grep -q '^1$'",
-              timeout=30,
-          )
-      except Exception:
-          print("### wait-for-healthy timeout — dumping health_reports with results:")
-          print(cp.execute(
-              "sqlite3 -header /var/lib/nixfleet-cp/state.db "
-              "\"SELECT id, all_passed, received_at, results "
-              "FROM health_reports WHERE machine_id='web-01' "
-              "ORDER BY received_at DESC, id DESC LIMIT 5\""
-          )[1])
-          raise
-
-      # Dump the DB state for debugging before resume.
-      print("### pre-resume rollout status:")
-      print(cp.succeed(
-          f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id}"
-      ))
-      print("### pre-resume batches:")
-      print(cp.succeed(
-          "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
-          f"\"SELECT id,batch_index,status,started_at,completed_at FROM rollout_batches WHERE rollout_id='{rollout_id}'\""
-      ))
-      print("### pre-resume recent reports:")
-      print(cp.succeed(
-          "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
-          "\"SELECT id,machine_id,success,received_at FROM reports WHERE machine_id='web-01' ORDER BY received_at DESC, id DESC LIMIT 5\""
-      ))
+      # `all_passed=1` to confirm the agent's health check has
+      # picked up the fresh state BEFORE we call /resume. Polling
+      # `reports.success` does not work here: the reports table is
+      # populated by both run_deploy_cycle (which always sets
+      # success=true under dryRun, message="dry-run: would apply")
+      # and run_health_report (success=health_report.all_passed).
+      # Only the health_reports table is exclusive to the health
+      # runner, so it is the load-bearing signal.
+      cp.wait_until_succeeds(
+          "sqlite3 /var/lib/nixfleet-cp/state.db "
+          "\"SELECT all_passed FROM health_reports WHERE machine_id='web-01' "
+          "ORDER BY received_at DESC, id DESC LIMIT 1\" | grep -q '^1$'",
+          timeout=30,
+      )
 
       cp.succeed(
           f"{CURL} {AUTH} -X POST {API}/api/v1/rollouts/{rollout_id}/resume"
@@ -350,43 +302,12 @@ in
       # ------------------------------------------------------------------
       # Phase 9 — Rollout must now reach `completed`
       # ------------------------------------------------------------------
-      try:
-          cp.wait_until_succeeds(
-              f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id} "
-              f"| python3 -c \"import sys,json; r=json.load(sys.stdin); "
-              f"assert r['status'] == 'completed', "
-              f"f'expected completed, got {{r[\\\"status\\\"]}}'\"",
-              timeout=120,
-          )
-      except Exception:
-          print("### post-resume-timeout rollout status:")
-          print(cp.execute(
-              f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id}"
-          )[1])
-          print("### post-resume-timeout batches:")
-          print(cp.execute(
-              "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
-              f"\"SELECT id,batch_index,status,started_at,completed_at FROM rollout_batches WHERE rollout_id='{rollout_id}'\""
-          )[1])
-          print("### post-resume-timeout reports (web-01):")
-          print(cp.execute(
-              "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
-              "\"SELECT id,machine_id,success,received_at FROM reports WHERE machine_id='web-01' ORDER BY received_at DESC, id DESC LIMIT 10\""
-          )[1])
-          print("### post-resume-timeout health_reports (web-01):")
-          print(cp.execute(
-              "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
-              "\"SELECT id,machine_id,all_passed,received_at,substr(results,1,200) as results FROM health_reports WHERE machine_id='web-01' ORDER BY received_at DESC, id DESC LIMIT 5\""
-          )[1])
-          print("### post-resume-timeout fail-flag file on web-01:")
-          print(web_01.execute("ls -la /var/lib/fail-next-health 2>&1")[1])
-          print("### post-resume-timeout agent journal (tail 40):")
-          print(web_01.execute("journalctl -u nixfleet-agent --no-pager -n 40 2>&1")[1])
-          print("### post-resume-timeout rollout_events:")
-          print(cp.execute(
-              "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
-              f"\"SELECT created_at,event_type,detail FROM rollout_events WHERE rollout_id='{rollout_id}' ORDER BY created_at DESC, id DESC LIMIT 20\""
-          )[1])
-          raise
+      cp.wait_until_succeeds(
+          f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id} "
+          f"| python3 -c \"import sys,json; r=json.load(sys.stdin); "
+          f"assert r['status'] == 'completed', "
+          f"f'expected completed, got {{r[\\\"status\\\"]}}'\"",
+          timeout=120,
+      )
     '';
   }
