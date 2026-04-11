@@ -1,16 +1,25 @@
-# Tier A — VM integration test: NixFleet agent ↔ control plane cycle.
+# Tier A — VM integration test: minimal NixFleet agent ↔ control plane
+# handshake smoke test.
 #
-# Two-node nixosTest proving the full systemd service lifecycle:
-#   1. Control plane starts and listens on port 8080
-#   2. Agent starts and polls the control plane
-#   3. Operator sets a desired generation via the CP API
-#   4. Agent detects mismatch, runs dry-run cycle, reports back
-#   5. CP inventory reflects the agent's report
+# Two nodes, no TLS, no release, no rollout — the simplest possible proof
+# that:
 #
-# Auth model: agent endpoints (report, desired-generation) have no API key
-# middleware — agents authenticate via mTLS at the transport layer. Admin
-# endpoints require a Bearer token. The test bootstraps a test API key for
-# admin operations (set-generation, list machines).
+#   1. `services.nixfleet-control-plane` starts and listens on port 8080
+#   2. `services.nixfleet-agent` starts and polls the control plane
+#   3. The agent's first health report auto-registers the machine in
+#      the CP's inventory
+#   4. `/metrics` on the CP exposes Prometheus text format
+#
+# This test deliberately uses plaintext HTTP + `allowInsecure = true`
+# because it is scoped to "do the two services talk at all". Everything
+# related to mTLS, bootstrap flow, releases, rollouts, health gates,
+# and rollback is covered by the `vm-fleet-*` scenario tests.
+#
+# Historical note: an earlier version of this test drove the agent via
+# `POST /api/v1/machines/{id}/set-generation` which was removed in
+# Phase 2 in favour of release + rollout. The original intent was a
+# "minimal CP ↔ agent cycle" smoke test, so we keep the scope that
+# narrow and let the heavier scenarios cover the rollout machinery.
 #
 # Run: nix build .#checks.x86_64-linux.vm-nixfleet --no-link
 {inputs, ...}: {
@@ -31,16 +40,12 @@
   in
     lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
-        # --- vm-nixfleet: agent ↔ control plane end-to-end cycle ---
+        # --- vm-nixfleet: CP + agent handshake smoke test ---
         vm-nixfleet = pkgs.testers.nixosTest {
           name = "vm-nixfleet";
 
           nodes.cp = mkTestNode {
-            hostSpecValues =
-              defaultTestSpec
-              // {
-                hostName = "cp";
-              };
+            hostSpecValues = defaultTestSpec // {hostName = "cp";};
             extraModules = [
               ({pkgs, ...}: {
                 services.nixfleet-control-plane = {
@@ -53,11 +58,7 @@
           };
 
           nodes.agent = mkTestNode {
-            hostSpecValues =
-              defaultTestSpec
-              // {
-                hostName = "agent";
-              };
+            hostSpecValues = defaultTestSpec // {hostName = "agent";};
             extraModules = [
               {
                 services.nixfleet-agent = {
@@ -66,6 +67,8 @@
                   machineId = "agent";
                   pollInterval = 2;
                   dryRun = true;
+                  # Plaintext HTTP for a smoke test — the scenarios
+                  # under _vm-fleet-scenarios/ cover the full mTLS path.
                   allowInsecure = true;
                 };
               }
@@ -76,85 +79,55 @@
             import json
 
             TEST_KEY = "test-admin-key"
-            # SHA256 of TEST_KEY, precomputed for sqlite insert
             KEY_HASH = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9"
             AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
 
-            # 1. Start control plane and wait for readiness
+            # --- Phase 1: Start CP, seed admin API key ---
             cp.start()
             cp.wait_for_unit("nixfleet-control-plane.service")
             cp.wait_for_open_port(8080)
 
-            # Bootstrap a test admin API key directly in the CP database
             cp.succeed(
                 f"sqlite3 /var/lib/nixfleet-cp/state.db "
-                f"\"INSERT INTO api_keys (key_hash, name, role) VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
+                f"\"INSERT INTO api_keys (key_hash, name, role) "
+                f"VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
             )
 
-            # 2. Pre-register the agent machine (required — unregistered machines get 404)
-            cp.succeed(
-                f"curl -sf -X POST "
-                f"http://localhost:8080/api/v1/machines/agent/register "
-                f"{AUTH} "
-                f"-H 'Content-Type: application/json' "
-                f"-d '{{}}'"
-            )
-
-            # 3. Start agent and wait for its service
+            # --- Phase 2: Start the agent and wait for its first health report ---
             agent.start()
             agent.wait_for_unit("nixfleet-agent.service")
 
-            # 4. Set a desired generation for the agent machine via CP API.
-            #    Use a fake store path -- the agent will detect a mismatch with
-            #    its real /run/current-system and enter the fetch/dry-run path.
-            cp.succeed(
-                f"curl -sf -X POST "
-                f"http://localhost:8080/api/v1/machines/agent/set-generation "
-                f"{AUTH} "
-                f"-H 'Content-Type: application/json' "
-                f"-d '{{\"hash\": \"/nix/store/fake-test-generation\"}}'"
-            )
-
-            # 5. Wait for the agent to poll, detect mismatch, and report back.
-            #    Agent cycle: Idle (2s sleep) -> Checking (reads /run/current-system,
-            #    compares with desired) -> Fetching (no cache_url = no-op) ->
-            #    dry-run branch -> Reporting (POST /report with success=true,
-            #    message="dry-run: would apply") -> Idle.
-            #    After report, the CP inventory will show "agent" in machine list.
-            # Wait for the agent to report (system_state transitions from "unknown" to "ok")
+            # The agent auto-registers on its first health report (see
+            # control-plane/src/routes.rs — unknown machine_id inserts a
+            # new row with lifecycle='active'). We poll until the CP's
+            # inventory contains the agent.
             cp.wait_until_succeeds(
-                f"curl -sf {AUTH} http://localhost:8080/api/v1/machines | grep '\"system_state\":\"ok\"'",
+                f"curl -sf {AUTH} http://localhost:8080/api/v1/machines "
+                f"| python3 -c \"import sys,json; ms=json.load(sys.stdin); "
+                f"assert any(m['machine_id'] == 'agent' for m in ms), "
+                f"f'agent not in inventory: {{ms}}'\"",
                 timeout=60,
             )
 
-            # 6. Verify the machine inventory contains the agent with expected state
+            # --- Phase 3: Sanity checks on the inventory entry ---
             result = cp.succeed(f"curl -sf {AUTH} http://localhost:8080/api/v1/machines")
-            inventory: list[dict] = json.loads(result)
-
-            agent_entry: dict | None = None
-            for entry in inventory:
-                if entry["machine_id"] == "agent":
-                    agent_entry = entry
-                    break
-
-            assert agent_entry is not None, f"Agent not found in inventory: {inventory}"
-
-            # dry-run reports success=true, which maps to system_state "ok"
-            assert agent_entry["system_state"] == "ok", (
-                f"Expected system_state 'ok' (dry-run reports success), "
-                f"got: {agent_entry['system_state']}"
+            inventory = json.loads(result)
+            agent_entry = next(
+                (m for m in inventory if m["machine_id"] == "agent"),
+                None,
             )
+            assert agent_entry is not None, \
+                f"agent missing from inventory: {inventory}"
 
-            # The desired generation should be the fake hash we set
-            assert agent_entry["desired_generation"] == "/nix/store/fake-test-generation", (
-                f"Expected desired_generation '/nix/store/fake-test-generation', "
-                f"got: {agent_entry['desired_generation']}"
-            )
+            # The agent reports its real /run/current-system as
+            # current_generation. Just check the field is populated.
+            assert agent_entry.get("current_generation"), \
+                f"agent has no current_generation: {agent_entry}"
 
-            # 7. Verify /metrics endpoint returns Prometheus text format
+            # --- Phase 4: /metrics endpoint exposes Prometheus text format ---
             metrics_output = cp.succeed("curl -sf http://localhost:8080/metrics")
             assert "nixfleet_fleet_size" in metrics_output, (
-                "Expected nixfleet_fleet_size in /metrics output"
+                "expected nixfleet_fleet_size in /metrics output"
             )
           '';
         };
