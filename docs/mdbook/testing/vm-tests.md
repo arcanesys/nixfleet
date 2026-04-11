@@ -193,9 +193,11 @@ Command health check with a sentinel file
    `POST /api/v1/rollouts/{id}/resume`, assert the rollout reaches
    `completed`.
 
-This test surfaced the rollout executor's stale-report fallback bug (fix
-committed in-branch) and the `CommandChecker` ENOENT bug (also fixed
-in-branch — `Command::new("sh")` failed under systemd).
+This test covers two subtle bugs in the resume path: the rollout
+executor must not re-mark a batch unhealthy from stale pre-resume
+reports, and the agent's `CommandChecker` must use an absolute `/bin/sh`
+so it works under a systemd unit PATH. A regression in either would
+make this test hang at Phase 9 (resume → completed).
 
 ### `vm-fleet-revert` (F2, C3)
 
@@ -293,8 +295,11 @@ All scenario tests use helpers from `modules/tests/_lib/helpers.nix`
 - **`nix-shim`** (from `_lib/nix-shim.nix`) — a `writeShellApplication`
   that intercepts `nix eval` / `nix build` with canned responses while
   delegating `nix copy` and other subcommands to the real nix at an
-  immutable `${pkgs.nix}/bin/nix` path (avoids the infinite-loop
-  collision fixed in-branch).
+  immutable `${pkgs.nix}/bin/nix` path. The absolute path is
+  deliberate: installing the shim into `systemPackages` would collide
+  with the real nix at `/run/current-system/sw/bin/nix`, and if the
+  shim won the collision its fall-through branches would infinitely
+  exec themselves. See the nixosTest gotchas section below.
 
 ## nixosTest gotchas worth knowing
 

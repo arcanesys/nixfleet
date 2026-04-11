@@ -166,6 +166,8 @@ the three pre-seeded role keys.
    / `create_release` / `tick_once` helpers so your scenario doesn't fight
    the executor's wall-clock interval.
 4. Run `cargo test -p nixfleet-control-plane --test <file>` to iterate.
-5. If the scenario uncovers a product bug, fix the bug in-branch rather
-   than adapting the test around it (see the test-vs-component debugging
-   rule in CLAUDE.md).
+5. If the scenario uncovers a product bug, fix the bug rather than
+   adapting the test around it. See the test-vs-component debugging
+   rule: when a test fails, first determine whether the test or the
+   tested component needs fixing, before choosing a fix. Prefer
+   root-cause fixes.

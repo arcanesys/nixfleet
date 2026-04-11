@@ -31,6 +31,76 @@ Out of Phase 2's original contingent scenarios (C1–C3):
 
 - [ ] **nixosTest shared-store makes store-path assertions tautological.** Multiple scenario tests would benefit from being able to assert "path X is on node A but not on node B" (e.g. to prove `nix copy` actually transferred something vs. was a no-op). Today that class of assertion is impossible because `/nix/store` is shared read-only via 9p across all VMs. Workarounds used in this branch: (a) VM-local marker files under `/tmp`, (b) Nix-DB queries via `nix-store -q --references` (DB is per-VM, store files are shared). A stronger approach would be to set `virtualisation.useNixStoreImage = true` + `virtualisation.mountHostNixStore = false` per-node to truly isolate stores, but that blows up build time because every VM then rebuilds its own image. Revisit during Phase 4 or later if more tests in this class need to be added.
 
+## Phase 3 — test hardening follow-ups
+
+These are product bugs Phase 3 surfaced via VM-tier scenarios that deserve a
+Rust-tier unit or integration test so the regression is caught at
+`cargo test --workspace` speed rather than waiting for a ~4 minute VM build.
+
+- [ ] **Rust unit test for `CommandChecker` absolute-path resilience.** The
+  bug fixed in this branch (`agent/src/health/command.rs`,
+  `Command::new("sh")` → `Command::new("/bin/sh")`) has no direct unit
+  test. Add a test that (a) unsets `PATH` in the child environment,
+  (b) invokes `CommandChecker::run`, and (c) asserts the result is
+  `Pass` (not `Fail { message: "failed to run command: ..." }`). Without
+  this, a future contributor could regress the fix by changing to a
+  relative path and the existing tests would still pass.
+
+- [ ] **Rust integration test for resume-after-stale-report race.** The
+  executor's `evaluate_batch` fix in this branch (`control-plane/src/rollout/executor.rs`,
+  `r.received_at.as_str() < started_at` filter on the `on_desired_gen`
+  branch) is only covered by the `vm-fleet-apply-failure` VM subtest.
+  Add a scenario under `control-plane/tests/failure_scenarios.rs` that:
+  (1) seeds a machine with a stale unhealthy report at T0, (2) creates
+  a release+rollout that reaches `paused`, (3) POSTs `/resume`, (4)
+  ticks the executor ONCE without sending a fresh report, (5) asserts
+  the batch did NOT flip to `failed` on the stale report, (6) inserts a
+  fresh healthy report, ticks again, (7) asserts the batch reaches
+  `succeeded`. Harness already has `tick_once` and `insert_health_report`.
+
+- [ ] **Rust verification pass after executor fix.** The stale-report
+  filter changes the `pending_count` vs `unhealthy_count` bookkeeping
+  in one branch of `evaluate_batch`. Existing F5 (`f5_failure_threshold_30_percent_pauses_on_4_of_10`)
+  uses `get_health_reports_since` which is unaffected, but existing
+  F4 (tiebreaker) and F6 (CP restart) indirectly exercise the
+  fallback path. Confirm both still pass via `cargo test -p
+  nixfleet-control-plane --test failure_scenarios`. If a regression
+  appears, it is a test-side stale assumption about the old
+  (pre-51ba108) behaviour, not a product regression.
+
+## Post-merge re-verification checklist
+
+Phase 3 ended with a large shared-helpers refactor (`bf53857`) that touched
+every VM scenario file and the `vm-fleet.nix` headline test. Before merging
+the `hardening/core-scenarios` branch, the full test suite needs to be
+re-run end-to-end from the refactored state:
+
+- [ ] `nix run .#validate -- --all` passes end to end (eval tier +
+      every `vm-*` check discovered dynamically + `cargo test --workspace`).
+      Equivalent to running every bullet below in one shot.
+- [ ] Eval tier green (unblocked after `0066b2c` fixed the `testConstants`
+      scoping regression, not yet re-verified).
+- [ ] All 10 `vm-fleet-*` scenario subtests green against the refactored
+      `mkCpNode` / `mkAgentNode` / `testPrelude` / `tlsCertsModule` helpers.
+- [ ] `vm-fleet.nix` green against the refactored helpers (local
+      `mkAgentNode` wrapper was removed in favour of the shared one).
+- [ ] `vm-core` / `vm-minimal` / `vm-infra` / `vm-nixfleet` /
+      `vm-agent-rebuild` green (unchanged by the refactor but not run
+      this session).
+- [ ] `integration-mock-client` green (unchanged but not run).
+- [ ] `cargo test --workspace` green after the executor stale-report
+      filter (`51ba108`) and the `CommandChecker` absolute-`sh` fix
+      (`c49932f`). See the "test hardening follow-ups" above for
+      specific scenarios worth double-checking.
+
+If any of the VM refactor substitutions produces a regression, the likely
+fault is a default parameter on `mkAgentNode` / `mkCpNode` not matching
+the previous inline config. The defaults in `modules/tests/_lib/helpers.nix`
+are: `pollInterval=2, healthInterval=5, dryRun=true, tags=[], controlPlaneUrl="https://cp:8080"`.
+Any scenario whose pre-refactor inline config diverged from these and
+didn't pass an explicit override in the refactored call is a candidate
+for the regression.
+
 ## Phase 4 — checklist coverage
 
 ### Rollout semantics inconsistency
