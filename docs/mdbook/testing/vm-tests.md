@@ -7,24 +7,26 @@ state machines behave as documented.
 
 ## How to run
 
-All VM checks are discovered dynamically by the `validate` script:
+The canonical entry point is `nix run .#validate -- --all` (see
+[Testing Overview](overview.md)). For VM-only iteration:
 
 ```sh
-nix run .#validate -- --vm          # format + eval + hosts + all vm-* checks
-nix run .#validate -- --all         # same + cargo test --workspace
+nix run .#validate -- --vm
 ```
 
-Individual tests (useful for iterating on one scenario):
+All `vm-*` checks under `.#checks.<system>` are discovered dynamically by
+the validate script, so new scenarios land in `--vm` / `--all`
+automatically without touching it.
+
+When `--vm` surfaces a specific VM failure, drill in:
 
 ```sh
-nix build .#checks.x86_64-linux.vm-fleet --no-link
-nix build .#checks.x86_64-linux.vm-fleet-release --no-link
 nix build .#checks.x86_64-linux.vm-fleet-apply-failure --no-link
-# … and so on, any attribute under .#checks.<system> starting with `vm-`
+nix log /nix/store/<hash>-vm-test-run-vm-fleet-apply-failure.drv
 ```
 
-`nix log /nix/store/<hash>-vm-test-run-<name>.drv` retrieves the full driver
-output for a failed or past run.
+`nix log` retrieves the full driver output (systemctl status, journals,
+Python traceback) for a failed or past run.
 
 ## Requirements
 

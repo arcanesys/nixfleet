@@ -123,15 +123,15 @@ Fleet repos wire these via `nixfleet.lib.mkVmApps { inherit pkgs; }`.
 ## Development
 
 ```sh
-nix develop                        # dev shell
-nix flake check --no-build         # eval tests (instant)
-nix run .#validate                 # full validation (eval + host builds)
-nix run .#validate -- --vm         # include VM tests
-nix fmt                            # format (alejandra + shfmt)
-cargo test --workspace             # Rust tests
+nix develop                        # dev shell (cargo, clippy, rustfmt, rust-analyzer)
+nix fmt                            # format (alejandra + rustfmt + shfmt)
+nix run .#validate -- --all        # run the whole test suite (format, eval, hosts, VM, Rust, clippy, package builds)
 ```
 
-Phase 3 scenario tests live in `control-plane/tests/*_scenarios.rs`, `cli/tests/*_scenarios.rs`, and `modules/tests/_vm-fleet-scenarios/`. Each VM subtest is independently buildable as `nix build .#checks.x86_64-linux.vm-fleet-<name> --no-link`. See `docs/adr/009-core-hardening-audit.md` for the audit that drove them.
+`nix run .#validate -- --all` is the single entry point — prefer it over
+running individual `cargo test` / `nix build .#checks` invocations. See
+`docs/mdbook/testing/overview.md` for what each tier contains and how to
+drill down into a specific failure.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed contributor guidelines.
 

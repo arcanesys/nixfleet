@@ -12,31 +12,30 @@ Plus the CLI at `cli/` (`nixfleet-cli`) which has its own integration tests.
 
 ## How to run
 
+The canonical entry point is `nix run .#validate -- --all` (see
+[Testing Overview](overview.md)). For faster Rust-only iteration:
+
 ```sh
-# Everything (all unit + integration tests across crates)
-nix develop --command cargo test --workspace
-
-# Via the validate orchestrator (runs eval + hosts + rust in one shot)
 nix run .#validate -- --rust
-nix run .#validate -- --all
-
-# Single crate
-cargo test -p nixfleet-control-plane
-cargo test -p nixfleet-agent
-cargo test -p nixfleet-cli
-
-# Single integration test file
-cargo test -p nixfleet-control-plane --test polling_scenarios
-cargo test -p nixfleet-cli --test config_scenarios
-
-# Single test function
-cargo test -p nixfleet-control-plane --test failure_scenarios \
-  f4_get_recent_reports_tiebreaker
 ```
 
-All commands assume you're inside `nix develop` or are prefixing with
-`nix develop --command`. The Rust toolchain (`cargo`, `rustc`, `clippy`,
-`rustfmt`, `rust-analyzer`) is pinned in the dev shell.
+That runs `cargo test --workspace` + `cargo clippy --workspace
+--all-targets -- -D warnings` + `nix build` of every Rust package (the
+sandboxed test run), in order. Use this over raw `cargo test` so clippy
+and the sandbox-build check stay in the loop.
+
+When you need to drill into a specific failure after `--rust` has
+already surfaced it:
+
+```sh
+nix develop --command cargo test -p nixfleet-control-plane --test route_coverage
+nix develop --command cargo test -p nixfleet-cli --test subcommand_coverage
+nix develop --command cargo test -p nixfleet-agent --test run_loop_scenarios \
+    poll_hint_shortens_next_interval
+```
+
+The Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`,
+`rust-analyzer`) is pinned in the dev shell.
 
 ## Unit tests (in-file `#[cfg(test)] mod tests`)
 

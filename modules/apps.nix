@@ -38,7 +38,7 @@ in {
 
     apps =
       {
-        "validate" = mkScript "validate" "Run format, eval, host, VM, and Rust tests" ''
+        "validate" = mkScript "validate" "Single entry point for the whole test suite (format + eval + hosts + VM + Rust + clippy)" ''
           set -uo pipefail
 
           GREEN='\033[1;32m'
@@ -54,9 +54,19 @@ in {
           RUST=0
 
           # Default: fast mode (format + eval + host builds). Flags add tiers.
-          #   --vm      also build all VM tests under checks.${system} (slow)
-          #   --rust    also run `cargo test --workspace` (medium)
-          #   --all     shorthand for --vm --rust
+          #
+          #   (none)    fast: format + flake check + eval-* + host builds
+          #   --vm      + every vm-* check (slow — minutes per check)
+          #   --rust    + cargo test --workspace + cargo clippy --workspace
+          #             + nix build of each rust package (runs test suite
+          #               under the nix build sandbox, catches
+          #               environment-dependent test failures that dev-shell
+          #               cargo test misses)
+          #   --all     everything
+          #
+          # --all is the intended single entry point for "test everything"
+          # (CI, pre-merge, pre-release). Don't list individual nix build /
+          # cargo commands in docs — point at this script.
           while [[ ''${#} -gt 0 ]]; do
             case "''${1}" in
               --fast) FAST=1; shift ;;
@@ -70,27 +80,14 @@ in {
           check() {
             local name="$1"
             shift
-            printf "%-40s" "$name"
+            printf "%-48s" "$name"
             if OUTPUT=$("$@" 2>&1); then
               echo -e "''${GREEN}OK''${NC}"
               PASS=$((PASS + 1))
             else
               echo -e "''${RED}FAIL''${NC}"
-              echo "$OUTPUT" | tail -5
+              echo "$OUTPUT" | tail -10
               FAIL=$((FAIL + 1))
-            fi
-          }
-
-          check_eval() {
-            local name="$1"
-            local attr="$2"
-            printf "%-40s" "$name"
-            if nix eval "$attr" --apply 'x: x.config.system.build.toplevel.name or "ok"' 2>/dev/null 1>/dev/null; then
-              echo -e "''${GREEN}OK (eval)''${NC}"
-              PASS=$((PASS + 1))
-            else
-              echo -e "''${YELLOW}SKIP (cross-platform)''${NC}"
-              SKIP=$((SKIP + 1))
             fi
           }
 
@@ -98,7 +95,16 @@ in {
           check "nix fmt" nix fmt -- --fail-on-change
 
           echo ""
-          echo "=== Eval Tests ==="
+          echo "=== Flake Check (every flake output, eval-only) ==="
+          # `nix flake check --no-build` evaluates every output in the
+          # flake (apps, packages, devShells, nixosConfigurations,
+          # checks) and confirms they type-check / have no eval errors.
+          # Cheaper than building anything and catches attrset drift
+          # across crates + modules + the validate app itself.
+          check "nix flake check --no-build" nix flake check --no-build
+
+          echo ""
+          echo "=== Eval Tests (explicit eval-* derivations) ==="
           ${
             if isLinux
             then ''
@@ -141,13 +147,43 @@ in {
 
           if [ "$RUST" = "1" ]; then
             echo ""
-            echo "=== Rust Tests ==="
+            echo "=== Rust Tests (dev shell) ==="
             # `cargo test --workspace` runs every crate's unit tests
             # and every integration test under control-plane/tests and
             # cli/tests. Runs inside the dev shell so rustc/cargo are
             # on PATH even when invoked from outside `nix develop`.
             check "cargo test --workspace" \
               nix develop --command cargo test --workspace --quiet
+
+            echo ""
+            echo "=== Rust Lint (dev shell) ==="
+            # clippy with -D warnings catches dead code, unused
+            # dependencies, and style regressions that cargo test does
+            # not. Run against the workspace with all targets so tests
+            # and examples are linted too.
+            check "cargo clippy --workspace -D warnings" \
+              nix develop --command cargo clippy --workspace --all-targets -- -D warnings
+
+            ${
+            if isLinux
+            then ''
+              echo ""
+              echo "=== Rust Package Builds (nix sandbox) ==="
+              # Rust packages defined in flake-module.nix build their
+              # crates inside the nix build sandbox, which runs
+              # `cargo test` under a restricted environment (no
+              # /run/current-system, no network, no host /nix/store
+              # mutations). Some tests pass in the dev shell but
+              # fail inside the sandbox due to environment leakage
+              # (see the agent run_loop_scenarios fix in commit
+              # ff49f5c). Running these catches those divergences.
+              for pkg in nixfleet-agent nixfleet-control-plane nixfleet-cli; do
+                check "package: $pkg" \
+                  nix build ".#packages.${system}.$pkg" --no-link
+              done
+            ''
+            else ""
+          }
           fi
 
           echo ""
