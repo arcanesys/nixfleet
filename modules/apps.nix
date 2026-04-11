@@ -91,6 +91,23 @@ in {
             fi
           }
 
+          # Schedule every derivation in a batch in ONE `nix build`
+          # invocation so nix can parallelise independent builds across
+          # CPU cores. Per-target PASS/FAIL reporting then re-runs
+          # `nix build` on each one individually — those calls are
+          # sub-second cache hits against the already-realised store
+          # paths, but keep the granular line-per-target output.
+          #
+          # `--keep-going` lets independent targets keep building after
+          # one fails, so a single broken host does not block the rest
+          # and the final summary lists every real failure.
+          #
+          # Arguments: a space-separated list of installable strings
+          # (everything that would go after `nix build`).
+          prebuild_parallel() {
+            nix build --no-link --keep-going "$@" >/dev/null 2>&1 || true
+          }
+
           echo "=== Formatting ==="
           check "nix fmt" nix fmt -- --fail-on-change
 
@@ -108,7 +125,14 @@ in {
           ${
             if isLinux
             then ''
-              for t in eval-hostspec-defaults eval-ssh-hardening eval-username-override eval-locale-timezone eval-ssh-authorized eval-password-files; do
+              EVAL_TESTS="eval-hostspec-defaults eval-ssh-hardening eval-username-override eval-locale-timezone eval-ssh-authorized eval-password-files"
+              # Pre-build all eval checks in parallel, then report per-test.
+              EVAL_ATTRS=""
+              for t in $EVAL_TESTS; do
+                EVAL_ATTRS="$EVAL_ATTRS .#checks.${system}.$t"
+              done
+              prebuild_parallel $EVAL_ATTRS
+              for t in $EVAL_TESTS; do
                 check "$t" nix build ".#checks.${system}.$t" --no-link
               done
             ''
@@ -121,6 +145,12 @@ in {
           echo ""
           echo "=== NixOS Test Hosts (build) ==="
           HOSTS=$(nix eval .#nixosConfigurations --apply 'x: builtins.concatStringsSep " " (builtins.attrNames x)' --raw 2>/dev/null)
+          # Pre-build every host toplevel in parallel, then report per host.
+          HOST_ATTRS=""
+          for host in $HOSTS; do
+            HOST_ATTRS="$HOST_ATTRS .#nixosConfigurations.$host.config.system.build.toplevel"
+          done
+          prebuild_parallel $HOST_ATTRS
           for host in $HOSTS; do
             check "$host" nix build ".#nixosConfigurations.$host.config.system.build.toplevel" --no-link
           done
@@ -137,6 +167,16 @@ in {
                 VM_TESTS=$(nix eval ".#checks.${system}" \
                     --apply 'cs: builtins.concatStringsSep " " (builtins.filter (n: builtins.match "vm-.*" n != null) (builtins.attrNames cs))' \
                     --raw 2>/dev/null)
+                # Pre-build every vm-* check in parallel. Scenarios that
+                # share node shapes (shared TLS certs, identical mkCpNode
+                # args) dedupe at the derivation layer, so pre-building
+                # them together also lets nix hit those shared closures
+                # only once.
+                VM_ATTRS=""
+                for t in $VM_TESTS; do
+                  VM_ATTRS="$VM_ATTRS .#checks.${system}.$t"
+                done
+                prebuild_parallel $VM_ATTRS
                 for t in $VM_TESTS; do
                   check "$t" nix build ".#checks.${system}.$t" --no-link
                 done
@@ -169,14 +209,17 @@ in {
             then ''
               echo ""
               echo "=== Rust Package Builds (nix sandbox) ==="
-              # Rust packages defined in flake-module.nix build their
-              # crates inside the nix build sandbox, which runs
-              # `cargo test` under a restricted environment (no
-              # /run/current-system, no network, no host /nix/store
-              # mutations). Some tests pass in the dev shell but
-              # fail inside the sandbox due to environment leakage
-              # (see the agent run_loop_scenarios fix in commit
-              # ff49f5c). Running these catches those divergences.
+              # Every `.#packages.<system>.nixfleet-*` attr points at
+              # the SAME `cargo-workspace.nix` derivation, so one
+              # `nix build` invocation on any of them builds the full
+              # workspace once and the remaining two are cache hits.
+              # We still report per-package so a workspace-level
+              # regression doesn't disappear from the summary.
+              prebuild_parallel \
+                .#packages.${system}.nixfleet-workspace \
+                .#packages.${system}.nixfleet-agent \
+                .#packages.${system}.nixfleet-control-plane \
+                .#packages.${system}.nixfleet-cli
               for pkg in nixfleet-agent nixfleet-control-plane nixfleet-cli; do
                 check "package: $pkg" \
                   nix build ".#packages.${system}.$pkg" --no-link
