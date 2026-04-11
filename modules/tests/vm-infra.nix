@@ -123,9 +123,23 @@
 
         # --- vm-cache-server: harmonia binary cache server starts and responds ---
         vm-cache-server = let
-          # Generate a signing key at build time for the test
-          signingKeyFile = pkgs.runCommand "cache-test-signing-key" {} ''
-            ${pkgs.nix}/bin/nix-store --generate-binary-cache-key test-cache "$out" /dev/null
+          # Generate a signing key at build time for the test.
+          # `nix-store --generate-binary-cache-key` tries to mkdir
+          # /nix/var/nix/profiles on startup, which is forbidden in
+          # the build sandbox — redirect NIX_STATE_DIR into $TMPDIR
+          # so it writes its profile scratch space there instead.
+          # Also write the key into a subdirectory of $out so $out
+          # remains a directory (what the nix build environment expects)
+          # and the file is reachable via ${signingKeyFile}/signing.secret.
+          signingKeyPair = pkgs.runCommand "cache-test-signing-key" {} ''
+            mkdir -p $out
+            export NIX_STATE_DIR="$TMPDIR/nix-state"
+            mkdir -p "$NIX_STATE_DIR"
+            ${pkgs.nix}/bin/nix-store --generate-binary-cache-key \
+              test-cache \
+              $out/signing.secret \
+              $out/signing.public
+            chmod 0444 $out/signing.secret
           '';
         in
           pkgs.testers.nixosTest {
@@ -137,7 +151,7 @@
                 {
                   services.nixfleet-cache-server = {
                     enable = true;
-                    signingKeyFile = "${signingKeyFile}";
+                    signingKeyFile = "${signingKeyPair}/signing.secret";
                   };
                 }
               ];
