@@ -45,7 +45,9 @@
       vm-fleet-poll-retry = import ./_vm-fleet-scenarios/poll-retry.nix {
         inherit pkgs mkTestNode defaultTestSpec mkTlsCerts;
       };
-      # Task 24: vm-fleet-mtls-missing = ...
+      vm-fleet-mtls-missing = import ./_vm-fleet-scenarios/mtls-missing.nix {
+        inherit pkgs mkTestNode defaultTestSpec mkTlsCerts;
+      };
       # Task 25: vm-fleet-rollback-ssh = ...
     };
   in
