@@ -97,7 +97,7 @@ async fn scrape(cp: &harness::Cp) -> String {
 
 /// ME1 — after creating + completing a rollout, every CP-side declared
 /// metric appears in `/metrics`, the `nixfleet_rollouts_total` counter
-/// has recorded the completion, and no archived Phase 2 metrics leak.
+/// has recorded the completion, and no unknown metric names leak.
 ///
 /// Scope note: `shared/src/metrics.rs` declares 7 CP-side constants and 6
 /// agent-side constants. The CP process never emits the agent-side
@@ -115,7 +115,7 @@ fn me1_metrics_populated_after_rollout_cycle() {
             "web",
             RolloutStrategy::AllAtOnce,
             None,
-            "1",
+            "0",
             OnFailure::Pause,
             60,
         )
@@ -123,18 +123,7 @@ fn me1_metrics_populated_after_rollout_cycle() {
 
         // Drive the full cycle: pending → deploying → waiting_health → completed.
         harness::tick_once(cp).await;
-        harness::fake_agent_report(
-            cp,
-            "web-01",
-            "/nix/store/me1-web-01",
-            true,
-            "applied",
-            &["web"],
-        )
-        .await;
-        cp.db
-            .insert_health_report("web-01", "{\"ok\":true}", true)
-            .expect("insert_health_report");
+        harness::agent_reports_health(cp, "web-01", "/nix/store/me1-web-01", true).await;
         harness::tick_once(cp).await;
         harness::tick_once(cp).await;
 
@@ -195,13 +184,14 @@ fn me1_metrics_populated_after_rollout_cycle() {
         "nixfleet_rollouts_total{{status=\"completed\"}} must be >= 1, got {value} (line: {completed_line})"
     );
 
-        // Negative: archived Phase 2 metric names must NOT appear anywhere
-        // in the scrape. These were removed when policy/schedule features
-        // were deleted in the Phase 2 hardening squash.
-        for gone in ["nixfleet_policy", "nixfleet_schedule"] {
+        // Negative: metric names that nixfleet does NOT expose must
+        // not appear in the scrape. Regression guard against
+        // accidentally introducing policy/schedule concepts — the
+        // rollout executor has no policy engine and no scheduler.
+        for forbidden in ["nixfleet_policy", "nixfleet_schedule"] {
             assert!(
-                !body.contains(gone),
-                "removed metric name '{gone}' leaked into /metrics"
+                !body.contains(forbidden),
+                "unexpected metric name '{forbidden}' in /metrics"
             );
         }
     });

@@ -49,9 +49,7 @@
 #     or be evaluated for health, so we MUST use each agent's real
 #     toplevel as its release entry store_path (read at test time
 #     via `readlink -f /run/current-system`). Same pattern as
-#     vm-fleet.nix Phase 4 and vm-fleet-bootstrap. Earlier versions
-#     of this file used `writeTextDir` fake paths relying on a
-#     non-existent health-timeout escape hatch.
+#     vm-fleet.nix and vm-fleet-bootstrap.
 #   * If the scheduler shuffles so that the failing batch is batch 0
 #     (i.e. the sentinel arm happens before batch 0 even starts because
 #     we don't yet know which machine will be in it), there are no
@@ -65,12 +63,10 @@
   pkgs,
   mkCpNode,
   mkAgentNode,
-  mkTlsCerts,
+  testCerts,
   testPrelude,
   ...
 }: let
-  testCerts = mkTlsCerts {hostnames = ["web-01" "web-02"];};
-
   failFlagHealthCheck = {
     name = "fail-flag";
     command = "test ! -f /var/lib/fail-next-health";
@@ -94,26 +90,18 @@ in
     nodes."web-02" = mkWebAgent "web-02";
 
     testScript = ''
-      import json
-
       ${testPrelude {}}
 
       # ------------------------------------------------------------------
-      # Phase 1 — Start CP, seed admin API key
+      # Step 1 — Boot CP + seed admin API key
       # ------------------------------------------------------------------
-      cp.start()
-      cp.wait_for_unit("nixfleet-control-plane.service")
-      cp.wait_for_open_port(8080)
-      seed_admin_key(cp)
+      cp_boot_and_seed(cp)
 
       # ------------------------------------------------------------------
-      # Phase 2 — Start both agents. Flag file is NOT present yet, so
+      # Step 2 — Start both agents. Flag file is NOT present yet, so
       # both report healthy on their first tick.
       # ------------------------------------------------------------------
-      web_01.start()
-      web_02.start()
-      web_01.wait_for_unit("nixfleet-agent.service")
-      web_02.wait_for_unit("nixfleet-agent.service")
+      start_agents(web_01, web_02)
 
       # Wait for both agents to register with the CP.
       cp.wait_until_succeeds(
@@ -151,71 +139,42 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 3 — Create release R2 with per-host store paths set to
+      # Step 3 — Create release R2 with per-host store paths set to
       # each agent's real /run/current-system toplevel. See the
       # "known caveats" note at the top of the file for why this is
       # required under dryRun=true.
       #
-      # Yes, both agents (web-01 and web-02) have their own distinct
+      # Both agents (web-01 and web-02) have their own distinct
       # toplevel closures because nixosTest builds a separate system
-      # derivation per node, so the two entries still have DIFFERENT
-      # store paths — we just stop lying about what those paths are.
+      # derivation per node, so the two release entries MUST point
+      # at each node's real toplevel rather than a shared placeholder.
       # ------------------------------------------------------------------
       web_01_toplevel = web_01.succeed("readlink -f /run/current-system").strip()
       web_02_toplevel = web_02.succeed("readlink -f /run/current-system").strip()
       assert web_01_toplevel != web_02_toplevel, \
           "sanity: web-01 and web-02 should have distinct toplevel closures"
 
-      release_body = json.dumps({
-          "flake_ref": "vm-fleet-revert",
-          "entries": [
-              {
-                  "hostname": "web-01",
-                  "store_path": web_01_toplevel,
-                  "platform": "x86_64-linux",
-                  "tags": ["web"],
-              },
-              {
-                  "hostname": "web-02",
-                  "store_path": web_02_toplevel,
-                  "platform": "x86_64-linux",
-                  "tags": ["web"],
-              },
-          ],
-      })
-      release = json.loads(cp.succeed(
-          f"{CURL} {AUTH} -X POST {API}/api/v1/releases "
-          f"-H 'Content-Type: application/json' "
-          f"-d '{release_body}'"
-      ))
-      release_id = release["id"]
-
-      rollout_body = json.dumps({
-          "release_id": release_id,
-          "strategy": "staged",
-          "batch_sizes": ["1", "1"],
-          "failure_threshold": "1",
-          "on_failure": "revert",
-          "health_timeout": 10,
-          "target": {"tags": ["web"]},
-      })
-      rollout = json.loads(cp.succeed(
-          f"{CURL} {AUTH} -X POST {API}/api/v1/rollouts "
-          f"-H 'Content-Type: application/json' "
-          f"-d '{rollout_body}'"
-      ))
-      rollout_id = rollout["rollout_id"]
+      release_id = create_release(cp, [
+          {"hostname": "web-01", "store_path": web_01_toplevel, "tags": ["web"]},
+          {"hostname": "web-02", "store_path": web_02_toplevel, "tags": ["web"]},
+      ])
+      rollout_id = create_rollout(
+          cp, release_id, "web",
+          strategy="staged",
+          batch_sizes=["1", "1"],
+          on_failure="revert",
+          health_timeout=10,
+      )
 
       # ------------------------------------------------------------------
-      # Phase 4 — Wait for batch 0 to reach `succeeded` via the health
-      # timeout branch (treats pending-but-success-reporting agents as
-      # healthy once the timeout expires). This is the prerequisite for
-      # the revert path to have something to revert.
-      #
-      # NOTE: under dryRun=true, the batch reaches `succeeded` only
-      # after the `health_timeout` (10 s) elapses and `unhealthy_count`
-      # stays below `failure_threshold`. This is load-bearing — see
-      # the caveat at the top of the file.
+      # Step 4 — Wait for batch 0 to reach `succeeded`. With the
+      # release entry store_path matching each agent's real
+      # /run/current-system, the generation gate matches and
+      # `evaluate_batch` proceeds to read the latest health report.
+      # Both agents are healthy at this point (sentinel not armed
+      # yet), so unhealthy_count stays at 0 and `0 <= 0` (zero
+      # tolerance) succeeds. This is the prerequisite for the
+      # revert path to have something to revert.
       # ------------------------------------------------------------------
       cp.wait_until_succeeds(
           f"sqlite3 /var/lib/nixfleet-cp/state.db "
@@ -225,7 +184,7 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 5 — Arm the sentinel on BOTH agents. Batch 0 has already
+      # Step 5 — Arm the sentinel on BOTH agents. Batch 0 has already
       # been recorded as succeeded; the agent in batch 1 will now
       # report unhealthy on its next tick.
       # ------------------------------------------------------------------
@@ -233,7 +192,7 @@ in
       web_02.succeed("mkdir -p /var/lib && touch /var/lib/fail-next-health")
 
       # ------------------------------------------------------------------
-      # Phase 6 — F2 positive: rollout must reach `failed` (revert
+      # Step 6 — F2 positive: rollout must reach `failed` (revert
       # path) rather than `paused` (pause path).
       # ------------------------------------------------------------------
       cp.wait_until_succeeds(
@@ -245,7 +204,7 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 7 — F2 positive: `rollout_batches.previous_generations`
+      # Step 7 — F2 positive: `rollout_batches.previous_generations`
       # for the succeeded batch (batch 0) is a non-empty JSON object
       # whose single entry points at the pre-rollout G1 path.
       # ------------------------------------------------------------------
@@ -265,7 +224,7 @@ in
           f"previous_generations[{only_machine}] = {only_prev}, expected {expected_g1}"
 
       # ------------------------------------------------------------------
-      # Phase 8 — F2 positive: the machine in the succeeded batch has
+      # Step 8 — F2 positive: the machine in the succeeded batch has
       # had its desired_generation reverted back to its G1 path by
       # `revert_completed_batches`. The machine in the failing batch
       # keeps the (new) R2 path because the failing batch is not
@@ -281,7 +240,7 @@ in
           f"{only_machine} desired_generation should revert to {expected_g1}, got {reverted}"
 
       # ------------------------------------------------------------------
-      # Phase 9 — C3 positive: the agent on the failing node must have
+      # Step 9 — C3 positive: the agent on the failing node must have
       # actually invoked its health check runner post-deploy. We assert
       # that by searching the agent journal for either the
       # `Running periodic health check` log line (run_health_report in
@@ -299,7 +258,7 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 10 — Negative: the agent services on both nodes are still
+      # Step 10 — Negative: the agent services on both nodes are still
       # active — the revert path did not crash either agent.
       # ------------------------------------------------------------------
       web_01.succeed("systemctl is-active nixfleet-agent.service")

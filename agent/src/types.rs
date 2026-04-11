@@ -1,9 +1,7 @@
-/// Re-export shared types from nixfleet-types.
-///
-/// This module previously defined DesiredGeneration, Report, and MachineStatus
-/// locally. They now live in the shared `nixfleet-types` crate so the control
-/// plane and agent share identical wire types.
-pub use nixfleet_types::{DesiredGeneration, Report};
+//! Wire-type re-exports from the shared `nixfleet-types` crate so the
+//! agent and control plane share identical types at the source level.
+//!
+//! `MachineStatus` is available as `nixfleet_types::MachineStatus`.
 
-// MachineStatus is available via nixfleet_types::MachineStatus if needed.
+pub use nixfleet_types::{DesiredGeneration, Report};
 

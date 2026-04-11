@@ -1,6 +1,14 @@
 # Test helper functions for eval and VM checks.
 # Usage: import from eval.nix, vm.nix, or vm-nixfleet.nix
-{lib}: let
+#
+# `pkgs` is required only because `mkTlsCerts` runs openssl inside a
+# `runCommand` derivation. Eval-only callers that never use mkTlsCerts
+# still pass pkgs because every callsite already has it in scope (they
+# all live under `perSystem = { pkgs, lib, ... }:`).
+{
+  lib,
+  pkgs,
+}: let
   # Import plain scope/core modules (same ones mkHost uses)
   baseScope = import ../../scopes/_base.nix;
   impermanenceScope = import ../../scopes/_impermanence.nix;
@@ -26,8 +34,69 @@
     apiKey = "test-admin-key";
     apiKeyHash = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9";
   };
+
+  # Superset of every hostname used by any VM test in the tree. Adding
+  # a new hostname here is cheap (one extra openssl cert inside the
+  # shared derivation) and triggers a single rebuild of `sharedTestCerts`
+  # which is then cached for every subsequent run.
+  sharedCertHostnames = [
+    "web-01"
+    "web-02"
+    "db-01"
+    "agent"
+    "operator"
+    "builder"
+    "cache"
+    "tagged"
+    "unauth"
+  ];
+
+  # Build a fleet CA + CP server cert + one client cert per hostname.
+  # Deterministic and cached — the same `hostnames` list yields the same
+  # derivation across tests.
+  mkTlsCerts = {hostnames ? ["web-01" "web-02" "db-01"]}:
+    pkgs.runCommand "nixfleet-fleet-test-certs" {
+      nativeBuildInputs = [pkgs.openssl];
+    } ''
+      mkdir -p $out
+
+      # Fleet CA (self-signed, EC P-256)
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+        -keyout $out/ca-key.pem -out $out/ca.pem -days 365 -nodes \
+        -subj '/CN=nixfleet-test-ca'
+
+      # CP server cert (CN=cp, SAN includes cp + localhost for test curl)
+      openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+        -keyout $out/cp-key.pem -out $out/cp-csr.pem -nodes \
+        -subj '/CN=cp' \
+        -addext 'subjectAltName=DNS:cp,DNS:localhost'
+      openssl x509 -req -in $out/cp-csr.pem -CA $out/ca.pem -CAkey $out/ca-key.pem \
+        -CAcreateserial -out $out/cp-cert.pem -days 365 \
+        -copy_extensions copyall
+
+      # Agent client certs (CN = hostname)
+      ${lib.concatMapStringsSep "\n" (h: ''
+          openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -keyout $out/${h}-key.pem -out $out/${h}-csr.pem -nodes \
+            -subj "/CN=${h}"
+          openssl x509 -req -in $out/${h}-csr.pem -CA $out/ca.pem -CAkey $out/ca-key.pem \
+            -CAcreateserial -out $out/${h}-cert.pem -days 365
+        '')
+        hostnames}
+
+      rm -f $out/*-csr.pem $out/*.srl
+    '';
+
+  # The single, shared cert derivation used by every VM scenario. All
+  # scenarios receive this as `testCerts` via `scenarioArgs`, which
+  # makes their cp + agent node closures dedupe across the fleet.
+  sharedTestCerts = mkTlsCerts {hostnames = sharedCertHostnames;};
 in {
   inherit testConstants;
+
+  # =====================================================================
+  # Eval helpers
+  # =====================================================================
 
   # Build a runCommand that prints PASS/FAIL for each assertion and fails on first failure.
   mkEvalCheck = pkgs: name: assertions:
@@ -49,15 +118,38 @@ in {
     isImpermanent = false;
   };
 
-  # ---------------------------------------------------------------------
+  # =====================================================================
+  # TLS / certificate helpers
+  # =====================================================================
+  #
+  # `mkTlsCerts` is parameterised by hostname list; each distinct list
+  # produces a distinct runCommand derivation. Historically every VM
+  # scenario called it with its own tiny list, which meant:
+  #   (a) ~11 distinct cert derivations (one per scenario), each running
+  #       openssl 5+ times.
+  #   (b) ~11 distinct CP / agent node derivations, because `mkCpNode`
+  #       and `mkAgentNode` capture `testCerts` by store path. Two
+  #       scenarios with identical CP shapes but different cert derivs
+  #       still ended up with different CP system closures.
+  #
+  # The fix: standardise on ONE shared cert set whose hostname list is
+  # a superset of everything any scenario references. Every scenario
+  # passes `sharedTestCerts` via `scenarioArgs` and nixosTest dedupes
+  # cp + agent closures across scenarios that differ only in testScript.
+  #
+  # The raw `mkTlsCerts` is still exported for any future test that
+  # genuinely needs a different CA shape.
+  inherit mkTlsCerts sharedCertHostnames sharedTestCerts;
+
+  # =====================================================================
   # Shared VM scenario test helpers
-  # ---------------------------------------------------------------------
+  # =====================================================================
   # These wrap mkTestNode with the boilerplate every fleet scenario test
   # repeats: TLS cert wiring, server packages, agent TLS flags, etc. All
   # of them take a pre-bound `mkTestNode` (the curried version with
   # inputs/hostSpecModule already applied) and a `defaultTestSpec`, then
   # expose a narrow, scenario-facing API.
-  #
+
   # Wire up /etc/nixfleet-tls/{ca,<certPrefix>-cert,<certPrefix>-key}.pem
   # on a node from a testCerts derivation. Scenarios with "operator" or
   # "builder" style nodes (clients that need the fleet CA + a client
@@ -75,23 +167,61 @@ in {
     environment.etc."nixfleet-tls/${certPrefix}-key.pem".source = "${testCerts}/${certPrefix}-key.pem";
   };
 
+  # =====================================================================
+  # Python test-script prelude
+  # =====================================================================
+
   # Python preamble injected at the top of every scenario testScript.
-  # Provides TEST_KEY / KEY_HASH / AUTH constants and a CURL string
-  # bound to the given cert files. `certPrefix` lets agent-side tests
-  # use their own client cert instead of the cp-cert.
+  # Provides constants (TEST_KEY / KEY_HASH / AUTH / CURL / API) and
+  # a set of helper functions callers reach for repeatedly:
+  #
+  #   seed_admin_key(node)
+  #     Insert the seeded admin API key into the CP's api_keys table.
+  #     Every scenario does this once right after `cp.wait_for_unit`.
+  #
+  #   cp_boot_and_seed(cp)
+  #     Boot the CP node, wait for the HTTP port, and seed the admin key.
+  #     Fuses 3 lines every scenario writes verbatim into one call.
+  #
+  #   start_agents(*nodes)
+  #     Start each agent node and wait for nixfleet-agent.service to be
+  #     active. Handles the common multi-agent case in fleet scenarios.
+  #
+  #   create_release(cp, entries)
+  #     POST /api/v1/releases with the given entries list. Each entry is
+  #     a dict of {hostname, store_path} (platform/tags defaulted). Parses
+  #     the response and returns the new release id. Panics on non-201.
+  #
+  #   create_rollout(cp, release_id, tag, **overrides)
+  #     POST /api/v1/rollouts with the canonical all-at-once, zero-
+  #     tolerance, pause-on-failure shape. `overrides` maps to the JSON
+  #     keys of CreateRolloutRequest — a scenario that needs canary or
+  #     a threshold passes `strategy="canary"` or `failure_threshold="30%"`.
+  #     Returns the new rollout id.
+  #
+  #   wait_rollout_status(cp, rollout_id, want, timeout=60)
+  #     Poll GET /api/v1/rollouts/{id} until `status == want` or the
+  #     deadline elapses. Mirrors the Rust harness helper of the same name.
+  #
+  # `certPrefix` lets agent-side tests use their own client cert instead
+  # of the cp-cert.
   #
   # Usage:
   #   testScript = ''
   #     ${helpers.testPrelude { }}
   #
-  #     cp.start()
-  #     ...
+  #     cp_boot_and_seed(cp)
+  #     release_id = create_release(cp, [{"hostname": "web-01", "store_path": "/nix/store/x"}])
+  #     rollout_id = create_rollout(cp, release_id, "web")
+  #     wait_rollout_status(cp, rollout_id, "completed")
   #   '';
   testPrelude = {
     certPrefix ? "cp",
     certDir ? "/etc/nixfleet-tls",
     api ? "https://localhost:8080",
   }: ''
+    import json
+
     TEST_KEY = "${testConstants.apiKey}"
     KEY_HASH = "${testConstants.apiKeyHash}"
     AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
@@ -109,7 +239,94 @@ in {
             f"\"INSERT INTO api_keys (key_hash, name, role) "
             f"VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
         )
+
+    def cp_boot_and_seed(cp):
+        """Start the CP, wait for port 8080, seed the admin API key."""
+        cp.start()
+        cp.wait_for_unit("nixfleet-control-plane.service")
+        cp.wait_for_open_port(8080)
+        seed_admin_key(cp)
+
+    def start_agents(*nodes):
+        """Start each agent node and wait for nixfleet-agent.service."""
+        for node in nodes:
+            node.start()
+            node.wait_for_unit("nixfleet-agent.service")
+
+    def create_release(cp, entries):
+        """POST /api/v1/releases; returns the new release id."""
+        body = {
+            "flake_ref": "test",
+            "flake_rev": "deadbeef",
+            "cache_url": None,
+            "entries": [
+                {
+                    "hostname": e["hostname"],
+                    "store_path": e["store_path"],
+                    "platform": e.get("platform", "x86_64-linux"),
+                    "tags": e.get("tags", []),
+                }
+                for e in entries
+            ],
+        }
+        # Shell-escape single quotes in the payload (close quote,
+        # escaped quote, reopen quote). The trailing triple-quote in
+        # the source is a nix indented-string escape for a literal
+        # pair of single quotes; see note at top of testPrelude.
+        payload = json.dumps(body).replace("'", "'\\'''")
+        raw = cp.succeed(
+            f"{CURL} {AUTH} -X POST "
+            f"-H 'Content-Type: application/json' "
+            f"-d '{payload}' {API}/api/v1/releases"
+        )
+        return json.loads(raw)["id"]
+
+    def create_rollout(cp, release_id, tag, **overrides):
+        """POST /api/v1/rollouts with the canonical shape; returns rollout id."""
+        body = {
+            "release_id": release_id,
+            "cache_url": None,
+            "strategy": "all_at_once",
+            "batch_sizes": None,
+            "failure_threshold": "0",
+            "on_failure": "pause",
+            "health_timeout": 60,
+            "target": {"tags": [tag]},
+            "policy": None,
+        }
+        body.update(overrides)
+        # Shell-escape single quotes in the payload (close quote,
+        # escaped quote, reopen quote). The trailing triple-quote in
+        # the source is a nix indented-string escape for a literal
+        # pair of single quotes; see note at top of testPrelude.
+        payload = json.dumps(body).replace("'", "'\\'''")
+        raw = cp.succeed(
+            f"{CURL} {AUTH} -X POST "
+            f"-H 'Content-Type: application/json' "
+            f"-d '{payload}' {API}/api/v1/rollouts"
+        )
+        return json.loads(raw)["rollout_id"]
+
+    def wait_rollout_status(cp, rollout_id, want, timeout=60):
+        """Poll GET /api/v1/rollouts/{id} until status == want."""
+        import time
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            raw = cp.succeed(f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id}")
+            last = json.loads(raw)["status"]
+            if last == want:
+                return
+            time.sleep(1)
+        raise Exception(
+            f"rollout {rollout_id} did not reach {want} within {timeout}s; "
+            f"last status = {last}"
+        )
   '';
+
+  # =====================================================================
+  # Node builders (mTLS-wired CP + agent + mkTestNode base)
+  # =====================================================================
 
   # Build a CP node with standard mTLS wiring + sqlite + python3.
   #

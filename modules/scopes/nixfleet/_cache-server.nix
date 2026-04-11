@@ -27,7 +27,21 @@ in {
     signingKeyFile = lib.mkOption {
       type = lib.types.str;
       example = "/run/secrets/cache-signing-key";
-      description = "Path to the Nix signing key file for on-the-fly signing.";
+      description = ''
+        Path to the Nix signing key file for on-the-fly signing.
+
+        IMPORTANT: this file is read by the upstream `services.harmonia.cache`
+        module which runs as the `harmonia` system user, NOT root. The path
+        you supply here must be readable by `harmonia` — typically by chowning
+        the secret to `harmonia:harmonia` after decryption. With agenix, set
+        `age.secrets.<name>.owner = "harmonia"`. With sops-nix, set
+        `sops.secrets.<name>.owner = "harmonia"`. Other secret stores have
+        equivalent options.
+
+        On boot, harmonia silently fails to start if the file is owned by
+        root and mode 0600 — the only signal in the journal is "Permission
+        denied" from the harmonia unit, which is easy to miss the first time.
+      '';
     };
   };
 

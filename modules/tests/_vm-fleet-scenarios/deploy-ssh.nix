@@ -152,7 +152,7 @@ in
     testScript = let
       stubPath = "${stubToplevel}";
     in ''
-      # --- Phase 1: Start both nodes ---
+      # --- Step 1: Start both nodes ---
       # There is NO cp node in this test topology: D4 proves that
       # `nixfleet deploy --ssh --target` never touches a control plane.
       target.start()
@@ -170,7 +170,7 @@ in
       # was invoked on the target, which we assert via the marker file.)
       target.fail("test -e /tmp/stub-switch-called")
 
-      # --- Phase 2: Prepare SSH client state on operator ---
+      # --- Step 2: Prepare SSH client state on operator ---
       operator.succeed("mkdir -p /root/.ssh && chmod 700 /root/.ssh")
       operator.succeed("cp /etc/ssh-operator-key /root/.ssh/id_ed25519")
       operator.succeed("chmod 600 /root/.ssh/id_ed25519")
@@ -191,7 +191,7 @@ in
       assert which_nix != "/run/current-system/sw/bin/nix", \
           f"shim not prepended to PATH, got {which_nix!r}"
 
-      # --- Phase 3: Run the real `nixfleet deploy --hosts target --ssh --target root@target` ---
+      # --- Step 3: Run the real `nixfleet deploy --hosts target --ssh --target root@target` ---
       # The CLI will:
       #   1. `nix eval` attrNames  → shim returns '["target"]'
       #   2. `nix build ...toplevel --print-out-paths --no-link` → shim returns the stub path
@@ -209,7 +209,7 @@ in
       assert "target" in deploy_out, \
           f"expected target in deploy output, got: {deploy_out!r}"
 
-      # --- Phase 4: Positive assertions on the target ---
+      # --- Step 4: Positive assertions on the target ---
       # Prove that `nix-copy-closure --to root@target` actually registered
       # the stub path in target's LOCAL Nix database. We cannot use
       # `test -e ${stubPath}` as a proof because nixosTest mounts the host

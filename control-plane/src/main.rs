@@ -36,6 +36,18 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Rustls 0.23 requires an explicit process-level CryptoProvider
+    // when more than one crypto backend is compiled into the binary.
+    // Our direct `rustls = "0.23"` dependency pulls in `aws-lc-rs`
+    // (its default feature) while `reqwest` with `rustls-tls` pulls
+    // in `ring`. Without this call, the first `ServerConfig::builder()`
+    // call in `tls::build_server_config` panics with
+    // "Could not automatically determine the process-level
+    // CryptoProvider from Rustls crate features".
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("install default rustls CryptoProvider");
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -92,8 +104,19 @@ async fn main() -> anyhow::Result<()> {
             )?;
             let tls_config =
                 axum_server::tls_rustls::RustlsConfig::from_config(std::sync::Arc::new(config));
-            tracing::info!("Control plane listening on {} (TLS)", cli.listen);
-            axum_server::bind_rustls(cli.listen.parse()?, tls_config)
+
+            // Wrap the rustls acceptor so peer certs are extracted
+            // after the handshake and injected into request extensions
+            // via PeerCertificates. The cn_matches_path_machine_id
+            // middleware (wired in lib.rs::build_app on agent routes
+            // only) reads the extension and enforces CN-vs-path-id.
+            let rustls_acceptor = axum_server::tls_rustls::RustlsAcceptor::new(tls_config);
+            let mtls_acceptor =
+                nixfleet_control_plane::auth_cn::MtlsAcceptor::new(rustls_acceptor);
+
+            tracing::info!("Control plane listening on {} (TLS+mTLS-CN)", cli.listen);
+            axum_server::bind(cli.listen.parse()?)
+                .acceptor(mtls_acceptor)
                 .serve(app.into_make_service())
                 .await?;
         }

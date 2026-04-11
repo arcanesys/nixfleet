@@ -6,27 +6,13 @@
 #[path = "harness.rs"]
 mod harness;
 
-use nixfleet_types::rollout::{OnFailure, RolloutStrategy};
 use nixfleet_types::DesiredGeneration;
 
 /// P1 — machine inside an active rollout → response carries `poll_hint = Some(5)`.
 #[tokio::test]
 async fn p1_poll_hint_present_when_rollout_active() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-
-    let release = harness::create_release(&cp, &[("web-01", "/nix/store/p1-web-01")]).await;
-    let _rollout = harness::create_rollout_for_tag(
-        &cp,
-        &release,
-        "web",
-        RolloutStrategy::AllAtOnce,
-        None,
-        "1",
-        OnFailure::Pause,
-        60,
-    )
-    .await;
+    let (cp, _release_id, _rollout_id) =
+        harness::spawn_cp_with_rollout("/nix/store/p1-web-01").await;
 
     // One executor tick so the batch transitions to `deploying` and the
     // machine's desired_generation is populated in FleetState.

@@ -12,8 +12,7 @@
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib;};
-    mkTlsCerts = import ./_lib/tls-certs.nix {inherit pkgs lib;};
+    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
@@ -51,9 +50,12 @@
       ];
     };
 
-    # Build-time TLS certificates: fleet CA + CP server cert + 3 agent client certs.
-    # Deterministic — no runtime setup needed.
-    testCerts = mkTlsCerts {hostnames = ["web-01" "web-02" "db-01"];};
+    # Build-time TLS certificates: use the shared fleet cert set so the
+    # CP + web-01 + web-02 + db-01 system closures dedupe with any
+    # `_vm-fleet-scenarios/*.nix` scenario that uses the same mkCpNode /
+    # mkAgentNode shape. See `helpers.nix::sharedTestCerts` for the
+    # rationale.
+    testCerts = helpers.sharedTestCerts;
   in
     lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
@@ -92,18 +94,12 @@
           };
 
           testScript = ''
-            import json
-
             ${testPrelude {}}
 
-            # --- Phase 1: Start CP, bootstrap API key ---
-            cp.start()
-            cp.wait_for_unit("nixfleet-control-plane.service")
-            cp.wait_for_open_port(8080)
+            # --- Step 1: Boot CP + seed admin API key ---
+            cp_boot_and_seed(cp)
 
-            seed_admin_key(cp)
-
-            # --- Phase 2: Register all agents with their tags ---
+            # --- Step 2: Register all agents with their tags ---
             for host, tags in [("web-01", ["web"]), ("web-02", ["web"]), ("db-01", ["db"])]:
                 tags_json = json.dumps(tags)
                 cp.succeed(
@@ -113,14 +109,8 @@
                     f"-d '{{\"tags\": {tags_json}}}'"
                 )
 
-            # --- Phase 3: Start all agents, wait for services ---
-            web_01.start()
-            web_02.start()
-            db_01.start()
-
-            web_01.wait_for_unit("nixfleet-agent.service")
-            web_02.wait_for_unit("nixfleet-agent.service")
-            db_01.wait_for_unit("nixfleet-agent.service")
+            # --- Step 3: Start all agents, wait for services ---
+            start_agents(web_01, web_02, db_01)
 
             # Wait for all 3 agents to report to the CP
             cp.wait_until_succeeds(
@@ -130,7 +120,7 @@
                 timeout=60,
             )
 
-            # --- Phase 4: Canary rollout on web tag (should succeed) ---
+            # --- Step 4: Canary rollout on web tag (should succeed) ---
             # Since the agents run in dryRun=true they do not actually switch,
             # but they still report nix::current_generation() which resolves
             # to /run/current-system. We therefore build the release whose
@@ -141,57 +131,19 @@
             web_01_toplevel = web_01.succeed("readlink -f /run/current-system").strip()
             web_02_toplevel = web_02.succeed("readlink -f /run/current-system").strip()
 
-            web_release_body = json.dumps({
-                "flake_ref": "test",
-                "flake_rev": "web-release",
-                "entries": [
-                    {
-                        "hostname": "web-01",
-                        "store_path": web_01_toplevel,
-                        "platform": "x86_64-linux",
-                        "tags": ["web"],
-                    },
-                    {
-                        "hostname": "web-02",
-                        "store_path": web_02_toplevel,
-                        "platform": "x86_64-linux",
-                        "tags": ["web"],
-                    },
-                ],
-            })
-            web_release_resp = cp.succeed(
-                f"{CURL} -X POST {API}/api/v1/releases {AUTH} "
-                f"-H 'Content-Type: application/json' "
-                f"-d '{web_release_body}'"
+            web_release_id = create_release(cp, [
+                {"hostname": "web-01", "store_path": web_01_toplevel, "tags": ["web"]},
+                {"hostname": "web-02", "store_path": web_02_toplevel, "tags": ["web"]},
+            ])
+            web_rollout_id = create_rollout(
+                cp, web_release_id, "web",
+                strategy="staged",
+                batch_sizes=["1", "100%"],
+                health_timeout=30,
             )
-            web_release_id = json.loads(web_release_resp)["id"]
+            wait_rollout_status(cp, web_rollout_id, "completed", timeout=120)
 
-            rollout_body = json.dumps({
-                "release_id": web_release_id,
-                "strategy": "staged",
-                "batch_sizes": ["1", "100%"],
-                "failure_threshold": "1",
-                "on_failure": "pause",
-                "health_timeout": 30,
-                "target": {"tags": ["web"]}
-            })
-            rollout_resp = cp.succeed(
-                f"{CURL} -X POST {API}/api/v1/rollouts {AUTH} "
-                f"-H 'Content-Type: application/json' "
-                f"-d '{rollout_body}'"
-            )
-            web_rollout = json.loads(rollout_resp)
-            web_rollout_id = web_rollout["rollout_id"]
-
-            # Wait for the web rollout to complete — both agents are healthy
-            cp.wait_until_succeeds(
-                f"{CURL} {AUTH} {API}/api/v1/rollouts/{web_rollout_id} "
-                f"| python3 -c \"import sys,json; r=json.load(sys.stdin); "
-                f"assert r['status'] == 'completed', f'Expected completed, got {{r[\\\"status\\\"]}}' \"",
-                timeout=120,
-            )
-
-            # --- Phase 5: Verify Prometheus metrics ---
+            # --- Step 5: Verify Prometheus metrics ---
             metrics = cp.succeed(f"{CURL} {API}/metrics")
             assert "nixfleet_fleet_size" in metrics, "Missing nixfleet_fleet_size in CP metrics"
             assert "nixfleet_rollouts_total" in metrics, "Missing nixfleet_rollouts_total in CP metrics"
@@ -199,55 +151,19 @@
             # Node exporter on web-01 should respond
             web_01.succeed("curl -sf http://localhost:9100/metrics | grep node_cpu")
 
-            # --- Phase 6: Rollout on db tag — health gate fails, rollout pauses ---
-            # Same trick as phase 4: release entry points at db-01's real
+            # --- Step 6: Rollout on db tag — health gate fails, rollout pauses ---
+            # Same trick as step 4: release entry points at db-01's real
             # toplevel so the generation gate matches and evaluate_batch
             # proceeds to health evaluation, which then fails because
             # db-01's configured health check hits :9999 (nothing listening).
             db_01_toplevel = db_01.succeed("readlink -f /run/current-system").strip()
-
-            db_release_body = json.dumps({
-                "flake_ref": "test",
-                "flake_rev": "db-release",
-                "entries": [
-                    {
-                        "hostname": "db-01",
-                        "store_path": db_01_toplevel,
-                        "platform": "x86_64-linux",
-                        "tags": ["db"],
-                    },
-                ],
-            })
-            db_release_resp = cp.succeed(
-                f"{CURL} -X POST {API}/api/v1/releases {AUTH} "
-                f"-H 'Content-Type: application/json' "
-                f"-d '{db_release_body}'"
-            )
-            db_release_id = json.loads(db_release_resp)["id"]
-
-            db_rollout_body = json.dumps({
-                "release_id": db_release_id,
-                "strategy": "all_at_once",
-                "failure_threshold": "0",
-                "on_failure": "pause",
-                "health_timeout": 10,
-                "target": {"tags": ["db"]}
-            })
-            db_rollout_resp = cp.succeed(
-                f"{CURL} -X POST {API}/api/v1/rollouts {AUTH} "
-                f"-H 'Content-Type: application/json' "
-                f"-d '{db_rollout_body}'"
-            )
-            db_rollout = json.loads(db_rollout_resp)
-            db_rollout_id = db_rollout["rollout_id"]
+            db_release_id = create_release(cp, [
+                {"hostname": "db-01", "store_path": db_01_toplevel, "tags": ["db"]},
+            ])
+            db_rollout_id = create_rollout(cp, db_release_id, "db", health_timeout=10)
 
             # Wait for rollout to pause (health check on port 9999 fails — nothing listening)
-            cp.wait_until_succeeds(
-                f"{CURL} {AUTH} {API}/api/v1/rollouts/{db_rollout_id} "
-                f"| python3 -c \"import sys,json; r=json.load(sys.stdin); "
-                f"assert r['status'] == 'paused', f'Expected paused, got {{r[\\\"status\\\"]}}' \"",
-                timeout=60,
-            )
+            wait_rollout_status(cp, db_rollout_id, "paused", timeout=60)
 
             # Resume the paused rollout and verify it transitions out of paused
             cp.succeed(

@@ -1,4 +1,4 @@
-//! F6 — CP restart mid-rollout resumes from DB state (ADR 010).
+//! CP restart mid-rollout resumes from DB state (see ADR 010).
 //!
 //! The rollout executor re-queries the `rollouts` table on every tick via
 //! `list_rollouts_by_status("running")`; it does NOT cache rollouts in
@@ -23,8 +23,8 @@ use nixfleet_control_plane::state;
 use nixfleet_types::rollout::{OnFailure, RolloutStatus, RolloutStrategy};
 
 #[tokio::test]
-async fn f6_cp_restart_mid_rollout_resumes_from_db() {
-    // ---- Phase 1: start CP #1, create a rollout, drive it to deploying ----
+async fn cp_restart_mid_rollout_resumes_from_db() {
+    // ---- Stage 1: start CP #1, create a rollout, drive it to deploying ----
     let cp1 = harness::spawn_cp().await;
 
     harness::register_machine(&cp1, "web-01", &["web"]).await;
@@ -44,7 +44,7 @@ async fn f6_cp_restart_mid_rollout_resumes_from_db() {
         "web",
         RolloutStrategy::AllAtOnce,
         None,
-        "1",
+        "0",
         OnFailure::Pause,
         60,
     )
@@ -54,26 +54,15 @@ async fn f6_cp_restart_mid_rollout_resumes_from_db() {
     harness::tick_once(&cp1).await;
 
     // Stage the first half of the reports on cp1.
-    harness::fake_agent_report(
-        &cp1,
-        "web-01",
-        "/nix/store/f6-web-01",
-        true,
-        "applied",
-        &["web"],
-    )
-    .await;
-    cp1.db
-        .insert_health_report("web-01", "{}", true)
-        .expect("insert_health_report web-01");
+    harness::agent_reports_health(&cp1, "web-01", "/nix/store/f6-web-01", true).await;
 
-    // ---- Simulate restart: spawn cp2 against the same on-disk DB. ----
+    // ---- Stage 2: simulate restart — spawn cp2 against the same DB ----
     //
     // Keep cp1 alive for the rest of the test. Its `TempDir` owns the
     // SQLite file on disk; dropping cp1 while cp2 is still running would
     // delete the file out from under cp2. SQLite supports multiple
     // connections to the same file (WAL mode), so cp1 and cp2 can
-    // coexist. Phase 2 interacts exclusively with cp2.
+    // coexist. Everything after this line interacts exclusively with cp2.
     let db_path = cp1.db_path.clone();
     let _keep_cp1_alive = cp1;
 
@@ -97,18 +86,7 @@ async fn f6_cp_restart_mid_rollout_resumes_from_db() {
     );
 
     // Complete the rollout on cp2.
-    harness::fake_agent_report(
-        &cp2,
-        "web-02",
-        "/nix/store/f6-web-02",
-        true,
-        "applied",
-        &["web"],
-    )
-    .await;
-    cp2.db
-        .insert_health_report("web-02", "{}", true)
-        .expect("insert_health_report web-02");
+    harness::agent_reports_health(&cp2, "web-02", "/nix/store/f6-web-02", true).await;
 
     harness::tick_once(&cp2).await; // → succeeded
     harness::tick_once(&cp2).await; // → completed

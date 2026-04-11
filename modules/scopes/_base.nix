@@ -44,7 +44,7 @@
         fastfetch
         gh
 
-        # File tools (ripgrep replaces ack, git diff --color replaces colordiff)
+        # File and disk tools
         duf
         eza
         fd

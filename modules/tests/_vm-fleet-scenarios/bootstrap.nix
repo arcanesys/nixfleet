@@ -19,12 +19,10 @@
   defaultTestSpec,
   mkCpNode,
   mkAgentNode,
-  mkTlsCerts,
+  testCerts,
   tlsCertsModule,
   ...
 }: let
-  testCerts = mkTlsCerts {hostnames = ["operator" "web-01" "web-02"];};
-
   nixfleetCli = pkgs.callPackage ../../../cli {};
 in
   pkgs.testers.nixosTest {
@@ -69,7 +67,7 @@ in
       import json
 
       # ------------------------------------------------------------------
-      # Phase 1 — Start CP with no seeded admin key
+      # Step 1 — Start CP with no seeded admin key
       # ------------------------------------------------------------------
       cp.start()
       cp.wait_for_unit("nixfleet-control-plane.service")
@@ -82,14 +80,14 @@ in
       assert key_count == "0", f"expected empty api_keys, got {key_count}"
 
       # ------------------------------------------------------------------
-      # Phase 2 — operator runs `nixfleet bootstrap`
+      # Step 2 — operator runs `nixfleet bootstrap`
       # ------------------------------------------------------------------
       operator.start()
       operator.wait_for_unit("multi-user.target")
 
       bootstrap_stdout = operator.succeed(
           "bash -lc '"
-          "export NIXFLEET_CP_URL=https://cp:8080 && "
+          "export NIXFLEET_CONTROL_PLANE_URL=https://cp:8080 && "
           "export NIXFLEET_CA_CERT=/etc/nixfleet-tls/ca.pem && "
           "export NIXFLEET_CLIENT_CERT=/etc/nixfleet-tls/operator-cert.pem && "
           "export NIXFLEET_CLIENT_KEY=/etc/nixfleet-tls/operator-key.pem && "
@@ -125,7 +123,7 @@ in
       API = "https://cp:8080"
 
       # ------------------------------------------------------------------
-      # Phase 3 — Initial fleet is empty
+      # Step 3 — Initial fleet is empty
       # ------------------------------------------------------------------
       initial = operator.succeed(
           f"{CURL_BASE} {AUTH} {API}/api/v1/machines"
@@ -135,7 +133,7 @@ in
           f"expected 0 machines before agents start, got {len(initial_machines)}"
 
       # ------------------------------------------------------------------
-      # Phase 4 — Start both agents and wait for them to register
+      # Step 4 — Start both agents and wait for them to register
       # ------------------------------------------------------------------
       web_01.start()
       web_02.start()
@@ -162,7 +160,7 @@ in
       # The operator's `nixfleet machines list` sees the same 2 machines.
       machines_cli = operator.succeed(
           "bash -lc '"
-          "export NIXFLEET_CP_URL=https://cp:8080 && "
+          "export NIXFLEET_CONTROL_PLANE_URL=https://cp:8080 && "
           "export NIXFLEET_CA_CERT=/etc/nixfleet-tls/ca.pem && "
           "export NIXFLEET_CLIENT_CERT=/etc/nixfleet-tls/operator-cert.pem && "
           "export NIXFLEET_CLIENT_KEY=/etc/nixfleet-tls/operator-key.pem && "
@@ -176,7 +174,7 @@ in
           f"expected web-02 in CLI output, got: {machines_cli!r}"
 
       # ------------------------------------------------------------------
-      # Phase 5 — Create a release via the HTTP API
+      # Step 5 — Create a release via the HTTP API
       #
       # We use curl directly to avoid re-exercising the nix-shim machinery
       # (already covered by vm-fleet-release/R1).
@@ -189,9 +187,9 @@ in
       # before a batch can proceed to health evaluation — a mismatch
       # pauses the rollout (the whole point of generation gating).
       #
-      # vm-fleet.nix uses the same trick (Phase 4 comment). Earlier
-      # versions of this file used throwaway writeTextDir closures and
-      # hit `status=paused` for exactly this reason.
+      # vm-fleet.nix uses the same trick. Pointing at a fabricated
+      # `writeTextDir` closure here would hit `status=paused` via the
+      # generation gate instead of reaching `completed`.
       # ------------------------------------------------------------------
       web_01_toplevel = web_01.succeed("readlink -f /run/current-system").strip()
       web_02_toplevel = web_02.succeed("readlink -f /run/current-system").strip()
@@ -224,12 +222,12 @@ in
           f"expected release id with rel- prefix, got {release_id}"
 
       # ------------------------------------------------------------------
-      # Phase 6 — Create a rollout and wait for completion
+      # Step 6 — Create a rollout and wait for completion
       # ------------------------------------------------------------------
       rollout_body = json.dumps({
           "release_id": release_id,
           "strategy": "all_at_once",
-          "failure_threshold": "1",
+          "failure_threshold": "0",
           "on_failure": "pause",
           "health_timeout": 60,
           "target": {"tags": ["web"]},
@@ -242,7 +240,7 @@ in
       rollout = json.loads(rollout_resp)
       rollout_id = rollout["rollout_id"]
 
-      # Same reason as Phase 4: poll from operator, not cp — CURL_BASE
+      # Same reason as step 4: poll from operator, not cp — CURL_BASE
       # references operator cert paths.
       operator.wait_until_succeeds(
           f"{CURL_BASE} {AUTH} {API}/api/v1/rollouts/{rollout_id} "
@@ -253,11 +251,11 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 7 (negative) — Second bootstrap call must fail with 409
+      # Step 7 (negative) — Second bootstrap call must fail with 409
       # ------------------------------------------------------------------
       operator.fail(
           "bash -lc '"
-          "export NIXFLEET_CP_URL=https://cp:8080 && "
+          "export NIXFLEET_CONTROL_PLANE_URL=https://cp:8080 && "
           "export NIXFLEET_CA_CERT=/etc/nixfleet-tls/ca.pem && "
           "export NIXFLEET_CLIENT_CERT=/etc/nixfleet-tls/operator-cert.pem && "
           "export NIXFLEET_CLIENT_KEY=/etc/nixfleet-tls/operator-key.pem && "

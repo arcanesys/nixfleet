@@ -19,28 +19,23 @@ struct Cli {
     command: Commands,
 
     /// Control plane URL
-    #[arg(
-        long,
-        global = true,
-        default_value = "http://localhost:8080",
-        env = "NIXFLEET_CP_URL"
-    )]
+    #[arg(long, global = true, default_value = "http://localhost:8080")]
     control_plane_url: String,
 
     /// API key for control plane authentication
-    #[arg(long, global = true, default_value = "", env = "NIXFLEET_API_KEY")]
+    #[arg(long, global = true, default_value = "")]
     api_key: String,
 
     /// Client certificate for mTLS authentication
-    #[arg(long, global = true, default_value = "", env = "NIXFLEET_CLIENT_CERT")]
+    #[arg(long, global = true, default_value = "")]
     client_cert: String,
 
     /// Client key for mTLS authentication
-    #[arg(long, global = true, default_value = "", env = "NIXFLEET_CLIENT_KEY")]
+    #[arg(long, global = true, default_value = "")]
     client_key: String,
 
     /// CA certificate for TLS verification (optional, uses system trust store if omitted)
-    #[arg(long, global = true, default_value = "", env = "NIXFLEET_CA_CERT")]
+    #[arg(long, global = true, default_value = "")]
     ca_cert: String,
 }
 
@@ -82,8 +77,10 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         batch_size: Option<Vec<String>>,
 
-        /// Maximum failures before pausing/reverting
-        #[arg(long, default_value = "1")]
+        /// Allow up to N unhealthy machines per batch (the (N+1)th fails the batch).
+        /// 0 means zero tolerance — any single failure pauses the rollout.
+        /// Accepts an absolute count (e.g. "3") or a percentage (e.g. "30%").
+        #[arg(long, default_value = "0")]
         failure_threshold: String,
 
         /// Action on failure: pause or revert
@@ -290,6 +287,8 @@ enum ReleaseAction {
         release_id_a: String,
         release_id_b: String,
     },
+    /// Delete a release (only if no rollout references it)
+    Delete { release_id: String },
 }
 
 #[derive(Subcommand)]
@@ -358,11 +357,13 @@ async fn main() -> Result<()> {
         config_file.as_ref(),
         config_dir.as_deref(),
         &credentials,
-        &cli.control_plane_url,
-        &cli.api_key,
-        &cli.ca_cert,
-        &cli.client_cert,
-        &cli.client_key,
+        config::CliOverrides {
+            cp_url: &cli.control_plane_url,
+            api_key: &cli.api_key,
+            ca_cert: &cli.ca_cert,
+            client_cert: &cli.client_cert,
+            client_key: &cli.client_key,
+        },
     );
 
     // Use resolved values for connection
@@ -598,6 +599,9 @@ async fn main() -> Result<()> {
                         &release_id_b,
                     )
                     .await
+                }
+                ReleaseAction::Delete { release_id } => {
+                    release::delete(&http_client, effective_cp_url, &release_id).await
                 }
             }
         }

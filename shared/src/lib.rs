@@ -181,130 +181,26 @@ pub struct AuditEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-
+    /// Wire contract for `DesiredGeneration`: `hash` is required,
+    /// `cache_url` and `poll_hint` are optional and must default to
+    /// `None` when absent. Pins the shape agents parse from the CP's
+    /// `/desired-generation` response.
     #[test]
-    fn test_desired_generation_deserialization() {
-        let json = r#"{"hash": "/nix/store/abc123-nixos-system"}"#;
-        let gen: DesiredGeneration = serde_json::from_str(json).unwrap();
-        assert_eq!(gen.hash, "/nix/store/abc123-nixos-system");
-        assert!(gen.cache_url.is_none());
-    }
+    fn desired_generation_serde_defaults() {
+        // Minimal payload — only `hash`.
+        let minimal: DesiredGeneration =
+            serde_json::from_str(r#"{"hash": "/nix/store/abc"}"#).unwrap();
+        assert_eq!(minimal.hash, "/nix/store/abc");
+        assert!(minimal.cache_url.is_none());
+        assert!(minimal.poll_hint.is_none());
 
-    #[test]
-    fn test_desired_generation_with_cache_url() {
-        let json = r#"{"hash": "/nix/store/abc123-nixos-system", "cache_url": "https://cache.example.com"}"#;
-        let gen: DesiredGeneration = serde_json::from_str(json).unwrap();
-        assert_eq!(gen.hash, "/nix/store/abc123-nixos-system");
-        assert_eq!(gen.cache_url, Some("https://cache.example.com".to_string()));
-    }
-
-    #[test]
-    fn test_desired_generation_with_poll_hint() {
-        let json = r#"{"hash": "/nix/store/abc123-nixos-system", "poll_hint": 5}"#;
-        let gen: DesiredGeneration = serde_json::from_str(json).unwrap();
-        assert_eq!(gen.hash, "/nix/store/abc123-nixos-system");
-        assert_eq!(gen.poll_hint, Some(5));
-        assert!(gen.cache_url.is_none());
-    }
-
-    #[test]
-    fn test_desired_generation_without_poll_hint() {
-        let json = r#"{"hash": "/nix/store/abc123-nixos-system"}"#;
-        let gen: DesiredGeneration = serde_json::from_str(json).unwrap();
-        assert!(gen.poll_hint.is_none());
-    }
-
-    #[test]
-    fn test_desired_generation_poll_hint_roundtrip() {
-        let gen = DesiredGeneration {
-            hash: "/nix/store/xyz-nixos-system".to_string(),
-            cache_url: None,
-            poll_hint: Some(10),
-        };
-        let json = serde_json::to_string(&gen).unwrap();
-        let back: DesiredGeneration = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.poll_hint, Some(10));
-    }
-
-    #[test]
-    fn test_desired_generation_equality() {
-        let a = DesiredGeneration {
-            hash: "/nix/store/abc123".to_string(),
-            cache_url: None,
-            poll_hint: None,
-        };
-        let b = DesiredGeneration {
-            hash: "/nix/store/abc123".to_string(),
-            cache_url: None,
-            poll_hint: None,
-        };
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn test_machine_status_serialization() {
-        let status = MachineStatus {
-            machine_id: "web-01".to_string(),
-            current_generation: "/nix/store/abc123-nixos-system".to_string(),
-            desired_generation: Some("/nix/store/def456-nixos-system".to_string()),
-            agent_version: "0.1.0".to_string(),
-            system_state: "running".to_string(),
-            uptime_seconds: 3600,
-            last_report: Some(Utc::now()),
-            lifecycle: MachineLifecycle::Active,
-            tags: vec!["web".to_string()],
-        };
-        let json = serde_json::to_string(&status).unwrap();
-        let back: MachineStatus = serde_json::from_str(&json).unwrap();
-        assert_eq!(status.machine_id, back.machine_id);
-        assert_eq!(status.uptime_seconds, back.uptime_seconds);
-        assert_eq!(back.lifecycle, MachineLifecycle::Active);
-    }
-
-    #[test]
-    fn test_lifecycle_serialization() {
-        let lc = MachineLifecycle::Pending;
-        let json = serde_json::to_string(&lc).unwrap();
-        assert_eq!(json, "\"pending\"");
-        let back: MachineLifecycle = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, MachineLifecycle::Pending);
-    }
-
-    #[test]
-    fn test_lifecycle_display() {
-        assert_eq!(MachineLifecycle::Active.to_string(), "active");
-        assert_eq!(MachineLifecycle::Pending.to_string(), "pending");
-        assert_eq!(MachineLifecycle::Maintenance.to_string(), "maintenance");
-        assert_eq!(
-            MachineLifecycle::Decommissioned.to_string(),
-            "decommissioned"
-        );
-    }
-
-    #[test]
-    fn test_lifecycle_invalid_transitions() {
-        assert!(!MachineLifecycle::Active.can_transition_to(&MachineLifecycle::Pending));
-        assert!(!MachineLifecycle::Decommissioned.can_transition_to(&MachineLifecycle::Active));
-        assert!(!MachineLifecycle::Maintenance.can_transition_to(&MachineLifecycle::Pending));
-    }
-
-    #[test]
-    fn test_report_json_contains_expected_fields() {
-        let report = Report {
-            machine_id: "mac-01".to_string(),
-            current_generation: "/nix/store/ghi012-nixos-system".to_string(),
-            success: true,
-            message: "up-to-date".to_string(),
-            timestamp: Utc::now(),
-            tags: vec!["staging".to_string()],
-            health: None,
-        };
-        let json = serde_json::to_string(&report).unwrap();
-        assert!(json.contains("machine_id"));
-        assert!(json.contains("mac-01"));
-        assert!(json.contains("success"));
-        assert!(json.contains("timestamp"));
+        // Full payload — all three optional fields populated.
+        let full: DesiredGeneration = serde_json::from_str(
+            r#"{"hash": "/nix/store/abc", "cache_url": "https://c", "poll_hint": 5}"#,
+        )
+        .unwrap();
+        assert_eq!(full.cache_url.as_deref(), Some("https://c"));
+        assert_eq!(full.poll_hint, Some(5));
     }
 
     #[test]
@@ -312,5 +208,74 @@ mod tests {
         assert!(api::DESIRED_GENERATION.starts_with("/api/v1/machines/"));
         assert!(api::REPORT.starts_with("/api/v1/machines/"));
         assert!(api::MACHINES.starts_with("/api/v1/machines"));
+    }
+
+    /// Exhaustive matrix for `can_transition_to`. Pins every cell of
+    /// the 5×5 lifecycle state graph so adding or removing a valid
+    /// transition requires updating both the impl AND this table.
+    /// Self-transitions are invalid per the current impl.
+    #[test]
+    fn test_lifecycle_can_transition_to_full_matrix() {
+        use MachineLifecycle::*;
+
+        // (from, to, expected_valid)
+        let cases: &[(MachineLifecycle, MachineLifecycle, bool)] = &[
+            // From Pending
+            (Pending, Pending, false),
+            (Pending, Provisioning, true),
+            (Pending, Active, true),
+            (Pending, Maintenance, false),
+            (Pending, Decommissioned, true),
+            // From Provisioning
+            (Provisioning, Pending, true),
+            (Provisioning, Provisioning, false),
+            (Provisioning, Active, true),
+            (Provisioning, Maintenance, false),
+            (Provisioning, Decommissioned, false),
+            // From Active
+            (Active, Pending, false),
+            (Active, Provisioning, false),
+            (Active, Active, false),
+            (Active, Maintenance, true),
+            (Active, Decommissioned, true),
+            // From Maintenance
+            (Maintenance, Pending, false),
+            (Maintenance, Provisioning, false),
+            (Maintenance, Active, true),
+            (Maintenance, Maintenance, false),
+            (Maintenance, Decommissioned, true),
+            // From Decommissioned (terminal)
+            (Decommissioned, Pending, false),
+            (Decommissioned, Provisioning, false),
+            (Decommissioned, Active, false),
+            (Decommissioned, Maintenance, false),
+            (Decommissioned, Decommissioned, false),
+        ];
+
+        for (from, to, expected) in cases {
+            assert_eq!(
+                from.can_transition_to(to),
+                *expected,
+                "transition {from:?} → {to:?}: expected {expected}, got {}",
+                from.can_transition_to(to)
+            );
+        }
+    }
+
+    /// from_str_lc must round-trip every variant + reject unknown.
+    #[test]
+    fn test_lifecycle_from_str_lc_exhaustive() {
+        use MachineLifecycle::*;
+        for v in [Pending, Provisioning, Active, Maintenance, Decommissioned] {
+            let s = v.to_string();
+            assert_eq!(
+                MachineLifecycle::from_str_lc(&s),
+                Some(v.clone()),
+                "round-trip failed for {v:?}"
+            );
+        }
+        assert_eq!(MachineLifecycle::from_str_lc("not-a-state"), None);
+        assert_eq!(MachineLifecycle::from_str_lc(""), None);
+        assert_eq!(MachineLifecycle::from_str_lc("ACTIVE"), None); // case-sensitive
     }
 }

@@ -8,7 +8,7 @@
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib;};
+    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;

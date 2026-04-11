@@ -2,27 +2,7 @@
   lib,
   rustPlatform,
 }:
-rustPlatform.buildRustPackage {
-  pname = "nixfleet-control-plane";
-  version = "0.1.0";
-  # See agent/default.nix for the rationale behind the fileset scope.
-  src = lib.fileset.toSource {
-    root = ./..;
-    fileset = lib.fileset.unions [
-      ../Cargo.toml
-      ../Cargo.lock
-      ../agent
-      ../control-plane
-      ../cli
-      ../shared
-    ];
-  };
-  cargoLock.lockFile = ../Cargo.lock;
-  cargoBuildFlags = ["-p" "nixfleet-control-plane"];
-
-  meta = {
-    description = "NixFleet control plane server";
-    license = lib.licenses.asl20;
-    mainProgram = "nixfleet-control-plane";
-  };
-}
+# See ../agent/default.nix — same thin alias to the shared workspace
+# derivation. `$out/bin/nixfleet-control-plane` is present in the
+# workspace output so every caller still gets the binary it expected.
+import ../cargo-workspace.nix {inherit lib rustPlatform;}

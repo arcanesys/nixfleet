@@ -35,12 +35,10 @@
   lib,
   mkCpNode,
   mkAgentNode,
-  mkTlsCerts,
+  testCerts,
   testPrelude,
   ...
 }: let
-  testCerts = mkTlsCerts {hostnames = ["web-01"];};
-
   # Trivial release closure. The agent is never going to fetch it —
   # the whole point of this test is that the machine never reports —
   # but the release registration endpoint still wants a store path.
@@ -74,22 +72,16 @@ in
     testScript = let
       web01Path = "${web01Closure}";
     in ''
-      import json
-
       ${testPrelude {}}
       RELEASE_PATH = "${web01Path}"
 
       # ------------------------------------------------------------------
-      # Phase 1 — Start CP, seed admin API key
+      # Step 1 — Boot CP + seed admin API key
       # ------------------------------------------------------------------
-      cp.start()
-      cp.wait_for_unit("nixfleet-control-plane.service")
-      cp.wait_for_open_port(8080)
-
-      seed_admin_key(cp)
+      cp_boot_and_seed(cp)
 
       # ------------------------------------------------------------------
-      # Phase 2 — Start web-01; verify the agent unit is NOT active
+      # Step 2 — Start web-01; verify the agent unit is NOT active
       # (wantedBy=[] is equivalent to mask for auto-start purposes).
       # ------------------------------------------------------------------
       web_01.start()
@@ -100,7 +92,7 @@ in
           f"expected agent unit inactive, got: {status!r}"
 
       # ------------------------------------------------------------------
-      # Phase 3 — Pre-register web-01 on the CP with tag=web so the
+      # Step 3 — Pre-register web-01 on the CP with tag=web so the
       # rollout target resolves to it. The agent will never boot,
       # so this is the ONLY way web-01 enters the fleet.
       # ------------------------------------------------------------------
@@ -123,47 +115,17 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 4 — Create release + rollout with a short health_timeout
+      # Step 4 — Create release + rollout with a short health_timeout
       # and on_failure=pause. health_timeout=5 means the batch must pause
       # within ~5–10s of entering `deploying` (executor ticks at 2s).
       # ------------------------------------------------------------------
-      release_body = json.dumps({
-          "flake_ref": "vm-fleet-timeout",
-          "entries": [
-              {
-                  "hostname": "web-01",
-                  "store_path": RELEASE_PATH,
-                  "platform": "x86_64-linux",
-                  "tags": ["web"],
-              },
-          ],
-      })
-      release = json.loads(cp.succeed(
-          f"{CURL} {AUTH} -X POST {API}/api/v1/releases "
-          f"-H 'Content-Type: application/json' "
-          f"-d '{release_body}'"
-      ))
-      release_id = release["id"]
+      release_id = create_release(cp, [{"hostname": "web-01", "store_path": RELEASE_PATH, "tags": ["web"]}])
       assert release_id.startswith("rel-"), \
           f"expected rel- prefix, got {release_id}"
-
-      rollout_body = json.dumps({
-          "release_id": release_id,
-          "strategy": "all_at_once",
-          "failure_threshold": "0",
-          "on_failure": "pause",
-          "health_timeout": 5,
-          "target": {"tags": ["web"]},
-      })
-      rollout = json.loads(cp.succeed(
-          f"{CURL} {AUTH} -X POST {API}/api/v1/rollouts "
-          f"-H 'Content-Type: application/json' "
-          f"-d '{rollout_body}'"
-      ))
-      rollout_id = rollout["rollout_id"]
+      rollout_id = create_rollout(cp, release_id, "web", health_timeout=5)
 
       # ------------------------------------------------------------------
-      # Phase 5 — Positive 1: rollout must reach `paused`
+      # Step 5 — Positive 1: rollout must reach `paused`
       # ------------------------------------------------------------------
       cp.wait_until_succeeds(
           f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id} "
@@ -174,7 +136,7 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 6 — Positive 2: events timeline contains `batch_failed`.
+      # Step 6 — Positive 2: events timeline contains `batch_failed`.
       # The detail JSON carries batch_index + unhealthy count; since we
       # never reported anything, unhealthy must equal the batch size (1).
       # ------------------------------------------------------------------
@@ -192,7 +154,7 @@ in
           f"expected unhealthy=1 in batch_failed detail, got: {bf_detail}"
 
       # ------------------------------------------------------------------
-      # Phase 7 — Positive 3: CP journal contains the `Health timeout
+      # Step 7 — Positive 3: CP journal contains the `Health timeout
       # elapsed` warn line emitted by executor.rs:273–279.
       # ------------------------------------------------------------------
       cp.succeed(
@@ -201,7 +163,7 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 8 — Negative 1: web-01 never produced any report. The
+      # Step 8 — Negative 1: web-01 never produced any report. The
       # reports table must be empty for machine_id=web-01. This proves
       # the pause reason was "timeout", NOT "reported failure".
       # ------------------------------------------------------------------
@@ -213,7 +175,7 @@ in
           f"expected zero reports from web-01, got {report_count}"
 
       # ------------------------------------------------------------------
-      # Phase 9 — Negative 2: re-confirm the agent unit never came up
+      # Step 9 — Negative 2: re-confirm the agent unit never came up
       # ------------------------------------------------------------------
       status_final = web_01.execute("systemctl is-active nixfleet-agent.service")[1].strip()
       assert status_final in ("inactive", "failed", "unknown"), \

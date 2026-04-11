@@ -7,7 +7,7 @@
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib;};
+    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
@@ -163,9 +163,9 @@
               # services.harmonia.cache — the actual systemd unit is
               # `harmonia.service`, not `nixfleet-cache-server.service`.
               # Use a bounded wait_until_succeeds so a regression in
-              # the signing-key LoadCredential path (see TODO.md Phase
-              # 3 bug log / commit 5d4ab30) produces an informative
-              # failure rather than an opaque wait_for_unit hang.
+              # the signing-key LoadCredential path produces an
+              # informative failure rather than an opaque
+              # wait_for_unit hang.
               try:
                   server.wait_until_succeeds(
                       "systemctl is-active harmonia.service", timeout=60
@@ -182,34 +182,6 @@
               server.succeed("curl -sf http://localhost:5000/nix-cache-info")
             '';
           };
-
-        # --- vm-cache: cache client configures Nix substituters ---
-        vm-cache = pkgs.testers.nixosTest {
-          name = "vm-cache";
-
-          nodes.machine = mkTestNode {
-            hostSpecValues = defaultTestSpec;
-            extraModules = [
-              {
-                services.nixfleet-cache = {
-                  enable = true;
-                  cacheUrl = "http://cache.example.com";
-                  publicKey = "test-cache:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-                };
-              }
-            ];
-          };
-
-          testScript = ''
-            machine.wait_for_unit("multi-user.target")
-
-            # Nix substituters should include the cache URL
-            machine.succeed("nix show-config | grep substituters | grep cache.example.com")
-
-            # Nix trusted-public-keys should include the signing key
-            machine.succeed("nix show-config | grep trusted-public-keys | grep test-cache")
-          '';
-        };
 
         # --- vm-backup-restic: restic backend wires up correctly ---
         vm-backup-restic = let

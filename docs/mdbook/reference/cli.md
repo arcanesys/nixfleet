@@ -6,7 +6,7 @@ Flat reference for all `nixfleet` CLI commands and flags.
 
 | Flag | Env var | Default | Description |
 |------|---------|---------|-------------|
-| `--control-plane-url` | `NIXFLEET_CP_URL` | `http://localhost:8080` | Control plane URL |
+| `--control-plane-url` | `NIXFLEET_CONTROL_PLANE_URL` | `http://localhost:8080` | Control plane URL |
 | `--api-key` | `NIXFLEET_API_KEY` | `""` | API key for control plane authentication |
 | `--client-cert` | `NIXFLEET_CLIENT_CERT` | `""` | Client certificate for mTLS authentication |
 | `--client-key` | `NIXFLEET_CLIENT_KEY` | `""` | Client key for mTLS authentication |
@@ -16,11 +16,12 @@ Logging is controlled via `RUST_LOG` (default: `nixfleet=info`).
 
 ### Configuration sources
 
-The CLI reads connection settings from three sources, in priority order (highest wins):
+The CLI reads connection settings from four layers, in priority order (highest wins):
 
-1. **CLI flags** / **environment variables** (shown above)
-2. **`~/.config/nixfleet/credentials.toml`** — user-level API keys, keyed by CP URL (auto-saved by `nixfleet bootstrap`)
-3. **`.nixfleet.toml`** — repo-level config, discovered by walking up from cwd
+1. **CLI flags** (`--control-plane-url`, `--api-key`, …)
+2. **Environment variables** (`NIXFLEET_*` shown above)
+3. **`~/.config/nixfleet/credentials.toml`** — user-level API keys, keyed by CP URL (auto-saved by `nixfleet bootstrap`)
+4. **`.nixfleet.toml`** — repo-level config, discovered by walking up from cwd
 
 This means the same CLI commands run with no flags from any fleet repo, inheriting the repo's connection settings and the user's bootstrapped credentials. See [`.nixfleet.toml` format](#nixfleet-toml-format) below.
 
@@ -169,6 +170,24 @@ nixfleet release diff <ID_A> <ID_B>
 
 ---
 
+## release delete
+
+Delete a release. Fails with exit code 1 if the release is still referenced by a rollout — the control plane returns 409 in that case to prevent breaking rollout history.
+
+```sh
+nixfleet release delete <RELEASE_ID>
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `<RELEASE_ID>` | string | ID of the release to delete |
+
+Exit codes:
+- `0` — release deleted (CP returned 204)
+- `1` — release still referenced by a rollout (CP returned 409), release not found (CP returned 404), or another non-2xx status
+
+---
+
 ## status
 
 Show fleet status from the control plane.
@@ -199,7 +218,7 @@ nixfleet rollback --host <HOST> --ssh [FLAGS]
 
 Running without `--ssh` exits with an error explaining the alternatives (see below).
 
-**For control-plane-driven rollback**, there is no direct endpoint — `POST /machines/{id}/set-generation` was removed with the release abstraction. Use one of:
+**For control-plane-driven rollback**, there is no direct endpoint. The rollback model is release-based, so use one of:
 
 1. **Rollout-level revert** — Create the originating rollout with `--on-failure revert`. The CP reverts completed batches using each batch's `previous_generations` (captured at batch start), restoring every machine to its own prior store path.
 2. **Deploy an older release** — Check out a previous flake commit, `nixfleet release create --push-to <cache>`, then `nixfleet deploy --release <old-id>`. Uses normal rollout semantics (health gates, batching, etc.).

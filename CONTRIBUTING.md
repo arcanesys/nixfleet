@@ -28,21 +28,28 @@ docs/           # ADRs and mdbook documentation
 
 ## Running Tests
 
+**One command runs everything:**
+
 ```sh
-# Rust tests (fast, run frequently)
-cargo test --workspace
-cargo clippy --workspace -- -D warnings
-cargo fmt --all -- --check
-
-# Nix eval tests (instant, no builds)
-nix flake check --no-build
-
-# Full validation (slow, builds all hosts)
-nix run .#validate
-
-# VM tests (slowest, boots VMs)
-nix run .#validate -- --vm
+nix run .#validate -- --all
 ```
+
+That's the entry point for pre-commit, pre-merge, and pre-release. It runs
+(in order): formatting, `nix flake check --no-build`, eval tests, host
+builds, every `vm-*` VM scenario, `cargo test --workspace`,
+`cargo clippy --workspace --all-targets -- -D warnings`, and a nix build
+of every Rust package (which runs cargo test under the nix sandbox).
+
+For faster inner-loop iteration when `--all` is too much:
+
+```sh
+nix run .#validate                 # format + flake check + eval + hosts only
+nix run .#validate -- --rust       # + cargo test + clippy + rust package builds
+nix run .#validate -- --vm         # + every vm-* check
+```
+
+See `docs/mdbook/testing/overview.md` for what each tier contains and how
+to drill down into a specific failure.
 
 ## Code Style
 
@@ -67,7 +74,7 @@ Keep the subject line under 72 characters. Use the body to explain "why," not "w
 
 1. Create a feature branch: `feat/`, `fix/`, `docs/`, etc.
 2. Make your changes with tests
-3. Ensure all checks pass (`cargo test --workspace && cargo clippy --workspace -- -D warnings && nix flake check --no-build`)
+3. Ensure all checks pass: `nix run .#validate -- --all`
 4. Open a PR with a clear description of the change and its motivation
 5. One feature per PR — keep changes focused
 

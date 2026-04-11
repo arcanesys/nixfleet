@@ -14,9 +14,9 @@ modules/
 ├── apps.nix           # Flake apps (validate, build-vm, start-vm, stop-vm, clean-vm, test-vm)
 ├── fleet.nix          # Framework test fleet (8 hosts)
 └── flake-module.nix   # Framework exports (lib.mkHost, nixosModules, diskoTemplates)
-agent/                 # Rust: nixfleet-agent (sequential deploy cycle daemon)
-control-plane/         # Rust: nixfleet-control-plane (Axum HTTP server)
-cli/                   # Rust: nixfleet CLI (deploy, status, rollback)
+agent/                 # Rust: nixfleet-agent (sequential deploy cycle daemon — main.rs is a thin wrapper around lib.rs::run_loop)
+control-plane/         # Rust: nixfleet-control-plane (Axum HTTP server, MtlsAcceptor for peer-cert injection, auth_cn middleware for CN validation)
+cli/                   # Rust: nixfleet CLI (deploy, status, rollback, release delete)
 shared/                # Rust: nixfleet-types (shared data types)
 examples/
 ├── client-fleet/      # Example: fleet consuming mkHost via flake-parts
@@ -31,30 +31,21 @@ TODO.md                # Discovered work, grouped by target phase
 ## Commands
 
 ```sh
-# Nix
-nix develop                        # dev shell
-nix fmt                            # format (alejandra + shfmt)
-nix flake check --no-build         # eval tests (instant)
-nix run .#validate                 # full validation (eval + host builds)
-nix run .#validate -- --vm         # include VM tests (slow)
-nix build .#checks.x86_64-linux.vm-fleet --no-link  # 4-node fleet test (CP + 3 agents, TLS/mTLS, rollouts)
-# Phase 3 scenario subtests (each independently buildable)
-nix build .#checks.x86_64-linux.vm-fleet-release --no-link        # R1, R2
-nix build .#checks.x86_64-linux.vm-fleet-bootstrap --no-link      # D1
-nix build .#checks.x86_64-linux.vm-fleet-deploy-ssh --no-link     # D4
-nix build .#checks.x86_64-linux.vm-fleet-apply-failure --no-link  # F1, RB1
-nix build .#checks.x86_64-linux.vm-fleet-revert --no-link         # F2, C3
-nix build .#checks.x86_64-linux.vm-fleet-timeout --no-link        # F3
-nix build .#checks.x86_64-linux.vm-fleet-poll-retry --no-link     # F7
-nix build .#checks.x86_64-linux.vm-fleet-mtls-missing --no-link   # A3
-nix build .#checks.x86_64-linux.vm-fleet-rollback-ssh --no-link   # RB2
-nix build .#checks.x86_64-linux.vm-fleet-tag-sync --no-link       # M3
+# Dev shell
+nix develop                        # dev shell (cargo, rustc, clippy, rustfmt)
+nix fmt                            # format (alejandra + rustfmt + shfmt)
+
+# Testing — ONE command for the whole suite
+nix run .#validate -- --all        # format + flake check + eval + hosts + VM + Rust + clippy + package builds
+nix run .#validate                 # fast (no VM, no Rust) — inner-loop iteration
+nix run .#validate -- --rust       # + cargo test + clippy + rust package builds (no VM)
+nix run .#validate -- --vm         # + every vm-* check (no Rust)
+
+# VM lifecycle (fleet-repo style — not for testing the framework)
 nix run .#build-vm -- -h web-02    # install VM (ISO + nixos-anywhere)
 nix run .#build-vm -- --all        # install all hosts
-nix run .#build-vm -- --all --vlan 1234  # install all with inter-VM VLAN
 nix run .#start-vm -- -h web-02    # start VM as headless daemon
 nix run .#start-vm -- --all        # start all installed VMs
-nix run .#start-vm -- --all --vlan 1234  # start all with inter-VM VLAN
 nix run .#stop-vm -- -h web-02     # stop VM daemon
 nix run .#clean-vm -- -h web-02    # delete VM disk + state
 nix run .#test-vm -- -h web-02     # end-to-end VM test cycle
@@ -66,11 +57,6 @@ sudo nixos-rebuild switch --flake .#hostname    # local rebuild
 nixos-rebuild switch --flake .#hostname --target-host root@ip  # remote rebuild
 darwin-rebuild switch --flake .#hostname        # macOS rebuild
 
-# Rust
-cargo test --workspace             # all Rust tests
-cargo build --workspace            # build all crates
-cargo clippy --workspace           # lint
-
 # Release management
 nixfleet release create --push-to s3://my-fleet-cache  # build all hosts, push to cache, register release
 nixfleet release create --copy                         # build all hosts, copy via SSH, register release
@@ -78,6 +64,7 @@ nixfleet release create --dry-run                 # build and show manifest only
 nixfleet release list                             # list recent releases
 nixfleet release show <RELEASE_ID>                # show release details and per-host entries
 nixfleet release diff <ID_A> <ID_B>               # diff two releases
+nixfleet release delete <RELEASE_ID>              # delete a release (409 if referenced by a rollout)
 ```
 
 ## Framework API
@@ -264,29 +251,44 @@ See `examples/` for standalone-host, batch-hosts, and client-fleet patterns.
 
 ## Testing
 
-Full reference: `docs/mdbook/testing/overview.md` (plus per-tier pages:
-`eval-tests.md`, `vm-tests.md`, `rust-tests.md`).
+**One command runs everything:**
 
-One-liner runners:
+```sh
+nix run .#validate -- --all
+```
 
-| Command | Runs |
+That's the entry point for CI, pre-merge, pre-release, and "did my change
+break something far from where I was editing". Full reference:
+`docs/mdbook/testing/overview.md` (plus per-tier pages `eval-tests.md`,
+`vm-tests.md`, `rust-tests.md`).
+
+`--all` runs, in order: formatting, `nix flake check --no-build`, every
+`eval-*` derivation, every host build, every `vm-*` check, `cargo test
+--workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
+and `nix build` of every Rust package (which runs the crate tests under
+the nix build sandbox — catches environment-dependent failures that
+dev-shell `cargo test` misses).
+
+Faster slices for inner-loop iteration when a full `--all` isn't
+warranted:
+
+| Flag | What it adds to the base |
 |---|---|
-| `nix run .#validate` | format + eval tests + all host builds (fast) |
-| `nix run .#validate -- --vm` | ^ + every `vm-*` check (dynamically discovered) |
-| `nix run .#validate -- --rust` | ^ + `cargo test --workspace` |
-| `nix run .#validate -- --all` | everything |
+| (none) | format + flake check + eval + hosts only (fast, seconds) |
+| `--rust` | + cargo test + clippy + rust package builds |
+| `--vm` | + every `vm-*` check (slow, minutes per check) |
+| `--all` | everything |
 
 Tiers:
 
 - **Eval** (`modules/tests/eval.nix`) — config correctness at Nix eval time, instant.
 - **Integration** (`modules/tests/integration/mock-client-test.nix`) — simulates a consumer flake importing `nixfleet.lib.mkHost`.
-- **VM framework** (`modules/tests/vm*.nix`) — `vm-core`, `vm-minimal`, `vm-infra` (firewall/monitoring/backup/secrets in one VM), `vm-nixfleet` (minimal CP↔agent), `vm-agent-rebuild` (fetch→apply→verify), `vm-fleet` (4-node fleet with mTLS + rollouts).
-- **VM scenarios** (`modules/tests/_vm-fleet-scenarios/`) — Phase 3 per-scenario subtests. Each one is independently buildable as `.#checks.x86_64-linux.vm-fleet-<name>`:
-  `vm-fleet-tag-sync`, `vm-fleet-bootstrap`, `vm-fleet-release`, `vm-fleet-deploy-ssh`, `vm-fleet-apply-failure`, `vm-fleet-revert`, `vm-fleet-timeout`, `vm-fleet-poll-retry`, `vm-fleet-mtls-missing`, `vm-fleet-rollback-ssh`.
-- **Rust unit** — in-file `#[cfg(test)] mod tests` in every Rust module (control-plane auth/db/state/tls/metrics, rollout batch/executor, agent comms/config/store/health/nix, shared types).
-- **Rust integration scenarios** — `control-plane/tests/*_scenarios.rs` and `cli/tests/*_scenarios.rs` cover release CRUD (R3-R6), deploy strategies (D2, D3), generation gating + threshold + hydration + CP restart (F4-F6, H1), rollback (RB3, RB4), polling (P1, P2), machine lifecycle (M1, M2), auth/RBAC (A1, A2, A4), audit (AU1, AU2), metrics (ME1, ME2), migrations idempotency (I1), CLI config precedence (I2 `#[ignore]` pending Phase 4, I3).
+- **VM framework** (`modules/tests/vm*.nix`) — subsystem VMs that boot `mkHost` without a fleet: `vm-core`, `vm-minimal`, `vm-firewall`, `vm-monitoring`, `vm-backup`, `vm-backup-restic`, `vm-secrets`, `vm-cache-server`. Plus `vm-fleet` (4-node fleet with mTLS + rollouts).
+- **VM scenarios** (`modules/tests/_vm-fleet-scenarios/`) — per-scenario subtests, each independently buildable as `.#checks.x86_64-linux.vm-fleet-<name>`. Discovered dynamically by validate so new ones land in `--all` / `--vm` automatically.
+- **Rust unit** — in-file `#[cfg(test)] mod tests` in every crate.
+- **Rust integration scenarios** — `control-plane/tests/*_scenarios.rs` and `cli/tests/*_scenarios.rs` cover release CRUD, deploy strategies, generation gating, failure threshold, hydration, rollback, polling, machine lifecycle, auth/RBAC, audit, metrics, migrations, CLI config precedence.
 
-VM scenario helpers live in `modules/tests/_lib/helpers.nix`: `mkCpNode`, `mkAgentNode`, `tlsCertsModule`, `testPrelude`, `mkTlsCerts`, `nix-shim`. The aggregator `modules/tests/vm-fleet-scenarios.nix` pre-binds them into a single `scenarioArgs` attrset so every scenario file's import is narrow.
+VM scenario helpers live in `modules/tests/_lib/helpers.nix`: `mkCpNode`, `mkAgentNode`, `tlsCertsModule`, `testPrelude`, `mkTlsCerts`, `sharedTestCerts`, `nix-shim`, `testConstants`. The aggregator `modules/tests/vm-fleet-scenarios.nix` pre-binds them into a single `scenarioArgs` attrset so every scenario file's import is narrow. The top-level `vm-fleet.nix` and every `_vm-fleet-scenarios/*.nix` use the same helper set.
 
 ## Multi-Repo
 

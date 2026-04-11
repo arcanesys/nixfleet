@@ -1,25 +1,51 @@
 # Testing Overview
 
 nixfleet has four test tiers that together cover configuration, Rust code,
-Nix module wiring, and full multi-node runtime behaviour. This page gives you
-the complete inventory and the one command that runs everything.
+Nix module wiring, and full multi-node runtime behaviour. There is exactly
+**one command that runs everything**:
 
-## Quick reference
+```sh
+nix run .#validate -- --all
+```
+
+That's it. Use this for CI, for pre-merge, for pre-release, and for "did my
+change break something far from where I was editing". When you need a smaller
+slice for an inner-loop iteration, the flag variants below trade coverage
+for speed:
 
 | Command | Runs | Typical duration |
 |---|---|---|
-| `nix run .#validate` | Format + eval tests + all host builds | ~30 s |
+| `nix run .#validate` | format + `nix flake check` + eval-* + host builds | ~1 min |
 | `nix run .#validate -- --vm` | ^ + every `vm-*` check (dynamically discovered) | ~20–40 min |
-| `nix run .#validate -- --rust` | ^ + `cargo test --workspace` | ~3–5 min |
+| `nix run .#validate -- --rust` | ^ + `cargo test --workspace` + `cargo clippy --workspace -- -D warnings` + nix-build of every Rust package (sandboxed test run) | ~5–8 min |
 | `nix run .#validate -- --all` | Everything | ~25–45 min |
 
-Individual tests:
+What `--all` actually runs, in order:
+
+1. **Formatting** — `nix fmt --fail-on-change`
+2. **Flake eval** — `nix flake check --no-build` (every flake output type-checks)
+3. **Eval tests** — all `eval-*` derivations under `.#checks`
+4. **Host builds** — every `nixosConfigurations.<host>.config.system.build.toplevel`
+5. **VM tests** — every `vm-*` under `.#checks`, discovered dynamically
+6. **Rust workspace tests** — `cargo test --workspace` in the dev shell
+7. **Rust lints** — `cargo clippy --workspace --all-targets -- -D warnings`
+8. **Rust package builds** — `nix build .#packages.<system>.{nixfleet-agent,nixfleet-control-plane,nixfleet-cli}` (runs `cargo test` inside the nix sandbox — catches environment-dependent test failures that the dev-shell `cargo test` misses)
+
+### Inner-loop iteration (drilling down when something fails)
+
+When `--all` surfaces a failure, you can reproduce the failing tier with a
+narrower command. Prefer these only after `--all` has already failed:
 
 ```sh
-nix flake check --no-build                                    # Tier C only
-nix build .#checks.x86_64-linux.<name> --no-link              # single VM/eval check
-cargo test -p nixfleet-control-plane                          # single Rust crate
-cargo test -p nixfleet-control-plane --test polling_scenarios # single Rust scenario file
+# Single VM scenario
+nix build .#checks.x86_64-linux.vm-fleet-apply-failure --no-link
+
+# Single Rust test binary
+nix develop --command cargo test -p nixfleet-control-plane --test route_coverage
+
+# Single test function
+nix develop --command cargo test -p nixfleet-agent --test run_loop_scenarios \
+    poll_hint_shortens_next_interval
 ```
 
 ## Tier C — Eval tests (fast, ~seconds)
@@ -38,21 +64,24 @@ of `hostSpec`, scope modules, and service wiring. See
 
 Real NixOS VMs booted under QEMU with Python test scripts driving assertions.
 See [VM Tests](vm-tests.md) for the full list and per-scenario semantics,
-including the 10 Phase 3 scenario subtests under `_vm-fleet-scenarios/`.
+including the fleet scenario subtests under `_vm-fleet-scenarios/`.
 
 High-level categories:
 
-- **Framework-level VMs** (`vm-core`, `vm-minimal`, `vm-infra`,
-  `vm-nixfleet`, `vm-agent-rebuild`) — each one boots one or two nodes and
-  exercises a single subsystem.
-- **Fleet-level VMs** (`vm-fleet` and the 10 `vm-fleet-*` scenario
-  subtests) — exercise multi-node topologies, mTLS, rollout strategies,
-  failure paths, SSH-direct deploys, etc.
+- **Framework-level VMs** (`vm-core`, `vm-minimal`, `vm-firewall`,
+  `vm-monitoring`, `vm-backup`, `vm-backup-restic`, `vm-secrets`,
+  `vm-cache-server`) — each one boots one or two nodes and exercises a
+  single subsystem in isolation. These prove the framework produces
+  bootable configs even when no fleet is enabled.
+- **Fleet-level VMs** (`vm-fleet` and the `vm-fleet-*` scenario subtests
+  under `_vm-fleet-scenarios/`) — exercise multi-node topologies,
+  mTLS, rollout strategies, failure paths, SSH-direct deploys, and the
+  real `fetch → apply → verify` pipeline (`vm-fleet-agent-rebuild`).
 
 ## Rust tests
 
-Every Rust crate has unit tests in-file, and Phase 3 added ~60 integration
-scenarios in `control-plane/tests/*_scenarios.rs` and `cli/tests/*_scenarios.rs`.
+Every Rust crate has unit tests in-file, plus integration scenarios in
+`control-plane/tests/*_scenarios.rs` and `cli/tests/*_scenarios.rs`.
 See [Rust Tests](rust-tests.md) for the full breakdown.
 
 ## Finding the right test for a symptom
@@ -61,10 +90,10 @@ See [Rust Tests](rust-tests.md) for the full breakdown.
 |---|---|
 | "Option X isn't being set correctly" | Eval test for that option |
 | "My consumer flake doesn't build with mkHost" | `integration-mock-client` |
-| "The agent service won't start on a real VM" | `vm-core`, `vm-nixfleet` |
-| "A scope module (firewall, backup, monitoring) is broken" | `vm-infra` |
-| "The fetch→apply pipeline isn't working" | `vm-agent-rebuild` |
-| "Rollout state machine is wrong" | `vm-fleet` + Phase 3 Rust `failure_scenarios.rs`, `deploy_scenarios.rs` |
+| "The agent service won't start on a real VM" | `vm-core`, `vm-fleet-tag-sync` |
+| "A scope module (firewall, backup, monitoring) is broken" | `vm-firewall`, `vm-backup`, `vm-monitoring` (per scope) |
+| "The fetch→apply pipeline isn't working" | `vm-fleet-agent-rebuild` |
+| "Rollout state machine is wrong" | `vm-fleet` + Rust `failure_scenarios.rs`, `deploy_scenarios.rs` |
 | "mTLS / auth / RBAC is wrong" | `vm-fleet-mtls-missing`, Rust `auth_scenarios.rs` |
 | "Release CRUD or release push-hook is wrong" | `vm-fleet-release`, Rust `release_scenarios.rs` |
 | "Bootstrap / admin-key flow is wrong" | `vm-fleet-bootstrap` |
@@ -77,16 +106,9 @@ See [Rust Tests](rust-tests.md) for the full breakdown.
 
 ## Known coverage gaps
 
-- **Real `switch-to-configuration`**: every VM test runs agents with `dryRun = true`
-  so the actual apply path is not exercised in CI. Only production bootstraps
-  cover it.
-- **Agent-side `poll_hint` honouring**: the CP-side emission is covered by
-  Rust scenarios P1 and P2, but the agent-side loop honouring the hint is
-  deferred to a testability refactor (logged in `TODO.md`).
-- **CLI env-var precedence**: the Rust scenario I2
-  (`cli/tests/config_scenarios.rs`) is `#[ignore]` pending a Phase 4 fix for
-  `config::resolve`.
-- **Release delete CLI subcommand**: `nixfleet release delete` doesn't exist
-  yet. `DELETE /api/v1/releases/{id}` is covered at the HTTP layer by R5/R6
-  (Rust `release_scenarios.rs`) but there's no CLI dispatch test.
-- **Multi-CP topologies** and **agenix secret rotation** have no tests at all.
+- **Real `switch-to-configuration`**: most VM tests run agents with `dryRun = true`
+  so the actual apply path is not exercised. The exception is
+  `vm-fleet-agent-rebuild`, which runs with `dryRun = false` and
+  exercises the missing-path guard end-to-end. Production bootstraps
+  cover the happy apply path.
+- **Multi-CP topologies** and **agenix secret rotation** have no tests.

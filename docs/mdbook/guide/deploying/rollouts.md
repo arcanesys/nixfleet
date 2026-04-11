@@ -70,7 +70,7 @@ This creates three batches:
    - The machine's latest report's `current_generation` matches the desired store path from the release entry (proves the agent actually applied the new generation)
    - A health report with `all_passed = true` has been received since the batch started
 
-   This two-step gate prevents false-positive completion from stale health reports (the old buggy behavior where a health report from the previous generation counted toward the new batch).
+   This two-step gate prevents false-positive completion from stale health reports: a health report from a previous generation cannot count toward the new batch.
 
 4. **Complete or fail** — When all batches succeed, the rollout status moves to `completed`. If a health gate fails, the rollout transitions to `paused` or `failed` depending on the `--on-failure` setting.
 

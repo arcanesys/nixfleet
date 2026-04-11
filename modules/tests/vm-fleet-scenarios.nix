@@ -1,4 +1,4 @@
-# Phase 3 VM scenario tests. Each subtest is an independently buildable
+# Per-scenario VM tests. Each subtest is an independently buildable
 # `testers.nixosTest` so a failure in one does not mask another.
 #
 # Run any subtest with:
@@ -10,8 +10,8 @@
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib;};
-    mkTlsCerts = import ./_lib/tls-certs.nix {inherit pkgs lib;};
+    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
+    inherit (helpers) mkTlsCerts sharedTestCerts;
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
@@ -30,9 +30,17 @@
     testPrelude = helpers.testPrelude;
     tlsCertsModule = helpers.tlsCertsModule;
 
+    # Every scenario receives `testCerts = sharedTestCerts` by default.
+    # Because the store path is identical, mkCpNode / mkAgentNode produce
+    # IDENTICAL system closures across scenarios that differ only in
+    # testScript. Nix dedupes those closures, so each unique node shape
+    # is built at most once across the entire VM suite rather than once
+    # per scenario. `mkTlsCerts` is still exposed for any future scenario
+    # that genuinely needs a different CA / hostname shape.
     scenarioArgs = {
       inherit pkgs lib mkTestNode defaultTestSpec mkTlsCerts;
       inherit mkCpNode mkAgentNode testPrelude tlsCertsModule;
+      testCerts = sharedTestCerts;
     };
 
     subtests = {
@@ -45,7 +53,9 @@
       vm-fleet-timeout = import ./_vm-fleet-scenarios/timeout.nix scenarioArgs;
       vm-fleet-poll-retry = import ./_vm-fleet-scenarios/poll-retry.nix scenarioArgs;
       vm-fleet-mtls-missing = import ./_vm-fleet-scenarios/mtls-missing.nix scenarioArgs;
+      vm-fleet-mtls-cn-mismatch = import ./_vm-fleet-scenarios/mtls-cn-mismatch.nix scenarioArgs;
       vm-fleet-rollback-ssh = import ./_vm-fleet-scenarios/rollback-ssh.nix scenarioArgs;
+      vm-fleet-agent-rebuild = import ./_vm-fleet-scenarios/agent-rebuild.nix scenarioArgs;
     };
   in
     lib.optionalAttrs (system == "x86_64-linux") {

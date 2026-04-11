@@ -65,96 +65,33 @@ pub struct ReleaseDiffEntry {
 
 #[cfg(test)]
 mod tests {
+    //! Only wire-contract tests live here: the `#[serde(default)]`
+    //! behaviour that lets older clients omit optional fields. Plain
+    //! roundtrip tests on derived serde are compile-time-enforced and
+    //! exercised end-to-end by every release_scenarios.rs test.
+
     use super::*;
 
+    /// ReleaseEntry.tags must default to an empty Vec when omitted.
+    /// Older CLI versions did not emit the field at all.
     #[test]
-    fn test_release_entry_roundtrip() {
-        let entry = ReleaseEntry {
-            hostname: "web-01".to_string(),
-            store_path: "/nix/store/abc123-nixos-system-web-01".to_string(),
-            platform: "x86_64-linux".to_string(),
-            tags: vec!["web".to_string(), "prod".to_string()],
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        let back: ReleaseEntry = serde_json::from_str(&json).unwrap();
-        assert_eq!(entry, back);
-    }
-
-    #[test]
-    fn test_release_entry_empty_tags_default() {
+    fn release_entry_empty_tags_default() {
         let json =
             r#"{"hostname":"db-01","store_path":"/nix/store/xyz","platform":"x86_64-linux"}"#;
         let entry: ReleaseEntry = serde_json::from_str(json).unwrap();
         assert!(entry.tags.is_empty());
     }
 
+    /// CreateReleaseRequest optional fields (flake_ref, flake_rev,
+    /// cache_url) must all default to None. This pins the contract
+    /// for a "minimal release create" HTTP call.
     #[test]
-    fn test_create_release_request_roundtrip() {
-        let req = CreateReleaseRequest {
-            flake_ref: Some(".".to_string()),
-            flake_rev: Some("abc123def".to_string()),
-            cache_url: Some("https://attic.internal:8081/fleet".to_string()),
-            entries: vec![
-                ReleaseEntry {
-                    hostname: "web-01".to_string(),
-                    store_path: "/nix/store/aaa-nixos-system-web-01".to_string(),
-                    platform: "x86_64-linux".to_string(),
-                    tags: vec!["web".to_string()],
-                },
-                ReleaseEntry {
-                    hostname: "db-01".to_string(),
-                    store_path: "/nix/store/bbb-nixos-system-db-01".to_string(),
-                    platform: "x86_64-linux".to_string(),
-                    tags: vec!["db".to_string()],
-                },
-            ],
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        let back: CreateReleaseRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.entries.len(), 2);
-        assert_eq!(back.flake_rev, Some("abc123def".to_string()));
-    }
-
-    #[test]
-    fn test_create_release_request_minimal() {
+    fn create_release_request_minimal_defaults() {
         let json = r#"{"entries":[{"hostname":"h1","store_path":"/nix/store/x","platform":"x86_64-linux"}]}"#;
         let req: CreateReleaseRequest = serde_json::from_str(json).unwrap();
         assert!(req.flake_ref.is_none());
         assert!(req.flake_rev.is_none());
         assert!(req.cache_url.is_none());
         assert_eq!(req.entries.len(), 1);
-    }
-
-    #[test]
-    fn test_create_release_response_roundtrip() {
-        let resp = CreateReleaseResponse {
-            id: "rel-abc123".to_string(),
-            host_count: 5,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let back: CreateReleaseResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.id, "rel-abc123");
-        assert_eq!(back.host_count, 5);
-    }
-
-    #[test]
-    fn test_release_diff_roundtrip() {
-        let diff = ReleaseDiff {
-            added: vec!["new-host".to_string()],
-            removed: vec!["old-host".to_string()],
-            changed: vec![ReleaseDiffEntry {
-                hostname: "web-01".to_string(),
-                old_store_path: "/nix/store/old".to_string(),
-                new_store_path: "/nix/store/new".to_string(),
-            }],
-            unchanged: vec!["db-01".to_string()],
-        };
-        let json = serde_json::to_string(&diff).unwrap();
-        let back: ReleaseDiff = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.added, vec!["new-host"]);
-        assert_eq!(back.removed, vec!["old-host"]);
-        assert_eq!(back.changed.len(), 1);
-        assert_eq!(back.changed[0].hostname, "web-01");
-        assert_eq!(back.unchanged, vec!["db-01"]);
     }
 }

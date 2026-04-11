@@ -12,31 +12,30 @@ Plus the CLI at `cli/` (`nixfleet-cli`) which has its own integration tests.
 
 ## How to run
 
+The canonical entry point is `nix run .#validate -- --all` (see
+[Testing Overview](overview.md)). For faster Rust-only iteration:
+
 ```sh
-# Everything (all unit + integration tests across crates)
-nix develop --command cargo test --workspace
-
-# Via the validate orchestrator (runs eval + hosts + rust in one shot)
 nix run .#validate -- --rust
-nix run .#validate -- --all
-
-# Single crate
-cargo test -p nixfleet-control-plane
-cargo test -p nixfleet-agent
-cargo test -p nixfleet-cli
-
-# Single integration test file
-cargo test -p nixfleet-control-plane --test polling_scenarios
-cargo test -p nixfleet-cli --test config_scenarios
-
-# Single test function
-cargo test -p nixfleet-control-plane --test failure_scenarios \
-  f4_get_recent_reports_tiebreaker
 ```
 
-All commands assume you're inside `nix develop` or are prefixing with
-`nix develop --command`. The Rust toolchain (`cargo`, `rustc`, `clippy`,
-`rustfmt`, `rust-analyzer`) is pinned in the dev shell.
+That runs `cargo test --workspace` + `cargo clippy --workspace
+--all-targets -- -D warnings` + `nix build` of every Rust package (the
+sandboxed test run), in order. Use this over raw `cargo test` so clippy
+and the sandbox-build check stay in the loop.
+
+When you need to drill into a specific failure after `--rust` has
+already surfaced it:
+
+```sh
+nix develop --command cargo test -p nixfleet-control-plane --test route_coverage
+nix develop --command cargo test -p nixfleet-cli --test subcommand_coverage
+nix develop --command cargo test -p nixfleet-agent --test run_loop_scenarios \
+    poll_hint_shortens_next_interval
+```
+
+The Rust toolchain (`cargo`, `rustc`, `clippy`, `rustfmt`,
+`rust-analyzer`) is pinned in the dev shell.
 
 ## Unit tests (in-file `#[cfg(test)] mod tests`)
 
@@ -74,28 +73,31 @@ HTTP / DB / filesystem / network.
 | `release.rs` | `Release` / `ReleaseEntry` serde |
 | `rollout.rs` | `RolloutStatus`, `RolloutStrategy`, `OnFailure` enum serde |
 
-## Integration tests (Phase 3 scenarios)
+## Integration tests (scenario files)
 
-Integration tests live in `control-plane/tests/*.rs` and `cli/tests/*.rs`.
-Every file is an independent test binary — `cargo test` spawns one binary
-per file.
+Integration tests live in `control-plane/tests/*_scenarios.rs`,
+`control-plane/tests/route_coverage.rs`, and `cli/tests/*_scenarios.rs`.
+Every file is an independent test binary — `cargo test` spawns one
+binary per file.
 
 ### Shared harness
 
-Every Phase 3 scenario file imports `control-plane/tests/harness.rs` via
-a `#[path = "harness.rs"] mod harness;` sibling include. The harness
+Every scenario file imports `control-plane/tests/harness.rs` via a
+`#[path = "harness.rs"] mod harness;` sibling include. The harness
 provides:
 
 | Helper | Purpose |
 |---|---|
-| `spawn_cp()` / `spawn_cp_at(path)` | Boot an in-process CP bound to a temp directory with pre-seeded admin / deploy / readonly API keys. Returns a `SpawnedCp` handle with `.state`, `.db`, `.api_key`, `.base_url`, etc. |
-| `register_machine(cp, id, tags)` | POST `/api/v1/machines/{id}/register` with the seeded admin key. |
-| `create_release(cp, entries)` | POST `/api/v1/releases` with per-host store paths. Returns the release id. |
-| `create_rollout_for_tag(cp, release_id, tag, strategy, batch_sizes, threshold, on_failure, health_timeout)` | POST `/api/v1/rollouts`. Returns the rollout id. |
-| `fake_agent_report(cp, machine_id, generation, success, message, tags)` | POST `/api/v1/machines/{id}/report` as an agent. |
-| `insert_health_report(machine_id, results, all_passed)` | Raw DB insert bypass for when you need to seed health state without going through the HTTP layer. |
-| `tick_once(cp)` | Drive a single executor tick deterministically via `executor::test_support::tick_for_tests`. Replaces the production 2 s `tokio::time::interval`. |
-| `wait_rollout_status(cp, rollout_id, status, per_tick_sleep)` | Repeatedly tick + check until the rollout reaches `status` or times out. |
+| `spawn_cp()` / `spawn_cp_at(path)` | Boot an in-process CP bound to a temp directory with pre-seeded admin / deploy / readonly API keys. Returns a `Cp` handle with `.db`, `.fleet`, `.admin`, `.base`, `.db_path`. |
+| `spawn_cp_with_rollout(store_path)` | Canonical "1 machine, 1 release, 1 all-at-once rollout, zero-tolerance, pause-on-failure" fixture. Returns `(cp, release_id, rollout_id)`. |
+| `register_machine(cp, id, tags)` | Register a machine directly via DB + fleet state (bypasses HTTP for setup speed). |
+| `create_release(cp, entries)` | `POST /api/v1/releases`; returns the release id. |
+| `create_rollout_for_tag(cp, release_id, tag, strategy, batch_sizes, threshold, on_failure, health_timeout)` | `POST /api/v1/rollouts`; returns the rollout id. |
+| `fake_agent_report(cp, machine_id, generation, success, message, tags)` | `POST /api/v1/machines/{id}/report` as an agent. |
+| `agent_reports_health(cp, machine_id, store_path, healthy)` | Paired helper that emits both a `fake_agent_report` and an `insert_health_report` — the executor's generation gate and batch health gate read different tables, so almost every failure / recovery scenario needs both together. |
+| `assert_status(builder, expected)` | One-line replacement for the `let resp = ...; .send().await; assert_eq!(resp.status(), N)` triple used across `route_coverage.rs`. |
+| `tick_once(cp)` | Drive a single executor tick deterministically via `executor::test_support::tick_for_tests`. Replaces the production 2s `tokio::time::interval`. |
+| `wait_rollout_status(cp, rollout_id, want, within)` | Poll `GET /rollouts/{id}` until status matches or the deadline elapses. |
 
 Constants: `TEST_API_KEY`, `TEST_DEPLOY_KEY`, `TEST_READONLY_KEY` are
 the three pre-seeded role keys.
@@ -104,26 +106,29 @@ the three pre-seeded role keys.
 
 | File | Covers |
 |---|---|
-| `agent_integration.rs` | Pre-Phase-3 baseline agent ↔ CP end-to-end tests (28 functions). |
 | `release_scenarios.rs` | R3 push-hook invocation, R4 release list pagination, R5 referenced release delete → 409, R6 orphan release delete → 204. |
 | `deploy_scenarios.rs` | D2 canary strategy happy path, D3 staged strategy happy path. |
-| `failure_scenarios.rs` | F4 `get_recent_reports` sub-second tiebreaker determinism, F5 `failure_threshold = "30%"` pauses on 4 of 10, F6 CP restart mid-rollout resumes from DB (ADR 010). |
-| `hydration_scenarios.rs` | H1 `FleetState` hydration on CP startup from a non-empty DB. |
-| `rollback_scenarios.rs` | RB3 rollback via CP API, RB4 rollback edge cases. |
-| `polling_scenarios.rs` | P1 CP emits `poll_hint = 5` during active rollouts, P2 `poll_hint` clears after rollout completes. Note: the agent-side loop honouring the hint is deferred. |
-| `machine_scenarios.rs` | M1 `get_machines_by_tags` lifecycle filter (decommissioned agents excluded), M2 tag propagation via health reports. |
-| `auth_scenarios.rs` | A1 bootstrap conflict (409), A2 role matrix (admin/deploy/readonly access patterns), A4 unauthenticated requests rejected. |
-| `audit_scenarios.rs` | AU1 audit log writes for rollout lifecycle events, AU2 CSV-injection escaping for untrusted actor values. |
-| `metrics_scenarios.rs` | ME1 `/metrics` exposure + counter updates, ME2 gauge accuracy. |
-| `infra_scenarios.rs` | I1 migrations idempotency (run V1..V6 twice, no errors), Phase-2-archived tables absent. |
+| `failure_scenarios.rs` | Generation-gate filters stale-gen reports, `failure_threshold = "30%"` pauses on 4 of 10, resume does not re-flip on a stale pre-resume report, Paused → Cancelled via operator cancel. |
+| `hydration_scenarios.rs` | CP restart mid-rollout resumes from DB (ADR 010) — cp1 stages a rollout, cp2 hydrates from the shared SQLite file and drives it to completion, proving `FleetState` is re-queried per tick. |
+| `rollback_scenarios.rs` | Rollback via CP API: redeploy an old release as a forward rollback; original forward rollout stays Completed (history preserved). |
+| `polling_scenarios.rs` | `poll_hint = 5` present when a machine is in an active rollout, absent when idle. |
+| `machine_scenarios.rs` | M1 lifecycle filter (decommissioned excluded from rollout targets), M2 tag propagation via health reports, M3 direct desired-gen ↔ report cycle, M4 `success=false` → `system_state=error`, M5 multi-machine desired-gen isolation, M6 `Pending → Active` auto-transition, M7 `Active ↔ Maintenance` round trip. |
+| `auth_scenarios.rs` | Bootstrap 409 after first key, anonymous admin route → 401, public `/health` stays open, readonly/deploy role enforcement on `POST /rollouts` and READ_ONLY on `GET /releases+/rollouts`, bearer-token shape errors (invalid token / missing `Bearer ` prefix → 401). |
+| `audit_scenarios.rs` | Audit log writes for every mutating route + CSV-injection escaping for untrusted detail fields. |
+| `metrics_scenarios.rs` | `/metrics` exposes every CP-side metric after a real rollout cycle, and the HTTP middleware counter increments per normalized path. |
+| `cn_validation_scenarios.rs` | mTLS CN validation middleware: no extension / empty extension / matching CN / mismatched CN (defense in depth above the CA boundary). |
+| `route_coverage.rs` | Happy + error + auth coverage for every admin route, grouped by family via section headers (machines / rollouts / releases / audit+bootstrap+public). ~50 tests. |
+| `migrations_scenarios.rs` | Fresh DB schema shape, `refinery_schema_history` exists, idempotent on second migrate, every expected table is queryable. |
 
 ### Scenario files — cli
 
 | File | Covers |
 |---|---|
-| `release_hook_scenarios.rs` | CLI-side of R3 — `release create --push-hook "..."` expands `{}` to the store path and runs the hook under `sh -c`. |
-| `rollback_cli_scenarios.rs` | RB2 CLI dispatch — `nixfleet rollback --host <h> --generation <g>` constructs the right SSH invocation. |
-| `config_scenarios.rs` | I2 env-var precedence (**currently `#[ignore]`** pending a Phase 4 fix for `cli::config::resolve`), I3 `HOSTNAME` fallback path. |
+| `release_hook_scenarios.rs` | `release create --push-hook "..."` expands `{}` to the store path and runs the hook under `sh -c`. |
+| `rollback_cli_scenarios.rs` | `nixfleet rollback --host <h> --generation <g>` constructs the right SSH invocation. |
+| `config_scenarios.rs` | CLI/credentials/file precedence + env-var precedence (`NIXFLEET_*` overrides credentials, loses to CLI flags) + `HOSTNAME` fallback path. |
+| `subcommand_coverage.rs` | Direct CLI test for every leaf subcommand (init, bootstrap, status, host add, machines list/untag/register, rollout list/status/cancel, release list/show/diff). |
+| `release_delete_scenarios.rs` | `nixfleet release delete` CLI dispatch (204 → exit 0, 409 → exit 1, 404 → exit 1). |
 
 ## Tests deliberately NOT in Rust
 
@@ -137,17 +142,54 @@ the three pre-seeded role keys.
 
 ## Known gaps
 
-- **I2 env-var precedence**: `#[ignore]` pending a fix in
-  `cli/src/config.rs::resolve` to layer env-vars between CLI flags and
-  `.nixfleet.toml`. Logged in `TODO.md` as a Phase 4 followup.
-- **Agent-side `poll_hint` honouring**: the CP emits the hint correctly
-  (P1, P2 in `polling_scenarios.rs`) but verifying the agent actually
-  schedules its next poll earlier requires either fake time
-  (`tokio::time::pause()`) which does not work across OS processes, or
-  extracting the loop into `agent/src/lib.rs` as a pub async fn so an
-  in-process `#[tokio::test]` can drive it. The refactor is deferred to
-  a testability cycle (spec Section 6 R1 forbids testability refactors
-  inside the hardening cycle).
+New gaps surfacing during operation should be added here and tracked
+in `TODO.md`.
+
+## Coverage measurement
+
+NixFleet measures Rust coverage with `cargo llvm-cov` on demand. We
+deliberately do not record a one-shot baseline snapshot — an orphaned
+number from a single point in time is theater without a concrete
+change to compare against.
+
+The useful measurement is **"coverage delta for the code you just
+touched"**, not "total workspace coverage at an arbitrary date."
+
+### When to run
+
+- Before merging a non-trivial Rust change, to confirm the new code is
+  covered by at least one test path.
+- Before a release, to spot-check any module whose coverage has drifted.
+- When investigating a regression, to see whether the failing path had
+  test coverage prior to the break.
+
+### How to run
+
+```sh
+cargo install cargo-llvm-cov  # once per toolchain
+cargo llvm-cov --workspace --html
+# Open target/llvm-cov/html/index.html for the per-crate breakdown.
+
+# Or on a specific crate / test target:
+cargo llvm-cov --package nixfleet-control-plane --html
+cargo llvm-cov --package nixfleet-agent --test run_loop_scenarios --html
+
+# Diff the branch under review against main:
+cargo llvm-cov --workspace --summary-only > /tmp/branch.txt
+git checkout main
+cargo llvm-cov --workspace --summary-only > /tmp/main.txt
+diff /tmp/main.txt /tmp/branch.txt
+```
+
+The html output is the primary operator experience. `--summary-only`
+produces a text table suitable for piping into diff tools.
+
+### What's not here
+
+There is no persistent coverage percentage in this document — a
+static snapshot has no downstream consumer. If a future change wants
+to establish a persistent baseline (e.g. as a CI regression gate),
+the tooling above is ready.
 
 ## Adding a new Rust scenario
 
