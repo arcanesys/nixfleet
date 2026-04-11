@@ -257,40 +257,23 @@ in
       )
 
       # --- Phase 1: Start all nodes ---
-      # Each wait has aggressive diagnostic output so a failure in any
-      # step shows up in the nix build log instead of an opaque hang.
-      print("### starting cp")
       cp.start()
-      print("### starting cache")
       cache.start()
-      print("### starting builder")
       builder.start()
-      print("### starting agent")
       agent.start()
 
-      print("### waiting for cp:nixfleet-control-plane")
-      try:
-          cp.wait_until_succeeds(
-              "systemctl is-active nixfleet-control-plane.service", timeout=120
-          )
-      except Exception:
-          print("=== cp:nixfleet-control-plane status ===")
-          print(cp.execute("systemctl status nixfleet-control-plane.service --no-pager")[1])
-          print("=== cp:nixfleet-control-plane journal ===")
-          print(cp.execute("journalctl -u nixfleet-control-plane.service --no-pager -n 80")[1])
-          raise
+      cp.wait_for_unit("nixfleet-control-plane.service")
       cp.wait_for_open_port(8080)
-      print("### cp:8080 open")
-
-      print("### waiting for cache:sshd")
       cache.wait_for_unit("sshd.service")
       cache.wait_for_open_port(22)
-      print("### cache:22 open")
 
-      # Bounded wait for harmonia with a diagnostic dump on failure — the
-      # upstream module uses systemd LoadCredential= and failures there
-      # (exit 243) are silent to `wait_for_unit` which blocks forever.
-      print("### waiting for cache:harmonia")
+      # Bounded wait for harmonia — the upstream module uses systemd
+      # LoadCredential= and failures there (exit 243) keep the unit in
+      # `activating` forever, which hangs `wait_for_unit` without any
+      # useful error. Use `wait_until_succeeds(is-active, timeout=120)`
+      # and dump the journal on failure so a regression in the signing
+      # key handling produces an informative build log rather than an
+      # opaque hang. See Phase 3 bug list in TODO.md.
       try:
           cache.wait_until_succeeds(
               "systemctl is-active harmonia.service", timeout=120
@@ -300,11 +283,8 @@ in
           print(cache.execute("systemctl status harmonia.service --no-pager")[1])
           print("=== harmonia journal (last 120 lines) ===")
           print(cache.execute("journalctl -u harmonia.service --no-pager -n 120")[1])
-          print("=== cache nix.conf ===")
-          print(cache.execute("cat /etc/nix/nix.conf")[1])
           raise
       cache.wait_for_open_port(5000)
-      print("### cache:5000 open — phase 1 complete")
 
       # Seed the admin API key on the CP via direct SQLite insert.
       cp.succeed(
@@ -330,95 +310,20 @@ in
       # known_hosts.
       builder.succeed("ssh-keyscan -t ed25519 cache >> /root/.ssh/known_hosts")
 
-      # Sanity: the shim must be first on PATH. It is a writeShellApplication
-      # installed as a normal package; systemPackages + sessionVariables
-      # ordering should ensure the shim resolves first.
+      # Sanity: the shim must be first on PATH. It is a
+      # writeShellApplication exposed only via sessionVariables.PATH
+      # (NOT systemPackages — see the nodes.builder config for why).
       which_nix = builder.succeed(
           "bash -lc 'command -v nix'"
       ).strip()
-      # The shim is installed under /nix/store/...-nix/bin/nix. We don't
-      # assert the exact path; we assert it is NOT the default system nix
-      # at /run/current-system/sw/bin/nix.
       assert which_nix != "/run/current-system/sw/bin/nix", \
           f"shim not prepended to PATH, got {which_nix!r}"
-
-      # Pre-flight smoke tests — isolate which subprocess is broken
-      # before invoking the CLI end-to-end. The previous run showed
-      # nix copy exiting 124 with EMPTY captured output and NO new
-      # ssh sessions recorded in the cache journal, which means nix
-      # copy hung CLIENT-SIDE before even attempting the SSH leg.
-      # Diagnose with a chain of ever-more-specific checks.
-
-      print("### preflight: nix --version")
-      print(builder.succeed("/run/current-system/sw/bin/nix --version"))
-
-      print("### preflight: local store sees ${web01Closure}")
-      print(builder.succeed(
-          "/run/current-system/sw/bin/nix-store -q --references "
-          + "${web01Closure}"
-      ))
-
-      print("### smoke: ssh -o BatchMode=yes root@cache true")
-      rc, out = builder.execute(
-          "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "
-          "-o ConnectTimeout=10 root@cache true",
-          timeout=30,
-      )
-      if rc != 0:
-          print("=== ssh smoke failed ===")
-          print(out)
-          raise Exception(f"ssh root@cache true returned {rc}")
-
-      # Simpler than `nix copy`: just ask the remote store if it's
-      # reachable. If THIS hangs, nix's ssh-store backend is broken
-      # on the builder. If it succeeds but copy hangs, the issue is
-      # somewhere deeper in the copy path.
-      print("### smoke: nix store ping --store ssh://root@cache")
-      builder.succeed(
-          "timeout 60 /run/current-system/sw/bin/nix store ping "
-          "--store ssh://root@cache "
-          "> /tmp/nix-ping.log 2>&1 || true"
-      )
-      print(builder.succeed("cat /tmp/nix-ping.log"))
-      ping_rc = int(builder.succeed(
-          "timeout 60 /run/current-system/sw/bin/nix store ping "
-          "--store ssh://root@cache >/dev/null 2>&1; echo $?"
-      ).strip())
-      if ping_rc != 0:
-          raise Exception(f"nix store ping returned {ping_rc}")
-
-      # Now the real nix-copy smoke. Run with -vvv and redirect to a
-      # file so buffered output survives a SIGKILL from timeout.
-      # `timeout 240` sends SIGTERM at 240s (graceful), SIGKILL 5s
-      # later if still running; the outer Python timeout gives us
-      # 300s total to tolerate either.
-      print("### smoke: nix copy -vvv --to ssh://root@cache <web01Closure>")
-      rc, _ = builder.execute(
-          "timeout --kill-after=5 240 "
-          "/run/current-system/sw/bin/nix copy -vvv "
-          "--to ssh://root@cache "
-          "${web01Closure} > /tmp/nix-copy.log 2>&1; "
-          "echo EXIT=$? >> /tmp/nix-copy.log",
-          timeout=300,
-      )
-      print("=== nix-copy.log ===")
-      print(builder.succeed("cat /tmp/nix-copy.log"))
-      print("====================")
-      copy_exit = builder.succeed(
-          "grep '^EXIT=' /tmp/nix-copy.log | tail -1"
-      ).strip()
-      if copy_exit != "EXIT=0":
-          raise Exception(
-              f"nix copy smoke failed ({copy_exit}) — see log above"
-          )
-      print("### smoke tests passed")
 
       # --- Phase 2: R1 — nixfleet release create --push-to ssh://root@cache ---
       # The real cli::release::create runs; the shim returns canned
       # nix eval / nix build output; `nix copy` is delegated to real nix
       # and pushes the closure to the cache over SSH.
-      print("### running nixfleet release create")
-      rc, out = builder.execute(
+      builder.succeed(
           "bash -lc '"
           "export NIXFLEET_API_KEY=" + TEST_KEY + " && "
           "nixfleet "
@@ -429,16 +334,9 @@ in
           "release create "
           "--flake /tmp/fake-flake "
           "--hosts web-01 "
-          "--push-to ssh://root@cache 2>&1"
-          "'",
-          timeout=480,
+          "--push-to ssh://root@cache"
+          "'"
       )
-      if rc != 0:
-          print("=== nixfleet release create FAILED ===")
-          print(out)
-          raise Exception(f"nixfleet release create returned {rc}")
-      print("### nixfleet release create output:")
-      print(out)
 
       # Positive: the CP now has exactly one release.
       releases = json.loads(
