@@ -357,11 +357,13 @@ async fn main() -> Result<()> {
         config_file.as_ref(),
         config_dir.as_deref(),
         &credentials,
-        &cli.control_plane_url,
-        &cli.api_key,
-        &cli.ca_cert,
-        &cli.client_cert,
-        &cli.client_key,
+        config::CliOverrides {
+            cp_url: &cli.control_plane_url,
+            api_key: &cli.api_key,
+            ca_cert: &cli.ca_cert,
+            client_cert: &cli.client_cert,
+            client_key: &cli.client_key,
+        },
     );
 
     // Use resolved values for connection

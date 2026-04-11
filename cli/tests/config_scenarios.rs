@@ -70,11 +70,10 @@ url = "https://file.example"
         Some(&cfg),
         Some(Path::new(".")),
         &empty_credentials(),
-        "http://localhost:8080", // sentinel = unset
-        "",
-        "",
-        "",
-        "",
+        config::CliOverrides {
+            cp_url: "http://localhost:8080", // sentinel = unset
+            ..config::CliOverrides::default()
+        },
     );
     assert_eq!(
         file_only.control_plane_url.as_deref(),
@@ -93,11 +92,10 @@ url = "https://file.example"
         Some(&cfg),
         Some(Path::new(".")),
         &creds,
-        "http://localhost:8080",
-        "",
-        "",
-        "",
-        "",
+        config::CliOverrides {
+            cp_url: "http://localhost:8080",
+            ..config::CliOverrides::default()
+        },
     );
     assert_eq!(with_creds.api_key.as_deref(), Some("nfk-from-creds"));
     assert_eq!(
@@ -111,11 +109,11 @@ url = "https://file.example"
         Some(&cfg),
         Some(Path::new(".")),
         &creds,
-        "https://cli.example",
-        "nfk-cli-key",
-        "",
-        "",
-        "",
+        config::CliOverrides {
+            cp_url: "https://cli.example",
+            api_key: "nfk-cli-key",
+            ..config::CliOverrides::default()
+        },
     );
     assert_eq!(
         cli.control_plane_url.as_deref(),
@@ -167,11 +165,10 @@ url = "https://file.example"
         Some(&cfg),
         Some(Path::new(".")),
         &creds,
-        "http://localhost:8080",
-        "",
-        "",
-        "",
-        "",
+        config::CliOverrides {
+            cp_url: "http://localhost:8080",
+            ..config::CliOverrides::default()
+        },
     );
     assert_eq!(
         env_only.api_key.as_deref(),
@@ -184,11 +181,11 @@ url = "https://file.example"
         Some(&cfg),
         Some(Path::new(".")),
         &creds,
-        "http://localhost:8080",
-        "nfk-from-cli",
-        "",
-        "",
-        "",
+        config::CliOverrides {
+            cp_url: "http://localhost:8080",
+            api_key: "nfk-from-cli",
+            ..config::CliOverrides::default()
+        },
     );
     assert_eq!(
         cli_wins.api_key.as_deref(),
@@ -210,11 +207,10 @@ url = "https://file.example"
         Some(&cfg),
         Some(Path::new(".")),
         &creds,
-        "http://localhost:8080",
-        "",
-        "",
-        "",
-        "",
+        config::CliOverrides {
+            cp_url: "http://localhost:8080",
+            ..config::CliOverrides::default()
+        },
     );
     assert_eq!(
         env_url.control_plane_url.as_deref(),
@@ -233,22 +229,21 @@ url = "https://file.example"
         Some(&cfg),
         Some(Path::new(".")),
         &creds,
-        "http://localhost:8080",
-        "",
-        "",
-        "",
-        "",
+        config::CliOverrides {
+            cp_url: "http://localhost:8080",
+            ..config::CliOverrides::default()
+        },
     );
     assert_eq!(env_ca.ca_cert.as_deref(), Some("/run/env-ca.pem"));
     let cli_ca = config::resolve(
         Some(&cfg),
         Some(Path::new(".")),
         &creds,
-        "http://localhost:8080",
-        "",
-        "/run/cli-ca.pem",
-        "",
-        "",
+        config::CliOverrides {
+            cp_url: "http://localhost:8080",
+            ca_cert: "/run/cli-ca.pem",
+            ..config::CliOverrides::default()
+        },
     );
     assert_eq!(
         cli_ca.ca_cert.as_deref(),

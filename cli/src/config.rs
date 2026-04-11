@@ -242,6 +242,18 @@ pub fn write_config_file(
     Ok(())
 }
 
+/// CLI-argument overrides passed to [`resolve`]. Bundled into a struct so
+/// the function signature does not grow with each new CLI flag — every
+/// field is the raw post-clap value (empty string means "not set").
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CliOverrides<'a> {
+    pub cp_url: &'a str,
+    pub api_key: &'a str,
+    pub ca_cert: &'a str,
+    pub client_cert: &'a str,
+    pub client_key: &'a str,
+}
+
 /// Resolve config from all sources (low precedence → high):
 ///   1. config file (`.nixfleet.toml`)
 ///   2. credentials file (`~/.config/nixfleet/credentials.toml`)
@@ -250,18 +262,19 @@ pub fn write_config_file(
 ///
 /// CLI args with default values (empty strings, "http://localhost:8080") are
 /// treated as unset.
-// CRUD function arguments map directly to table columns; refactoring is busywork
-#[allow(clippy::too_many_arguments)]
 pub fn resolve(
     config_file: Option<&ConfigFile>,
     config_dir: Option<&Path>,
     credentials: &CredentialsFile,
-    cli_cp_url: &str,
-    cli_api_key: &str,
-    cli_ca_cert: &str,
-    cli_client_cert: &str,
-    cli_client_key: &str,
+    cli: CliOverrides<'_>,
 ) -> ResolvedConfig {
+    let CliOverrides {
+        cp_url: cli_cp_url,
+        api_key: cli_api_key,
+        ca_cert: cli_ca_cert,
+        client_cert: cli_client_cert,
+        client_key: cli_client_key,
+    } = cli;
     let mut resolved = ResolvedConfig::default();
 
     // Layer 1: config file
@@ -462,11 +475,10 @@ url = "https://lab:8080"
             Some(&config),
             Some(Path::new("/fleet")),
             &creds,
-            "https://prod:8080",  // CLI override
-            "",
-            "",
-            "",
-            "",
+            CliOverrides {
+                cp_url: "https://prod:8080", // CLI override
+                ..CliOverrides::default()
+            },
         );
         assert_eq!(resolved.control_plane_url, Some("https://prod:8080".to_string()));
     }
@@ -483,11 +495,10 @@ url = "https://lab:8080"
             Some(&config),
             Some(Path::new("/fleet")),
             &creds,
-            "http://localhost:8080",  // clap default — should not override
-            "",
-            "",
-            "",
-            "",
+            CliOverrides {
+                cp_url: "http://localhost:8080", // clap default — should not override
+                ..CliOverrides::default()
+            },
         );
         assert_eq!(resolved.control_plane_url, Some("https://lab:8080".to_string()));
     }
