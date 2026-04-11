@@ -39,6 +39,41 @@ impl Actor {
     }
 }
 
+/// Middleware: require valid API key in Authorization: Bearer header.
+/// If an Actor is already set (e.g. from mTLS), pass through.
+pub async fn require_api_key(
+    headers: HeaderMap,
+    db: Arc<Db>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if request.extensions().get::<Actor>().is_some() {
+        return Ok(next.run(request).await);
+    }
+
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let key_hash = hash_key(token);
+    let role = db
+        .verify_api_key(&key_hash)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let name = db
+        .get_api_key_name(&key_hash)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .unwrap_or_else(|| "unknown".to_string());
+
+    request
+        .extensions_mut()
+        .insert(Actor::ApiKey { name, role });
+    Ok(next.run(request).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,40 +117,5 @@ mod tests {
         };
         assert!(!actor.has_role(&[]));
     }
-}
-
-/// Middleware: require valid API key in Authorization: Bearer header.
-/// If an Actor is already set (e.g. from mTLS), pass through.
-pub async fn require_api_key(
-    headers: HeaderMap,
-    db: Arc<Db>,
-    mut request: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    if request.extensions().get::<Actor>().is_some() {
-        return Ok(next.run(request).await);
-    }
-
-    let token = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    let key_hash = hash_key(token);
-    let role = db
-        .verify_api_key(&key_hash)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    let name = db
-        .get_api_key_name(&key_hash)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .unwrap_or_else(|| "unknown".to_string());
-
-    request
-        .extensions_mut()
-        .insert(Actor::ApiKey { name, role });
-    Ok(next.run(request).await)
 }
 

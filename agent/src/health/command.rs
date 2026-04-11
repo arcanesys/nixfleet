@@ -75,17 +75,22 @@ impl Check for CommandChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::OnceLock;
+    use tokio::sync::{Mutex, MutexGuard};
 
     /// Process-wide lock serializing tests that mutate `PATH`. cargo test
     /// runs tests in parallel; std::env mutations are global so two
     /// concurrent tests touching PATH would race. Every PATH-mutating
     /// test below acquires this lock.
-    fn path_env_lock() -> MutexGuard<'static, ()> {
+    ///
+    /// `tokio::sync::Mutex` (not `std::sync::Mutex`) because the guard
+    /// has to be held across an `.await` point — the checker's `run`
+    /// future must execute with the modified PATH in place. A blocking
+    /// std Mutex held across await would trip `clippy::await_holding_lock`
+    /// and can deadlock the tokio runtime under contention.
+    async fn path_env_lock() -> MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        LOCK.get_or_init(|| Mutex::new(())).lock().await
     }
 
     /// `CommandChecker` must use the absolute `/bin/sh` rather than a
@@ -100,7 +105,7 @@ mod tests {
     /// uses the absolute path.
     #[tokio::test]
     async fn command_checker_runs_with_pathological_path_env() {
-        let _guard = path_env_lock();
+        let _guard = path_env_lock().await;
 
         let checker = CommandChecker {
             name: "echo".to_string(),
@@ -130,7 +135,7 @@ mod tests {
     /// as the spawn-error branch.
     #[tokio::test]
     async fn command_checker_returns_fail_on_nonzero_exit() {
-        let _guard = path_env_lock();
+        let _guard = path_env_lock().await;
 
         let checker = CommandChecker {
             name: "fail".to_string(),
