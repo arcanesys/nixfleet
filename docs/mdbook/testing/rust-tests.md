@@ -150,31 +150,53 @@ the three pre-seeded role keys.
 (All previously listed gaps were closed in Phase 4. New gaps surfacing
 during operation should be added here and tracked in `TODO.md`.)
 
-## Coverage baseline
+## Coverage measurement
 
-NixFleet measures Rust coverage with `cargo llvm-cov`. The baseline is
-captured at the close of each hardening cycle. Per the cycle DoD, this
-is a measurement, not a gate — used to catch obvious regressions.
+NixFleet measures Rust coverage with `cargo llvm-cov` on demand. The
+core hardening cycle (closed 2026-04-11) explicitly declined to record
+a one-shot baseline snapshot — an orphaned number from a single point
+in time is theater without a concrete change to compare against.
 
-To regenerate:
+The useful measurement is **"coverage delta for the code you just
+touched"**, not "total workspace coverage at an arbitrary date."
+
+### When to run
+
+- Before merging a non-trivial Rust change, to confirm the new code is
+  covered by at least one test path.
+- Before a release, to spot-check any module whose coverage has drifted.
+- When investigating a regression, to see whether the failing path had
+  test coverage prior to the break.
+
+### How to run
 
 ```sh
-cargo install cargo-llvm-cov  # if not already installed
+cargo install cargo-llvm-cov  # once per toolchain
 cargo llvm-cov --workspace --html
-# Output in target/llvm-cov/html/index.html
+# Open target/llvm-cov/html/index.html for the per-crate breakdown.
+
+# Or on a specific crate / test target:
+cargo llvm-cov --package nixfleet-control-plane --html
+cargo llvm-cov --package nixfleet-agent --test run_loop_scenarios --html
+
+# Diff against a baseline (e.g. pre-refactor):
+cargo llvm-cov --workspace --summary-only > /tmp/post.txt
+git checkout main
+cargo llvm-cov --workspace --summary-only > /tmp/pre.txt
+diff /tmp/pre.txt /tmp/post.txt
 ```
 
-### 2026-04-11 (end of core hardening cycle, Phase 4)
+The html output is the primary operator experience. `--summary-only`
+produces a text table suitable for piping into diff tools.
 
-| Crate | Lines | Branches |
-|---|---|---|
-| `nixfleet-cli` | TBD | TBD |
-| `nixfleet-control-plane` | TBD | TBD |
-| `nixfleet-agent` | TBD | TBD |
-| `nixfleet-types` | TBD | TBD |
+### What's not here
 
-(filled in after the user runs Task 29's `cargo llvm-cov` block and
-reports the per-crate numbers)
+There is no persistent coverage percentage in this document. The spec
+for the core hardening cycle called the baseline "not a hard gate —
+measured, not enforced," and Phase 4 decided that a static snapshot in
+docs has no downstream consumer. If a future cycle wants to establish
+a persistent baseline (e.g. as a CI regression gate), the tooling
+above is ready.
 
 ## Adding a new Rust scenario
 
