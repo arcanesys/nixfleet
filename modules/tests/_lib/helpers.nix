@@ -49,6 +49,10 @@
     "cache"
     "tagged"
     "unauth"
+    # Single-node subsystem tests in `vm-infra.nix` use `nodes.machine`
+    # with `mkAgentNode` for closure dedupe — the shared cert set needs
+    # a `machine-cert.pem` entry so mkAgentNode's TLS wiring resolves.
+    "machine"
   ];
 
   # Build a fleet CA + CP server cert + one client cert per hostname.

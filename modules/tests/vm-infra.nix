@@ -1,5 +1,17 @@
-# VM tests for infrastructure scopes (firewall, monitoring, backup, secrets).
-# Tests firewall hardening, node exporter, backup timer, and secrets host key generation.
+# VM tests for infrastructure scopes (firewall, monitoring, backup, secrets, cache-server).
+# Each test boots a single-node VM and asserts runtime state for one scope
+# in isolation, without a control plane or a fleet topology.
+#
+# Most tests use `mkAgentNode` (with `dryRun = true` and no reachable CP)
+# because that is the node shape every `_vm-fleet-scenarios/*.nix` already
+# uses — identical args produce identical NixOS system closures, so Nix
+# dedupes the base image across the fleet suite and these single-node
+# tests. The agent service starts, fails its first poll against a
+# non-existent `cp:8080`, schedules a retry, and stays active — it does
+# not affect the subsystem assertions.
+#
+# `vm-cache-server` stays on raw `mkTestNode` because it needs a specific
+# harmonia + LoadCredential shape that `mkAgentNode` does not model.
 {inputs, ...}: {
   perSystem = {
     pkgs,
@@ -15,15 +27,23 @@
     };
 
     defaultTestSpec = helpers.defaultTestSpec;
+
+    # Single-node `mkAgentNode` with dryRun = true. Every subsystem test
+    # calls this with its scope-specific `extraModules` and gets the
+    # same base closure (agent service + mTLS wiring + shared certs).
+    mkSubsystemNode = extraModules:
+      helpers.mkAgentNode {
+        inherit mkTestNode defaultTestSpec extraModules;
+        testCerts = helpers.sharedTestCerts;
+        hostName = "machine";
+      };
   in
     lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
         # --- vm-firewall: SSH rate limiting and drop logging ---
         vm-firewall = pkgs.testers.nixosTest {
           name = "vm-firewall";
-          nodes.machine = mkTestNode {
-            hostSpecValues = defaultTestSpec;
-          };
+          nodes.machine = mkSubsystemNode [];
           testScript = ''
             machine.wait_for_unit("multi-user.target")
 
@@ -41,17 +61,14 @@
         # --- vm-monitoring: node exporter responds on port ---
         vm-monitoring = pkgs.testers.nixosTest {
           name = "vm-monitoring";
-          nodes.machine = mkTestNode {
-            hostSpecValues = defaultTestSpec;
-            extraModules = [
-              {
-                nixfleet.monitoring.nodeExporter = {
-                  enable = true;
-                  openFirewall = true;
-                };
-              }
-            ];
-          };
+          nodes.machine = mkSubsystemNode [
+            {
+              nixfleet.monitoring.nodeExporter = {
+                enable = true;
+                openFirewall = true;
+              };
+            }
+          ];
           testScript = ''
             machine.wait_for_unit("multi-user.target")
             machine.wait_for_unit("prometheus-node-exporter.service")
@@ -69,19 +86,16 @@
         # --- vm-backup: timer registered and service skeleton exists ---
         vm-backup = pkgs.testers.nixosTest {
           name = "vm-backup";
-          nodes.machine = mkTestNode {
-            hostSpecValues = defaultTestSpec;
-            extraModules = [
-              ({pkgs, ...}: {
-                nixfleet.backup = {
-                  enable = true;
-                  schedule = "*-*-* *:*:00";
-                };
-                # Provide a dummy ExecStart so the service can run
-                systemd.services.nixfleet-backup.serviceConfig.ExecStart = "${pkgs.coreutils}/bin/true";
-              })
-            ];
-          };
+          nodes.machine = mkSubsystemNode [
+            ({pkgs, ...}: {
+              nixfleet.backup = {
+                enable = true;
+                schedule = "*-*-* *:*:00";
+              };
+              # Provide a dummy ExecStart so the service can run
+              systemd.services.nixfleet-backup.serviceConfig.ExecStart = "${pkgs.coreutils}/bin/true";
+            })
+          ];
           testScript = ''
             machine.wait_for_unit("multi-user.target")
 
@@ -101,14 +115,11 @@
         # --- vm-secrets: host key generation on first boot ---
         vm-secrets = pkgs.testers.nixosTest {
           name = "vm-secrets";
-          nodes.machine = mkTestNode {
-            hostSpecValues = defaultTestSpec;
-            extraModules = [
-              {
-                nixfleet.secrets.enable = true;
-              }
-            ];
-          };
+          nodes.machine = mkSubsystemNode [
+            {
+              nixfleet.secrets.enable = true;
+            }
+          ];
           testScript = ''
             machine.wait_for_unit("multi-user.target")
 
@@ -122,6 +133,12 @@
         };
 
         # --- vm-cache-server: harmonia binary cache server starts and responds ---
+        #
+        # Deliberately NOT using mkAgentNode — this test exercises a
+        # specific harmonia + LoadCredential shape (signing key baked
+        # into the store) that has no overlap with the fleet-agent
+        # node shape. Forcing mkAgentNode here would bolt an unrelated
+        # nixfleet-agent service onto the test without closure benefit.
         vm-cache-server = let
           # Generate a signing key at build time for the test.
           # `nix-store --generate-binary-cache-key` tries to mkdir
@@ -191,23 +208,20 @@
           pkgs.testers.nixosTest {
             name = "vm-backup-restic";
 
-            nodes.machine = mkTestNode {
-              hostSpecValues = defaultTestSpec;
-              extraModules = [
-                {
-                  nixfleet.backup = {
-                    enable = true;
-                    backend = "restic";
-                    schedule = "*-*-* *:*:00";
-                    paths = ["/tmp"];
-                    restic = {
-                      repository = repositoryPath;
-                      passwordFile = "${passwordFile}";
-                    };
+            nodes.machine = mkSubsystemNode [
+              {
+                nixfleet.backup = {
+                  enable = true;
+                  backend = "restic";
+                  schedule = "*-*-* *:*:00";
+                  paths = ["/tmp"];
+                  restic = {
+                    repository = repositoryPath;
+                    passwordFile = "${passwordFile}";
                   };
-                }
-              ];
-            };
+                };
+              }
+            ];
 
             testScript = ''
               machine.wait_for_unit("multi-user.target")
