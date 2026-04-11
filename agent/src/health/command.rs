@@ -88,16 +88,16 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner())
     }
 
-    /// Regression guard for c49932f: when systemd starts the agent unit
-    /// the default service PATH does not include `/run/current-system/sw/bin`,
+    /// `CommandChecker` must use the absolute `/bin/sh` rather than a
+    /// relative `sh` lookup. When systemd starts the agent unit the
+    /// default service PATH does not include `/run/current-system/sw/bin`,
     /// so a relative `Command::new("sh")` fails with ENOENT before the
-    /// shell even parses the command. Pinning the absolute path
-    /// `/bin/sh` (which on NixOS is a symlink managed by
-    /// environment.binsh) keeps CommandChecker working under that
-    /// minimal env. This test asserts the property by setting PATH to
-    /// `/var/empty` (which contains no `sh`) and verifying the checker
-    /// still returns Pass — that can only happen if Command::new uses
-    /// the absolute path.
+    /// shell even parses the command. `/bin/sh` (on NixOS, a symlink
+    /// managed by `environment.binsh`) keeps the checker working under
+    /// that minimal env. This test asserts the property by setting PATH
+    /// to `/var/empty` (which contains no `sh`) and verifying the
+    /// checker still returns Pass — that can only happen if `Command::new`
+    /// uses the absolute path.
     #[tokio::test]
     async fn command_checker_runs_with_pathological_path_env() {
         let _guard = path_env_lock();
@@ -121,7 +121,7 @@ mod tests {
         assert!(
             matches!(result, HealthCheckResult::Pass { .. }),
             "CommandChecker must succeed when PATH excludes sh's directory \
-             (the absolute /bin/sh fix from c49932f); got {result:?}"
+             (proof that it uses an absolute /bin/sh); got {result:?}"
         );
     }
 

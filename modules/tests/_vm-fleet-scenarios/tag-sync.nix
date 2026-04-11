@@ -1,4 +1,4 @@
-# vm-fleet-tag-sync — M3
+# vm-fleet-tag-sync
 #
 # The real nixfleet-agent binary reports its configured tags via the
 # periodic health report. This test starts a 2-node fleet (cp + one
@@ -6,8 +6,8 @@
 # view of the machine's tags matches the NixOS-config-side declaration.
 #
 # This file is the canonical template for all other _vm-fleet-scenarios/*
-# files in Phase 3. Copy this structure, replace the nodes block with
-# your topology, and replace the testScript body with your phases.
+# files. Copy this structure, replace the nodes block with your topology,
+# and replace the testScript body with your steps.
 {
   pkgs,
   mkCpNode,
@@ -32,13 +32,13 @@ pkgs.testers.nixosTest {
   testScript = ''
     ${testPrelude {}}
 
-    # --- Phase 1: Start CP, seed the admin API key ---
+    # --- Step 1: Start CP, seed the admin API key ---
     cp.start()
     cp.wait_for_unit("nixfleet-control-plane.service")
     cp.wait_for_open_port(8080)
     seed_admin_key(cp)
 
-    # --- Phase 2: Start the tagged agent; wait for it to register ---
+    # --- Step 2: Start the tagged agent; wait for it to register ---
     tagged.start()
     tagged.wait_for_unit("nixfleet-agent.service")
 
@@ -51,7 +51,7 @@ pkgs.testers.nixosTest {
         timeout=60,
     )
 
-    # --- Phase 3: Verify tags propagated via the health report ---
+    # --- Step 3: Verify tags propagated via the health report ---
     # Query the DB directly for the machine_tags rows (mirrors what the
     # HTTP handler reads in get_machines_by_tags).
     tags_output = cp.succeed(
@@ -63,7 +63,7 @@ pkgs.testers.nixosTest {
     assert actual_tags == expected_tags, \
         f"expected tags {expected_tags}, got {actual_tags}"
 
-    # --- Phase 4: Filtering by a declared tag returns the machine ---
+    # --- Step 4: Filtering by a declared tag returns the machine ---
     canary_machines = cp.succeed(
         f"{CURL} {AUTH} {API}/api/v1/machines "
         f"| python3 -c \"import sys,json; "
@@ -73,7 +73,7 @@ pkgs.testers.nixosTest {
     assert canary_machines == "tagged", \
         f"tag filter for 'canary' returned {canary_machines!r}, expected 'tagged'"
 
-    # --- Phase 5 (negative): A tag the agent did NOT declare must NOT appear ---
+    # --- Step 5 (negative): A tag the agent did NOT declare must NOT appear ---
     prod_machines = cp.succeed(
         f"{CURL} {AUTH} {API}/api/v1/machines "
         f"| python3 -c \"import sys,json; "

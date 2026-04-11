@@ -1,6 +1,6 @@
-# vm-fleet-mtls-cn-mismatch — Phase 4 mTLS CN validation
+# vm-fleet-mtls-cn-mismatch — mTLS CN validation
 #
-# Companion to mtls-missing (A3). That test pins the CA-boundary
+# Companion to mtls-missing. That test pins the CA-boundary
 # enforcement at the TLS layer: a client without a fleet-CA-signed
 # cert is rejected at the handshake. This test pins the per-agent
 # enforcement on TOP of the CA boundary: a client WITH a valid
@@ -43,7 +43,7 @@ pkgs.testers.nixosTest {
 
   testScript = ''
     # ------------------------------------------------------------------
-    # Phase 1 — Start CP with mTLS required (clientCa set in mkCpNode).
+    # Step 1 — Start CP with mTLS required (clientCa set in mkCpNode).
     # ------------------------------------------------------------------
     cp.start()
     cp.wait_for_unit("nixfleet-control-plane.service")
@@ -53,7 +53,7 @@ pkgs.testers.nixosTest {
     unauth.wait_for_unit("multi-user.target")
 
     # ------------------------------------------------------------------
-    # Phase 2 — POST to /machines/web-01/report with a CERT WHOSE CN IS
+    # Step 2 — POST to /machines/web-01/report with a CERT WHOSE CN IS
     # "unauth". The TLS handshake completes (cert is signed by the
     # fleet CA). The auth_cn middleware then reads the peer cert from
     # the request extension, extracts CN="unauth", compares against
@@ -77,7 +77,7 @@ pkgs.testers.nixosTest {
     )
 
     # ------------------------------------------------------------------
-    # Phase 3 (positive control) — Same cert, but the path now matches
+    # Step 3 (positive control) — Same cert, but the path now matches
     # the cert's CN ("unauth"). The middleware accepts and the request
     # reaches the report handler. We don't care about the handler's
     # response code — only that it is NOT 403 (which would mean the
@@ -102,7 +102,7 @@ pkgs.testers.nixosTest {
     )
 
     # ------------------------------------------------------------------
-    # Phase 4 — GET /machines/web-01/desired-generation also enforces
+    # Step 4 — GET /machines/web-01/desired-generation also enforces
     # CN validation. Same cert (CN="unauth"), different path (web-01).
     # ------------------------------------------------------------------
     desired_status = unauth.succeed(

@@ -49,9 +49,7 @@
 #     or be evaluated for health, so we MUST use each agent's real
 #     toplevel as its release entry store_path (read at test time
 #     via `readlink -f /run/current-system`). Same pattern as
-#     vm-fleet.nix Phase 4 and vm-fleet-bootstrap. Earlier versions
-#     of this file used `writeTextDir` fake paths relying on a
-#     non-existent health-timeout escape hatch.
+#     vm-fleet.nix and vm-fleet-bootstrap.
 #   * If the scheduler shuffles so that the failing batch is batch 0
 #     (i.e. the sentinel arm happens before batch 0 even starts because
 #     we don't yet know which machine will be in it), there are no
@@ -95,12 +93,12 @@ in
       ${testPrelude {}}
 
       # ------------------------------------------------------------------
-      # Phase 1 — Boot CP + seed admin API key
+      # Step 1 — Boot CP + seed admin API key
       # ------------------------------------------------------------------
       cp_boot_and_seed(cp)
 
       # ------------------------------------------------------------------
-      # Phase 2 — Start both agents. Flag file is NOT present yet, so
+      # Step 2 — Start both agents. Flag file is NOT present yet, so
       # both report healthy on their first tick.
       # ------------------------------------------------------------------
       start_agents(web_01, web_02)
@@ -141,7 +139,7 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 3 — Create release R2 with per-host store paths set to
+      # Step 3 — Create release R2 with per-host store paths set to
       # each agent's real /run/current-system toplevel. See the
       # "known caveats" note at the top of the file for why this is
       # required under dryRun=true.
@@ -169,7 +167,7 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 4 — Wait for batch 0 to reach `succeeded`. With the
+      # Step 4 — Wait for batch 0 to reach `succeeded`. With the
       # release entry store_path matching each agent's real
       # /run/current-system, the generation gate matches and
       # `evaluate_batch` proceeds to read the latest health report.
@@ -186,7 +184,7 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 5 — Arm the sentinel on BOTH agents. Batch 0 has already
+      # Step 5 — Arm the sentinel on BOTH agents. Batch 0 has already
       # been recorded as succeeded; the agent in batch 1 will now
       # report unhealthy on its next tick.
       # ------------------------------------------------------------------
@@ -194,7 +192,7 @@ in
       web_02.succeed("mkdir -p /var/lib && touch /var/lib/fail-next-health")
 
       # ------------------------------------------------------------------
-      # Phase 6 — F2 positive: rollout must reach `failed` (revert
+      # Step 6 — F2 positive: rollout must reach `failed` (revert
       # path) rather than `paused` (pause path).
       # ------------------------------------------------------------------
       cp.wait_until_succeeds(
@@ -206,7 +204,7 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 7 — F2 positive: `rollout_batches.previous_generations`
+      # Step 7 — F2 positive: `rollout_batches.previous_generations`
       # for the succeeded batch (batch 0) is a non-empty JSON object
       # whose single entry points at the pre-rollout G1 path.
       # ------------------------------------------------------------------
@@ -226,7 +224,7 @@ in
           f"previous_generations[{only_machine}] = {only_prev}, expected {expected_g1}"
 
       # ------------------------------------------------------------------
-      # Phase 8 — F2 positive: the machine in the succeeded batch has
+      # Step 8 — F2 positive: the machine in the succeeded batch has
       # had its desired_generation reverted back to its G1 path by
       # `revert_completed_batches`. The machine in the failing batch
       # keeps the (new) R2 path because the failing batch is not
@@ -242,7 +240,7 @@ in
           f"{only_machine} desired_generation should revert to {expected_g1}, got {reverted}"
 
       # ------------------------------------------------------------------
-      # Phase 9 — C3 positive: the agent on the failing node must have
+      # Step 9 — C3 positive: the agent on the failing node must have
       # actually invoked its health check runner post-deploy. We assert
       # that by searching the agent journal for either the
       # `Running periodic health check` log line (run_health_report in
@@ -260,7 +258,7 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 10 — Negative: the agent services on both nodes are still
+      # Step 10 — Negative: the agent services on both nodes are still
       # active — the revert path did not crash either agent.
       # ------------------------------------------------------------------
       web_01.succeed("systemctl is-active nixfleet-agent.service")

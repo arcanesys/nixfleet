@@ -15,11 +15,8 @@
 # related to mTLS, bootstrap flow, releases, rollouts, health gates,
 # and rollback is covered by the `vm-fleet-*` scenario tests.
 #
-# Historical note: an earlier version of this test drove the agent via
-# `POST /api/v1/machines/{id}/set-generation` which was removed in
-# Phase 2 in favour of release + rollout. The original intent was a
-# "minimal CP ↔ agent cycle" smoke test, so we keep the scope that
-# narrow and let the heavier scenarios cover the rollout machinery.
+# This test deliberately stays a minimal smoke test — the heavier
+# release + rollout machinery is covered by the `vm-fleet-*` suite.
 #
 # Run: nix build .#checks.x86_64-linux.vm-nixfleet --no-link
 {inputs, ...}: {
@@ -94,7 +91,7 @@
             KEY_HASH = "${testConstants.apiKeyHash}"
             AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
 
-            # --- Phase 1: Start CP, seed admin API key ---
+            # --- Step 1: Start CP, seed admin API key ---
             cp.start()
             cp.wait_for_unit("nixfleet-control-plane.service")
             cp.wait_for_open_port(8080)
@@ -105,7 +102,7 @@
                 f"VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
             )
 
-            # --- Phase 2: Start the agent and wait for its first health report ---
+            # --- Step 2: Start the agent and wait for its first health report ---
             agent.start()
             agent.wait_for_unit("nixfleet-agent.service")
 
@@ -142,7 +139,7 @@
                 timeout=60,
             )
 
-            # --- Phase 3: Sanity checks on the inventory entry ---
+            # --- Step 3: Sanity checks on the inventory entry ---
             result = cp.succeed(f"curl -sf {AUTH} http://localhost:8080/api/v1/machines")
             inventory = json.loads(result)
             agent_entry = next(
@@ -157,7 +154,7 @@
             assert agent_entry.get("current_generation"), \
                 f"agent has no current_generation: {agent_entry}"
 
-            # --- Phase 4: /metrics endpoint exposes Prometheus text format ---
+            # --- Step 4: /metrics endpoint exposes Prometheus text format ---
             metrics_output = cp.succeed("curl -sf http://localhost:8080/metrics")
             assert "nixfleet_fleet_size" in metrics_output, (
                 "expected nixfleet_fleet_size in /metrics output"

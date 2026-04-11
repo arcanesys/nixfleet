@@ -223,7 +223,7 @@ in
           "-H 'Authorization: Bearer " + TEST_KEY + "' "
       )
 
-      # --- Phase 1: Start all nodes ---
+      # --- Step 1: Start all nodes ---
       cp.start()
       cache.start()
       builder.start()
@@ -240,7 +240,7 @@ in
       # useful error. Use `wait_until_succeeds(is-active, timeout=120)`
       # and dump the journal on failure so a regression in the signing
       # key handling produces an informative build log rather than an
-      # opaque hang. See Phase 3 bug list in TODO.md.
+      # opaque hang.
       try:
           cache.wait_until_succeeds(
               "systemctl is-active harmonia.service", timeout=120
@@ -286,7 +286,7 @@ in
       assert which_nix != "/run/current-system/sw/bin/nix", \
           f"shim not prepended to PATH, got {which_nix!r}"
 
-      # --- Phase 2: R1 — nixfleet release create --push-to ssh://root@cache ---
+      # --- Step 2: R1 — nixfleet release create --push-to ssh://root@cache ---
       # The real cli::release::create runs; the shim returns canned
       # nix eval / nix build output; `nix copy` is delegated to real nix
       # and pushes the closure to the cache over SSH.
@@ -338,7 +338,7 @@ in
       # Nix DB — nix copy pushed only to the cache, not to cp.
       cp.fail(f"nix-store -q --references {store_path}")
 
-      # --- Phase 3: R2 — agent fetches from http://cache:5000 ---
+      # --- Step 3: R2 — agent fetches from http://cache:5000 ---
       agent.wait_for_unit("multi-user.target")
 
       # Agent's nix config must list the cache as a substituter.

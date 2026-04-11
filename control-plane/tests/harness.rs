@@ -1,4 +1,4 @@
-//! Shared test harness for Phase 3 scenario tests.
+//! Shared test harness for CP scenario tests.
 //!
 //! Each CP scenario test file (`release_scenarios.rs`, `deploy_scenarios.rs`,
 //! etc.) uses `#[path = "harness.rs"] mod harness;` at the top to pull this

@@ -49,20 +49,20 @@ pkgs.testers.nixosTest {
 
   testScript = ''
     # ------------------------------------------------------------------
-    # Phase 1 — Start CP with mTLS required (clientCa set)
+    # Step 1 — Start CP with mTLS required (clientCa set)
     # ------------------------------------------------------------------
     cp.start()
     cp.wait_for_unit("nixfleet-control-plane.service")
     cp.wait_for_open_port(8080)
 
     # ------------------------------------------------------------------
-    # Phase 2 — Start the unauth node
+    # Step 2 — Start the unauth node
     # ------------------------------------------------------------------
     unauth.start()
     unauth.wait_for_unit("multi-user.target")
 
     # ------------------------------------------------------------------
-    # Phase 3 — curl /health WITHOUT a client cert must fail at TLS
+    # Step 3 — curl /health WITHOUT a client cert must fail at TLS
     #
     # We use `--fail-with-body` so curl still returns non-zero on any
     # non-2xx, and `-v` so the TLS diagnostics land in stderr. The
@@ -92,7 +92,7 @@ pkgs.testers.nixosTest {
     )
 
     # ------------------------------------------------------------------
-    # Phase 4 — The agent report endpoint is ALSO rejected at the
+    # Step 4 — The agent report endpoint is ALSO rejected at the
     # TLS layer, before the handler ever runs.
     # ------------------------------------------------------------------
     report_stderr = unauth.fail(
@@ -106,7 +106,7 @@ pkgs.testers.nixosTest {
     )
 
     # ------------------------------------------------------------------
-    # Phase 5 (positive control) — The SAME curl with a valid client
+    # Step 5 (positive control) — The SAME curl with a valid client
     # cert signed by the fleet CA must succeed at the TLS layer.
     #
     # For /health we expect HTTP 200 (public endpoint).

@@ -35,7 +35,7 @@
 # qemuAccel  — -enable-kvm (Linux) | -accel hvf (Darwin)
 # basePkgs   — [qemu coreutils openssh nix git]
 # mkScript   — name -> description -> bash text -> flake app attrset
-# nixos-anywhere-bin — path to nixos-anywhere (Linux only, Task 6)
+# nixos-anywhere-bin — path to nixos-anywhere (Linux only)
 #
 # ─────────────────────────────────────────────────────────────────────────────
 {inputs}: {pkgs}: let
@@ -190,7 +190,7 @@
   '';
 in
   lib.optionalAttrs (isLinux || isDarwin) {
-    # ── build-vm (Task 2) ──
+    # ── build-vm ──
     build-vm = mkScript "build-vm" "Install a VM host via nixos-anywhere (ISO boot + disko)" ''
       set -euo pipefail
       export PATH="${lib.makeBinPath basePkgs}:$PATH"
@@ -313,7 +313,7 @@ in
       fi
     '';
 
-    # ── start-vm (Task 3) ──
+    # ── start-vm ──
     "start-vm" = mkScript "start-vm" "Start an installed VM as a headless daemon" ''
       set -euo pipefail
       export PATH="${lib.makeBinPath basePkgs}:$PATH"
@@ -383,7 +383,7 @@ in
       fi
     '';
 
-    # ── stop-vm (Task 4) ──
+    # ── stop-vm ──
     "stop-vm" = mkScript "stop-vm" "Stop a running VM daemon" ''
       set -euo pipefail
       export PATH="${lib.makeBinPath (with pkgs; [coreutils nix])}:$PATH"
@@ -432,7 +432,7 @@ in
       fi
     '';
 
-    # ── clean-vm (Task 4) ──
+    # ── clean-vm ──
     "clean-vm" = mkScript "clean-vm" "Delete VM disk, pidfile, and port file" ''
       set -euo pipefail
       export PATH="${lib.makeBinPath (with pkgs; [coreutils nix])}:$PATH"
@@ -486,7 +486,7 @@ in
         clean_one "$HOST"
       fi
     '';
-    # ── test-vm (Task 5) ──
+    # ── test-vm ──
     "test-vm" = mkScript "test-vm" "End-to-end VM test: build, install, verify, cleanup" ''
       set -euo pipefail
       export PATH="${lib.makeBinPath basePkgs}:$PATH"

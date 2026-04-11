@@ -51,7 +51,7 @@ pkgs.testers.nixosTest {
     ${testPrelude {}}
 
     # ------------------------------------------------------------------
-    # Phase 1 — Start the agent BEFORE the cp. The agent's first poll
+    # Step 1 — Start the agent BEFORE the cp. The agent's first poll
     # will hit a closed port and fail.
     # ------------------------------------------------------------------
     agent.start()
@@ -74,7 +74,7 @@ pkgs.testers.nixosTest {
         f"agent unit unexpectedly not active after failed poll: {status_pre!r}"
 
     # ------------------------------------------------------------------
-    # Phase 2 — Start the cp, seed the admin API key.
+    # Step 2 — Start the cp, seed the admin API key.
     # ------------------------------------------------------------------
     cp.start()
     cp.wait_for_unit("nixfleet-control-plane.service")
@@ -83,9 +83,9 @@ pkgs.testers.nixosTest {
     seed_admin_key(cp)
 
     # ------------------------------------------------------------------
-    # Phase 3 — Negative check: the cp is reachable, admin auth works,
+    # Step 3 — Negative check: the cp is reachable, admin auth works,
     # but NO machines are registered yet. This proves the registration
-    # we observe in Phase 4 happens strictly AFTER the cp came up.
+    # we observe in step 4 happens strictly AFTER the cp came up.
     # ------------------------------------------------------------------
     machines_pre = cp.succeed(
         f"{CURL} {AUTH} {API}/api/v1/machines "
@@ -96,7 +96,7 @@ pkgs.testers.nixosTest {
         f"expected zero machines before agent recovery, got {machines_pre}"
 
     # ------------------------------------------------------------------
-    # Phase 4 — Positive: the agent's retry loop recovers and the
+    # Step 4 — Positive: the agent's retry loop recovers and the
     # machine registers. The generous timeout covers multiple
     # retryInterval cycles (5s each) plus one health report round.
     # ------------------------------------------------------------------
@@ -109,7 +109,7 @@ pkgs.testers.nixosTest {
     )
 
     # ------------------------------------------------------------------
-    # Phase 5 — Positive: the agent unit is STILL active after the
+    # Step 5 — Positive: the agent unit is STILL active after the
     # retry + recovery cycle. The auto-retry path did not crash the
     # daemon at any point.
     # ------------------------------------------------------------------

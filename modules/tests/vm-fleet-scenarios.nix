@@ -1,4 +1,4 @@
-# Phase 3 VM scenario tests. Each subtest is an independently buildable
+# Per-scenario VM tests. Each subtest is an independently buildable
 # `testers.nixosTest` so a failure in one does not mask another.
 #
 # Run any subtest with:

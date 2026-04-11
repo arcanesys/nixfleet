@@ -1,15 +1,13 @@
-//! Phase 4 § 5 #9 — DB migrations scenarios.
+//! DB migrations scenarios.
 //!
 //! Pins:
 //!   1. Fresh DB → migrate → schema shape (every expected table is
-//!      present, refinery_schema_history exists, no leftover tables).
-//!   2. Migrate twice → idempotent. Pre-existing I1 in
-//!      `infra_scenarios.rs` already covers this; we re-pin it here
-//!      for completeness.
-//!   3. Per-table read+write integration coverage. Most tables are
-//!      already exercised end-to-end by Phase 3 scenarios via the
-//!      HTTP route layer; this test does a per-table grep-style
-//!      audit instead of duplicating.
+//!      present, `refinery_schema_history` exists, no leftover tables).
+//!   2. `refinery_schema_history` table exists after migrate.
+//!   3. Migrate twice → idempotent.
+//!
+//! Per-table read+write coverage is handled end-to-end by the scenario
+//! suite via the HTTP route layer — no need to duplicate it here.
 
 use nixfleet_control_plane::db;
 use rusqlite::Connection;

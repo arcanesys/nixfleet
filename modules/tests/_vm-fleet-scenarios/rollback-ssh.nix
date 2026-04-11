@@ -151,7 +151,7 @@ in
       stubG1Path = "${stubG1}";
       stubG2Path = "${stubG2}";
     in ''
-      # --- Phase 1: Start both nodes; no CP in this topology ---
+      # --- Step 1: Start both nodes; no CP in this topology ---
       target.start()
       operator.start()
 
@@ -170,7 +170,7 @@ in
       # "the path was actually copied into this VM's store DB".
       target.fail("test -e /tmp/stub-switch-last")
 
-      # --- Phase 2: Prepare SSH client state on operator ---
+      # --- Step 2: Prepare SSH client state on operator ---
       operator.succeed("mkdir -p /root/.ssh && chmod 700 /root/.ssh")
       operator.succeed("cp /etc/ssh-operator-key /root/.ssh/id_ed25519")
       operator.succeed("chmod 600 /root/.ssh/id_ed25519")
@@ -185,7 +185,7 @@ in
       assert which_nix != "/run/current-system/sw/bin/nix", \
           f"shim not prepended to PATH, got {which_nix!r}"
 
-      # --- Phase 3: Deploy G2 via `nixfleet deploy --hosts target --ssh` ---
+      # --- Step 3: Deploy G2 via `nixfleet deploy --hosts target --ssh` ---
       # Shim returns stubG2 from `nix build`. nix-copy-closure transfers it;
       # ssh runs its switch-to-configuration; the stub writes "active=g2".
       operator.succeed(
@@ -210,12 +210,12 @@ in
           f"expected marker active=g2 after deploy, got: {marker_after_deploy!r}"
 
       # Sanity: G1 is NOT yet in the target's Nix DB. It will be after
-      # the explicit nix-copy-closure in Phase 4 below. Using the DB
+      # the explicit nix-copy-closure in step 4 below. Using the DB
       # check (not `test -e`) because the store path is visible on the
       # target's filesystem via 9p even when the DB has no record of it.
       target.fail("nix-store -q --references ${stubG1Path}")
 
-      # --- Phase 4: Pre-copy G1 to target so --generation can reference it ---
+      # --- Step 4: Pre-copy G1 to target so --generation can reference it ---
       # The rollback handler SSHes to the target and runs
       #   <generation>/bin/switch-to-configuration switch
       # directly; it does NOT nix-copy-closure the rollback path. So G1 must
@@ -235,7 +235,7 @@ in
       assert "active=g2" in marker_still_g2, \
           f"marker unexpectedly changed to {marker_still_g2!r} after nix-copy-closure"
 
-      # --- Phase 5: `nixfleet rollback --host target --ssh --generation <G1>` ---
+      # --- Step 5: `nixfleet rollback --host target --ssh --generation <G1>` ---
       operator.succeed(
           "bash -lc '"
           "nixfleet rollback "
@@ -245,7 +245,7 @@ in
           "'"
       )
 
-      # --- Phase 6: Positive assertion on the target ---
+      # --- Step 6: Positive assertion on the target ---
       marker_after_rollback = target.succeed("cat /tmp/stub-switch-last").strip()
       assert "active=g1" in marker_after_rollback, \
           f"expected marker active=g1 after rollback, got: {marker_after_rollback!r}"

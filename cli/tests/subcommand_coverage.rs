@@ -1,7 +1,6 @@
-//! Phase 4 § 5 #1 — direct CLI subcommand coverage.
+//! Direct CLI subcommand coverage.
 //!
-//! Every leaf subcommand that did not already have a Rust-tier test
-//! gets at least one test here. The pattern is:
+//! Every leaf subcommand has at least one test here. The pattern is:
 //!   1. spawn a wiremock CP that returns the documented response shape
 //!      for whatever HTTP endpoint the subcommand calls
 //!   2. invoke the real `nixfleet` binary via assert_cmd
@@ -10,14 +9,13 @@
 //! Subcommands that don't talk to a CP (host add, init) chdir into a
 //! tempdir and assert the generated files / config.
 //!
-//! Pre-existing coverage (skipped here, see the matrix in
-//! docs/superpowers/notes/2026-04-11-phase-4-coverage-matrix.md):
-//!   - deploy (vm-fleet, vm-fleet-bootstrap)
-//!   - rollback --ssh (cli/tests/rollback_cli_scenarios.rs)
-//!   - rollback (no --ssh, refusal path) (rollback_cli_scenarios.rs)
-//!   - rollout resume (F1 vm-fleet-apply-failure)
-//!   - release create (vm-fleet-release, R3 hooks)
-//!   - release delete (cli/tests/release_delete_scenarios.rs)
+//! Subcommands covered by dedicated scenario files are NOT duplicated
+//! here:
+//!   - deploy — `vm-fleet`, `vm-fleet-bootstrap`
+//!   - rollback (both `--ssh` and refusal paths) — `rollback_cli_scenarios.rs`
+//!   - rollout resume — `vm-fleet-apply-failure`
+//!   - release create (+ push hook) — `vm-fleet-release`, `release_hook_scenarios.rs`
+//!   - release delete — `release_delete_scenarios.rs`
 
 use assert_cmd::Command;
 use predicates::prelude::*;

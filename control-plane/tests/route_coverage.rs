@@ -1,8 +1,7 @@
-//! Phase 4 § 5 #2 — HTTP route happy / error / auth coverage.
+//! HTTP route happy / error / auth coverage for every admin route.
 //!
-//! One file per spec § 5 category, not per route family. Tests are
-//! grouped into `// =====` sections below so a failure can be
-//! attributed at a glance, and filtered from the CLI via
+//! Tests are grouped into `// =====` sections below so a failure can
+//! be attributed at a glance, and filtered from the CLI via
 //! `cargo test -p nixfleet-control-plane --test route_coverage <substring>`.
 //!
 //! Routes covered:
@@ -37,9 +36,10 @@
 //!     GET    /metrics
 //!
 //! Pattern per route: happy path + error path + auth path (where
-//! applicable). Slots already covered by Phase 3 scenarios are
-//! skipped — see the coverage matrix in
-//! `docs/superpowers/notes/2026-04-11-phase-4-coverage-matrix.md`.
+//! applicable). Cases that a domain-specific scenario file already
+//! pins end-to-end (e.g. failure thresholds in `failure_scenarios.rs`,
+//! rollout strategies in `deploy_scenarios.rs`) are skipped here to
+//! avoid duplication.
 
 #[path = "harness.rs"]
 mod harness;
@@ -968,9 +968,10 @@ async fn audit_export_csv_deploy_role_succeeds() {
 //
 // The harness pre-seeds three API keys via seed_key, so the bootstrap
 // route always sees keys-already-exist on the default spawn_cp(). The
-// happy first-call path is covered by Phase 3 A1 in
-// `auth_scenarios.rs::a1_bootstrap_first_admin_then_409`; here we
-// test the 409 conflict from a spawn_cp().
+// happy first-call path is covered by
+// `auth_scenarios.rs::a1_bootstrap_first_admin_then_409` (which wipes
+// the seeded keys first); here we only test the 409 conflict from a
+// default spawn_cp().
 
 #[tokio::test]
 async fn bootstrap_when_keys_exist_returns_409() {

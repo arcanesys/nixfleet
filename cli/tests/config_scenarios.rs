@@ -1,11 +1,10 @@
-//! I2, I3 — config precedence and ${HOSTNAME} fallback.
+//! CLI config precedence and `${HOSTNAME}` fallback.
 //!
 //! Tests call `cli::config::resolve` and `cli::config::expand_env_vars`
 //! directly via the lib target. No CP is involved.
 //!
-//! Phase 4 added an explicit env-var layer in `resolve` between
-//! credentials and CLI args. Final precedence (high → low):
-//! CLI flag → NIXFLEET_* env → credentials → config file.
+//! Precedence (high → low):
+//! CLI flag → `NIXFLEET_*` env → credentials file → `.nixfleet.toml`.
 
 use nixfleet::config::{self, ConfigFile, CredentialsFile, ResolvedConfig};
 use std::collections::HashMap;
@@ -133,9 +132,9 @@ url = "https://file.example"
     );
 }
 
-/// I2 (env layer) — env vars override credentials but lose to CLI args.
+/// Env-var layer — env vars override credentials but lose to CLI args.
 ///
-/// Asserts the Phase 4 layering: file → credentials → env → CLI flag.
+/// Asserts the layering: file → credentials → env → CLI flag.
 /// `NIXFLEET_API_KEY` must override the credentials-file api_key but
 /// be overridden by `cli_api_key`. Serialized via `env_lock()` because
 /// std::env mutations are process-wide.

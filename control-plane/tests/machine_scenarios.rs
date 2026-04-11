@@ -10,9 +10,8 @@
 //! | M6 | `Pending → Active` auto-transition on first report |
 //! | M7 | `Active ↔ Maintenance` round-trip via PATCH lifecycle |
 //!
-//! M3–M7 were migrated out of the obsolete `agent_integration.rs`
-//! pre-Phase-3 baseline in the closing cleanup. Everything else in
-//! that file was duplicated by Phase 3/4 scenario tests.
+//! Every scenario spins up a fresh in-process CP via `harness::spawn_cp`
+//! and drives it over real HTTP.
 
 #[path = "harness.rs"]
 mod harness;

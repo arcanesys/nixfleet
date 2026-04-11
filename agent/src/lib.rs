@@ -5,11 +5,6 @@
 //! binary at `src/main.rs` is a thin wrapper that builds `Config` and
 //! calls `run_loop`. Process-level fake time is impossible — paused
 //! time only works in-process — which is why this lib exists at all.
-//!
-//! Spec § 6 R1 originally banned testability refactors inside the
-//! hardening cycle to keep earlier phases focused; that constraint is
-//! explicitly lifted for Phase 4 because Phase 4 is the closing phase
-//! and the agent half of the polling contract is load-bearing.
 
 use anyhow::Context;
 use std::time::Duration;

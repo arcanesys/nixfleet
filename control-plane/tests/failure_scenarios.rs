@@ -142,7 +142,7 @@ async fn f5_failure_threshold_30_percent_pauses_on_4_of_10() {
     );
 }
 
-/// F-stale-resume — regression guard for 51ba108.
+/// Resume must not re-flip a batch to `failed` on a stale pre-resume report.
 ///
 /// Sequence:
 ///   1. Rollout reaches `paused` because the agent reported unhealthy on
@@ -153,10 +153,9 @@ async fn f5_failure_threshold_30_percent_pauses_on_4_of_10() {
 ///      unhealthy report from before resume — defeating the resume
 ///      before the agent had a chance to send a fresh healthy report.
 ///
-/// The fix in `executor.rs::evaluate_batch` adds a `received_at <
-/// started_at` filter to the `on_desired_gen` fallback branch so a
-/// stale report is treated as pending instead of unhealthy. This test
-/// pins that fix.
+/// The `received_at < started_at` filter in
+/// `executor.rs::evaluate_batch::on_desired_gen` treats a stale report
+/// as pending instead of unhealthy. This test pins that filter.
 ///
 /// Test design notes:
 ///   * `on_desired_gen=true` is what triggers the fallback branch we

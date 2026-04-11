@@ -1,6 +1,6 @@
-//! Phase 4 — agent half of the polling contract.
+//! Agent half of the polling contract.
 //!
-//! P1 / P2 (CP-side) are pinned in `control-plane/tests/polling_scenarios.rs`:
+//! The CP-side is pinned in `control-plane/tests/polling_scenarios.rs`:
 //! the CP's `desired-generation` response carries `poll_hint = Some(5)` iff
 //! the machine is part of an active rollout. These tests pin the agent
 //! half: when the agent sees `poll_hint`, does it actually shorten its

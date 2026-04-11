@@ -1,12 +1,9 @@
-//! RB3 — `nixfleet rollback` without `--ssh` bails with actionable guidance.
+//! `nixfleet rollback` without `--ssh` bails with actionable guidance.
 //!
-//! Spec: docs/superpowers/specs/2026-04-10-core-hardening-cycle-design.md Section 4
-//! Audit: docs/adr/009-core-hardening-audit.md Category 1 (CLI subcommands)
-//!
-//! The control-plane set-generation rollback endpoint was removed. The CLI
-//! must refuse non-SSH rollbacks and point the user at the supported paths
-//! (release create + deploy, or `--on-failure revert`). This test asserts
-//! the exact guidance text from `cli/src/main.rs::rollback`.
+//! The CLI supports rollback only via SSH; non-SSH callers are pointed
+//! at the supported paths (release create + deploy, or
+//! `--on-failure revert`). This test asserts the exact guidance text
+//! from `cli/src/main.rs::rollback`.
 
 use assert_cmd::Command;
 use predicates::prelude::*;

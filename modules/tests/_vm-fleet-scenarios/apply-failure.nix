@@ -63,12 +63,12 @@ pkgs.testers.nixosTest {
     ${testPrelude {}}
 
     # ------------------------------------------------------------------
-    # Phase 1 — Boot CP + seed admin key
+    # Step 1 — Boot CP + seed admin key
     # ------------------------------------------------------------------
     cp_boot_and_seed(cp)
 
     # ------------------------------------------------------------------
-    # Phase 2 — Arm the fail-flag BEFORE starting the agent, so the very
+    # Step 2 — Arm the fail-flag BEFORE starting the agent, so the very
     # first health report from web-01 already carries success=false. This
     # avoids a race where an early "healthy" report flips the batch to
     # completed before we can observe the paused state.
@@ -79,7 +79,7 @@ pkgs.testers.nixosTest {
     web_01.wait_for_unit("nixfleet-agent.service")
 
     # ------------------------------------------------------------------
-    # Phase 3 — Wait for the CP to observe web-01 registered
+    # Step 3 — Wait for the CP to observe web-01 registered
     # ------------------------------------------------------------------
     cp.wait_until_succeeds(
         f"{CURL} {AUTH} {API}/api/v1/machines "
@@ -111,7 +111,7 @@ pkgs.testers.nixosTest {
         f"sanity: agent toplevel ({release_path}) must match CP's view of current_generation ({g1})"
 
     # ------------------------------------------------------------------
-    # Phase 4 — Create release + rollout (on_failure=pause).
+    # Step 4 — Create release + rollout (on_failure=pause).
     #
     # `health_timeout=30` is shorter than the canonical default (60)
     # so the paused verdict lands inside the test timeout budget.
@@ -122,7 +122,7 @@ pkgs.testers.nixosTest {
     rollout_id = create_rollout(cp, release_id, "web", health_timeout=30)
 
     # ------------------------------------------------------------------
-    # Phase 5 — F1 positive: rollout must reach `paused`
+    # Step 5 — F1 positive: rollout must reach `paused`
     # ------------------------------------------------------------------
     cp.wait_until_succeeds(
         f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id} "
@@ -133,7 +133,7 @@ pkgs.testers.nixosTest {
     )
 
     # ------------------------------------------------------------------
-    # Phase 6 — RB1 positive: web-01 is still at G1 and still reporting
+    # Step 6 — RB1 positive: web-01 is still at G1 and still reporting
     #
     # Under dryRun=true, the agent literally cannot advance — it skips
     # `apply_generation` and always reports /run/current-system. That
@@ -153,13 +153,13 @@ pkgs.testers.nixosTest {
         f"RB1: web-01 current_generation regressed (was {g1}, now {g_mid})"
 
     # ------------------------------------------------------------------
-    # Phase 7 — Negative: the agent service is still active (auto-rollback
+    # Step 7 — Negative: the agent service is still active (auto-rollback
     # did not crash the agent)
     # ------------------------------------------------------------------
     web_01.succeed("systemctl is-active nixfleet-agent.service")
 
     # ------------------------------------------------------------------
-    # Phase 8 — Clear the fail flag, wait for a verified-healthy report,
+    # Step 8 — Clear the fail flag, wait for a verified-healthy report,
     # then resume the rollout.
     #
     # Waiting for the agent to actually emit a healthy report BEFORE
@@ -194,7 +194,7 @@ pkgs.testers.nixosTest {
     )
 
     # ------------------------------------------------------------------
-    # Phase 9 — Rollout must now reach `completed`
+    # Step 9 — Rollout must now reach `completed`
     # ------------------------------------------------------------------
     cp.wait_until_succeeds(
         f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id} "

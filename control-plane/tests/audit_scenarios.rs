@@ -105,10 +105,11 @@ async fn au1_mutations_write_audit_events() {
         assert!(actions.contains(want), "audit missing action '{want}'");
     }
 
-    // Negative: no 'set_tags' action (handler was removed in Phase 2).
+    // Negative: no 'set_tags' action (handler does not exist —
+    // tags are synced implicitly via the report handler).
     assert!(
         !actions.contains("set_tags"),
-        "set_tags action must not appear — handler was removed in Phase 2"
+        "set_tags action must not appear — tags sync via the report handler, not a dedicated route"
     );
 }
 

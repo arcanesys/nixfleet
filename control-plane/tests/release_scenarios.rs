@@ -1,7 +1,5 @@
-//! Release lifecycle scenarios (R4, R5, R6).
-//!
-//! Spec: docs/superpowers/specs/2026-04-10-core-hardening-cycle-design.md Section 4
-//! Audit: docs/adr/009-core-hardening-audit.md Category 2 (release routes)
+//! Release lifecycle scenarios: diff, referenced-delete 409,
+//! orphan-delete 204 + cascade.
 
 #[path = "harness.rs"]
 mod harness;

@@ -1,4 +1,4 @@
-//! RB4 — redeploy an old release as a forward rollback.
+//! Rollback via redeploying an old release as a forward rollout.
 
 #[path = "harness.rs"]
 mod harness;
@@ -6,14 +6,14 @@ mod harness;
 use nixfleet_types::rollout::{OnFailure, RolloutStatus, RolloutStrategy};
 
 #[tokio::test]
-async fn rb4_redeploy_old_release_as_forward_rollback() {
+async fn redeploy_old_release_as_forward_rollback() {
     let cp = harness::spawn_cp().await;
     harness::register_machine(&cp, "web-01", &["web"]).await;
 
     let old = harness::create_release(&cp, &[("web-01", "/nix/store/rb4-old")]).await;
     let new = harness::create_release(&cp, &[("web-01", "/nix/store/rb4-new")]).await;
 
-    // Phase 1: deploy new.
+    // Stage 1: deploy new.
     let fwd = harness::create_rollout_for_tag(
         &cp,
         &new,
@@ -37,7 +37,7 @@ async fn rb4_redeploy_old_release_as_forward_rollback() {
     )
     .await;
 
-    // Phase 2: forward rollback — redeploy the old release.
+    // Stage 2: forward rollback — redeploy the old release.
     let back = harness::create_rollout_for_tag(
         &cp,
         &old,

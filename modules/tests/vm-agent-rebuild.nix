@@ -69,7 +69,7 @@
 
             ${helpers.testPrelude {}}
 
-            # --- Phase 1: Start CP, seed admin API key, register agent ---
+            # --- Step 1: Start CP, seed admin API key, register agent ---
             cp.start()
             cp.wait_for_unit("nixfleet-control-plane.service")
             cp.wait_for_open_port(8080)
@@ -83,7 +83,7 @@
                 f"-d '{{\"tags\": [\"test\"]}}'"
             )
 
-            # --- Phase 2: Start the agent and wait for it to post its
+            # --- Step 2: Start the agent and wait for it to post its
             # first report so the CP has current_generation on file. ---
             agent.start()
             agent.wait_for_unit("nixfleet-agent.service")
@@ -102,7 +102,7 @@
             # even after the CP tells the agent to deploy a fake path.
             original_gen = agent.succeed("readlink /run/current-system").strip()
 
-            # --- Phase 3: Missing path guard ---
+            # --- Step 3: Missing path guard ---
             # Create a release whose entry points at a fabricated store
             # path that does NOT exist anywhere. The agent's cacheUrl is
             # not configured, so `fetch_closure` calls `nix path-info
@@ -110,10 +110,9 @@
             # URL configured" and the agent refuses to advance.
             #
             # The release + rollout machinery is the only way to
-            # populate the agent's desired_generation (the legacy
-            # `set-generation` admin endpoint was removed in Phase 2);
-            # the executor's batch state is not asserted by this test,
-            # only the agent's behaviour in response.
+            # populate the agent's desired_generation. The executor's
+            # batch state is not asserted by this test, only the
+            # agent's behaviour in response.
             fake_path = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nixos-system-fake"
 
             release_body = json.dumps({
@@ -147,7 +146,7 @@
                 f"-d '{rollout_body}'"
             )
 
-            # --- Phase 4: Wait for the agent to log the "not found
+            # --- Step 4: Wait for the agent to log the "not found
             # locally" error from fetch_closure. This is the load-bearing
             # signal that the agent's refuse-to-switch branch fired. ---
             agent.wait_until_succeeds(
@@ -156,7 +155,7 @@
                 timeout=60,
             )
 
-            # --- Phase 5: /run/current-system must not have moved ---
+            # --- Step 5: /run/current-system must not have moved ---
             actual_gen = agent.succeed("readlink /run/current-system").strip()
             assert actual_gen == original_gen, (
                 f"agent switched unexpectedly after being told to deploy a "

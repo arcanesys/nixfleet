@@ -97,7 +97,7 @@ async fn scrape(cp: &harness::Cp) -> String {
 
 /// ME1 — after creating + completing a rollout, every CP-side declared
 /// metric appears in `/metrics`, the `nixfleet_rollouts_total` counter
-/// has recorded the completion, and no archived Phase 2 metrics leak.
+/// has recorded the completion, and no removed legacy metrics leak.
 ///
 /// Scope note: `shared/src/metrics.rs` declares 7 CP-side constants and 6
 /// agent-side constants. The CP process never emits the agent-side
@@ -184,9 +184,9 @@ fn me1_metrics_populated_after_rollout_cycle() {
         "nixfleet_rollouts_total{{status=\"completed\"}} must be >= 1, got {value} (line: {completed_line})"
     );
 
-        // Negative: archived Phase 2 metric names must NOT appear anywhere
-        // in the scrape. These were removed when policy/schedule features
-        // were deleted in the Phase 2 hardening squash.
+        // Negative: removed legacy metric names must NOT appear anywhere
+        // in the scrape. Regression guard against accidentally re-adding
+        // the policy/schedule features these metrics used to track.
         for gone in ["nixfleet_policy", "nixfleet_schedule"] {
             assert!(
                 !body.contains(gone),

@@ -64,21 +64,21 @@ of `hostSpec`, scope modules, and service wiring. See
 
 Real NixOS VMs booted under QEMU with Python test scripts driving assertions.
 See [VM Tests](vm-tests.md) for the full list and per-scenario semantics,
-including the 10 Phase 3 scenario subtests under `_vm-fleet-scenarios/`.
+including the fleet scenario subtests under `_vm-fleet-scenarios/`.
 
 High-level categories:
 
 - **Framework-level VMs** (`vm-core`, `vm-minimal`, `vm-infra`,
   `vm-nixfleet`, `vm-agent-rebuild`) — each one boots one or two nodes and
   exercises a single subsystem.
-- **Fleet-level VMs** (`vm-fleet` and the 10 `vm-fleet-*` scenario
-  subtests) — exercise multi-node topologies, mTLS, rollout strategies,
-  failure paths, SSH-direct deploys, etc.
+- **Fleet-level VMs** (`vm-fleet` and the `vm-fleet-*` scenario subtests)
+  — exercise multi-node topologies, mTLS, rollout strategies, failure
+  paths, SSH-direct deploys, etc.
 
 ## Rust tests
 
-Every Rust crate has unit tests in-file, and Phase 3 added ~60 integration
-scenarios in `control-plane/tests/*_scenarios.rs` and `cli/tests/*_scenarios.rs`.
+Every Rust crate has unit tests in-file, plus integration scenarios in
+`control-plane/tests/*_scenarios.rs` and `cli/tests/*_scenarios.rs`.
 See [Rust Tests](rust-tests.md) for the full breakdown.
 
 ## Finding the right test for a symptom
@@ -90,7 +90,7 @@ See [Rust Tests](rust-tests.md) for the full breakdown.
 | "The agent service won't start on a real VM" | `vm-core`, `vm-nixfleet` |
 | "A scope module (firewall, backup, monitoring) is broken" | `vm-infra` |
 | "The fetch→apply pipeline isn't working" | `vm-agent-rebuild` |
-| "Rollout state machine is wrong" | `vm-fleet` + Phase 3 Rust `failure_scenarios.rs`, `deploy_scenarios.rs` |
+| "Rollout state machine is wrong" | `vm-fleet` + Rust `failure_scenarios.rs`, `deploy_scenarios.rs` |
 | "mTLS / auth / RBAC is wrong" | `vm-fleet-mtls-missing`, Rust `auth_scenarios.rs` |
 | "Release CRUD or release push-hook is wrong" | `vm-fleet-release`, Rust `release_scenarios.rs` |
 | "Bootstrap / admin-key flow is wrong" | `vm-fleet-bootstrap` |

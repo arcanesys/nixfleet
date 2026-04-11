@@ -96,10 +96,10 @@
           testScript = ''
             ${testPrelude {}}
 
-            # --- Phase 1: Boot CP + seed admin API key ---
+            # --- Step 1: Boot CP + seed admin API key ---
             cp_boot_and_seed(cp)
 
-            # --- Phase 2: Register all agents with their tags ---
+            # --- Step 2: Register all agents with their tags ---
             for host, tags in [("web-01", ["web"]), ("web-02", ["web"]), ("db-01", ["db"])]:
                 tags_json = json.dumps(tags)
                 cp.succeed(
@@ -109,7 +109,7 @@
                     f"-d '{{\"tags\": {tags_json}}}'"
                 )
 
-            # --- Phase 3: Start all agents, wait for services ---
+            # --- Step 3: Start all agents, wait for services ---
             start_agents(web_01, web_02, db_01)
 
             # Wait for all 3 agents to report to the CP
@@ -120,7 +120,7 @@
                 timeout=60,
             )
 
-            # --- Phase 4: Canary rollout on web tag (should succeed) ---
+            # --- Step 4: Canary rollout on web tag (should succeed) ---
             # Since the agents run in dryRun=true they do not actually switch,
             # but they still report nix::current_generation() which resolves
             # to /run/current-system. We therefore build the release whose
@@ -143,7 +143,7 @@
             )
             wait_rollout_status(cp, web_rollout_id, "completed", timeout=120)
 
-            # --- Phase 5: Verify Prometheus metrics ---
+            # --- Step 5: Verify Prometheus metrics ---
             metrics = cp.succeed(f"{CURL} {API}/metrics")
             assert "nixfleet_fleet_size" in metrics, "Missing nixfleet_fleet_size in CP metrics"
             assert "nixfleet_rollouts_total" in metrics, "Missing nixfleet_rollouts_total in CP metrics"
@@ -151,8 +151,8 @@
             # Node exporter on web-01 should respond
             web_01.succeed("curl -sf http://localhost:9100/metrics | grep node_cpu")
 
-            # --- Phase 6: Rollout on db tag — health gate fails, rollout pauses ---
-            # Same trick as phase 4: release entry points at db-01's real
+            # --- Step 6: Rollout on db tag — health gate fails, rollout pauses ---
+            # Same trick as step 4: release entry points at db-01's real
             # toplevel so the generation gate matches and evaluate_batch
             # proceeds to health evaluation, which then fails because
             # db-01's configured health check hits :9999 (nothing listening).

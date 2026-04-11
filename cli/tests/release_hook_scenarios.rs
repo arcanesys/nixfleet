@@ -1,11 +1,9 @@
-//! R3 — release create with --push-hook invokes the hook per store path.
+//! `release create --push-hook` invokes the hook per store path.
 //!
-//! Spec: docs/superpowers/specs/2026-04-10-core-hardening-cycle-design.md Section 4
-//! Audit: docs/adr/009-core-hardening-audit.md Category 1 (CLI subcommands)
-//!
-//! We cannot run `nix build` in the test, so we call `cli::release::run_push_hook`
-//! directly with a hook that appends the store path to a tempfile. This is the
-//! real function path the CLI takes when `--push-hook` is set without `--push-to`.
+//! We cannot run `nix build` in the test, so we call
+//! `cli::release::run_push_hook` directly with a hook that appends the
+//! store path to a tempfile. This is the real function path the CLI
+//! takes when `--push-hook` is set without `--push-to`.
 
 use nixfleet::release::{extract_ssh_host, run_push_hook};
 use std::fs;

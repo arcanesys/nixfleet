@@ -128,22 +128,22 @@ The fetch → apply → verify pipeline with two sub-scenarios:
    `nixfleet_rollouts_total`; agent node exporter on web-01 exposes
    `node_cpu`.
 
-## Phase 3 fleet scenario subtests
+## Fleet scenario subtests
 
-Every CLI path, failure mode, and rollout branch from the Phase 3 design
-spec has its own independently buildable VM subtest under
+Every CLI path, failure mode, and rollout branch has its own
+independently buildable VM subtest under
 `modules/tests/_vm-fleet-scenarios/*.nix`. The aggregator
 `modules/tests/vm-fleet-scenarios.nix` exposes each one as
 `.#checks.<system>.vm-fleet-<name>`.
 
-### `vm-fleet-tag-sync` (M3)
+### `vm-fleet-tag-sync`
 
 Real agent with `tags = ["web" "canary" "eu-west"]` in NixOS config. Asserts
 tags appear in the CP `machine_tags` table after the first health report,
 that filtering by a declared tag returns the agent, and that undeclared tags
 do not leak into the table.
 
-### `vm-fleet-bootstrap` (D1)
+### `vm-fleet-bootstrap`
 
 End-to-end bootstrap flow:
 
@@ -157,7 +157,7 @@ End-to-end bootstrap flow:
 5. POST a rollout targeting `tag=web` and wait for `status=completed`.
 6. **Negative**: a second `nixfleet bootstrap` call must fail (409 Conflict).
 
-### `vm-fleet-release` (R1, R2)
+### `vm-fleet-release`
 
 Real `nixfleet release create --push-to ssh://root@cache` exercised against
 a harmonia binary cache server:
@@ -174,7 +174,7 @@ a harmonia binary cache server:
 - Agent then fetches from `http://cache:5000` and the DB check passes on
   the agent too.
 
-### `vm-fleet-deploy-ssh` (D4)
+### `vm-fleet-deploy-ssh`
 
 Real `nixfleet deploy --hosts target --ssh --target root@target` — no CP
 in the topology at all. The CLI calls `nix eval` (shim) → `nix build`
@@ -182,7 +182,7 @@ in the topology at all. The CLI calls `nix eval` (shim) → `nix build`
 (real). A stub `switch-to-configuration` writes a marker file to `/tmp`
 that the test asserts. Proves `--ssh` mode truly bypasses the CP.
 
-### `vm-fleet-apply-failure` (F1, RB1)
+### `vm-fleet-apply-failure`
 
 Command health check with a sentinel file
 (`/var/lib/fail-next-health`) drives the failure path:
@@ -199,9 +199,9 @@ This test covers two subtle bugs in the resume path: the rollout
 executor must not re-mark a batch unhealthy from stale pre-resume
 reports, and the agent's `CommandChecker` must use an absolute `/bin/sh`
 so it works under a systemd unit PATH. A regression in either would
-make this test hang at Phase 9 (resume → completed).
+make the resume → completed transition hang.
 
-### `vm-fleet-revert` (F2, C3)
+### `vm-fleet-revert`
 
 2-agent staged rollout with `on_failure = revert`:
 
@@ -213,7 +213,7 @@ make this test hang at Phase 9 (resume → completed).
   if the health runner were dead code, the failing report would never
   arrive and the revert path wouldn't fire.
 
-### `vm-fleet-timeout` (F3)
+### `vm-fleet-timeout`
 
 The agent is configured but its unit's `wantedBy` is forced to `[]` so the
 process never starts. CP records the machine in the release but sees zero
@@ -224,7 +224,7 @@ reports from it. The batch sits in `pending_count > 0` until
 Negative control: the `reports` table is empty for the machine — the pause
 reason really is "timeout", not "agent reported a failure".
 
-### `vm-fleet-poll-retry` (F7)
+### `vm-fleet-poll-retry`
 
 Agent starts *before* the CP. First poll hits a closed port (connection
 refused). The agent's main loop schedules a retry at `retryInterval = 5s`.
@@ -232,7 +232,7 @@ Then the CP starts, and the agent's next retry succeeds. Asserts the
 agent journal contains the retry-scheduling log line, then waits for
 registration.
 
-### `vm-fleet-mtls-missing` (A3)
+### `vm-fleet-mtls-missing`
 
 Pure transport-layer test. CP has `tls.clientCa` set. A client with the CA
 cert (can verify server) but no client key pair sends curl against
@@ -244,7 +244,7 @@ cert (can verify server) but no client key pair sends curl against
 - Positive control with a valid client cert → HTTP response comes back
   (any status — what matters is the handshake completed).
 
-### `vm-fleet-rollback-ssh` (RB2)
+### `vm-fleet-rollback-ssh`
 
 Real `nixfleet rollback --host target --ssh --generation <G1>` end-to-end:
 
@@ -305,8 +305,8 @@ All scenario tests use helpers from `modules/tests/_lib/helpers.nix`
 
 ## nixosTest gotchas worth knowing
 
-A few behaviours of the nixosTest framework itself that bit scenarios
-during Phase 3:
+A few behaviours of the nixosTest framework itself that have bitten
+scenarios in this suite:
 
 - **Shared `/nix/store` via 9p**: every VM sees the host store read-only
   via 9p mount. Any store path referenced anywhere in the test evaluation
@@ -354,7 +354,7 @@ references the path. A `nix copy` between nodes appears to succeed even
 when it transferred zero bytes, because the receiver could already see
 the path via 9p.
 
-Phase 3 settled on two workaround patterns instead of the heavy-weight
+The suite uses two workaround patterns instead of the heavy-weight
 per-VM store-image approach:
 
 | Need | Workaround | Why it works |
@@ -379,11 +379,10 @@ Concrete examples in the suite:
 The alternative — `virtualisation.useNixStoreImage = true;
 virtualisation.mountHostNixStore = false;` — was considered and rejected:
 every node would rebuild its own store image, multiplying VM build cost
-for an assertion class that the workarounds already cover. Phase 3 did
-not surface a scenario where the workarounds were insufficient.
+for an assertion class that the workarounds already cover. No scenario
+in the current suite needs per-VM store isolation.
 
-If a future scenario genuinely requires per-VM store isolation
-(e.g. asserting on byte-level transfer through `nix copy` rather than
-DB registration), revisit this decision in a follow-up plan. Do not
-adopt per-VM store images preemptively — they cost real wall-clock
-minutes per CI run.
+If a future scenario genuinely requires it (e.g. asserting on byte-level
+transfer through `nix copy` rather than DB registration), revisit this
+decision in a follow-up. Do not adopt per-VM store images preemptively
+— they cost real wall-clock minutes per CI run.

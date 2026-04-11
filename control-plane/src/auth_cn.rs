@@ -16,10 +16,10 @@
 //! per-connection `tower::Service` wrapper.
 //!
 //! The `axum-server-mtls` crate (v0.1.0) implements exactly this pattern.
-//! Phase 4 vendors a trimmed-down version in-tree to avoid taking a 0.1.0
-//! third-party dependency for the closing PR. The implementation is
-//! mechanical and matches the upstream pattern; only `leaf_cn()` is
-//! retained from the upstream API surface.
+//! We vendor a trimmed-down version in-tree to avoid taking a 0.1.0
+//! third-party dependency. The implementation is mechanical and matches
+//! the upstream pattern; only `leaf_cn()` is retained from the upstream
+//! API surface.
 //!
 //! ## Wiring
 //!

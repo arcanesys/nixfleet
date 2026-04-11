@@ -1,4 +1,4 @@
-//! Phase 4 — mTLS CN validation middleware (defense in depth).
+//! mTLS CN validation middleware — defense in depth above the CA boundary.
 //!
 //! The middleware lives in `control-plane/src/auth_cn.rs` and is wired
 //! on agent-facing routes only via `lib.rs::build_app`. These tests
@@ -13,13 +13,10 @@
 //!   4. PeerCertificates with CN NOT matching → 403.
 //!
 //! Cases 3 and 4 require a real DER-encoded cert with a known CN. We
-//! generate one in-test using a simple self-signed cert built via
-//! `rcgen`, which is already a transitive dep of the rustls stack but
-//! NOT a direct dep — we add it as a dev-dep in this PR.
-//!
-//! For the no-op cases (1, 2) we don't need rcgen because we either
-//! omit the extension entirely or insert the empty `PeerCertificates`
-//! constructor.
+//! generate one in-test using `rcgen`, a transitive dep of the rustls
+//! stack that is pulled in as a dev-dep here. For the no-op cases
+//! (1, 2) rcgen is unnecessary — we either omit the extension or
+//! insert the empty `PeerCertificates` constructor.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
