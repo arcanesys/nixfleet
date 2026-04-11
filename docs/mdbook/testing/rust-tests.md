@@ -114,7 +114,6 @@ the three pre-seeded role keys.
 | `auth_scenarios.rs` | A1 bootstrap conflict (409), A2 anonymous admin → 401 + public /health stays open, A4 readonly/deploy role enforcement on POST /rollouts and READ_ONLY on GET /releases+/rollouts, A5 bearer-token shape errors (invalid token / missing Bearer prefix → 401). |
 | `audit_scenarios.rs` | AU1 audit log writes for rollout lifecycle events, AU2 CSV-injection escaping for untrusted actor values. |
 | `metrics_scenarios.rs` | ME1 `/metrics` exposure + counter updates, ME2 gauge accuracy. |
-| `infra_scenarios.rs` | I1 migrations idempotency (run V1..V6 twice, no errors), Phase-2-archived tables absent. |
 | `cn_validation_scenarios.rs` | Phase 4 mTLS CN validation middleware: no extension / empty extension / matching CN / mismatched CN. |
 | `route_coverage.rs` | Phase 4 § 5 #2 — happy + error + auth coverage for every admin route, grouped by family via section headers (machines / rollouts / releases / audit+bootstrap+public). ~50 tests. |
 | `migrations_scenarios.rs` | Phase 4 § 5 #9 — fresh DB schema shape, refinery_schema_history exists, idempotent on second migrate, every expected table is queryable. |
