@@ -32,17 +32,12 @@
 #   exactly the RB1 "agent did not advance to the failing generation"
 #   guarantee.
 {
-  pkgs,
   mkTestNode,
   defaultTestSpec,
   mkTlsCerts,
+  ...
 }: let
   testCerts = mkTlsCerts {hostnames = ["web-01"];};
-
-  # Trivial closure baked into the agent's system so `nix path-info`
-  # succeeds inside fetch_closure (same pattern as bootstrap.nix). dryRun
-  # skips switch-to-configuration — file contents are never exercised.
-  web01Closure = pkgs.writeTextDir "share/nixfleet-apply-failure-web-01" "fail test web-01";
 in
   pkgs.testers.nixosTest {
     name = "vm-fleet-apply-failure";
@@ -87,10 +82,6 @@ in
           environment.etc."nixfleet-tls/web-01-cert.pem".source = "${testCerts}/web-01-cert.pem";
           environment.etc."nixfleet-tls/web-01-key.pem".source = "${testCerts}/web-01-key.pem";
 
-          # Bake the trivial closure so fetch_closure's nix path-info check
-          # succeeds without needing a binary cache.
-          environment.systemPackages = [web01Closure];
-
           services.nixfleet-agent = {
             enable = true;
             controlPlaneUrl = "https://cp:8080";
@@ -116,9 +107,7 @@ in
       ];
     };
 
-    testScript = let
-      web01Path = "${web01Closure}";
-    in ''
+    testScript = ''
       import json
 
       TEST_KEY = "test-admin-key"
@@ -130,7 +119,6 @@ in
           "--key /etc/nixfleet-tls/cp-key.pem"
       )
       API = "https://localhost:8080"
-      RELEASE_PATH = "${web01Path}"
 
       # ------------------------------------------------------------------
       # Phase 1 — Start CP, seed admin API key
@@ -168,15 +156,25 @@ in
       )
 
       # Record the agent's original generation (G1) as reported to the CP.
-      # With dryRun=true this is /run/current-system of the VM itself — a
-      # real NixOS closure, NOT the trivial release store path.
+      # Under dryRun=true the agent reports /run/current-system forever
+      # (agent/src/main.rs:266 — current_generation is read fresh on every
+      # report and never swapped to the desired path because
+      # apply_generation is short-circuited at main.rs:302-307). We MUST
+      # use this real toplevel as the release store path, otherwise the
+      # rollout executor's generation gate (report.generation ==
+      # release_entry.store_path) can never match and the rollout can
+      # never complete on resume — same class of bug as vm-fleet-bootstrap.
       initial_machines = json.loads(
           cp.succeed(f"{CURL} {AUTH} {API}/api/v1/machines")
       )
       g1 = initial_machines[0].get("current_generation", "")
       assert g1, f"expected web-01 to report a current_generation, got: {initial_machines[0]!r}"
-      assert g1 != RELEASE_PATH, \
-          f"precondition: web-01 current_generation must differ from release path, got {g1}"
+
+      # Read the same toplevel from the agent directly so the release
+      # entry is guaranteed to match (cp's view is the persisted report).
+      release_path = web_01.succeed("readlink -f /run/current-system").strip()
+      assert release_path == g1, \
+          f"sanity: agent toplevel ({release_path}) must match CP's view of current_generation ({g1})"
 
       # ------------------------------------------------------------------
       # Phase 4 — Create release + rollout (on_failure=pause)
@@ -186,7 +184,7 @@ in
           "entries": [
               {
                   "hostname": "web-01",
-                  "store_path": RELEASE_PATH,
+                  "store_path": release_path,
                   "platform": "x86_64-linux",
                   "tags": ["web"],
               },
@@ -228,22 +226,24 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 6 — RB1 positive: web-01 is still at G1, NOT the release path
+      # Phase 6 — RB1 positive: web-01 is still at G1 and still reporting
       #
-      # With dryRun=true the agent skips switch-to-configuration, so the
-      # agent's `current_generation` as reported to the CP should still be
-      # the original NixOS system closure (G1). This is the observable
-      # signature that the failing deploy did not leave the machine stranded
-      # on a half-applied generation — the rollback guarantee of RB1.
+      # Under dryRun=true, the agent literally cannot advance — it skips
+      # `apply_generation` and always reports /run/current-system. That
+      # makes the "agent did not advance" half of RB1 structurally true;
+      # what this phase really validates is that the failing health report
+      # did not crash the agent, did not cause the CP to lose track of
+      # web-01, and did not regress `current_generation` to anything else
+      # (e.g. an empty string from a broken report path).
       # ------------------------------------------------------------------
       machines_mid = json.loads(
           cp.succeed(f"{CURL} {AUTH} {API}/api/v1/machines")
       )
+      assert len(machines_mid) == 1, \
+          f"RB1: CP lost track of web-01 during paused rollout, got {machines_mid!r}"
       g_mid = machines_mid[0].get("current_generation", "")
       assert g_mid == g1, \
-          f"RB1: web-01 current_generation changed despite failure (was {g1}, now {g_mid})"
-      assert g_mid != RELEASE_PATH, \
-          f"RB1: web-01 current_generation advanced to release path despite failure: {g_mid}"
+          f"RB1: web-01 current_generation regressed (was {g1}, now {g_mid})"
 
       # ------------------------------------------------------------------
       # Phase 7 — Negative: the agent service is still active (auto-rollback
