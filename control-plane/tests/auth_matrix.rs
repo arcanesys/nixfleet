@@ -33,26 +33,15 @@ struct ExpectedAuth {
 }
 
 /// Read-only routes accessible to admin/deploy/readonly, 401 for anon.
+/// This is the only shape driven through `run_matrix_row` below. The
+/// deploy-or-admin and admin-only shapes are exercised by dedicated
+/// tests further down in this file because those routes require
+/// state setup (release_id / rollout_id) that doesn't fit the
+/// generic helper.
 const READ_ONLY: ExpectedAuth = ExpectedAuth {
     admin: 200,
     deploy: 200,
     readonly: 200,
-    anonymous: 401,
-};
-
-/// Deploy-or-admin write routes — readonly is forbidden.
-const DEPLOY_OR_ADMIN: ExpectedAuth = ExpectedAuth {
-    admin: 200,
-    deploy: 200,
-    readonly: 403,
-    anonymous: 401,
-};
-
-/// Admin-only routes — deploy and readonly are forbidden.
-const ADMIN_ONLY: ExpectedAuth = ExpectedAuth {
-    admin: 200,
-    deploy: 403,
-    readonly: 403,
     anonymous: 401,
 };
 

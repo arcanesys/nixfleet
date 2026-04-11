@@ -60,6 +60,33 @@ async fn poll_count(server: &MockServer) -> usize {
         .count()
 }
 
+/// Read whatever `nix::current_generation()` returns in the current
+/// environment. The mock uses this as the desired-generation hash so
+/// every poll immediately hits the "Already at desired generation"
+/// early-return branch in `run_deploy_cycle`, regardless of whether
+/// the test runs on a real dev host (with `/run/current-system`) or
+/// inside a nix build sandbox (where that symlink doesn't exist and
+/// `current_generation` returns `""`).
+///
+/// Why this matters: without this alignment, the loop proceeds past
+/// the early-return and calls `nix::fetch_closure()`, which in turn
+/// runs `nix copy` / `nix-store --realise` against the mock's store
+/// path. That call fails deterministically in sandbox builds (no
+/// network, no real store path) and the loop returns
+/// `PollOutcome::Failed`, which schedules the next tick at
+/// `retry_interval = 30s` instead of `poll_hint = 1s`. Only one poll
+/// fires in the 2.5s observation window and the test fails with
+/// "got 1 polls, expected ≥3".
+///
+/// With the mock hash tied to `current_generation()`, every poll
+/// takes the early-return path and the `poll_hint` cadence is the
+/// only thing under test — which is exactly what we want to pin.
+async fn current_generation_for_mock() -> String {
+    nixfleet_agent::nix::current_generation()
+        .await
+        .unwrap_or_default()
+}
+
 /// P-agent-1 — when the CP returns `poll_hint = Some(1)` (1 second),
 /// the agent's next poll fires at 1 second, NOT at the configured
 /// 60-second `poll_interval`. We observe over a 2.5-second window and
@@ -68,11 +95,12 @@ async fn poll_count(server: &MockServer) -> usize {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn poll_hint_shortens_next_interval() {
     let server = MockServer::start().await;
+    let current = current_generation_for_mock().await;
 
     Mock::given(method("GET"))
         .and(path("/api/v1/machines/web-01/desired-generation"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "hash": "/run/current-system",
+            "hash": current,
             "cache_url": null,
             "poll_hint": 1
         })))
@@ -124,14 +152,18 @@ async fn poll_hint_shortens_next_interval() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn poll_hint_clearing_reverts_to_configured_interval() {
     let server = MockServer::start().await;
+    let current = current_generation_for_mock().await;
 
     // First two polls return poll_hint=1 (1 second). Mock matches in
     // registration order; up_to_n_times(2) makes this mock match
     // twice then yield to the next mock.
+    //
+    // `hash` matches the current environment's current_generation
+    // output (see current_generation_for_mock above for why).
     Mock::given(method("GET"))
         .and(path("/api/v1/machines/web-01/desired-generation"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "hash": "/run/current-system",
+            "hash": current,
             "cache_url": null,
             "poll_hint": 1
         })))
@@ -142,7 +174,7 @@ async fn poll_hint_clearing_reverts_to_configured_interval() {
     Mock::given(method("GET"))
         .and(path("/api/v1/machines/web-01/desired-generation"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "hash": "/run/current-system",
+            "hash": current,
             "cache_url": null,
             "poll_hint": null
         })))
