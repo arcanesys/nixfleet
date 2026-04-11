@@ -272,12 +272,23 @@ in
       # whatever) is recreating it, the health check will keep
       # failing forever.
       print("### post-rm file check on web-01:")
-      rc, out = web_01.execute("ls -la /var/lib/fail-next-health")
-      print(f"rc={rc} out={out!r}")
-      assert rc != 0, (
-          f"/var/lib/fail-next-health still exists after rm -f! "
-          f"rc={rc} out={out!r}"
+      rc, out = web_01.execute("ls -la /var/lib/fail-next-health 2>&1; echo rc=$?")
+      print(out)
+
+      # Dump the actual health-checks config that the agent is reading.
+      print("### /etc/nixfleet/health-checks.json on web-01:")
+      print(web_01.succeed("cat /etc/nixfleet/health-checks.json"))
+
+      # Run the exact command the CommandChecker runs, under the same
+      # `sh -c` wrapper, and report its exit code. This lets us
+      # distinguish a product bug (CommandChecker mis-invoking sh) from
+      # a shell-semantics surprise (`test ! -f` behaving unexpectedly
+      # under the specific sh the agent uses).
+      print("### manual check: sh -c 'test ! -f /var/lib/fail-next-health':")
+      rc, out = web_01.execute(
+          "sh -c 'test ! -f /var/lib/fail-next-health'; echo exit=$?"
       )
+      print(f"rc={rc} out={out!r}")
 
       # Wait for a HEALTH report (not a deploy-cycle report) with
       # all_passed=1. The `reports` table is populated by BOTH
@@ -287,12 +298,22 @@ in
       # deploy cycle and tells us nothing about health. Poll the
       # `health_reports` table directly — it is only populated by
       # run_health_report.
-      cp.wait_until_succeeds(
-          "sqlite3 /var/lib/nixfleet-cp/state.db "
-          "\"SELECT all_passed FROM health_reports WHERE machine_id='web-01' "
-          "ORDER BY received_at DESC, id DESC LIMIT 1\" | grep -q '^1$'",
-          timeout=30,
-      )
+      try:
+          cp.wait_until_succeeds(
+              "sqlite3 /var/lib/nixfleet-cp/state.db "
+              "\"SELECT all_passed FROM health_reports WHERE machine_id='web-01' "
+              "ORDER BY received_at DESC, id DESC LIMIT 1\" | grep -q '^1$'",
+              timeout=30,
+          )
+      except Exception:
+          print("### wait-for-healthy timeout — dumping health_reports with results:")
+          print(cp.execute(
+              "sqlite3 -header /var/lib/nixfleet-cp/state.db "
+              "\"SELECT id, all_passed, received_at, results "
+              "FROM health_reports WHERE machine_id='web-01' "
+              "ORDER BY received_at DESC, id DESC LIMIT 5\""
+          )[1])
+          raise
 
       # Dump the DB state for debugging before resume.
       print("### pre-resume rollout status:")
