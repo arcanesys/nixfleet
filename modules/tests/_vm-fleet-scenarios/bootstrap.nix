@@ -21,13 +21,6 @@
 }: let
   testCerts = mkTlsCerts {hostnames = ["operator" "web-01" "web-02"];};
 
-  # Trivial per-host closures baked into each agent's system so the agent's
-  # `nix path-info <store_path>` check inside fetch_closure succeeds without
-  # needing a binary cache. The closures have no runtime meaning — dryRun=true
-  # skips switch-to-configuration entirely, so the file content is irrelevant.
-  web01Closure = pkgs.writeTextDir "share/nixfleet-bootstrap-web-01" "hello web-01";
-  web02Closure = pkgs.writeTextDir "share/nixfleet-bootstrap-web-02" "hello web-02";
-
   nixfleetCli = pkgs.callPackage ../../../cli {};
 in
   pkgs.testers.nixosTest {
@@ -97,9 +90,6 @@ in
           environment.etc."nixfleet-tls/web-01-cert.pem".source = "${testCerts}/web-01-cert.pem";
           environment.etc."nixfleet-tls/web-01-key.pem".source = "${testCerts}/web-01-key.pem";
 
-          # Bake the trivial closure into the system so nix path-info succeeds.
-          environment.systemPackages = [web01Closure];
-
           services.nixfleet-agent = {
             enable = true;
             controlPlaneUrl = "https://cp:8080";
@@ -131,8 +121,6 @@ in
           environment.etc."nixfleet-tls/web-02-cert.pem".source = "${testCerts}/web-02-cert.pem";
           environment.etc."nixfleet-tls/web-02-key.pem".source = "${testCerts}/web-02-key.pem";
 
-          environment.systemPackages = [web02Closure];
-
           services.nixfleet-agent = {
             enable = true;
             controlPlaneUrl = "https://cp:8080";
@@ -150,10 +138,7 @@ in
       ];
     };
 
-    testScript = let
-      web01Path = "${web01Closure}";
-      web02Path = "${web02Closure}";
-    in ''
+    testScript = ''
       import json
 
       # ------------------------------------------------------------------
@@ -267,22 +252,35 @@ in
       # Phase 5 — Create a release via the HTTP API
       #
       # We use curl directly to avoid re-exercising the nix-shim machinery
-      # (already covered by vm-fleet-release/R1). The release points at
-      # the trivial closures that are baked into each agent's system,
-      # so fetch_closure's local path-info check succeeds.
+      # (already covered by vm-fleet-release/R1).
+      #
+      # The release entries MUST point at each agent's actual
+      # /run/current-system toplevel. Agents run in dryRun=true so they
+      # never actually switch, but they still report their real current
+      # generation in health reports. The rollout executor's generation
+      # gate requires `report.generation == release_entry.store_path`
+      # before a batch can proceed to health evaluation — a mismatch
+      # pauses the rollout (the whole point of generation gating).
+      #
+      # vm-fleet.nix uses the same trick (Phase 4 comment). Earlier
+      # versions of this file used throwaway writeTextDir closures and
+      # hit `status=paused` for exactly this reason.
       # ------------------------------------------------------------------
+      web_01_toplevel = web_01.succeed("readlink -f /run/current-system").strip()
+      web_02_toplevel = web_02.succeed("readlink -f /run/current-system").strip()
+
       release_body = json.dumps({
           "flake_ref": "vm-fleet-bootstrap",
           "entries": [
               {
                   "hostname": "web-01",
-                  "store_path": "${web01Path}",
+                  "store_path": web_01_toplevel,
                   "platform": "x86_64-linux",
                   "tags": ["web"],
               },
               {
                   "hostname": "web-02",
-                  "store_path": "${web02Path}",
+                  "store_path": web_02_toplevel,
                   "platform": "x86_64-linux",
                   "tags": ["web"],
               },
