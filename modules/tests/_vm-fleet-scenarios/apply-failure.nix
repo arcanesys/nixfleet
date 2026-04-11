@@ -253,9 +253,46 @@ in
       web_01.succeed("systemctl is-active nixfleet-agent.service")
 
       # ------------------------------------------------------------------
-      # Phase 8 — Clear the fail flag and resume the rollout
+      # Phase 8 — Clear the fail flag, wait for a verified-healthy report,
+      # then resume the rollout.
+      #
+      # Waiting for the agent to actually emit a healthy report BEFORE
+      # we call /resume is load-bearing. Without this, the executor's
+      # next tick after resume reads the agent's latest report, which
+      # is still the stale unhealthy one from before the flag was
+      # cleared, and the stale-report filter only delays the verdict
+      # (pending_count += 1 → waiting_health). Up until health_timeout
+      # elapses the batch sits in waiting_health; after it elapses the
+      # batch flips unhealthy_count and the rollout pauses again.
       # ------------------------------------------------------------------
       web_01.succeed("rm -f /var/lib/fail-next-health")
+
+      # Wait for the CP's most recent general report for web-01 to
+      # show success=true (which `run_health_report` sets from
+      # `health_report.all_passed`). This confirms both the agent
+      # picked up the fresh state and the CP persisted it.
+      cp.wait_until_succeeds(
+          "sqlite3 /var/lib/nixfleet-cp/state.db "
+          "\"SELECT success FROM reports WHERE machine_id='web-01' "
+          "ORDER BY received_at DESC, id DESC LIMIT 1\" | grep -q '^1$'",
+          timeout=30,
+      )
+
+      # Dump the DB state for debugging before resume.
+      print("### pre-resume rollout status:")
+      print(cp.succeed(
+          f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id}"
+      ))
+      print("### pre-resume batches:")
+      print(cp.succeed(
+          "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
+          f"\"SELECT id,batch_index,status,started_at,completed_at FROM rollout_batches WHERE rollout_id='{rollout_id}'\""
+      ))
+      print("### pre-resume recent reports:")
+      print(cp.succeed(
+          "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
+          "\"SELECT id,machine_id,success,received_at FROM reports WHERE machine_id='web-01' ORDER BY received_at DESC, id DESC LIMIT 5\""
+      ))
 
       cp.succeed(
           f"{CURL} {AUTH} -X POST {API}/api/v1/rollouts/{rollout_id}/resume"
@@ -264,12 +301,39 @@ in
       # ------------------------------------------------------------------
       # Phase 9 — Rollout must now reach `completed`
       # ------------------------------------------------------------------
-      cp.wait_until_succeeds(
-          f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id} "
-          f"| python3 -c \"import sys,json; r=json.load(sys.stdin); "
-          f"assert r['status'] == 'completed', "
-          f"f'expected completed, got {{r[\\\"status\\\"]}}'\"",
-          timeout=120,
-      )
+      try:
+          cp.wait_until_succeeds(
+              f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id} "
+              f"| python3 -c \"import sys,json; r=json.load(sys.stdin); "
+              f"assert r['status'] == 'completed', "
+              f"f'expected completed, got {{r[\\\"status\\\"]}}'\"",
+              timeout=120,
+          )
+      except Exception:
+          print("### post-resume-timeout rollout status:")
+          print(cp.execute(
+              f"{CURL} {AUTH} {API}/api/v1/rollouts/{rollout_id}"
+          )[1])
+          print("### post-resume-timeout batches:")
+          print(cp.execute(
+              "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
+              f"\"SELECT id,batch_index,status,started_at,completed_at FROM rollout_batches WHERE rollout_id='{rollout_id}'\""
+          )[1])
+          print("### post-resume-timeout reports (web-01):")
+          print(cp.execute(
+              "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
+              "\"SELECT id,machine_id,success,received_at FROM reports WHERE machine_id='web-01' ORDER BY received_at DESC, id DESC LIMIT 10\""
+          )[1])
+          print("### post-resume-timeout health_reports (web-01):")
+          print(cp.execute(
+              "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
+              "\"SELECT id,machine_id,all_passed,received_at FROM health_reports WHERE machine_id='web-01' ORDER BY received_at DESC, id DESC LIMIT 10\""
+          )[1])
+          print("### post-resume-timeout rollout_events:")
+          print(cp.execute(
+              "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
+              f"\"SELECT created_at,event_type,detail FROM rollout_events WHERE rollout_id='{rollout_id}' ORDER BY created_at DESC, id DESC LIMIT 20\""
+          )[1])
+          raise
     '';
   }
