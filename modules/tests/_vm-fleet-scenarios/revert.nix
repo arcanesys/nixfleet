@@ -41,15 +41,17 @@
 #   0 is irrelevant because its batch has already been evaluated".
 #
 # Known caveats (runtime, not eval):
-#   * With `dryRun=true` the agent's `/run/current-system` never
-#     matches the release's trivial writeTextDir store path, so
-#     `on_desired_gen` in `evaluate_batch` is always false. The batch
-#     therefore lives in the `pending_count > 0` path until the
-#     `health_timeout` elapses; at that point it is marked unhealthy.
-#     The test configures `health_timeout = 10` so the timeout branch
-#     fires quickly, and the `all_passed` signal from the agent's own
-#     health report is what actually drives the batch verdict.
-#     This is the same structural gotcha acknowledged by the 22a test.
+#   * With `dryRun=true` the agent skips `apply_generation` and
+#     `current_generation` reported to the CP is always the real
+#     /run/current-system toplevel, never the release entry. The
+#     executor's generation gate requires `report.generation ==
+#     release_entry.store_path` before a batch can reach `succeeded`
+#     or be evaluated for health, so we MUST use each agent's real
+#     toplevel as its release entry store_path (read at test time
+#     via `readlink -f /run/current-system`). Same pattern as
+#     vm-fleet.nix Phase 4 and vm-fleet-bootstrap. Earlier versions
+#     of this file used `writeTextDir` fake paths relying on a
+#     non-existent health-timeout escape hatch.
 #   * If the scheduler shuffles so that the failing batch is batch 0
 #     (i.e. the sentinel arm happens before batch 0 even starts because
 #     we don't yet know which machine will be in it), there are no
@@ -64,16 +66,9 @@
   mkTestNode,
   defaultTestSpec,
   mkTlsCerts,
+  ...
 }: let
   testCerts = mkTlsCerts {hostnames = ["web-01" "web-02"];};
-
-  # Trivial closures baked into each agent's system so that
-  # `nix path-info` succeeds inside `fetch_closure` (same trick as
-  # `apply-failure.nix` and `bootstrap.nix`). With `dryRun=true` the
-  # file contents are never exercised — the closure just needs to
-  # exist on the agent's store.
-  r2Web01Closure = pkgs.writeTextDir "share/nixfleet-revert-r2-web-01" "R2 web-01";
-  r2Web02Closure = pkgs.writeTextDir "share/nixfleet-revert-r2-web-02" "R2 web-02";
 in
   pkgs.testers.nixosTest {
     name = "vm-fleet-revert";
@@ -118,8 +113,6 @@ in
           environment.etc."nixfleet-tls/web-01-cert.pem".source = "${testCerts}/web-01-cert.pem";
           environment.etc."nixfleet-tls/web-01-key.pem".source = "${testCerts}/web-01-key.pem";
 
-          environment.systemPackages = [r2Web01Closure];
-
           services.nixfleet-agent = {
             enable = true;
             controlPlaneUrl = "https://cp:8080";
@@ -159,8 +152,6 @@ in
           environment.etc."nixfleet-tls/web-02-cert.pem".source = "${testCerts}/web-02-cert.pem";
           environment.etc."nixfleet-tls/web-02-key.pem".source = "${testCerts}/web-02-key.pem";
 
-          environment.systemPackages = [r2Web02Closure];
-
           services.nixfleet-agent = {
             enable = true;
             controlPlaneUrl = "https://cp:8080";
@@ -186,10 +177,7 @@ in
       ];
     };
 
-    testScript = let
-      r2Web01Path = "${r2Web01Closure}";
-      r2Web02Path = "${r2Web02Closure}";
-    in ''
+    testScript = ''
       import json
 
       TEST_KEY = "test-admin-key"
@@ -201,8 +189,6 @@ in
           "--key /etc/nixfleet-tls/cp-key.pem"
       )
       API = "https://localhost:8080"
-      R2_WEB01 = "${r2Web01Path}"
-      R2_WEB02 = "${r2Web02Path}"
 
       # ------------------------------------------------------------------
       # Phase 1 — Start CP, seed admin API key
@@ -262,22 +248,33 @@ in
       )
 
       # ------------------------------------------------------------------
-      # Phase 3 — Create release R2 with DIFFERENT store paths per host
-      # and a rollout with `on_failure=revert` and `strategy=staged`
-      # ["1","1"] so we get two sequential single-machine batches.
+      # Phase 3 — Create release R2 with per-host store paths set to
+      # each agent's real /run/current-system toplevel. See the
+      # "known caveats" note at the top of the file for why this is
+      # required under dryRun=true.
+      #
+      # Yes, both agents (web-01 and web-02) have their own distinct
+      # toplevel closures because nixosTest builds a separate system
+      # derivation per node, so the two entries still have DIFFERENT
+      # store paths — we just stop lying about what those paths are.
       # ------------------------------------------------------------------
+      web_01_toplevel = web_01.succeed("readlink -f /run/current-system").strip()
+      web_02_toplevel = web_02.succeed("readlink -f /run/current-system").strip()
+      assert web_01_toplevel != web_02_toplevel, \
+          "sanity: web-01 and web-02 should have distinct toplevel closures"
+
       release_body = json.dumps({
           "flake_ref": "vm-fleet-revert",
           "entries": [
               {
                   "hostname": "web-01",
-                  "store_path": R2_WEB01,
+                  "store_path": web_01_toplevel,
                   "platform": "x86_64-linux",
                   "tags": ["web"],
               },
               {
                   "hostname": "web-02",
-                  "store_path": R2_WEB02,
+                  "store_path": web_02_toplevel,
                   "platform": "x86_64-linux",
                   "tags": ["web"],
               },

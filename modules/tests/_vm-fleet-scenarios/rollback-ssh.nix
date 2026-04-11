@@ -26,11 +26,10 @@
   lib,
   mkTestNode,
   defaultTestSpec,
-  mkTlsCerts,
+  ...
 }: let
   # mkTlsCerts is not strictly needed (no mTLS here) but we accept it to
   # keep the subtest signature symmetric with the other scenarios.
-
   # Build two stub closures. Each has a real `bin/switch-to-configuration`
   # that writes a distinct marker file so the testScript can observe which
   # generation was most recently applied.
@@ -156,9 +155,15 @@ in
       target.wait_for_open_port(22)
       operator.wait_for_unit("multi-user.target")
 
-      # Sanity: neither stub path nor the marker file exist yet on the target.
-      target.fail("test -e ${stubG1Path}")
-      target.fail("test -e ${stubG2Path}")
+      # Sanity: the marker file does not exist yet on the target.
+      #
+      # We cannot assert the stub STORE PATHS are absent because
+      # nixosTest mounts the host /nix/store read-only on every VM
+      # via 9p, so any path referenced anywhere in the test eval is
+      # visible on every node regardless of its closure. The Nix
+      # DATABASE is per-VM, though, so we can (and do below) use
+      # `nix-store -q --references` as a load-bearing check for
+      # "the path was actually copied into this VM's store DB".
       target.fail("test -e /tmp/stub-switch-last")
 
       # --- Phase 2: Prepare SSH client state on operator ---
@@ -189,17 +194,22 @@ in
           "'"
       )
 
-      # Positive: G2 closure is now on the target and the G2 marker was written.
-      target.succeed("test -e ${stubG2Path}")
-      target.succeed("test -x ${stubG2Path}/bin/switch-to-configuration")
+      # Positive: G2 is registered in the target's Nix DB — the VM-local
+      # `nix-store -q --references` only succeeds for paths the node's
+      # database actually knows about (i.e. those added via
+      # nix-copy-closure / substitution / local build), not for paths
+      # merely visible via the 9p store overlay. Marker file also
+      # confirms switch-to-configuration was invoked with G2.
+      target.succeed("nix-store -q --references ${stubG2Path} >/dev/null")
       marker_after_deploy = target.succeed("cat /tmp/stub-switch-last").strip()
       assert "active=g2" in marker_after_deploy, \
           f"expected marker active=g2 after deploy, got: {marker_after_deploy!r}"
 
-      # Negative: the G1 closure is NOT on the target yet. Rollback will
-      # copy it there. This confirms the upcoming assertion tests the
-      # rollback's real work, not pre-seeded state.
-      target.fail("test -e ${stubG1Path}")
+      # Sanity: G1 is NOT yet in the target's Nix DB. It will be after
+      # the explicit nix-copy-closure in Phase 4 below. Using the DB
+      # check (not `test -e`) because the store path is visible on the
+      # target's filesystem via 9p even when the DB has no record of it.
+      target.fail("nix-store -q --references ${stubG1Path}")
 
       # --- Phase 4: Pre-copy G1 to target so --generation can reference it ---
       # The rollback handler SSHes to the target and runs
@@ -212,7 +222,8 @@ in
       operator.succeed(
           "nix-copy-closure --to root@target ${stubG1Path}"
       )
-      target.succeed("test -e ${stubG1Path}")
+      # Load-bearing: G1 is now in target's Nix DB.
+      target.succeed("nix-store -q --references ${stubG1Path} >/dev/null")
 
       # Sanity: the marker is still G2 (the pre-copy is a transport-only
       # step, it does not invoke switch-to-configuration).
@@ -235,10 +246,10 @@ in
       assert "active=g1" in marker_after_rollback, \
           f"expected marker active=g1 after rollback, got: {marker_after_rollback!r}"
 
-      # Negative: the G2 stub still exists on the target (rollback did not
-      # delete the forward generation — history preserved). And the marker
-      # does NOT still say g2.
-      target.succeed("test -e ${stubG2Path}")
+      # Positive: the G2 stub is still registered in the target's Nix DB
+      # (rollback did not delete the forward generation — history
+      # preserved). And the marker does NOT still say g2.
+      target.succeed("nix-store -q --references ${stubG2Path} >/dev/null")
       assert "active=g2" not in marker_after_rollback, \
           f"marker should have been overwritten by g1, still contains g2: {marker_after_rollback!r}"
     '';
