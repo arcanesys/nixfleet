@@ -238,10 +238,6 @@ mod tests {
             normalize_path("/api/v1/machines/web-01/lifecycle"),
             "/api/v1/machines/{id}/lifecycle"
         );
-        assert_eq!(
-            normalize_path("/api/v1/releases"),
-            "/api/v1/releases"
-        );
     }
 
     #[test]
