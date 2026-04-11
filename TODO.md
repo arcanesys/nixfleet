@@ -4,7 +4,7 @@ Future work discovered during implementation. Grouped by target phase.
 
 ## Phase 3 — scenario tests
 
-**Status:** in progress (branch `hardening/core-scenarios`, plan `docs/superpowers/plans/2026-04-10-core-hardening-phase-3-scenarios.md`).
+**Status:** awaiting review (branch `hardening/core-scenarios`, plan `docs/superpowers/plans/2026-04-10-core-hardening-phase-3-scenarios.md`). All 11 Rust-tier scenario files + 10 VM-tier subtests landed; Rust tests run green; VM eval is clean; runtime VM builds still pending user-side verification.
 
 ### Phase 3 bugs surfaced
 
@@ -37,3 +37,13 @@ Out of Phase 2's original contingent scenarios (C1–C3):
 
 - [ ] **#22: Revert `attic` input to upstream** when https://github.com/zhaofengli/attic/pull/300 is merged. Currently pinned to a fork.
 - [ ] **Cosmetic:** Generation count fix in compliance probes (count the active system as generation 1, not 0).
+
+## Testability refactor gap (deferred per spec Section 6 R1)
+
+Spec `docs/superpowers/specs/2026-04-10-core-hardening-cycle-design.md` Section 6 R1 forbids testability refactors inside the hardening cycle. Phase 3 surfaced one gap that is blocked by this rule:
+
+- [ ] **Agent poll-loop lib extraction for in-process P1/P2.** The `poll_hint` honouring logic lives in `agent/src/main.rs` (around the `PollOutcome::Success { poll_hint: Some(hint) }` match arm, ~lines 170–186 at PR #30). Testing whether the real agent honours `poll_hint` requires observing its poll cadence, which in turn requires either:
+  - Fake time (`tokio::time::pause()`), which does not work across OS processes, OR
+  - Extracting the loop into `pub async fn agent::run_loop(...)` in a new `agent/src/lib.rs` so an in-process `#[tokio::test]` can drive it deterministically.
+
+  The refactor is the right solution; it is deferred to a follow-up testability cycle. CP-side emission of `poll_hint` IS covered in Phase 3 by `control-plane/tests/polling_scenarios.rs` (scenarios P1, P2) so the CP half of the contract is under test; only the agent half is gapped.
