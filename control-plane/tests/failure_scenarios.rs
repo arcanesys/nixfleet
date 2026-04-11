@@ -119,7 +119,7 @@ async fn f5_failure_threshold_30_percent_pauses_on_4_of_10() {
 
     harness::tick_once(&cp).await; // → deploying
 
-    // 6 healthy, 4 unhealthy. Threshold = ceil(10 * 0.30) = 3. 4 >= 3 → fail.
+    // 6 healthy, 4 unhealthy. Threshold = ceil(10 * 0.30) = 3. 4 > 3 → fail.
     for i in 1..=6 {
         let id = format!("node-{i:02}");
         let path = format!("/nix/store/f5-node-{i:02}");

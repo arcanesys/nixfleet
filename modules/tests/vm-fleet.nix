@@ -170,7 +170,7 @@
                 "release_id": web_release_id,
                 "strategy": "staged",
                 "batch_sizes": ["1", "100%"],
-                "failure_threshold": "1",
+                "failure_threshold": "0",
                 "on_failure": "pause",
                 "health_timeout": 30,
                 "target": {"tags": ["web"]}

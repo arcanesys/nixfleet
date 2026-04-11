@@ -82,8 +82,10 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         batch_size: Option<Vec<String>>,
 
-        /// Maximum failures before pausing/reverting
-        #[arg(long, default_value = "1")]
+        /// Allow up to N unhealthy machines per batch (the (N+1)th fails the batch).
+        /// 0 means zero tolerance — any single failure pauses the rollout.
+        /// Accepts an absolute count (e.g. "3") or a percentage (e.g. "30%").
+        #[arg(long, default_value = "0")]
         failure_threshold: String,
 
         /// Action on failure: pause or revert

@@ -229,7 +229,7 @@ in
       rollout_body = json.dumps({
           "release_id": release_id,
           "strategy": "all_at_once",
-          "failure_threshold": "1",
+          "failure_threshold": "0",
           "on_failure": "pause",
           "health_timeout": 60,
           "target": {"tags": ["web"]},

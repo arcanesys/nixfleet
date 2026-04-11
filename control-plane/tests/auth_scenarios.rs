@@ -131,7 +131,7 @@ async fn a4_role_enforcement_on_rollout_creation() {
         cache_url: None,
         strategy: RolloutStrategy::AllAtOnce,
         batch_sizes: None,
-        failure_threshold: "1".to_string(),
+        failure_threshold: "0".to_string(),
         on_failure: OnFailure::Pause,
         health_timeout: Some(60),
         target: RolloutTarget::Tags(vec!["web".to_string()]),

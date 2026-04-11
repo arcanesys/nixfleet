@@ -305,10 +305,15 @@ async fn evaluate_batch(
         }
     }
 
-    // All machines have reported — evaluate
+    // All machines have reported — evaluate.
+    //
+    // Semantic: failure_threshold = N means "allow up to N unhealthy machines
+    // per batch; the (N+1)th unhealthy machine fails the batch". Therefore the
+    // success condition is `unhealthy_count <= threshold`. threshold = 0 reads
+    // as zero tolerance (any single failure pauses the batch).
     let threshold = parse_threshold(&rollout.failure_threshold, machine_ids.len());
 
-    if unhealthy_count < threshold {
+    if unhealthy_count <= threshold {
         // Batch succeeded
         db.update_batch_status(&batch.id, "succeeded")?;
         let _ = db.insert_rollout_event(
@@ -354,7 +359,7 @@ async fn evaluate_batch(
             "batch.failed",
             &batch.id,
             Some(&format!(
-                "Batch {} failed: {unhealthy_count} unhealthy >= threshold {threshold}",
+                "Batch {} failed: {unhealthy_count} unhealthy > threshold {threshold}",
                 batch.batch_index
             )),
         )?;

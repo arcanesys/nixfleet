@@ -194,7 +194,7 @@ in
           "release_id": release_id,
           "strategy": "staged",
           "batch_sizes": ["1", "1"],
-          "failure_threshold": "1",
+          "failure_threshold": "0",
           "on_failure": "revert",
           "health_timeout": 10,
           "target": {"tags": ["web"]},
@@ -207,15 +207,14 @@ in
       rollout_id = rollout["rollout_id"]
 
       # ------------------------------------------------------------------
-      # Phase 4 — Wait for batch 0 to reach `succeeded` via the health
-      # timeout branch (treats pending-but-success-reporting agents as
-      # healthy once the timeout expires). This is the prerequisite for
-      # the revert path to have something to revert.
-      #
-      # NOTE: under dryRun=true, the batch reaches `succeeded` only
-      # after the `health_timeout` (10 s) elapses and `unhealthy_count`
-      # stays below `failure_threshold`. This is load-bearing — see
-      # the caveat at the top of the file.
+      # Phase 4 — Wait for batch 0 to reach `succeeded`. With the
+      # release entry store_path matching each agent's real
+      # /run/current-system, the generation gate matches and
+      # `evaluate_batch` proceeds to read the latest health report.
+      # Both agents are healthy at this point (sentinel not armed
+      # yet), so unhealthy_count stays at 0 and `0 <= 0` (zero
+      # tolerance) succeeds. This is the prerequisite for the
+      # revert path to have something to revert.
       # ------------------------------------------------------------------
       cp.wait_until_succeeds(
           f"sqlite3 /var/lib/nixfleet-cp/state.db "

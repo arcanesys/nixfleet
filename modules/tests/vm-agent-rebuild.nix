@@ -211,7 +211,7 @@
             rollout_body = json.dumps({
                 "release_id": release["id"],
                 "strategy": "all_at_once",
-                "failure_threshold": "1",
+                "failure_threshold": "0",
                 "on_failure": "pause",
                 "health_timeout": 30,
                 "target": {"tags": ["test"]},
