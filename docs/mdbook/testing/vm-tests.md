@@ -342,3 +342,46 @@ during Phase 3:
 
 For non-fleet VM tests (single-subsystem things like `vm-core` / `vm-infra`)
 follow the pattern in `modules/tests/vm.nix` — use `mkTestNode` directly.
+
+## Shared `/nix/store` and the assertion classes it forbids (WONTFIX)
+
+Every node in a `nixosTest` mounts the host's `/nix/store` read-only via 9p.
+This means store-path existence checks (`test -e /nix/store/...`) are
+**tautologically true** on every node regardless of which node's closure
+references the path. A `nix copy` between nodes appears to succeed even
+when it transferred zero bytes, because the receiver could already see
+the path via 9p.
+
+Phase 3 settled on two workaround patterns instead of the heavy-weight
+per-VM store-image approach:
+
+| Need | Workaround | Why it works |
+|---|---|---|
+| Prove a command ran on a specific node | VM-local marker file under `/tmp` | `/tmp` is per-VM, never shared via 9p |
+| Prove a path is registered in a node's Nix DB | `nix-store -q --references <path>` on the target | The Nix DB (`/nix/var/nix/db`) is per-VM, only the store *files* are shared |
+
+Concrete examples in the suite:
+
+- `vm-fleet-deploy-ssh` uses `nix-store -q --references` to prove
+  `nix-copy-closure --to` actually registered the stub closure in the
+  target's Nix DB. The 9p-mounted store would make a `test -e` check
+  invariant.
+- `vm-fleet-rollback-ssh` uses the same pattern for the per-generation
+  rollback assertion.
+- `vm-fleet-apply-failure` uses `/tmp/stub-switch-called` (a regular
+  filesystem path, VM-local) as the load-bearing proof that
+  `switch-to-configuration switch` was invoked.
+
+### Why not per-VM store images
+
+The alternative — `virtualisation.useNixStoreImage = true;
+virtualisation.mountHostNixStore = false;` — was considered and rejected:
+every node would rebuild its own store image, multiplying VM build cost
+for an assertion class that the workarounds already cover. Phase 3 did
+not surface a scenario where the workarounds were insufficient.
+
+If a future scenario genuinely requires per-VM store isolation
+(e.g. asserting on byte-level transfer through `nix copy` rather than
+DB registration), revisit this decision in a follow-up plan. Do not
+adopt per-VM store images preemptively — they cost real wall-clock
+minutes per CI run.
