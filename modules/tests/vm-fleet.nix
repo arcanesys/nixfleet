@@ -170,17 +170,13 @@
             )
 
             # --- Phase 2: Register all agents with their tags ---
-            # NOTE: lifecycle defaults to "pending" server-side; must be
-            # set explicitly to "active" so the machine is eligible for
-            # rollout targeting (get_machines_by_tags filters by
-            # lifecycle = 'active').
             for host, tags in [("web-01", ["web"]), ("web-02", ["web"]), ("db-01", ["db"])]:
                 tags_json = json.dumps(tags)
                 cp.succeed(
                     f"{CURL} -X POST {API}/api/v1/machines/{host}/register "
                     f"{AUTH} "
                     f"-H 'Content-Type: application/json' "
-                    f"-d '{{\"lifecycle\": \"active\", \"tags\": {tags_json}}}'"
+                    f"-d '{{\"tags\": {tags_json}}}'"
                 )
 
             # --- Phase 3: Start all agents, wait for services ---
