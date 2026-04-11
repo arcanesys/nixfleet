@@ -458,3 +458,31 @@ pub async fn diff(client: &Client, base_url: &str, id_a: &str, id_b: &str) -> Re
     }
     Ok(())
 }
+
+/// `nixfleet release delete`
+///
+/// 204 → exit 0 with confirmation message.
+/// 409 → exit 1 with explanatory message (release still referenced by a rollout).
+/// 404 → exit 1 with explanatory message.
+/// other non-2xx → exit 1 with the response body.
+pub async fn delete(client: &Client, base_url: &str, release_id: &str) -> Result<()> {
+    let resp = client
+        .delete(format!("{}/api/v1/releases/{}", base_url, release_id))
+        .send()
+        .await
+        .context("failed to DELETE release")?;
+
+    let status = resp.status();
+    if status.as_u16() == 204 || status.is_success() {
+        println!("Release {release_id} deleted");
+        return Ok(());
+    }
+    if status.as_u16() == 409 {
+        anyhow::bail!("Release {release_id} cannot be deleted: still referenced by a rollout");
+    }
+    if status.as_u16() == 404 {
+        anyhow::bail!("Release {release_id} not found");
+    }
+    let body = resp.text().await.unwrap_or_default();
+    anyhow::bail!("failed to delete release: {} {}", status, body);
+}

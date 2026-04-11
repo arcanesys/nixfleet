@@ -287,6 +287,8 @@ enum ReleaseAction {
         release_id_a: String,
         release_id_b: String,
     },
+    /// Delete a release (only if no rollout references it)
+    Delete { release_id: String },
 }
 
 #[derive(Subcommand)]
@@ -595,6 +597,9 @@ async fn main() -> Result<()> {
                         &release_id_b,
                     )
                     .await
+                }
+                ReleaseAction::Delete { release_id } => {
+                    release::delete(&http_client, effective_cp_url, &release_id).await
                 }
             }
         }

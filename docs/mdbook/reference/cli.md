@@ -170,6 +170,24 @@ nixfleet release diff <ID_A> <ID_B>
 
 ---
 
+## release delete
+
+Delete a release. Fails with exit code 1 if the release is still referenced by a rollout — the control plane returns 409 in that case to prevent breaking rollout history.
+
+```sh
+nixfleet release delete <RELEASE_ID>
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `<RELEASE_ID>` | string | ID of the release to delete |
+
+Exit codes:
+- `0` — release deleted (CP returned 204)
+- `1` — release still referenced by a rollout (CP returned 409), release not found (CP returned 404), or another non-2xx status
+
+---
+
 ## status
 
 Show fleet status from the control plane.

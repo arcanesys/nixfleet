@@ -78,6 +78,7 @@ nixfleet release create --dry-run                 # build and show manifest only
 nixfleet release list                             # list recent releases
 nixfleet release show <RELEASE_ID>                # show release details and per-host entries
 nixfleet release diff <ID_A> <ID_B>               # diff two releases
+nixfleet release delete <RELEASE_ID>              # delete a release (409 if referenced by a rollout)
 ```
 
 ## Framework API
