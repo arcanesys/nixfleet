@@ -124,55 +124,39 @@
           nodes.agent = agentNode;
 
           testScript = ''
-            import json
-
             TEST_KEY = "test-admin-key"
             KEY_HASH = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9"
             AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
             CURL = "curl -sf --cacert /etc/nixfleet-tls/ca.pem --cert /etc/nixfleet-tls/cp-cert.pem --key /etc/nixfleet-tls/cp-key.pem"
             API = "https://localhost:8080"
 
-            def create_release(entries_list):
-                """POST /api/v1/releases and return the release id."""
-                body = json.dumps({
-                    "flake_ref": "vm-agent-rebuild",
-                    "entries": entries_list,
-                })
-                resp = cp.succeed(
-                    f"{CURL} {AUTH} -X POST {API}/api/v1/releases "
-                    f"-H 'Content-Type: application/json' "
-                    f"-d '{body}'"
+            def set_desired_generation(machine_id, store_path):
+                """Seed the CP's `generations` table directly so the agent's
+                next poll of /api/v1/machines/{id}/desired-generation returns
+                store_path. This deliberately bypasses the release+rollout
+                executor: this test targets the agent's run_deploy_cycle
+                (check → fetch → apply → report) only, and the rollout
+                executor's batch/health-gate/conflict state machine is
+                covered by the vm-fleet-* scenario tests."""
+                cp.succeed(
+                    f"sqlite3 /var/lib/nixfleet-cp/state.db "
+                    f"\"INSERT INTO generations (machine_id, hash) "
+                    f"VALUES ('{machine_id}', '{store_path}') "
+                    f"ON CONFLICT(machine_id) DO UPDATE SET hash='{store_path}', "
+                    f"set_at=datetime('now')\""
                 )
-                return json.loads(resp)["id"]
 
-            def create_rollout(release_id, tag):
-                """POST /api/v1/rollouts for the given release+tag."""
-                body = json.dumps({
-                    "release_id": release_id,
-                    "strategy": "all_at_once",
-                    "failure_threshold": "1",
-                    "on_failure": "pause",
-                    "health_timeout": 30,
-                    "target": {"tags": [tag]},
-                })
-                resp = cp.succeed(
-                    f"{CURL} {AUTH} -X POST {API}/api/v1/rollouts "
-                    f"-H 'Content-Type: application/json' "
-                    f"-d '{body}'"
-                )
-                return json.loads(resp)["rollout_id"]
-
-            # --- Phase 1: Start CP, bootstrap API key ---
+            # --- Phase 1: Start CP, seed admin API key, register agent ---
             cp.start()
             cp.wait_for_unit("nixfleet-control-plane.service")
             cp.wait_for_open_port(8080)
 
             cp.succeed(
                 f"sqlite3 /var/lib/nixfleet-cp/state.db "
-                f"\"INSERT INTO api_keys (key_hash, name, role) VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
+                f"\"INSERT INTO api_keys (key_hash, name, role) "
+                f"VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
             )
 
-            # Register agent with the test tag (needed for rollout targeting).
             cp.succeed(
                 f"{CURL} -X POST {API}/api/v1/machines/agent/register "
                 f"{AUTH} "
@@ -180,75 +164,63 @@
                 f"-d '{{\"tags\": [\"test\"]}}'"
             )
 
-            # --- Phase 2: Start agent, wait for it to register on the CP ---
+            # --- Phase 2: Start the agent and wait for it to post its
+            # first report so the CP has a current_generation on file. ---
             agent.start()
             agent.wait_for_unit("nixfleet-agent.service")
 
             cp.wait_until_succeeds(
                 f"{CURL} {AUTH} {API}/api/v1/machines "
-                f"| python3 -c \"import sys,json; machines=json.load(sys.stdin); "
-                f"assert any(m['machine_id'] == 'agent' for m in machines), 'agent not registered'\"",
+                f"| python3 -c \"import sys,json; ms=json.load(sys.stdin); "
+                f"agent=[m for m in ms if m['machine_id'] == 'agent'][0]; "
+                f"assert agent.get('current_generation'), "
+                f"f'agent has no current_generation yet: {{agent}}'\"",
                 timeout=60,
             )
 
             # --- Test B: No-cache, pre-seeded store path ---
-            # The agent's own /run/current-system is guaranteed to be in
-            # its local store. We build a release whose entry points at
-            # that path, so when the executor sets desired_generation,
-            # the agent's check loop sees `current == desired` and
-            # short-circuits to "up-to-date" without ever calling
-            # fetch_closure or apply_generation.
+            # Seed the agent's own /run/current-system as the desired
+            # generation. The agent's next poll sees `current == desired`
+            # and takes the "Already at desired generation" branch
+            # (agent/src/main.rs:269-277), sends a success report, and
+            # never touches fetch_closure. This proves the agent handles
+            # the trivial no-op case correctly.
             current_gen = agent.succeed("readlink /run/current-system").strip()
+            set_desired_generation("agent", current_gen)
 
-            release_b = create_release([
-                {
-                    "hostname": "agent",
-                    "store_path": current_gen,
-                    "platform": "x86_64-linux",
-                    "tags": ["test"],
-                },
-            ])
-            create_rollout(release_b, "test")
-
-            # Agent should report `current_generation == desired` back
-            # to the CP within a couple of poll cycles (pollInterval=2).
-            cp.wait_until_succeeds(
-                f"{CURL} {AUTH} {API}/api/v1/machines "
-                f"| python3 -c \"import sys,json; machines=json.load(sys.stdin); "
-                f"agent = [m for m in machines if m['machine_id'] == 'agent'][0]; "
-                f"assert agent.get('current_generation') == '{current_gen}', "
-                f"f'Expected {current_gen}, got {{agent.get(\\\"current_generation\\\")}}'\"",
+            # Wait for the agent to log the "Already at desired generation"
+            # line, which is the load-bearing signal that the no-op branch
+            # fired. It's guaranteed to appear within one poll interval
+            # (pollInterval=2s) of the desired-generation update.
+            agent.wait_until_succeeds(
+                "journalctl -u nixfleet-agent.service --no-pager "
+                "| grep -q 'Already at desired generation'",
                 timeout=30,
             )
 
             # --- Test C: Missing path guard ---
-            # Build a release whose entry points at a fabricated store
-            # path that does NOT exist anywhere, with no cache URL
-            # configured on the agent. The agent must refuse to switch
-            # and stay at its original generation.
+            # Seed a fabricated store path that does NOT exist locally and
+            # is not reachable via any cache (cacheUrl is not configured
+            # on this agent). The agent's fetch_closure calls `nix
+            # path-info <fake>` which fails, and the agent logs
+            # "store path ... not found locally and no cache URL
+            # configured" without advancing /run/current-system.
             fake_path = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nixos-system-fake"
-            release_c = create_release([
-                {
-                    "hostname": "agent",
-                    "store_path": fake_path,
-                    "platform": "x86_64-linux",
-                    "tags": ["test"],
-                },
-            ])
-            create_rollout(release_c, "test")
+            set_desired_generation("agent", fake_path)
 
-            # Wait a few poll cycles — agent should NOT switch.
+            # Give the agent several poll cycles to try the fake path.
             import time
             time.sleep(10)
 
-            # Agent's /run/current-system must still be the original.
+            # /run/current-system must not have moved.
             actual_gen = agent.succeed("readlink /run/current-system").strip()
-            assert actual_gen == current_gen, \
-                f"Agent switched unexpectedly! Expected {current_gen}, got {actual_gen}"
+            assert actual_gen == current_gen, (
+                f"agent switched unexpectedly after being told to deploy a "
+                f"non-existent path: expected {current_gen}, got {actual_gen}"
+            )
 
-            # Verify the agent logged the missing-path error from
-            # `fetch_closure` (agent/src/nix.rs → "store path {...}
-            # not found locally and no cache URL configured").
+            # The agent must have logged the fetch_closure "not found
+            # locally" error message from agent/src/nix.rs.
             agent.succeed(
                 "journalctl -u nixfleet-agent.service --no-pager "
                 "| grep -q 'not found locally and no cache URL configured'"

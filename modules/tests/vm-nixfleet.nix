@@ -66,6 +66,11 @@
                   controlPlaneUrl = "http://cp:8080";
                   machineId = "agent";
                   pollInterval = 2;
+                  # healthInterval must be well under the test's 60s
+                  # timeout. The module default is 60s, which races
+                  # the wait and flakes. 5s gives multiple health
+                  # ticks inside the test window.
+                  healthInterval = 5;
                   dryRun = true;
                   # Plaintext HTTP for a smoke test — the scenarios
                   # under _vm-fleet-scenarios/ cover the full mTLS path.
