@@ -26,8 +26,7 @@ async fn rb4_redeploy_old_release_as_forward_rollback() {
     )
     .await;
     harness::tick_once(&cp).await;
-    harness::fake_agent_report(&cp, "web-01", "/nix/store/rb4-new", true, "", &["web"]).await;
-    cp.db.insert_health_report("web-01", "{}", true).unwrap();
+    harness::agent_reports_health(&cp, "web-01", "/nix/store/rb4-new", true).await;
     harness::tick_once(&cp).await;
     harness::tick_once(&cp).await;
     let _ = harness::wait_rollout_status(
@@ -51,8 +50,7 @@ async fn rb4_redeploy_old_release_as_forward_rollback() {
     )
     .await;
     harness::tick_once(&cp).await;
-    harness::fake_agent_report(&cp, "web-01", "/nix/store/rb4-old", true, "", &["web"]).await;
-    cp.db.insert_health_report("web-01", "{}", true).unwrap();
+    harness::agent_reports_health(&cp, "web-01", "/nix/store/rb4-old", true).await;
     harness::tick_once(&cp).await;
     harness::tick_once(&cp).await;
 

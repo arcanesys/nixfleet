@@ -10,7 +10,12 @@
 //!
 //! A4 exercises role enforcement on `POST /api/v1/rollouts`: the seeded
 //! `readonly` key is forbidden (403), the `deploy` key succeeds (201), and
-//! as a negative assertion readonly can still `GET /api/v1/releases` (200).
+//! readonly can still `GET /api/v1/releases` (200) and `GET /api/v1/rollouts`
+//! (200).
+//!
+//! A5 pins the bearer-token shape errors: an unrecognised token surfaces as
+//! 401 (not 403), and an Authorization header without the `Bearer ` prefix
+//! also surfaces as 401. These are the gaps route_coverage and A1–A4 leave.
 
 #[path = "harness.rs"]
 mod harness;
@@ -165,15 +170,58 @@ async fn a4_role_enforcement_on_rollout_creation() {
         "deploy key must create rollout: HTTP {status}, body={text}"
     );
 
-    // Negative: readonly can still read releases.
-    let resp = readonly
-        .get(format!("{}/api/v1/releases", cp.base))
+    // Negative: readonly can still read releases and rollouts. These
+    // read routes are gated on READ_ONLY (any authenticated role passes);
+    // the distinct assertion here vs. route_coverage's per-route tests
+    // is that the same seeded readonly key traverses both read and
+    // write paths in one scenario.
+    for path in ["/api/v1/releases", "/api/v1/rollouts"] {
+        let resp = readonly
+            .get(format!("{}{path}", cp.base))
+            .send()
+            .await
+            .expect("readonly GET request");
+        assert_eq!(
+            resp.status(),
+            200,
+            "readonly key must still be able to GET {path}"
+        );
+    }
+}
+
+/// A5 — bearer token shape errors.
+///
+/// Unrecognised tokens and missing `Bearer ` prefix must surface as 401,
+/// not 403. 401 means "no identity was established"; 403 means "identity
+/// is known but lacks the role". Returning 403 here would leak the
+/// existence of the route to unauthenticated callers.
+#[tokio::test]
+async fn a5_invalid_bearer_token_returns_401() {
+    let cp = harness::spawn_cp().await;
+    let bad = harness::client_with_key("nfk-not-a-real-key-zzz");
+    let resp = bad
+        .get(format!("{}/api/v1/machines", cp.base))
         .send()
         .await
-        .expect("readonly GET /releases request");
+        .unwrap();
     assert_eq!(
         resp.status(),
-        200,
-        "readonly key must still be able to GET /api/v1/releases"
+        401,
+        "invalid bearer must surface as 401, not 403"
     );
+}
+
+#[tokio::test]
+async fn a5_missing_bearer_prefix_returns_401() {
+    let cp = harness::spawn_cp().await;
+    // Custom request without the "Bearer " prefix — the auth layer
+    // must treat this as unauthenticated rather than trying to parse
+    // the raw token.
+    let resp = reqwest::Client::new()
+        .get(format!("{}/api/v1/machines", cp.base))
+        .header("authorization", harness::TEST_API_KEY)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
 }

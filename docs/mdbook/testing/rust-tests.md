@@ -106,19 +106,17 @@ the three pre-seeded role keys.
 | `agent_integration.rs` | Pre-Phase-3 baseline agent ↔ CP end-to-end tests (28 functions). |
 | `release_scenarios.rs` | R3 push-hook invocation, R4 release list pagination, R5 referenced release delete → 409, R6 orphan release delete → 204. |
 | `deploy_scenarios.rs` | D2 canary strategy happy path, D3 staged strategy happy path. |
-| `failure_scenarios.rs` | F4 `get_recent_reports` sub-second tiebreaker determinism, F5 `failure_threshold = "30%"` pauses on 4 of 10, F6 CP restart mid-rollout resumes from DB (ADR 010). |
-| `hydration_scenarios.rs` | H1 `FleetState` hydration on CP startup from a non-empty DB. |
+| `failure_scenarios.rs` | F4 generation-gate filters stale-gen reports, F5 `failure_threshold = "30%"` pauses on 4 of 10, F-stale-resume pins the resume → stale-report filter fix (51ba108), F-paused-cancel covers Paused → Cancelled. |
+| `hydration_scenarios.rs` | F6 CP restart mid-rollout resumes from DB (ADR 010) — cp1 stages a rollout, cp2 hydrates from the shared SQLite file and drives it to completion, proving `FleetState` is re-queried per tick. |
 | `rollback_scenarios.rs` | RB3 rollback via CP API, RB4 rollback edge cases. |
 | `polling_scenarios.rs` | P1 CP emits `poll_hint = 5` during active rollouts, P2 `poll_hint` clears after rollout completes. Note: the agent-side loop honouring the hint is deferred. |
 | `machine_scenarios.rs` | M1 `get_machines_by_tags` lifecycle filter (decommissioned agents excluded), M2 tag propagation via health reports. |
-| `auth_scenarios.rs` | A1 bootstrap conflict (409), A2 role matrix (admin/deploy/readonly access patterns), A4 unauthenticated requests rejected. |
+| `auth_scenarios.rs` | A1 bootstrap conflict (409), A2 anonymous admin → 401 + public /health stays open, A4 readonly/deploy role enforcement on POST /rollouts and READ_ONLY on GET /releases+/rollouts, A5 bearer-token shape errors (invalid token / missing Bearer prefix → 401). |
 | `audit_scenarios.rs` | AU1 audit log writes for rollout lifecycle events, AU2 CSV-injection escaping for untrusted actor values. |
 | `metrics_scenarios.rs` | ME1 `/metrics` exposure + counter updates, ME2 gauge accuracy. |
 | `infra_scenarios.rs` | I1 migrations idempotency (run V1..V6 twice, no errors), Phase-2-archived tables absent. |
 | `cn_validation_scenarios.rs` | Phase 4 mTLS CN validation middleware: no extension / empty extension / matching CN / mismatched CN. |
 | `route_coverage.rs` | Phase 4 § 5 #2 — happy + error + auth coverage for every admin route, grouped by family via section headers (machines / rollouts / releases / audit+bootstrap+public). ~50 tests. |
-| `executor_transition_scenarios.rs` | Phase 4 § 5 #4 — explicit positive + negative coverage for every executor state transition (Created→Running, Running→Completed, Running→Cancelled, Paused→Cancelled, Cancelled terminal). |
-| `auth_matrix.rs` | Phase 4 § 5 #8 — role × endpoint auth matrix for every admin route + invalid bearer + missing prefix. |
 | `migrations_scenarios.rs` | Phase 4 § 5 #9 — fresh DB schema shape, refinery_schema_history exists, idempotent on second migrate, every expected table is queryable. |
 
 ### Scenario files — cli

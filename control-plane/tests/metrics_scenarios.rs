@@ -123,18 +123,7 @@ fn me1_metrics_populated_after_rollout_cycle() {
 
         // Drive the full cycle: pending → deploying → waiting_health → completed.
         harness::tick_once(cp).await;
-        harness::fake_agent_report(
-            cp,
-            "web-01",
-            "/nix/store/me1-web-01",
-            true,
-            "applied",
-            &["web"],
-        )
-        .await;
-        cp.db
-            .insert_health_report("web-01", "{\"ok\":true}", true)
-            .expect("insert_health_report");
+        harness::agent_reports_health(cp, "web-01", "/nix/store/me1-web-01", true).await;
         harness::tick_once(cp).await;
         harness::tick_once(cp).await;
 

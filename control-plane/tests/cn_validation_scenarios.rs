@@ -27,9 +27,6 @@ use nixfleet_control_plane::auth_cn::PeerCertificates;
 use rustls_pki_types::CertificateDer;
 use tower::util::ServiceExt;
 
-#[path = "harness.rs"]
-mod harness;
-
 /// Build a tiny axum router that mounts the same agent-route layer as
 /// `build_app`, plus a 200-OK handler at the same path. We do not use
 /// `build_app` here because the harness's spawn_cp() variant constructs
@@ -120,12 +117,4 @@ async fn mismatched_cn_returns_403() {
     req.extensions_mut().insert(peer_certs_with_cn("web-01"));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-}
-
-// harness reference is intentional — keeps cargo from declaring it
-// unused at the file level. Real harness usage in this file is nil
-// because every case here uses the in-process axum::Router pattern.
-#[allow(dead_code)]
-fn _harness_marker() -> harness::Cp {
-    unreachable!("compile-only marker")
 }

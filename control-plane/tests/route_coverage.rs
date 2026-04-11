@@ -73,12 +73,11 @@ async fn machines_list_returns_empty_when_none_registered() {
 #[tokio::test]
 async fn machines_list_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .get(format!("{}/api/v1/machines", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().get(format!("{}/api/v1/machines", cp.base)),
+        401,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -120,26 +119,25 @@ async fn machines_register_creates_machine_and_returns_201() {
 #[tokio::test]
 async fn machines_register_invalid_lifecycle_returns_400() {
     let cp = harness::spawn_cp().await;
-    let resp = cp
-        .admin
-        .post(format!("{}/api/v1/machines/web-01/register", cp.base))
-        .json(&json!({"lifecycle": "not-a-real-state", "tags": []}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400);
+    harness::assert_status(
+        cp.admin
+            .post(format!("{}/api/v1/machines/web-01/register", cp.base))
+            .json(&json!({"lifecycle": "not-a-real-state", "tags": []})),
+        400,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn machines_register_readonly_role_returns_403() {
     let cp = harness::spawn_cp().await;
-    let resp = client_with_key(TEST_READONLY_KEY)
-        .post(format!("{}/api/v1/machines/web-01/register", cp.base))
-        .json(&json!({"tags": []}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
+    harness::assert_status(
+        client_with_key(TEST_READONLY_KEY)
+            .post(format!("{}/api/v1/machines/web-01/register", cp.base))
+            .json(&json!({"tags": []})),
+        403,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -178,40 +176,38 @@ async fn machines_lifecycle_invalid_transition_returns_409() {
 async fn machines_lifecycle_invalid_state_string_returns_400() {
     let cp = harness::spawn_cp().await;
     harness::register_machine(&cp, "web-01", &["web"]).await;
-    let resp = cp
-        .admin
-        .patch(format!("{}/api/v1/machines/web-01/lifecycle", cp.base))
-        .json(&json!({"lifecycle": "imaginary"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400);
+    harness::assert_status(
+        cp.admin
+            .patch(format!("{}/api/v1/machines/web-01/lifecycle", cp.base))
+            .json(&json!({"lifecycle": "imaginary"})),
+        400,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn machines_lifecycle_unknown_machine_returns_404() {
     let cp = harness::spawn_cp().await;
-    let resp = cp
-        .admin
-        .patch(format!("{}/api/v1/machines/ghost/lifecycle", cp.base))
-        .json(&json!({"lifecycle": "decommissioned"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
+    harness::assert_status(
+        cp.admin
+            .patch(format!("{}/api/v1/machines/ghost/lifecycle", cp.base))
+            .json(&json!({"lifecycle": "decommissioned"})),
+        404,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn machines_lifecycle_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
     harness::register_machine(&cp, "web-01", &["web"]).await;
-    let resp = client_anonymous()
-        .patch(format!("{}/api/v1/machines/web-01/lifecycle", cp.base))
-        .json(&json!({"lifecycle": "decommissioned"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous()
+            .patch(format!("{}/api/v1/machines/web-01/lifecycle", cp.base))
+            .json(&json!({"lifecycle": "decommissioned"})),
+        401,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -267,24 +263,23 @@ async fn machines_remove_tag_succeeds_and_drops_from_list() {
 async fn machines_remove_tag_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
     harness::register_machine(&cp, "web-01", &["web"]).await;
-    let resp = client_anonymous()
-        .delete(format!("{}/api/v1/machines/web-01/tags/web", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().delete(format!("{}/api/v1/machines/web-01/tags/web", cp.base)),
+        401,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn machines_remove_tag_readonly_returns_403() {
     let cp = harness::spawn_cp().await;
     harness::register_machine(&cp, "web-01", &["web"]).await;
-    let resp = client_with_key(TEST_READONLY_KEY)
-        .delete(format!("{}/api/v1/machines/web-01/tags/web", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
+    harness::assert_status(
+        client_with_key(TEST_READONLY_KEY)
+            .delete(format!("{}/api/v1/machines/web-01/tags/web", cp.base)),
+        403,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -295,106 +290,90 @@ async fn machines_remove_tag_readonly_returns_403() {
 async fn machines_desired_generation_returns_404_when_not_set() {
     let cp = harness::spawn_cp().await;
     harness::register_machine(&cp, "web-01", &["web"]).await;
-    let resp = cp
-        .admin
-        .get(format!(
+    harness::assert_status(
+        cp.admin.get(format!(
             "{}/api/v1/machines/web-01/desired-generation",
             cp.base
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
+        )),
+        404,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn machines_desired_generation_returns_400_when_id_too_long() {
     let cp = harness::spawn_cp().await;
     let long_id = "x".repeat(257);
-    let resp = cp
-        .admin
-        .get(format!(
+    harness::assert_status(
+        cp.admin.get(format!(
             "{}/api/v1/machines/{long_id}/desired-generation",
             cp.base
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400);
+        )),
+        400,
+    )
+    .await;
 }
 
 // =====================================================================
 // Machines — POST /api/v1/machines/{id}/report
 // =====================================================================
 
-#[tokio::test]
-async fn machines_report_rejects_oversized_current_generation() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-    let huge = "/nix/store/".to_string() + &"x".repeat(600);
-    let report = Report {
-        machine_id: "web-01".to_string(),
-        current_generation: huge,
+/// Baseline valid `Report` body. Tests override one field to hit a
+/// specific size-validation branch.
+fn valid_report(machine_id: &str) -> Report {
+    Report {
+        machine_id: machine_id.to_string(),
+        current_generation: "/nix/store/abc".to_string(),
         success: true,
         message: "ok".to_string(),
         timestamp: chrono::Utc::now(),
         tags: vec![],
         health: None,
-    };
-    let resp = cp
-        .admin
-        .post(format!("{}/api/v1/machines/web-01/report", cp.base))
-        .json(&report)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400);
+    }
+}
+
+#[tokio::test]
+async fn machines_report_rejects_oversized_current_generation() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "web-01", &["web"]).await;
+    let mut report = valid_report("web-01");
+    report.current_generation = "/nix/store/".to_string() + &"x".repeat(600);
+    harness::assert_status(
+        cp.admin
+            .post(format!("{}/api/v1/machines/web-01/report", cp.base))
+            .json(&report),
+        400,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn machines_report_rejects_oversized_message() {
     let cp = harness::spawn_cp().await;
     harness::register_machine(&cp, "web-01", &["web"]).await;
-    let report = Report {
-        machine_id: "web-01".to_string(),
-        current_generation: "/nix/store/abc".to_string(),
-        success: true,
-        message: "x".repeat(5000),
-        timestamp: chrono::Utc::now(),
-        tags: vec![],
-        health: None,
-    };
-    let resp = cp
-        .admin
-        .post(format!("{}/api/v1/machines/web-01/report", cp.base))
-        .json(&report)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400);
+    let mut report = valid_report("web-01");
+    report.message = "x".repeat(5000);
+    harness::assert_status(
+        cp.admin
+            .post(format!("{}/api/v1/machines/web-01/report", cp.base))
+            .json(&report),
+        400,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn machines_report_rejects_oversized_machine_id_in_path() {
     let cp = harness::spawn_cp().await;
     let long_id = "x".repeat(257);
-    let report = Report {
-        machine_id: long_id.clone(),
-        current_generation: "/nix/store/abc".to_string(),
-        success: true,
-        message: "ok".to_string(),
-        timestamp: chrono::Utc::now(),
-        tags: vec![],
-        health: None,
-    };
-    let resp = cp
-        .admin
-        .post(format!("{}/api/v1/machines/{long_id}/report", cp.base))
-        .json(&report)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400);
+    let report = valid_report(&long_id);
+    harness::assert_status(
+        cp.admin
+            .post(format!("{}/api/v1/machines/{long_id}/report", cp.base))
+            .json(&report),
+        400,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -442,13 +421,13 @@ async fn rollouts_create_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
     let release_id = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
     let body = valid_rollout_body(release_id, "web");
-    let resp = client_anonymous()
-        .post(format!("{}/api/v1/rollouts", cp.base))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous()
+            .post(format!("{}/api/v1/rollouts", cp.base))
+            .json(&body),
+        401,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -457,13 +436,13 @@ async fn rollouts_create_readonly_returns_403() {
     harness::register_machine(&cp, "web-01", &["web"]).await;
     let release_id = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
     let body = valid_rollout_body(release_id, "web");
-    let resp = client_with_key(TEST_READONLY_KEY)
-        .post(format!("{}/api/v1/rollouts", cp.base))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
+    harness::assert_status(
+        client_with_key(TEST_READONLY_KEY)
+            .post(format!("{}/api/v1/rollouts", cp.base))
+            .json(&body),
+        403,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -487,20 +466,7 @@ async fn rollouts_list_empty_returns_empty_array() {
 
 #[tokio::test]
 async fn rollouts_list_with_status_filter() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-    let release_id = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
-    let _id = harness::create_rollout_for_tag(
-        &cp,
-        &release_id,
-        "web",
-        RolloutStrategy::AllAtOnce,
-        None,
-        "0",
-        OnFailure::Pause,
-        60,
-    )
-    .await;
+    let (cp, _, _) = harness::spawn_cp_with_rollout("/nix/store/x").await;
 
     // Filter for "running" — the rollout is running by default after create.
     let resp = cp
@@ -522,12 +488,11 @@ async fn rollouts_list_with_status_filter() {
 #[tokio::test]
 async fn rollouts_list_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .get(format!("{}/api/v1/rollouts", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().get(format!("{}/api/v1/rollouts", cp.base)),
+        401,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -537,24 +502,21 @@ async fn rollouts_list_anonymous_returns_401() {
 #[tokio::test]
 async fn rollouts_get_unknown_id_returns_404() {
     let cp = harness::spawn_cp().await;
-    let resp = cp
-        .admin
-        .get(format!("{}/api/v1/rollouts/r-ghost", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
+    harness::assert_status(
+        cp.admin.get(format!("{}/api/v1/rollouts/r-ghost", cp.base)),
+        404,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn rollouts_get_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .get(format!("{}/api/v1/rollouts/r-anything", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().get(format!("{}/api/v1/rollouts/r-anything", cp.base)),
+        401,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -564,52 +526,36 @@ async fn rollouts_get_anonymous_returns_401() {
 #[tokio::test]
 async fn rollouts_resume_unknown_id_returns_404() {
     let cp = harness::spawn_cp().await;
-    let resp = cp
-        .admin
-        .post(format!("{}/api/v1/rollouts/r-ghost/resume", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
+    harness::assert_status(
+        cp.admin
+            .post(format!("{}/api/v1/rollouts/r-ghost/resume", cp.base)),
+        404,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn rollouts_resume_when_running_returns_409() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-    let release_id = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
-    let id = harness::create_rollout_for_tag(
-        &cp,
-        &release_id,
-        "web",
-        RolloutStrategy::AllAtOnce,
-        None,
-        "0",
-        OnFailure::Pause,
-        60,
-    )
-    .await;
+    let (cp, _, id) = harness::spawn_cp_with_rollout("/nix/store/x").await;
 
     // Rollout is created in `running` state — resume must 409 because
     // there's nothing to resume.
-    let resp = cp
-        .admin
-        .post(format!("{}/api/v1/rollouts/{}/resume", cp.base, id))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 409);
+    harness::assert_status(
+        cp.admin
+            .post(format!("{}/api/v1/rollouts/{}/resume", cp.base, id)),
+        409,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn rollouts_resume_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .post(format!("{}/api/v1/rollouts/r-anything/resume", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().post(format!("{}/api/v1/rollouts/r-anything/resume", cp.base)),
+        401,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -618,28 +564,14 @@ async fn rollouts_resume_anonymous_returns_401() {
 
 #[tokio::test]
 async fn rollouts_cancel_running_succeeds_and_state_changes() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-    let release_id = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
-    let id = harness::create_rollout_for_tag(
-        &cp,
-        &release_id,
-        "web",
-        RolloutStrategy::AllAtOnce,
-        None,
-        "0",
-        OnFailure::Pause,
-        60,
+    let (cp, _, id) = harness::spawn_cp_with_rollout("/nix/store/x").await;
+
+    harness::assert_status(
+        cp.admin
+            .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id)),
+        200,
     )
     .await;
-
-    let resp = cp
-        .admin
-        .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
 
     // Side effect: rollout reaches Cancelled.
     let detail = harness::wait_rollout_status(
@@ -655,31 +587,17 @@ async fn rollouts_cancel_running_succeeds_and_state_changes() {
 #[tokio::test]
 async fn rollouts_cancel_unknown_id_returns_404() {
     let cp = harness::spawn_cp().await;
-    let resp = cp
-        .admin
-        .post(format!("{}/api/v1/rollouts/r-ghost/cancel", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
+    harness::assert_status(
+        cp.admin
+            .post(format!("{}/api/v1/rollouts/r-ghost/cancel", cp.base)),
+        404,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn rollouts_cancel_already_cancelled_returns_409() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-    let release_id = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
-    let id = harness::create_rollout_for_tag(
-        &cp,
-        &release_id,
-        "web",
-        RolloutStrategy::AllAtOnce,
-        None,
-        "0",
-        OnFailure::Pause,
-        60,
-    )
-    .await;
+    let (cp, _, id) = harness::spawn_cp_with_rollout("/nix/store/x").await;
     // First cancel succeeds.
     cp.admin
         .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id))
@@ -687,37 +605,23 @@ async fn rollouts_cancel_already_cancelled_returns_409() {
         .await
         .unwrap();
     // Second cancel must 409 — the rollout is no longer active.
-    let resp = cp
-        .admin
-        .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 409);
+    harness::assert_status(
+        cp.admin
+            .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id)),
+        409,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn rollouts_cancel_readonly_returns_403() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-    let release_id = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
-    let id = harness::create_rollout_for_tag(
-        &cp,
-        &release_id,
-        "web",
-        RolloutStrategy::AllAtOnce,
-        None,
-        "0",
-        OnFailure::Pause,
-        60,
+    let (cp, _, id) = harness::spawn_cp_with_rollout("/nix/store/x").await;
+    harness::assert_status(
+        client_with_key(TEST_READONLY_KEY)
+            .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id)),
+        403,
     )
     .await;
-    let resp = client_with_key(TEST_READONLY_KEY)
-        .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
 }
 
 // =====================================================================
@@ -742,23 +646,21 @@ async fn releases_list_empty_returns_empty_array() {
 #[tokio::test]
 async fn releases_list_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .get(format!("{}/api/v1/releases", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().get(format!("{}/api/v1/releases", cp.base)),
+        401,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn releases_list_readonly_role_succeeds() {
     let cp = harness::spawn_cp().await;
-    let resp = client_with_key(TEST_READONLY_KEY)
-        .get(format!("{}/api/v1/releases", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
+    harness::assert_status(
+        client_with_key(TEST_READONLY_KEY).get(format!("{}/api/v1/releases", cp.base)),
+        200,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -807,25 +709,25 @@ async fn releases_create_empty_entries_returns_400() {
 #[tokio::test]
 async fn releases_create_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .post(format!("{}/api/v1/releases", cp.base))
-        .json(&minimal_release_body())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous()
+            .post(format!("{}/api/v1/releases", cp.base))
+            .json(&minimal_release_body()),
+        401,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn releases_create_readonly_returns_403() {
     let cp = harness::spawn_cp().await;
-    let resp = client_with_key(TEST_READONLY_KEY)
-        .post(format!("{}/api/v1/releases", cp.base))
-        .json(&minimal_release_body())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
+    harness::assert_status(
+        client_with_key(TEST_READONLY_KEY)
+            .post(format!("{}/api/v1/releases", cp.base))
+            .json(&minimal_release_body()),
+        403,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -835,24 +737,22 @@ async fn releases_create_readonly_returns_403() {
 #[tokio::test]
 async fn releases_get_unknown_id_returns_404() {
     let cp = harness::spawn_cp().await;
-    let resp = cp
-        .admin
-        .get(format!("{}/api/v1/releases/rel-ghost", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
+    harness::assert_status(
+        cp.admin
+            .get(format!("{}/api/v1/releases/rel-ghost", cp.base)),
+        404,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn releases_get_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .get(format!("{}/api/v1/releases/rel-anything", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().get(format!("{}/api/v1/releases/rel-anything", cp.base)),
+        401,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -887,24 +787,22 @@ async fn releases_get_happy_returns_release_with_entries() {
 #[tokio::test]
 async fn releases_delete_unknown_id_returns_404() {
     let cp = harness::spawn_cp().await;
-    let resp = cp
-        .admin
-        .delete(format!("{}/api/v1/releases/rel-ghost", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
+    harness::assert_status(
+        cp.admin
+            .delete(format!("{}/api/v1/releases/rel-ghost", cp.base)),
+        404,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn releases_delete_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .delete(format!("{}/api/v1/releases/rel-anything", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().delete(format!("{}/api/v1/releases/rel-anything", cp.base)),
+        401,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -912,12 +810,12 @@ async fn releases_delete_deploy_role_returns_403() {
     // delete_release requires admin; deploy must be rejected.
     let cp = harness::spawn_cp().await;
     let id = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
-    let resp = client_with_key(TEST_DEPLOY_KEY)
-        .delete(format!("{}/api/v1/releases/{}", cp.base, id))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 403);
+    harness::assert_status(
+        client_with_key(TEST_DEPLOY_KEY)
+            .delete(format!("{}/api/v1/releases/{}", cp.base, id)),
+        403,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -928,43 +826,38 @@ async fn releases_delete_deploy_role_returns_403() {
 async fn releases_diff_unknown_a_returns_404() {
     let cp = harness::spawn_cp().await;
     let id_b = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
-    let resp = cp
-        .admin
-        .get(format!(
+    harness::assert_status(
+        cp.admin.get(format!(
             "{}/api/v1/releases/rel-ghost/diff/{}",
             cp.base, id_b
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
+        )),
+        404,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn releases_diff_unknown_b_returns_404() {
     let cp = harness::spawn_cp().await;
     let id_a = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
-    let resp = cp
-        .admin
-        .get(format!(
+    harness::assert_status(
+        cp.admin.get(format!(
             "{}/api/v1/releases/{}/diff/rel-ghost",
             cp.base, id_a
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
+        )),
+        404,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn releases_diff_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .get(format!("{}/api/v1/releases/rel-a/diff/rel-b", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().get(format!("{}/api/v1/releases/rel-a/diff/rel-b", cp.base)),
+        401,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -1000,23 +893,21 @@ async fn audit_list_events_returns_array() {
 #[tokio::test]
 async fn audit_list_events_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .get(format!("{}/api/v1/audit", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().get(format!("{}/api/v1/audit", cp.base)),
+        401,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn audit_list_events_readonly_role_succeeds() {
     let cp = harness::spawn_cp().await;
-    let resp = client_with_key(TEST_READONLY_KEY)
-        .get(format!("{}/api/v1/audit", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
+    harness::assert_status(
+        client_with_key(TEST_READONLY_KEY).get(format!("{}/api/v1/audit", cp.base)),
+        200,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -1054,23 +945,21 @@ async fn audit_export_csv_returns_csv_body() {
 #[tokio::test]
 async fn audit_export_csv_anonymous_returns_401() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .get(format!("{}/api/v1/audit/export", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    harness::assert_status(
+        client_anonymous().get(format!("{}/api/v1/audit/export", cp.base)),
+        401,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn audit_export_csv_deploy_role_succeeds() {
     let cp = harness::spawn_cp().await;
-    let resp = client_with_key(TEST_DEPLOY_KEY)
-        .get(format!("{}/api/v1/audit/export", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
+    harness::assert_status(
+        client_with_key(TEST_DEPLOY_KEY).get(format!("{}/api/v1/audit/export", cp.base)),
+        200,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -1086,13 +975,13 @@ async fn audit_export_csv_deploy_role_succeeds() {
 #[tokio::test]
 async fn bootstrap_when_keys_exist_returns_409() {
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .post(format!("{}/api/v1/keys/bootstrap", cp.base))
-        .json(&json!({"name": "should-fail"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 409);
+    harness::assert_status(
+        client_anonymous()
+            .post(format!("{}/api/v1/keys/bootstrap", cp.base))
+            .json(&json!({"name": "should-fail"})),
+        409,
+    )
+    .await;
 }
 
 // =====================================================================
@@ -1125,10 +1014,9 @@ async fn metrics_route_returns_200_without_auth() {
     // contract: /metrics is reachable without an Authorization header
     // and returns 200.
     let cp = harness::spawn_cp().await;
-    let resp = client_anonymous()
-        .get(format!("{}/metrics", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
+    harness::assert_status(
+        client_anonymous().get(format!("{}/metrics", cp.base)),
+        200,
+    )
+    .await;
 }

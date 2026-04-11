@@ -7,7 +7,6 @@
 mod harness;
 
 use nixfleet_types::release::ReleaseDiff;
-use nixfleet_types::rollout::{OnFailure, RolloutStrategy};
 
 /// R4 — release diff A→B → correct added/removed/changed entries.
 #[tokio::test]
@@ -95,23 +94,8 @@ async fn r4_release_diff_classifies_entries() {
 /// R5 — delete a release that a rollout references → 409.
 #[tokio::test]
 async fn r5_delete_referenced_release_returns_409() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-
-    let release_id =
-        harness::create_release(&cp, &[("web-01", "/nix/store/hash-referenced-web-01")]).await;
-
-    let _rollout = harness::create_rollout_for_tag(
-        &cp,
-        &release_id,
-        "web",
-        RolloutStrategy::AllAtOnce,
-        None,
-        "0",
-        OnFailure::Pause,
-        30,
-    )
-    .await;
+    let (cp, release_id, _rollout_id) =
+        harness::spawn_cp_with_rollout("/nix/store/hash-referenced-web-01").await;
 
     let resp = cp
         .admin

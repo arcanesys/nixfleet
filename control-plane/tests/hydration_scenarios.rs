@@ -54,18 +54,7 @@ async fn f6_cp_restart_mid_rollout_resumes_from_db() {
     harness::tick_once(&cp1).await;
 
     // Stage the first half of the reports on cp1.
-    harness::fake_agent_report(
-        &cp1,
-        "web-01",
-        "/nix/store/f6-web-01",
-        true,
-        "applied",
-        &["web"],
-    )
-    .await;
-    cp1.db
-        .insert_health_report("web-01", "{}", true)
-        .expect("insert_health_report web-01");
+    harness::agent_reports_health(&cp1, "web-01", "/nix/store/f6-web-01", true).await;
 
     // ---- Simulate restart: spawn cp2 against the same on-disk DB. ----
     //
@@ -97,18 +86,7 @@ async fn f6_cp_restart_mid_rollout_resumes_from_db() {
     );
 
     // Complete the rollout on cp2.
-    harness::fake_agent_report(
-        &cp2,
-        "web-02",
-        "/nix/store/f6-web-02",
-        true,
-        "applied",
-        &["web"],
-    )
-    .await;
-    cp2.db
-        .insert_health_report("web-02", "{}", true)
-        .expect("insert_health_report web-02");
+    harness::agent_reports_health(&cp2, "web-02", "/nix/store/f6-web-02", true).await;
 
     harness::tick_once(&cp2).await; // → succeeded
     harness::tick_once(&cp2).await; // → completed

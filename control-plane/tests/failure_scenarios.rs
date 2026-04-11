@@ -1,4 +1,11 @@
-//! F4, F5 — failure-path scenarios.
+//! F4, F5, F-stale-resume, F-paused-cancel — failure-path scenarios.
+//!
+//! All of the scenarios in this file verify what the executor does
+//! when a deploy is unhealthy: generation gate filtering, threshold
+//! breaches, stale-report regression guards, and operator cancel
+//! from Paused. Happy-path transitions (Created → Running → Completed,
+//! Running → Cancelled) live in deploy_scenarios.rs and
+//! route_coverage.rs.
 
 #[path = "harness.rs"]
 mod harness;
@@ -13,22 +20,8 @@ use nixfleet_types::rollout::{OnFailure, RolloutStatus, RolloutStrategy};
 /// the report's `success` flag. This test drives that branch directly.
 #[tokio::test]
 async fn f4_generation_mismatch_counted_as_pending_then_accepted() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-
-    let release_id =
-        harness::create_release(&cp, &[("web-01", "/nix/store/f4-correct")]).await;
-    let rollout_id = harness::create_rollout_for_tag(
-        &cp,
-        &release_id,
-        "web",
-        RolloutStrategy::AllAtOnce,
-        None,
-        "0",
-        OnFailure::Pause,
-        60,
-    )
-    .await;
+    let (cp, _release_id, rollout_id) =
+        harness::spawn_cp_with_rollout("/nix/store/f4-correct").await;
 
     harness::tick_once(&cp).await; // pending → deploying
 
@@ -42,9 +35,7 @@ async fn f4_generation_mismatch_counted_as_pending_then_accepted() {
         &["web"],
     )
     .await;
-    cp.db
-        .insert_health_report("web-01", "{}", true)
-        .unwrap();
+    cp.db.insert_health_report("web-01", "{}", true).unwrap();
 
     harness::tick_once(&cp).await;
 
@@ -62,18 +53,7 @@ async fn f4_generation_mismatch_counted_as_pending_then_accepted() {
     );
 
     // Stage 2: agent re-applies and reports the correct store path.
-    harness::fake_agent_report(
-        &cp,
-        "web-01",
-        "/nix/store/f4-correct",
-        true,
-        "applied correct gen",
-        &["web"],
-    )
-    .await;
-    cp.db
-        .insert_health_report("web-01", "{}", true)
-        .unwrap();
+    harness::agent_reports_health(&cp, "web-01", "/nix/store/f4-correct", true).await;
 
     harness::tick_once(&cp).await; // → succeeded
     harness::tick_once(&cp).await; // → completed
@@ -189,39 +169,15 @@ async fn f5_failure_threshold_30_percent_pauses_on_4_of_10() {
 ///     `started_at`.
 #[tokio::test]
 async fn f_stale_resume_does_not_reflip_on_pre_resume_report() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-    let release_id =
-        harness::create_release(&cp, &[("web-01", "/nix/store/fstale-web-01")]).await;
-    let rollout_id = harness::create_rollout_for_tag(
-        &cp,
-        &release_id,
-        "web",
-        RolloutStrategy::AllAtOnce,
-        None,
-        "0",
-        OnFailure::Pause,
-        60,
-    )
-    .await;
+    let (cp, _release_id, rollout_id) =
+        harness::spawn_cp_with_rollout("/nix/store/fstale-web-01").await;
 
     // Tick once: pending → deploying.
     harness::tick_once(&cp).await;
 
     // Stage 1: agent reports failure on the desired gen → batch fails →
     // rollout pauses (on_failure=Pause).
-    harness::fake_agent_report(
-        &cp,
-        "web-01",
-        "/nix/store/fstale-web-01",
-        false,
-        "boom",
-        &["web"],
-    )
-    .await;
-    cp.db
-        .insert_health_report("web-01", "{\"fail\":true}", false)
-        .unwrap();
+    harness::agent_reports_health(&cp, "web-01", "/nix/store/fstale-web-01", false).await;
     harness::tick_once(&cp).await;
 
     let _ = harness::wait_rollout_status(
@@ -313,18 +269,7 @@ async fn f_stale_resume_does_not_reflip_on_pre_resume_report() {
 
     // Stage 3: now insert a fresh healthy report and tick again. The
     // batch should reach `succeeded` and the rollout should complete.
-    harness::fake_agent_report(
-        &cp,
-        "web-01",
-        "/nix/store/fstale-web-01",
-        true,
-        "ok",
-        &["web"],
-    )
-    .await;
-    cp.db
-        .insert_health_report("web-01", "{}", true)
-        .unwrap();
+    harness::agent_reports_health(&cp, "web-01", "/nix/store/fstale-web-01", true).await;
     // Two ticks: first to flip the batch to `succeeded`, second to
     // promote the rollout to `completed`.
     harness::tick_once(&cp).await;
@@ -337,4 +282,49 @@ async fn f_stale_resume_does_not_reflip_on_pre_resume_report() {
         std::time::Duration::from_secs(2),
     )
     .await;
+}
+
+/// F-paused-cancel — operator can cancel a paused rollout instead of resuming.
+///
+/// The Running → Cancelled path is already covered by route_coverage.rs
+/// (`rollouts_cancel_running_succeeds_and_state_changes`). This test
+/// pins the Paused → Cancelled branch, which only route_coverage's
+/// `rollouts_cancel_already_cancelled_returns_409` touches tangentially
+/// (and only for the second call). Every other executor state
+/// transition (Created → Running, Running → Completed, Cancelled
+/// terminal) is covered by deploy_scenarios.rs + route_coverage.rs,
+/// so no dedicated executor_transition file is needed.
+#[tokio::test]
+async fn f_paused_cancel_transitions_to_cancelled() {
+    let (cp, _, rollout_id) =
+        harness::spawn_cp_with_rollout("/nix/store/p2c-web-01").await;
+
+    // Pause via failure: insert an unhealthy report on the desired gen.
+    harness::tick_once(&cp).await;
+    harness::agent_reports_health(&cp, "web-01", "/nix/store/p2c-web-01", false).await;
+    harness::tick_once(&cp).await;
+    let _ = harness::wait_rollout_status(
+        &cp,
+        &rollout_id,
+        RolloutStatus::Paused,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+
+    // Now cancel the paused rollout.
+    harness::assert_status(
+        cp.admin
+            .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, rollout_id)),
+        200,
+    )
+    .await;
+
+    let detail = harness::wait_rollout_status(
+        &cp,
+        &rollout_id,
+        RolloutStatus::Cancelled,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+    assert_eq!(detail.status, RolloutStatus::Cancelled);
 }

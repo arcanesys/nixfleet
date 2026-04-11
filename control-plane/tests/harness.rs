@@ -307,3 +307,83 @@ pub async fn tick_once(cp: &Cp) {
         .await
         .expect("tick_for_tests");
 }
+
+// =====================================================================
+// High-level convenience helpers
+//
+// The three helpers below compose the lower-level primitives above
+// into the patterns that ~30 scenario tests repeat verbatim. They
+// exist purely to keep the tests readable — each caller saves
+// ~10 lines of fixture setup.
+// =====================================================================
+
+/// Spin up a fresh CP with the canonical "1 machine, 1 release entry,
+/// 1 all-at-once rollout, zero tolerance, pause on failure" fixture.
+/// Returns `(Cp, release_id, rollout_id)`.
+///
+/// Canonical defaults: `machine_id = "web-01"`, `tag = "web"`,
+/// `strategy = AllAtOnce`, `failure_threshold = "0"`,
+/// `on_failure = Pause`, `health_timeout = 60`. The caller supplies
+/// `store_path` so it can be referenced later in `fake_agent_report`
+/// or `insert_health_report` calls that have to match the release
+/// entry (generation gate).
+///
+/// Tests that need a non-canonical strategy, threshold, or multi-
+/// machine fleet still compose the lower-level `register_machine` /
+/// `create_release` / `create_rollout_for_tag` primitives directly.
+pub async fn spawn_cp_with_rollout(store_path: &str) -> (Cp, String, String) {
+    let cp = spawn_cp().await;
+    register_machine(&cp, "web-01", &["web"]).await;
+    let release_id = create_release(&cp, &[("web-01", store_path)]).await;
+    let rollout_id = create_rollout_for_tag(
+        &cp,
+        &release_id,
+        "web",
+        RolloutStrategy::AllAtOnce,
+        None,
+        "0",
+        OnFailure::Pause,
+        60,
+    )
+    .await;
+    (cp, release_id, rollout_id)
+}
+
+/// Paired report: submits both a `fake_agent_report` (visible to the
+/// executor's generation gate + failure_count) AND an
+/// `insert_health_report` (visible to the batch evaluator's health
+/// gate). The executor checks both; almost every failure/recovery
+/// scenario needs both to arrive together.
+///
+/// `healthy = true` → success=true, message="ok", health_results="{}".
+/// `healthy = false` → success=false, message="boom",
+/// health_results="{\"fail\":true}".
+pub async fn agent_reports_health(cp: &Cp, machine_id: &str, store_path: &str, healthy: bool) {
+    let (message, health_body) = if healthy {
+        ("ok", "{}")
+    } else {
+        ("boom", "{\"fail\":true}")
+    };
+    fake_agent_report(cp, machine_id, store_path, healthy, message, &["web"]).await;
+    cp.db
+        .insert_health_report(machine_id, health_body, healthy)
+        .unwrap();
+}
+
+/// Send an HTTP request via `builder` and assert the response status
+/// equals `expected`. Used by `route_coverage.rs` to collapse every
+/// "let resp = ...; .send().await; assert_eq!(resp.status(), N)"
+/// triple into a single line:
+///
+/// ```ignore
+/// assert_status(cp.admin.get(format!("{}/...", cp.base)), 200).await;
+/// ```
+pub async fn assert_status(builder: reqwest::RequestBuilder, expected: u16) {
+    let resp = builder.send().await.expect("request");
+    assert_eq!(
+        resp.status().as_u16(),
+        expected,
+        "unexpected status: body = {}",
+        resp.text().await.unwrap_or_default()
+    );
+}

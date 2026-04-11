@@ -60,12 +60,7 @@ async fn d2_staged_strategy_completes_sequentially() {
         // Report each machine healthy on the desired generation.
         for m in &machine_ids {
             let path = format!("/nix/store/d2-{m}");
-            harness::fake_agent_report(&cp, m, &path, true, "applied", &["web"]).await;
-
-            // Also write a passing health report so evaluate_batch clears it.
-            cp.db
-                .insert_health_report(m, "{\"ok\":true}", true)
-                .unwrap();
+            harness::agent_reports_health(&cp, m, &path, true).await;
         }
 
         harness::tick_once(&cp).await; // deploying → succeeded
