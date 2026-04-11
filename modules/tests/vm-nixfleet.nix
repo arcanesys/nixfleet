@@ -30,6 +30,7 @@
     ...
   }: let
     helpers = import ./_lib/helpers.nix {inherit lib;};
+    inherit (helpers) testConstants;
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
@@ -83,8 +84,14 @@
           testScript = ''
             import json
 
-            TEST_KEY = "test-admin-key"
-            KEY_HASH = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9"
+            # Pull the API key + its SHA-256 hash from the shared
+            # testConstants in _lib/helpers.nix so the string lives in
+            # exactly one place across every VM test. This test
+            # deliberately skips the full `testPrelude` helper because
+            # testPrelude bakes in an mTLS CURL binding, and this test
+            # is the plaintext-HTTP smoke test (see the file header).
+            TEST_KEY = "${testConstants.apiKey}"
+            KEY_HASH = "${testConstants.apiKeyHash}"
             AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
 
             # --- Phase 1: Start CP, seed admin API key ---

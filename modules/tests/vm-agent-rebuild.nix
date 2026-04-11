@@ -13,6 +13,13 @@
 # cycle). The "pre-seeded path + up-to-date report" case that used to live
 # here was dropped as trivially duplicated by vm-nixfleet and vm-fleet-*.
 #
+# Uses the shared _lib/helpers.nix + _lib/tls-certs.nix infrastructure
+# (same as the _vm-fleet-scenarios/*.nix files) instead of inlining its
+# own openssl cert generation and CP/agent service wiring. The only
+# scenario-specific override is `dryRun = false` on mkAgentNode — every
+# other test (including every _vm-fleet-scenarios subtest) runs dryRun
+# because they only need to prove the reporting cycle.
+#
 # Run: nix build .#checks.x86_64-linux.vm-agent-rebuild --no-link
 {inputs, ...}: {
   perSystem = {
@@ -22,6 +29,7 @@
     ...
   }: let
     helpers = import ./_lib/helpers.nix {inherit lib;};
+    mkTlsCerts = import ./_lib/tls-certs.nix {inherit pkgs lib;};
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
@@ -30,126 +38,43 @@
 
     defaultTestSpec = helpers.defaultTestSpec;
 
-    # Build-time TLS certs: fleet CA + CP server cert + agent client cert.
-    testCerts =
-      pkgs.runCommand "nixfleet-rebuild-test-certs" {
-        nativeBuildInputs = [pkgs.openssl];
-      } ''
-        mkdir -p $out
+    mkCpNode = args:
+      helpers.mkCpNode ({inherit mkTestNode defaultTestSpec;} // args);
+    mkAgentNode = args:
+      helpers.mkAgentNode ({inherit mkTestNode defaultTestSpec;} // args);
 
-        # Fleet CA
-        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-          -keyout $out/ca-key.pem -out $out/ca.pem -days 365 -nodes \
-          -subj '/CN=nixfleet-rebuild-test-ca'
-
-        # CP server cert
-        openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-          -keyout $out/cp-key.pem -out $out/cp-csr.pem -nodes \
-          -subj '/CN=cp' \
-          -addext 'subjectAltName=DNS:cp,DNS:localhost'
-        openssl x509 -req -in $out/cp-csr.pem -CA $out/ca.pem -CAkey $out/ca-key.pem \
-          -CAcreateserial -out $out/cp-cert.pem -days 365 \
-          -copy_extensions copyall
-
-        # Agent client cert
-        openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-          -keyout $out/agent-key.pem -out $out/agent-csr.pem -nodes \
-          -subj '/CN=agent'
-        openssl x509 -req -in $out/agent-csr.pem -CA $out/ca.pem -CAkey $out/ca-key.pem \
-          -CAcreateserial -out $out/agent-cert.pem -days 365
-
-        rm -f $out/*.csr.pem $out/*.srl
-      '';
-
-    # CP node: control plane with TLS
-    cpNode = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "cp";
-        };
-      extraModules = [
-        ({pkgs, ...}: {
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/cp-cert.pem".source = "${testCerts}/cp-cert.pem";
-          environment.etc."nixfleet-tls/cp-key.pem".source = "${testCerts}/cp-key.pem";
-
-          services.nixfleet-control-plane = {
-            enable = true;
-            openFirewall = true;
-            tls = {
-              cert = "/etc/nixfleet-tls/cp-cert.pem";
-              key = "/etc/nixfleet-tls/cp-key.pem";
-              clientCa = "/etc/nixfleet-tls/ca.pem";
-            };
-          };
-
-          environment.systemPackages = [pkgs.sqlite pkgs.python3];
-        })
-      ];
-    };
-
-    # Agent node: non-dry-run agent with mTLS
-    agentNode = mkTestNode {
-      hostSpecValues =
-        defaultTestSpec
-        // {
-          hostName = "agent";
-        };
-      extraModules = [
-        ({pkgs, ...}: {
-          security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-
-          environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-          environment.etc."nixfleet-tls/agent-cert.pem".source = "${testCerts}/agent-cert.pem";
-          environment.etc."nixfleet-tls/agent-key.pem".source = "${testCerts}/agent-key.pem";
-
-          services.nixfleet-agent = {
-            enable = true;
-            controlPlaneUrl = "https://cp:8080";
-            machineId = "agent";
-            pollInterval = 2;
-            healthInterval = 5;
-            dryRun = false;
-            tags = ["test"];
-            tls = {
-              clientCert = "/etc/nixfleet-tls/agent-cert.pem";
-              clientKey = "/etc/nixfleet-tls/agent-key.pem";
-            };
-          };
-
-          environment.systemPackages = [pkgs.python3];
-        })
-      ];
-    };
+    # CP needs an "agent"-CN client cert to make admin HTTP calls back
+    # into itself, and the agent node needs its own matching cert.
+    testCerts = mkTlsCerts {hostnames = ["agent"];};
   in
     lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
         vm-agent-rebuild = pkgs.testers.nixosTest {
           name = "vm-agent-rebuild";
 
-          nodes.cp = cpNode;
-          nodes.agent = agentNode;
+          nodes.cp = mkCpNode {inherit testCerts;};
+
+          # This is the one place in the entire test suite where we
+          # want dryRun = false — the test's load-bearing assertion
+          # depends on the real fetch path being exercised.
+          nodes.agent = mkAgentNode {
+            inherit testCerts;
+            hostName = "agent";
+            tags = ["test"];
+            dryRun = false;
+          };
 
           testScript = ''
             import json
 
-            TEST_KEY = "test-admin-key"
-            KEY_HASH = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9"
-            AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
-            CURL = "curl -sf --cacert /etc/nixfleet-tls/ca.pem --cert /etc/nixfleet-tls/cp-cert.pem --key /etc/nixfleet-tls/cp-key.pem"
-            API = "https://localhost:8080"
+            ${helpers.testPrelude {}}
 
             # --- Phase 1: Start CP, seed admin API key, register agent ---
             cp.start()
             cp.wait_for_unit("nixfleet-control-plane.service")
             cp.wait_for_open_port(8080)
 
-            cp.succeed(
-                f"sqlite3 /var/lib/nixfleet-cp/state.db "
-                f"\"INSERT INTO api_keys (key_hash, name, role) "
-                f"VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
-            )
+            seed_admin_key(cp)
 
             cp.succeed(
                 f"{CURL} -X POST {API}/api/v1/machines/agent/register "
