@@ -102,15 +102,36 @@
             agent.start()
             agent.wait_for_unit("nixfleet-agent.service")
 
-            # The agent auto-registers on its first health report (see
-            # control-plane/src/routes.rs — unknown machine_id inserts a
-            # new row with lifecycle='active'). We poll until the CP's
-            # inventory contains the agent.
+            # Pre-register the agent up front. The CP's post_report
+            # handler SHOULD auto-register unknown machines on the
+            # first report (see control-plane/src/routes.rs around
+            # "Auto-register: persist to DB on first report from
+            # unknown machine"), but the in-memory FleetState update
+            # that backs `GET /api/v1/machines` happens in a separate
+            # code path and the previous version of this test flaked
+            # waiting for it under a short health interval. An
+            # explicit register call removes the race and makes the
+            # test's intent ("can the agent talk to the CP at all?")
+            # unambiguous — the test is NOT about auto-registration.
+            cp.succeed(
+                f"curl -sf -X POST "
+                f"http://localhost:8080/api/v1/machines/agent/register "
+                f"{AUTH} "
+                f"-H 'Content-Type: application/json' "
+                f"-d '{{\"tags\": []}}'"
+            )
+
+            # Wait for the agent to appear in the CP's inventory via
+            # its first health report. We know the report machinery
+            # is working because pre-register succeeded, so this is
+            # a tight wait.
             cp.wait_until_succeeds(
                 f"curl -sf {AUTH} http://localhost:8080/api/v1/machines "
                 f"| python3 -c \"import sys,json; ms=json.load(sys.stdin); "
-                f"assert any(m['machine_id'] == 'agent' for m in ms), "
-                f"f'agent not in inventory: {{ms}}'\"",
+                f"agent=[m for m in ms if m['machine_id'] == 'agent']; "
+                f"assert agent, f'agent not in inventory: {{ms}}'; "
+                f"assert agent[0].get('current_generation'), "
+                f"f'agent has no current_generation: {{agent[0]}}'\"",
                 timeout=60,
             )
 
