@@ -240,7 +240,19 @@ async fn evaluate_batch(
                     unhealthy_count += 1;
                 }
             } else if let Some(r) = report {
-                if r.success {
+                // Fallback to the most recent general report. MUST filter
+                // by started_at — otherwise on resume, a stale unhealthy
+                // report from before the failure was cleared would flip
+                // the batch back to failed immediately, before the agent
+                // has a chance to send a fresh healthy report. This
+                // mirrors the `received_at >= started_at` filter in the
+                // `!on_desired_gen` branch above.
+                if r.received_at.as_str() < started_at {
+                    // Stale report from before this batch's started_at
+                    // (common right after resume). Treat as pending —
+                    // give the agent a chance to send a fresh one.
+                    pending_count += 1;
+                } else if r.success {
                     // On desired gen and success, but no health report yet
                     pending_count += 1;
                 } else {
