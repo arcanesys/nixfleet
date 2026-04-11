@@ -89,7 +89,7 @@ in
 
       bootstrap_stdout = operator.succeed(
           "bash -lc '"
-          "export NIXFLEET_CP_URL=https://cp:8080 && "
+          "export NIXFLEET_CONTROL_PLANE_URL=https://cp:8080 && "
           "export NIXFLEET_CA_CERT=/etc/nixfleet-tls/ca.pem && "
           "export NIXFLEET_CLIENT_CERT=/etc/nixfleet-tls/operator-cert.pem && "
           "export NIXFLEET_CLIENT_KEY=/etc/nixfleet-tls/operator-key.pem && "
@@ -162,7 +162,7 @@ in
       # The operator's `nixfleet machines list` sees the same 2 machines.
       machines_cli = operator.succeed(
           "bash -lc '"
-          "export NIXFLEET_CP_URL=https://cp:8080 && "
+          "export NIXFLEET_CONTROL_PLANE_URL=https://cp:8080 && "
           "export NIXFLEET_CA_CERT=/etc/nixfleet-tls/ca.pem && "
           "export NIXFLEET_CLIENT_CERT=/etc/nixfleet-tls/operator-cert.pem && "
           "export NIXFLEET_CLIENT_KEY=/etc/nixfleet-tls/operator-key.pem && "
@@ -257,7 +257,7 @@ in
       # ------------------------------------------------------------------
       operator.fail(
           "bash -lc '"
-          "export NIXFLEET_CP_URL=https://cp:8080 && "
+          "export NIXFLEET_CONTROL_PLANE_URL=https://cp:8080 && "
           "export NIXFLEET_CA_CERT=/etc/nixfleet-tls/ca.pem && "
           "export NIXFLEET_CLIENT_CERT=/etc/nixfleet-tls/operator-cert.pem && "
           "export NIXFLEET_CLIENT_KEY=/etc/nixfleet-tls/operator-key.pem && "

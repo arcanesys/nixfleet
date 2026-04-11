@@ -90,7 +90,7 @@ Invalid transitions (e.g., `decommissioned` to `active`, or `active` to `pending
 Use the control plane API directly:
 
 ```sh
-curl -X PATCH "$NIXFLEET_CP_URL/api/v1/machines/web-01/lifecycle" \
+curl -X PATCH "$NIXFLEET_CONTROL_PLANE_URL/api/v1/machines/web-01/lifecycle" \
   -H "Content-Type: application/json" \
   -d '{"lifecycle": "maintenance"}'
 ```

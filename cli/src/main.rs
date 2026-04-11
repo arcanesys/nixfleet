@@ -19,28 +19,23 @@ struct Cli {
     command: Commands,
 
     /// Control plane URL
-    #[arg(
-        long,
-        global = true,
-        default_value = "http://localhost:8080",
-        env = "NIXFLEET_CP_URL"
-    )]
+    #[arg(long, global = true, default_value = "http://localhost:8080")]
     control_plane_url: String,
 
     /// API key for control plane authentication
-    #[arg(long, global = true, default_value = "", env = "NIXFLEET_API_KEY")]
+    #[arg(long, global = true, default_value = "")]
     api_key: String,
 
     /// Client certificate for mTLS authentication
-    #[arg(long, global = true, default_value = "", env = "NIXFLEET_CLIENT_CERT")]
+    #[arg(long, global = true, default_value = "")]
     client_cert: String,
 
     /// Client key for mTLS authentication
-    #[arg(long, global = true, default_value = "", env = "NIXFLEET_CLIENT_KEY")]
+    #[arg(long, global = true, default_value = "")]
     client_key: String,
 
     /// CA certificate for TLS verification (optional, uses system trust store if omitted)
-    #[arg(long, global = true, default_value = "", env = "NIXFLEET_CA_CERT")]
+    #[arg(long, global = true, default_value = "")]
     ca_cert: String,
 }
 

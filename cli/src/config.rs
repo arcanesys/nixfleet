@@ -242,8 +242,14 @@ pub fn write_config_file(
     Ok(())
 }
 
-/// Resolve config from all sources: config file → credentials → env vars → CLI args.
-/// CLI args with default values (empty strings, "http://localhost:8080") are treated as unset.
+/// Resolve config from all sources (low precedence → high):
+///   1. config file (`.nixfleet.toml`)
+///   2. credentials file (`~/.config/nixfleet/credentials.toml`)
+///   3. environment variables (`NIXFLEET_*`)
+///   4. CLI flags
+///
+/// CLI args with default values (empty strings, "http://localhost:8080") are
+/// treated as unset.
 // CRUD function arguments map directly to table columns; refactoring is busywork
 #[allow(clippy::too_many_arguments)]
 pub fn resolve(
@@ -291,7 +297,42 @@ pub fn resolve(
         }
     }
 
-    // Layer 3: CLI args (override if non-default)
+    // Layer 3: environment variables (override credentials, lose to CLI).
+    // Each var is treated as unset if absent or empty so an exported but
+    // empty NIXFLEET_FOO does not silently clear a credentials value.
+    if let Ok(v) = std::env::var("NIXFLEET_CONTROL_PLANE_URL") {
+        if !v.is_empty() {
+            resolved.control_plane_url = Some(v.clone());
+            // Re-check credentials for the new URL.
+            if let Some(entry) = credentials.entries.get(&v) {
+                if entry.api_key.is_some() {
+                    resolved.api_key = entry.api_key.clone();
+                }
+            }
+        }
+    }
+    if let Ok(v) = std::env::var("NIXFLEET_API_KEY") {
+        if !v.is_empty() {
+            resolved.api_key = Some(v);
+        }
+    }
+    if let Ok(v) = std::env::var("NIXFLEET_CA_CERT") {
+        if !v.is_empty() {
+            resolved.ca_cert = Some(v);
+        }
+    }
+    if let Ok(v) = std::env::var("NIXFLEET_CLIENT_CERT") {
+        if !v.is_empty() {
+            resolved.client_cert = Some(v);
+        }
+    }
+    if let Ok(v) = std::env::var("NIXFLEET_CLIENT_KEY") {
+        if !v.is_empty() {
+            resolved.client_key = Some(v);
+        }
+    }
+
+    // Layer 4: CLI args (override if non-default)
     if cli_cp_url != "http://localhost:8080" && !cli_cp_url.is_empty() {
         resolved.control_plane_url = Some(cli_cp_url.to_string());
         // Re-check credentials for the new URL

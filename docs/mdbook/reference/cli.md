@@ -6,7 +6,7 @@ Flat reference for all `nixfleet` CLI commands and flags.
 
 | Flag | Env var | Default | Description |
 |------|---------|---------|-------------|
-| `--control-plane-url` | `NIXFLEET_CP_URL` | `http://localhost:8080` | Control plane URL |
+| `--control-plane-url` | `NIXFLEET_CONTROL_PLANE_URL` | `http://localhost:8080` | Control plane URL |
 | `--api-key` | `NIXFLEET_API_KEY` | `""` | API key for control plane authentication |
 | `--client-cert` | `NIXFLEET_CLIENT_CERT` | `""` | Client certificate for mTLS authentication |
 | `--client-key` | `NIXFLEET_CLIENT_KEY` | `""` | Client key for mTLS authentication |
@@ -16,11 +16,12 @@ Logging is controlled via `RUST_LOG` (default: `nixfleet=info`).
 
 ### Configuration sources
 
-The CLI reads connection settings from three sources, in priority order (highest wins):
+The CLI reads connection settings from four layers, in priority order (highest wins):
 
-1. **CLI flags** / **environment variables** (shown above)
-2. **`~/.config/nixfleet/credentials.toml`** — user-level API keys, keyed by CP URL (auto-saved by `nixfleet bootstrap`)
-3. **`.nixfleet.toml`** — repo-level config, discovered by walking up from cwd
+1. **CLI flags** (`--control-plane-url`, `--api-key`, …)
+2. **Environment variables** (`NIXFLEET_*` shown above)
+3. **`~/.config/nixfleet/credentials.toml`** — user-level API keys, keyed by CP URL (auto-saved by `nixfleet bootstrap`)
+4. **`.nixfleet.toml`** — repo-level config, discovered by walking up from cwd
 
 This means the same CLI commands run with no flags from any fleet repo, inheriting the repo's connection settings and the user's bootstrapped credentials. See [`.nixfleet.toml` format](#nixfleet-toml-format) below.
 
