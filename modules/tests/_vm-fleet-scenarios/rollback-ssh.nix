@@ -236,12 +236,12 @@ in
 
       # --- Phase 5: `nixfleet rollback --host target --ssh --generation <G1>` ---
       operator.succeed(
-          f"bash -lc '"
-          f"nixfleet rollback "
-          f"--host target "
-          f"--ssh "
-          f"--generation ${stubG1Path}"
-          f"'"
+          "bash -lc '"
+          "nixfleet rollback "
+          "--host target "
+          "--ssh "
+          "--generation ${stubG1Path}"
+          "'"
       )
 
       # --- Phase 6: Positive assertion on the target ---
