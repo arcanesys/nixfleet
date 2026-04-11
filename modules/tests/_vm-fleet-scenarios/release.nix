@@ -124,13 +124,24 @@ in
           # Harmonia binary cache server (serves from local Nix store).
           # Generate the signing key on first boot; harmonia reads the file
           # at service start.
+          #
+          # NOTE: the upstream services.harmonia.cache module runs harmonia
+          # as its own system user (`harmonia`). The signing key file must
+          # be readable by that user. We create the holding directory via
+          # tmpfiles with harmonia ownership, generate the key from the
+          # activation script (running as root), then chown/chmod so the
+          # harmonia process can read it. Directory is 0750 so traversal
+          # works for the owner group.
           systemd.tmpfiles.rules = [
-            "d /var/lib/nixfleet-cache 0700 root root -"
+            "d /var/lib/nixfleet-cache 0750 harmonia harmonia -"
           ];
           system.activationScripts.nixfleetCacheKey = ''
             if [ ! -f /var/lib/nixfleet-cache/signing.secret ]; then
               ${pkgs.nix}/bin/nix-store --generate-binary-cache-key \
                 nixfleet-test-cache \
+                /var/lib/nixfleet-cache/signing.secret \
+                /var/lib/nixfleet-cache/signing.public
+              chown harmonia:harmonia \
                 /var/lib/nixfleet-cache/signing.secret \
                 /var/lib/nixfleet-cache/signing.public
               chmod 0400 /var/lib/nixfleet-cache/signing.secret

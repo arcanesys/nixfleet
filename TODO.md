@@ -35,6 +35,10 @@ Out of Phase 2's original contingent scenarios (C1–C3):
 
 - [ ] **CN validation on mTLS.** Currently any cert signed by the fleet CA is accepted for any agent identity; the agent identifies itself via URL path (`/api/v1/machines/{id}/report`). Add a check that the cert CN matches the `{id}` in the path for agent-facing mTLS routes.
 
+### Module ergonomics
+
+- [ ] **`services.nixfleet-cache-server.signingKeyFile` leaks the harmonia user detail.** The option takes a path but does not document that the upstream `services.harmonia.cache` module runs as the `harmonia` system user, so the file must be readable by that user (not root-only). Every operator writing `signingKeyFile = "/run/secrets/cache-key"` will hit "harmonia cannot read file" on first start until they discover the permission requirement. Options: (a) document the permission requirement in the option description; (b) add a `generateIfMissing = true` option that creates the key under `/var/lib/harmonia/` with the correct ownership on first boot; (c) wrap the upstream module to automatically `chown harmonia` the configured path via a preStart hook. Surfaced by Phase 3 `vm-fleet-release` VM test.
+
 ## Infrastructure / dependencies
 
 - [ ] **#22: Revert `attic` input to upstream** when https://github.com/zhaofengli/attic/pull/300 is merged. Currently pinned to a fork.
