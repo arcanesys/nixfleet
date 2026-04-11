@@ -251,34 +251,54 @@ in
       )
 
       # --- Phase 1: Start all nodes ---
+      # Each wait has aggressive diagnostic output so a failure in any
+      # step shows up in the nix build log instead of an opaque hang.
+      print("### starting cp")
       cp.start()
+      print("### starting cache")
       cache.start()
+      print("### starting builder")
       builder.start()
+      print("### starting agent")
       agent.start()
 
-      cp.wait_for_unit("nixfleet-control-plane.service")
+      print("### waiting for cp:nixfleet-control-plane")
+      try:
+          cp.wait_until_succeeds(
+              "systemctl is-active nixfleet-control-plane.service", timeout=120
+          )
+      except Exception:
+          print("=== cp:nixfleet-control-plane status ===")
+          print(cp.execute("systemctl status nixfleet-control-plane.service --no-pager")[1])
+          print("=== cp:nixfleet-control-plane journal ===")
+          print(cp.execute("journalctl -u nixfleet-control-plane.service --no-pager -n 80")[1])
+          raise
       cp.wait_for_open_port(8080)
+      print("### cp:8080 open")
+
+      print("### waiting for cache:sshd")
       cache.wait_for_unit("sshd.service")
       cache.wait_for_open_port(22)
+      print("### cache:22 open")
 
       # Bounded wait for harmonia with a diagnostic dump on failure — the
       # upstream module uses systemd LoadCredential= and failures there
       # (exit 243) are silent to `wait_for_unit` which blocks forever.
+      print("### waiting for cache:harmonia")
       try:
           cache.wait_until_succeeds(
-              "systemctl is-active harmonia.service", timeout=90
+              "systemctl is-active harmonia.service", timeout=120
           )
       except Exception:
-          status = cache.execute("systemctl status harmonia.service --no-pager")[1]
-          journal = cache.execute(
-              "journalctl -u harmonia.service --no-pager -n 80"
-          )[1]
           print("=== harmonia status ===")
-          print(status)
-          print("=== harmonia journal (last 80 lines) ===")
-          print(journal)
+          print(cache.execute("systemctl status harmonia.service --no-pager")[1])
+          print("=== harmonia journal (last 120 lines) ===")
+          print(cache.execute("journalctl -u harmonia.service --no-pager -n 120")[1])
+          print("=== cache nix.conf ===")
+          print(cache.execute("cat /etc/nix/nix.conf")[1])
           raise
       cache.wait_for_open_port(5000)
+      print("### cache:5000 open — phase 1 complete")
 
       # Seed the admin API key on the CP via direct SQLite insert.
       cp.succeed(

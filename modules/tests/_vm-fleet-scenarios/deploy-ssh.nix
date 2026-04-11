@@ -26,11 +26,9 @@
   lib,
   mkTestNode,
   defaultTestSpec,
-  mkTlsCerts,
 }: let
   # Certs are unused by deploy-ssh itself (no CP, no mTLS), but mkTestNode
   # does not care and we keep the helper symmetric with the other subtests.
-
   # A minimal "system toplevel" derivation with a real `bin/switch-to-configuration`
   # script. The script writes a marker file so the test can assert the switch
   # step actually ran on the target (proving nix-copy-closure + ssh-switch
@@ -163,8 +161,12 @@ in
       target.wait_for_open_port(22)
       operator.wait_for_unit("multi-user.target")
 
-      # Sanity: the stub store path should NOT exist on the target yet.
-      target.fail("test -e ${stubPath}")
+      # Sanity: the stub's switch marker must not exist before the deploy.
+      # (We cannot usefully assert the stub STORE PATH is absent because
+      # nixosTest mounts the host Nix store read-only on every VM over
+      # 9p, so every /nix/store path referenced by any node is visible
+      # everywhere. The real deploy proof is that switch-to-configuration
+      # was invoked on the target, which we assert via the marker file.)
       target.fail("test -e /tmp/stub-switch-called")
 
       # --- Phase 2: Prepare SSH client state on operator ---
