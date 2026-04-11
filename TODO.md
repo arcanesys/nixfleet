@@ -33,6 +33,15 @@ Out of Phase 2's original contingent scenarios (C1–C3):
 
 ## Phase 4 — checklist coverage
 
+### Rollout semantics inconsistency
+
+- [ ] **`failure_threshold` interpretation is inconsistent between executor code and CLI help.** `control-plane/src/rollout/executor.rs::evaluate_batch` uses `unhealthy_count < threshold { succeed } else { fail }` (line ~311), meaning "threshold N = batch fails if N or more machines are unhealthy". The CLI help text in `cli/src/main.rs:87` says `/// Maximum failures before pausing/reverting`, which implies "allow up to N failures" (i.e., `unhealthy_count <= threshold`). Under the current code, `threshold="0"` is pathological — it can NEVER succeed because `0 < 0` is false regardless of health status. Existing tests use both conventions:
+  - `vm-fleet.nix` (web rollout), `revert.nix`, `bootstrap.nix`, `auth_scenarios.rs`: `threshold="1"` with semantic "any single failure fails the batch" (matches current `<` code).
+  - `apply-failure.nix` F1 tried `threshold="0"` with semantic "zero tolerance" — broken under current code, workaround was to switch to `"1"`.
+  - `failure_scenarios.rs::f5_failure_threshold_30_percent_pauses_on_4_of_10`: comment says "Threshold = ceil(10 * 0.30) = 3. 4 >= 3 → fail" — author's mental model was `>=`, which matches current code.
+
+  Decide one semantic, fix the executor (or the help text) to match, and update the tests consistently. The most operator-intuitive interpretation is probably the `<=` one ("failure_threshold=N means allow up to N failures"), in which case the executor should change `<` to `<=` and any test that depends on the current `<` semantics (revert, vm-fleet web rollout) should decrement its threshold by 1.
+
 ### CLI gaps surfaced during Phase 2 verification
 
 - [ ] **Env-var precedence in CLI `config::resolve`** — `NIXFLEET_CONTROL_PLANE_URL`, `NIXFLEET_API_KEY`, `NIXFLEET_CA_CERT`, `NIXFLEET_CLIENT_CERT`, `NIXFLEET_CLIENT_KEY` are documented in CLAUDE.md but not enforced in `resolve`. Phase 3 I2 left `i2_env_var_precedence_deferred` as `#[ignore]` pending a Phase 4 fix. Wire env-var layer between credentials and CLI args.

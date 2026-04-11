@@ -200,10 +200,22 @@ in
       assert release_id.startswith("rel-"), \
           f"expected rel- prefix, got {release_id}"
 
+      # NOTE: failure_threshold="1" (not "0"). The current executor uses
+      # `unhealthy_count < threshold` for the success check, which makes
+      # threshold="0" pathological — the condition `0 < 0` is always
+      # false so a threshold="0" rollout can NEVER succeed regardless
+      # of how healthy the fleet is. Every other test in the suite
+      # (vm-fleet.nix, revert.nix, bootstrap.nix) uses threshold="1"
+      # with the convention "1 unhealthy machine fails the batch". We
+      # follow the same convention here so Phase 9's resume-to-completed
+      # path is reachable. The semantic inconsistency between
+      # `unhealthy_count < threshold` (current code) and the CLI help
+      # text "Maximum failures before pausing/reverting" (which
+      # implies `<=`) is tracked as a Phase 4 followup.
       rollout_body = json.dumps({
           "release_id": release_id,
           "strategy": "all_at_once",
-          "failure_threshold": "0",
+          "failure_threshold": "1",
           "on_failure": "pause",
           "health_timeout": 30,
           "target": {"tags": ["web"]},
