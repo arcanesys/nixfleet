@@ -336,13 +336,23 @@ in
       assert which_nix != "/run/current-system/sw/bin/nix", \
           f"shim not prepended to PATH, got {which_nix!r}"
 
-      # Pre-flight smoke test: make sure `nix copy --to ssh://root@cache`
-      # actually works before invoking the CLI end-to-end. The shim
-      # delegates `nix copy` to /run/current-system/sw/bin/nix, and that
-      # invokes ssh under the hood. If ssh auth/keys/known_hosts are
-      # misconfigured we want to see a clear error here, not a silent
-      # hang inside cli::release::create.
-      print("### smoke: ssh root@cache true")
+      # Pre-flight smoke tests — isolate which subprocess is broken
+      # before invoking the CLI end-to-end. The previous run showed
+      # nix copy exiting 124 with EMPTY captured output and NO new
+      # ssh sessions recorded in the cache journal, which means nix
+      # copy hung CLIENT-SIDE before even attempting the SSH leg.
+      # Diagnose with a chain of ever-more-specific checks.
+
+      print("### preflight: nix --version")
+      print(builder.succeed("/run/current-system/sw/bin/nix --version"))
+
+      print("### preflight: local store sees ${web01Closure}")
+      print(builder.succeed(
+          "/run/current-system/sw/bin/nix-store -q --references "
+          + "${web01Closure}"
+      ))
+
+      print("### smoke: ssh -o BatchMode=yes root@cache true")
       rc, out = builder.execute(
           "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "
           "-o ConnectTimeout=10 root@cache true",
@@ -352,22 +362,50 @@ in
           print("=== ssh smoke failed ===")
           print(out)
           raise Exception(f"ssh root@cache true returned {rc}")
-      print("### smoke: nix copy --to ssh://root@cache <web01Closure>")
-      # nix copy over SSH performs a full store protocol handshake via
-      # `nix-daemon --stdio` on the remote, which is CPU/I-O heavy on a
-      # shared-host VM. The 60s we tried first was too tight — 300s
-      # gives enough headroom on a busy nixosTest host.
-      rc, out = builder.execute(
-          "/run/current-system/sw/bin/nix copy --to ssh://root@cache "
-          + "${web01Closure} 2>&1",
+
+      # Simpler than `nix copy`: just ask the remote store if it's
+      # reachable. If THIS hangs, nix's ssh-store backend is broken
+      # on the builder. If it succeeds but copy hangs, the issue is
+      # somewhere deeper in the copy path.
+      print("### smoke: nix store ping --store ssh://root@cache")
+      builder.succeed(
+          "timeout 60 /run/current-system/sw/bin/nix store ping "
+          "--store ssh://root@cache "
+          "> /tmp/nix-ping.log 2>&1 || true"
+      )
+      print(builder.succeed("cat /tmp/nix-ping.log"))
+      ping_rc = int(builder.succeed(
+          "timeout 60 /run/current-system/sw/bin/nix store ping "
+          "--store ssh://root@cache >/dev/null 2>&1; echo $?"
+      ).strip())
+      if ping_rc != 0:
+          raise Exception(f"nix store ping returned {ping_rc}")
+
+      # Now the real nix-copy smoke. Run with -vvv and redirect to a
+      # file so buffered output survives a SIGKILL from timeout.
+      # `timeout 240` sends SIGTERM at 240s (graceful), SIGKILL 5s
+      # later if still running; the outer Python timeout gives us
+      # 300s total to tolerate either.
+      print("### smoke: nix copy -vvv --to ssh://root@cache <web01Closure>")
+      rc, _ = builder.execute(
+          "timeout --kill-after=5 240 "
+          "/run/current-system/sw/bin/nix copy -vvv "
+          "--to ssh://root@cache "
+          "${web01Closure} > /tmp/nix-copy.log 2>&1; "
+          "echo EXIT=$? >> /tmp/nix-copy.log",
           timeout=300,
       )
-      if rc != 0:
-          print("=== nix copy smoke failed ===")
-          print(out)
-          raise Exception(f"nix copy returned {rc}")
+      print("=== nix-copy.log ===")
+      print(builder.succeed("cat /tmp/nix-copy.log"))
+      print("====================")
+      copy_exit = builder.succeed(
+          "grep '^EXIT=' /tmp/nix-copy.log | tail -1"
+      ).strip()
+      if copy_exit != "EXIT=0":
+          raise Exception(
+              f"nix copy smoke failed ({copy_exit}) — see log above"
+          )
       print("### smoke tests passed")
-      print(out)
 
       # --- Phase 2: R1 — nixfleet release create --push-to ssh://root@cache ---
       # The real cli::release::create runs; the shim returns canned
