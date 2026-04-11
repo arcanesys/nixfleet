@@ -7,7 +7,7 @@
 Instead, use one of these methods:
 
 1. **GitHub Security Advisory** (preferred): Go to the [Security tab](https://github.com/your-org/nixfleet/security/advisories/new) and click "Report a vulnerability"
-2. **Email:** security@your-org (replace with actual security contact before launch)
+2. **Email:** Open a private security advisory on GitHub (see above)
 
 Include:
 - Description of the vulnerability
@@ -19,8 +19,8 @@ Include:
 
 The control plane separates agent-facing routes from admin routes:
 
-- **Agent routes** (`/api/v1/machines/...`): authenticated via mTLS. Agents present a client certificate. No API key required or accepted.
-- **Admin routes** (`/api/v1/admin/...`): authenticated via API key. Used by operators and the CLI. mTLS is not required.
+- **Agent routes** (`/api/v1/machines/{id}/desired-generation`, `/api/v1/machines/{id}/report`): authenticated via mTLS client certificate. No API key required.
+- **Admin routes** (all other `/api/v1/...` endpoints): authenticated via API key (Bearer token). When `--client-ca` is set, admin clients also require a valid client certificate.
 
 This split ensures API key rotation does not affect deployed agents, and machine credentials cannot reach admin endpoints.
 

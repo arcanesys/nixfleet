@@ -79,7 +79,7 @@ This creates three batches:
 After each batch deploys, the control plane waits for agents to report health. The gate evaluates based on two parameters:
 
 - **`--health-timeout`** (default: `300` seconds) — Maximum time to wait for health reports after a batch deploys. Machines that do not report within this window are marked as timed out. Set this higher than `pollInterval` so agents have time to notice the deploy (or rely on `poll_hint` to react within 5s).
-- **`--failure-threshold`** (default: `1`) — Maximum number of unhealthy/timed-out machines before triggering the failure action. Can be absolute (`"3"`) or a percentage of the batch (`"30%"`).
+- **`--failure-threshold`** (default: `0`) — Maximum number of unhealthy/timed-out machines before triggering the failure action. `0` means zero tolerance — any single failure pauses the rollout. Can be absolute (`"3"`) or a percentage of the batch (`"30%"`).
 
 When the threshold is exceeded:
 
@@ -88,25 +88,7 @@ When the threshold is exceeded:
 
 ## CLI flags
 
-Key flags for `nixfleet deploy` in rollout mode:
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--release <ID>` | — | Release to deploy (required unless using `--push-to` / `--copy`) |
-| `--push-to <URL>` | — | Implicitly build + push + register a release before deploying. URL accepts `ssh://`, `s3://`, or any Nix binary cache. |
-| `--copy` | `false` | Implicitly build + SSH-copy to each target + register a release (no binary cache needed) |
-| `--tag <TAG>` | — | Target machines by tag (repeatable) |
-| `--hosts <PATTERN>` | `*` | Target machines by name pattern (alternative to `--tag`) |
-| `--strategy <STRATEGY>` | `all-at-once` | Rollout strategy: `canary`, `staged`, `all-at-once` |
-| `--batch-size <SIZES>` | — | Comma-separated batch sizes (e.g., `1,25%,100%`) |
-| `--failure-threshold <N>` | `1` | Max failures before pausing/reverting |
-| `--on-failure <ACTION>` | `pause` | Action on failure: `pause` or `revert` |
-| `--health-timeout <SECS>` | `300` | Seconds to wait for health reports per batch |
-| `--wait` | `false` | Stream rollout progress to stdout |
-| `--cache-url <URL>` | — | Override the release's recorded cache URL (for agents) |
-| `--dry-run` | `false` | Build closures and show plan without deploying |
-
-See [CLI reference](../../reference/cli.md#deploy) for the full list and connection flags.
+See [CLI reference — deploy](../../reference/cli.md#deploy) for the full flag list with defaults and descriptions.
 
 ## Monitoring rollouts
 

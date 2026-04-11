@@ -92,10 +92,10 @@ Metrics exposed:
 |--------|-------------|
 | `nixfleet_agent_state` | Current phase of the deploy cycle (idle, checking, fetching, applying, verifying, reporting, rolling_back) encoded as a label |
 | `nixfleet_agent_poll_duration_seconds` | Duration of the last poll cycle |
-| `nixfleet_agent_last_poll_timestamp` | Unix timestamp of the last completed poll |
+| `nixfleet_agent_last_poll_timestamp_seconds` | Unix timestamp of the last completed poll |
 | `nixfleet_agent_health_check_duration_seconds` | Duration of the last health check run |
 | `nixfleet_agent_health_check_status` | Result of the last health check (1 = healthy, 0 = unhealthy) |
-| `nixfleet_agent_current_generation` | Nix store path of the current active generation (as a label) |
+| `nixfleet_agent_generation_info` | Nix store path of the current active generation (as a label) |
 
 Metrics are served in the standard Prometheus text format at `GET /metrics`.
 
@@ -124,17 +124,10 @@ The agent runs as a privileged root systemd service:
 | PATH | `${config.nix.package}/bin:${pkgs.systemd}/bin` |
 | Environment | `XDG_CACHE_HOME=/var/lib/nixfleet/.cache` |
 
-**Hardening rationale.** The agent is a privileged system manager whose primary job is to run `switch-to-configuration` — modifying bootloaders, kernel modules, systemd units, user home directories, and filesystem layout. Previous versions applied systemd sandboxing (`PrivateDevices`, `PrivateTmp`, `ProtectKernel*`, `ProtectControlGroups`, `ProtectHome`, `ReadOnlyPaths`), but since `switch-to-configuration` runs as a subprocess it inherited the agent's namespace and broke in multiple ways:
+**Hardening rationale.** The agent runs `switch-to-configuration` as a subprocess, which needs full system access (`/dev`, `/home`, cgroups, kernel modules). Sandboxing (e.g. `PrivateDevices`, `ProtectHome`) would break these operations. The threat model is equivalent to `sudo nixos-rebuild switch` as a daemon. `NoNewPrivileges = true` is kept to prevent setuid escalation.
 
-- `PrivateDevices` blocks `blkid` (needed to read `/dev/sda2` for the bootloader UUID during GRUB install)
-- `ProtectHome` makes `/home` and `/root` read-only, breaking user activation scripts
-- `ProtectControlGroups` prevents `systemctl` operations during unit restart
-- `ProtectKernelModules` blocks kernel module changes during kernel upgrades
-
-The threat model is equivalent to `sudo nixos-rebuild switch` running as a daemon — no sandboxing applies. `NoNewPrivileges = true` is kept to prevent setuid escalation.
-
-- `nix` is in `PATH` so `nix copy` and `nix path-info` work inside the service.
-- `XDG_CACHE_HOME` points into the state directory so nix metadata cache (narinfo lookups etc.) persists across reboots on impermanent hosts.
+- `nix` is in `PATH` for `nix copy` and `nix path-info`.
+- `XDG_CACHE_HOME` points into the state directory so nix metadata cache persists on impermanent hosts.
 
 Health check configuration is written to `/etc/nixfleet/health-checks.json` and passed via `--health-config`.
 

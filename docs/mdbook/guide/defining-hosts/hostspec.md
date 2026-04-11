@@ -4,34 +4,13 @@
 
 Every module injected by mkHost -- core, scopes, Home Manager -- can read `config.hostSpec` to adapt behavior. Scopes use hostSpec flags to self-activate via `lib.mkIf`.
 
-## Data fields
+## Options
 
-These carry host identity and environment information.
+**Data fields:** `userName` (required), `hostName` (auto-set), `home` (computed), `timeZone`, `locale`, `keyboardLayout`, `sshAuthorizedKeys`, `networking`, `secretsPath`, `hashedPasswordFile`, `rootHashedPasswordFile`.
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `userName` | `str` | *required* | Primary user account name. |
-| `hostName` | `str` | *required* | Machine hostname. Set by mkHost, always matches the `hostName` parameter. |
-| `home` | `str` | computed | Home directory. `/home/<userName>` on Linux, `/Users/<userName>` on Darwin. |
-| `timeZone` | `str` | `"UTC"` | IANA timezone (e.g. `Europe/Paris`). |
-| `locale` | `str` | `"en_US.UTF-8"` | System locale. |
-| `keyboardLayout` | `str` | `"us"` | XKB keyboard layout. |
-| `sshAuthorizedKeys` | `listOf str` | `[]` | SSH public keys added to both the primary user and root `authorized_keys`. |
-| `secretsPath` | `nullOr str` | `null` | Hint for the secrets repo path. Framework-agnostic -- no coupling to agenix or sops. |
-| `networking` | `attrsOf anything` | `{}` | Freeform networking data (e.g. `{ interface = "eno1"; }`). |
-| `hashedPasswordFile` | `nullOr str` | `null` | Path to hashed password file for the primary user. |
-| `rootHashedPasswordFile` | `nullOr str` | `null` | Path to hashed password file for root. |
+**Capability flags:** `isMinimal`, `isDarwin` (auto-set), `isImpermanent`, `isServer`.
 
-## Capability flags
-
-These control which scopes and behaviors activate.
-
-| Flag | Type | Default | Controls |
-|------|------|---------|----------|
-| `isMinimal` | `bool` | `false` | When `true`, the base scope skips CLI packages. Use for lean servers and edge devices. |
-| `isDarwin` | `bool` | `false` | Auto-set by mkHost based on `platform`. Do not set manually. Switches core module, home directory path, and HM modules. |
-| `isImpermanent` | `bool` | `false` | Activates the impermanence scope: btrfs root wipe, system/user persist paths. |
-| `isServer` | `bool` | `false` | Marks a server host. Used by core module to restrict `trusted-users`. |
+For the full option reference with types, defaults, and descriptions, see [hostSpec Options](../../reference/hostspec-options.md).
 
 ## Accessing hostSpec in modules
 

@@ -9,7 +9,7 @@ nix build .#iso
 ```
 
 The ISO includes:
-- Our SSH public key in root's authorized_keys (no passwd needed)
+- Fleet SSH public keys in root's authorized_keys (configured via `nixfleet.isoSshKeys`)
 - QEMU guest agents + SPICE support
 - Git, parted, vim
 

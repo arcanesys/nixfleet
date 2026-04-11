@@ -11,7 +11,7 @@ The cache server uses [harmonia](https://github.com/nix-community/harmonia), whi
 | `enable` | `bool` | `false` | Enable the NixFleet binary cache server (harmonia). |
 | `port` | `port` | `5000` | Port to listen on. |
 | `openFirewall` | `bool` | `false` | Open the cache server port in the firewall. |
-| `signingKeyFile` | `str` | — (required) | Path to the Nix signing key file for on-the-fly signing. Example: `"/run/secrets/cache-signing-key"`. |
+| `signingKeyFile` | `str` | — (required) | Path to the Nix signing key file for on-the-fly signing. Must be readable by the `harmonia` user (set `age.secrets.<name>.owner = "harmonia"` with agenix, or `sops.secrets.<name>.owner = "harmonia"` with sops-nix). Example: `"/run/secrets/cache-signing-key"`. |
 
 ## services.nixfleet-cache
 

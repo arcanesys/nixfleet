@@ -59,15 +59,15 @@ CLI-managed tags are stored in the control plane database. NixOS-configured tags
 
 Every machine has a lifecycle state that determines how the control plane treats it.
 
-| State | Description | Receives deploys? |
-|-------|-------------|-------------------|
-| `pending` | Pre-registered, no agent report yet | No |
-| `provisioning` | Install in progress | No |
-| `active` | Agent reporting normally | Yes |
-| `maintenance` | Manually paused | No |
-| `decommissioned` | Removed from fleet | No |
+| State | Description |
+|-------|-------------|
+| `pending` | Pre-registered, no agent report yet |
+| `provisioning` | Install in progress |
+| `active` | Agent reporting normally |
+| `maintenance` | Manually paused |
+| `decommissioned` | Removed from fleet |
 
-Only machines in the `active` state are included in rollouts and receive new desired generations.
+Lifecycle is informational — rollouts target machines by tag or hostname regardless of lifecycle state. Use lifecycle to track operational status and filter with `nixfleet machines list`.
 
 ### Transitions
 

@@ -8,7 +8,7 @@ All options under `nixfleet.secrets`. The module is auto-included by mkHost and 
 |--------|------|---------|-------------|
 | `enable` | `bool` | `false` | Enable NixFleet secrets wiring (identity paths, persist, boot ordering). |
 | `identityPaths.hostKey` | `nullOr str` | `"/etc/ssh/ssh_host_ed25519_key"` | Primary decryption identity (host SSH key). Used on all hosts. |
-| `identityPaths.userKey` | `nullOr str` | `"~/.keys/id_ed25519"` | Fallback decryption identity (user key). Used on workstations only. |
+| `identityPaths.userKey` | `nullOr str` | `"<home>/.keys/id_ed25519"` | Fallback decryption identity (user key). Used on workstations only. Computed from `hostSpec.home`. |
 | `identityPaths.enableUserKey` | `bool` | `!hostSpec.isServer` | Include user key in resolved paths. Defaults to true on non-server hosts. |
 | `identityPaths.extra` | `listOf str` | `[]` | Additional identity paths appended to the resolved list. |
 | `resolvedIdentityPaths` | `listOf str` | *(computed)* | Read-only. Computed identity paths. Fleet modules pass this to agenix/sops. |

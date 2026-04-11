@@ -12,11 +12,11 @@ modules/
 ├── scopes/            # Scope modules (_base, _impermanence, _firewall, _secrets, _backup, _monitoring, nixfleet/_agent, nixfleet/_control-plane, nixfleet/_cache-server, nixfleet/_cache, nixfleet/_microvm-host)
 ├── tests/             # Eval tests, VM tests, integration tests
 ├── apps.nix           # Flake apps (validate, build-vm, start-vm, stop-vm, clean-vm, test-vm)
-├── fleet.nix          # Framework test fleet (8 hosts)
+├── fleet.nix          # Framework test fleet
 └── flake-module.nix   # Framework exports (lib.mkHost, nixosModules, diskoTemplates)
 agent/                 # Rust: nixfleet-agent (sequential deploy cycle daemon — main.rs is a thin wrapper around lib.rs::run_loop)
 control-plane/         # Rust: nixfleet-control-plane (Axum HTTP server, MtlsAcceptor for peer-cert injection, auth_cn middleware for CN validation)
-cli/                   # Rust: nixfleet CLI (deploy, status, rollback, release delete)
+cli/                   # Rust: nixfleet CLI (deploy, status, rollback, release, rollout, machines, host, init, bootstrap)
 shared/                # Rust: nixfleet-types (shared data types)
 examples/
 ├── client-fleet/      # Example: fleet consuming mkHost via flake-parts
@@ -25,7 +25,7 @@ examples/
 docs/
 ├── adr/               # Architecture Decision Records
 └── mdbook/            # Technical reference + user guide (mdbook)
-TODO.md                # Discovered work, grouped by target phase
+TODO.md                # External dependencies / future work
 ```
 
 ## Commands
@@ -36,259 +36,132 @@ nix develop                        # dev shell (cargo, rustc, clippy, rustfmt)
 nix fmt                            # format (alejandra + rustfmt + shfmt)
 
 # Testing — ONE command for the whole suite
-nix run .#validate -- --all        # format + flake check + eval + hosts + VM + Rust + clippy + package builds
-nix run .#validate                 # fast (no VM, no Rust) — inner-loop iteration
-nix run .#validate -- --rust       # + cargo test + clippy + rust package builds (no VM)
-nix run .#validate -- --vm         # + every vm-* check (no Rust)
+nix run .#validate -- --all        # full suite
+nix run .#validate                 # fast (format + eval + hosts only)
+nix run .#validate -- --rust       # + cargo test + clippy + package builds
+nix run .#validate -- --vm         # + every vm-* check
 
-# VM lifecycle (fleet-repo style — not for testing the framework)
+# VM lifecycle
 nix run .#build-vm -- -h web-02    # install VM (ISO + nixos-anywhere)
-nix run .#build-vm -- --all        # install all hosts
 nix run .#start-vm -- -h web-02    # start VM as headless daemon
-nix run .#start-vm -- --all        # start all installed VMs
 nix run .#stop-vm -- -h web-02     # stop VM daemon
 nix run .#clean-vm -- -h web-02    # delete VM disk + state
 nix run .#test-vm -- -h web-02     # end-to-end VM test cycle
-nix build .#iso                    # custom installer ISO
 
-# Deployment (standard NixOS tooling — no custom scripts)
+# Deployment (standard NixOS tooling)
 nixos-anywhere --flake .#hostname root@ip       # fresh install
 sudo nixos-rebuild switch --flake .#hostname    # local rebuild
 nixos-rebuild switch --flake .#hostname --target-host root@ip  # remote rebuild
 darwin-rebuild switch --flake .#hostname        # macOS rebuild
-
-# Release management
-nixfleet release create --push-to s3://my-fleet-cache  # build all hosts, push to cache, register release
-nixfleet release create --copy                         # build all hosts, copy via SSH, register release
-nixfleet release create --dry-run                 # build and show manifest only
-nixfleet release list                             # list recent releases
-nixfleet release show <RELEASE_ID>                # show release details and per-host entries
-nixfleet release diff <ID_A> <ID_B>               # diff two releases
-nixfleet release delete <RELEASE_ID>              # delete a release (409 if referenced by a rollout)
 ```
+
+VM apps reference: `docs/mdbook/reference/apps.md`
 
 ## Framework API
 
-| Function | Purpose |
-|----------|---------|
-| `nixfleet.lib.mkHost` | Single host definition -> returns `nixosSystem` or `darwinSystem` |
-| `nixfleet.lib.mkVmApps` | VM helper apps generator for fleet repos |
+`nixfleet.lib.mkHost { hostName, platform, hostSpec?, modules?, stateVersion?, isVm? }` — returns `nixosSystem` or `darwinSystem`. `nixfleet.lib.mkVmApps` — VM helper apps for fleet repos.
 
-### mkHost Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `hostName` | string | yes | Machine hostname |
-| `platform` | string | yes | `x86_64-linux`, `aarch64-linux`, `aarch64-darwin`, `x86_64-darwin` |
-| `stateVersion` | string | no | NixOS/Darwin state version (default: "24.11") |
-| `hostSpec` | attrset | no | Host configuration flags (extensible by fleet modules) |
-| `modules` | list | no | Additional NixOS/Darwin modules |
-| `isVm` | bool | no | Inject QEMU VM hardware (default: false) |
-
-### Exports
-
-```nix
-nixfleet.lib.mkHost                              # the API
-nixfleet.lib.mkVmApps                            # VM helper generator
-nixfleet.nixosModules.nixfleet-core              # raw NixOS core module
-nixfleet.diskoTemplates.btrfs                    # standard btrfs disk template
-nixfleet.diskoTemplates.btrfs-impermanence       # btrfs with impermanence layout
-nixfleet.packages.${system}.iso                  # custom installer ISO
-nixfleet.packages.${system}.nixfleet-agent       # Rust agent binary
-nixfleet.packages.${system}.nixfleet-control-plane # Rust control-plane binary
-nixfleet.packages.${system}.nixfleet-cli         # Rust CLI binary
-```
+Full parameter reference, injected modules, exports: `docs/mdbook/reference/mkhost-api.md`
 
 ## Framework Scopes
 
 Scopes are plain NixOS/HM modules auto-included by mkHost. They self-activate via `lib.mkIf` on hostSpec flags.
 
-| Scope | Flag / Enable condition | What it provides |
-|-------|------------------------|-----------------|
-| `base` | `!isMinimal` | Universal CLI packages (NixOS + Darwin + HM) |
-| `impermanence` | `isImpermanent` | Btrfs root wipe + system/user persistence paths |
-| `firewall` | `!isMinimal` | SSH rate limiting, nftables, drop logging; bridge forwarding rules when microVM host is enabled |
-| `secrets` | `nixfleet.secrets.enable = true` | Identity paths, persist, boot ordering, key validation |
-| `backup` | `nixfleet.backup.enable = true` | Systemd timer, hooks, health ping, status reporting; optional `backend` (`"restic"`, `"borgbackup"`) for concrete backup commands |
-| `monitoring` | `nixfleet.monitoring.nodeExporter.enable = true` | Node exporter with fleet-tuned collector defaults |
-| `nixfleet-agent` | `services.nixfleet-agent.enable = true` | Fleet agent systemd service; key options: `metricsPort` (Prometheus listener), `metricsOpenFirewall`, `allowInsecure`. Tags auto-synced to CP via health reports. Verifies store path exists locally via `nix path-info` when no cache URL is configured. Poll interval adapts via `poll_hint` from CP (5s during active rollouts). |
-| `nixfleet-control-plane` | `services.nixfleet-control-plane.enable = true` | Control plane HTTP server; `GET /metrics` always available on listen address; routes split: agent-facing (mTLS, no API key) vs admin (API key required); when `tls.clientCa` is set, all connections require a client certificate (defense-in-depth) |
-| `nixfleet-cache-server` | `services.nixfleet-cache-server.enable = true` | Harmonia binary cache server; serves from local Nix store; key options: `port`, `signingKeyFile`, `openFirewall` |
-| `nixfleet-cache` | `services.nixfleet-cache.enable = true` | Binary cache client; configures `nix.settings.substituters` + `trusted-public-keys` |
-| `nixfleet-microvm-host` | `services.nixfleet-microvm-host.enable = true` | MicroVM host with TAP + bridge networking, DHCP (dnsmasq), NAT; microVMs participate in fleet as first-class members |
+**Automatic** (hostSpec-gated): `base` (`!isMinimal`), `impermanence` (`isImpermanent`), `firewall` (`!isMinimal`)
 
-Fleet repos add opinionated scopes (dev tools, desktop environments, theming, etc.) as plain NixOS/HM modules.
+**Opt-in** (explicit enable): `secrets`, `backup`, `monitoring`, `nixfleet-agent`, `nixfleet-control-plane`, `nixfleet-cache-server`, `nixfleet-cache`, `nixfleet-microvm-host`
+
+Fleet repos add opinionated scopes (dev tools, desktop environments, theming) as plain NixOS/HM modules.
+
+Full scope table with activation conditions and details: `docs/mdbook/guide/defining-hosts/scopes.md`. Per-scope option reference: `docs/mdbook/reference/`.
 
 ## CLI
 
+Commands: `init`, `bootstrap`, `status`, `deploy`, `rollback`, `release` (create/list/show/diff/delete), `rollout` (list/status/resume/cancel), `machines` (list/register/untag), `host` (add).
+
 ```bash
-# Initialize CLI config
-nixfleet init --control-plane-url https://lab:8080 --ca-cert modules/_config/fleet-ca.pem
-
-# Bootstrap first API key
-API_KEY=$(nixfleet bootstrap \
-  --control-plane-url https://cp:8080 \
-  --client-cert cp-cert --client-key cp-key --ca-cert fleet-ca.pem)
-
-# Fleet status
-nixfleet status
-nixfleet machines list --tag web
-
-# Deploy via control plane (requires a release)
-nixfleet deploy --release rel-abc123 --tag web --strategy canary --wait
-nixfleet deploy --push-to s3://my-fleet-cache --tag web --strategy canary --wait  # implicit release creation
-nixfleet deploy --copy --tag web --strategy staged --wait              # implicit release, SSH copy
-
-# Direct SSH deploy (no control plane needed)
-nixfleet deploy --hosts web-02 --ssh                                          # deploy via SSH (resolves hostname)
-nixfleet deploy --hosts web-02 --ssh --target root@192.168.1.10               # deploy via SSH to specific IP
-
-# Rollout management
-nixfleet rollout list
-nixfleet rollout status <ID>       # includes events timeline
-nixfleet rollout resume <ID>
-nixfleet rollout cancel <ID>
+nixfleet init --control-plane-url https://lab:8080 --ca-cert fleet-ca.pem
+nixfleet bootstrap                                                       # first admin API key
+nixfleet deploy --push-to ssh://root@cache --tag web --strategy canary --wait
+nixfleet deploy --hosts web-02 --ssh                                     # direct SSH (no CP)
+nixfleet rollback --host web-02 --ssh                                    # SSH-only rollback
 ```
 
-mTLS flags (`--client-cert`, `--client-key`, `--ca-cert`) and `--api-key` can be set via env vars: `NIXFLEET_CLIENT_CERT`, `NIXFLEET_CLIENT_KEY`, `NIXFLEET_CA_CERT`, `NIXFLEET_API_KEY`.
+Config priority (highest wins): CLI flags → env vars → `~/.config/nixfleet/credentials.toml` → `.nixfleet.toml`
 
-### Rollout Events
-
-Every rollout state transition (created → running → paused → completed, batch started/completed/failed) is recorded as an event in the `rollout_events` table. Events include timestamp, type, detail JSON, and actor. The `rollout status` CLI command shows these as a timeline.
+Full CLI reference with all flags, config format, and examples: `docs/mdbook/reference/cli.md`
 
 ### Rollout Executor & Generation Gating
 
-The rollout executor verifies that each agent's `current_generation` matches the release entry before accepting health reports during batch evaluation. This ensures agents deployed from the same release can be evaluated together for health status. Mismatched generations are flagged as out-of-sync and paused until manually resumed or the rollout is cancelled.
-
-### Configuration
-
-The CLI reads settings from three sources (highest priority wins):
-
-1. CLI flags (`--control-plane-url`, `--api-key`, etc.)
-2. Environment variables (`NIXFLEET_API_KEY`, `NIXFLEET_CA_CERT`, etc.)
-3. `~/.config/nixfleet/credentials.toml` — API keys (auto-saved by `nixfleet bootstrap`)
-4. `.nixfleet.toml` — connection settings (created by `nixfleet init`, committed to fleet repo)
-
-#### `.nixfleet.toml` example
-
-```toml
-[control-plane]
-url = "https://lab:8080"
-ca-cert = "modules/_config/fleet-ca.pem"
-
-[tls]
-client-cert = "/run/agenix/agent-${HOSTNAME}-cert"
-client-key = "/run/agenix/agent-${HOSTNAME}-key"
-
-[cache]
-url = "http://lab:5000"
-push-to = "ssh://root@lab"
-
-[deploy]
-strategy = "staged"
-health-timeout = 300
-```
-
-Setup:
-
-```sh
-nixfleet init --control-plane-url https://lab:8080 --ca-cert modules/_config/fleet-ca.pem
-nixfleet bootstrap    # auto-saves API key to ~/.config/nixfleet/credentials.toml
-```
+The rollout executor verifies that each agent's `current_generation` matches the release entry before accepting health reports during batch evaluation. Mismatched generations are flagged as out-of-sync and paused. Details: `docs/mdbook/guide/deploying/rollouts.md`
 
 ## Control Plane API
 
-### Bootstrap
+### API Endpoints
 
-```bash
-# Via CLI (recommended)
-API_KEY=$(nixfleet bootstrap --client-cert cp-cert --client-key cp-key --ca-cert fleet-ca.pem)
+#### Agent-facing (mTLS, no API key)
 
-# Via curl
-curl -X POST https://cp:8080/api/v1/keys/bootstrap \
-  --cacert fleet-ca.pem --cert cp-cert --key cp-key \
-  -H 'Content-Type: application/json' -d '{"name":"admin"}'
-# Returns: {"key":"nfk-...","name":"admin","role":"admin"}
-# Returns 409 if keys already exist
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/machines/{id}/desired-generation` | Poll for desired state |
+| POST | `/api/v1/machines/{id}/report` | Report deploy result + health |
 
-### API Endpoints (new)
+#### Admin (API key required, role-gated)
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
+Roles: `admin` (full access), `deploy` (create releases/rollouts), `readonly` (read-only).
+
+| Method | Path | Min role | Description |
+|--------|------|----------|-------------|
+| GET | `/api/v1/machines` | readonly | List all machines |
+| POST | `/api/v1/machines/{id}/register` | admin | Pre-register a machine |
+| PATCH | `/api/v1/machines/{id}/lifecycle` | admin | Change machine lifecycle state |
+| DELETE | `/api/v1/machines/{id}/tags/{tag}` | admin | Remove a tag from a machine |
+| POST | `/api/v1/rollouts` | deploy | Create a rollout (requires `release_id`) |
+| GET | `/api/v1/rollouts` | readonly | List rollouts |
+| GET | `/api/v1/rollouts/{id}` | readonly | Get rollout detail (includes `events` timeline) |
+| POST | `/api/v1/rollouts/{id}/resume` | deploy | Resume a paused rollout |
+| POST | `/api/v1/rollouts/{id}/cancel` | deploy | Cancel a rollout |
 | POST | `/api/v1/releases` | deploy | Create a release from a manifest |
 | GET | `/api/v1/releases` | readonly | List releases (paginated, newest first) |
 | GET | `/api/v1/releases/{id}` | readonly | Get release with entries |
 | GET | `/api/v1/releases/{id}/diff/{other_id}` | readonly | Diff two releases |
-| DELETE | `/api/v1/releases/{id}` | admin | Delete a release (only if no rollout references it) |
+| DELETE | `/api/v1/releases/{id}` | admin | Delete a release (409 if referenced by a rollout) |
+| GET | `/api/v1/audit` | readonly | List audit events |
+| GET | `/api/v1/audit/export` | readonly | Export audit events as CSV |
 
-The `POST /api/v1/rollouts` endpoint requires a `release_id` field. The `GET /api/v1/rollouts/{id}` response includes `events` (timeline).
+#### Bootstrap (no auth, only works when no keys exist)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/keys/bootstrap` | Create the first admin API key (409 if keys already exist) |
+
+#### Unauthenticated
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+| GET | `/metrics` | Prometheus metrics |
 
 ### Agent tag sync
 
-Agent tags (from `services.nixfleet-agent.tags`) are automatically synced to the CP on every health report. No manual `POST /tags` needed — tags are self-managing from NixOS config.
+Agent tags (from `services.nixfleet-agent.tags`) are automatically synced to the CP on every health report. No manual tag management needed — tags are self-managing from NixOS config.
 
 ## Consuming the Framework
 
-```nix
-# Minimal fleet repo — flake.nix (no flake-parts needed)
-{
-  inputs.nixfleet.url = "github:your-org/nixfleet";
-  inputs.nixpkgs.follows = "nixfleet/nixpkgs";
-
-  outputs = {nixfleet, ...}: {
-    nixosConfigurations.myhost = nixfleet.lib.mkHost {
-      hostName = "myhost";
-      platform = "x86_64-linux";
-      hostSpec = { userName = "alice"; timeZone = "US/Eastern"; };
-      modules = [ ./hardware-configuration.nix ./disk-config.nix ];
-    };
-  };
-}
-```
-
-See `examples/` for standalone-host, batch-hosts, and client-fleet patterns.
+See `examples/` for standalone-host, batch-hosts, and client-fleet patterns. Quick start: `docs/mdbook/guide/getting-started/quick-start.md`
 
 ## Testing
 
-**One command runs everything:**
-
 ```sh
-nix run .#validate -- --all
+nix run .#validate -- --all        # full suite: format + eval + hosts + VM + Rust + clippy + package builds
+nix run .#validate                 # fast: format + eval + hosts only
+nix run .#validate -- --rust       # + cargo test + clippy + rust package builds
+nix run .#validate -- --vm         # + every vm-* check
 ```
 
-That's the entry point for CI, pre-merge, pre-release, and "did my change
-break something far from where I was editing". Full reference:
-`docs/mdbook/testing/overview.md` (plus per-tier pages `eval-tests.md`,
-`vm-tests.md`, `rust-tests.md`).
+Tiers: eval (instant), integration (mock consumer), VM framework (per-subsystem), VM fleet scenarios (multi-node), Rust unit + integration.
 
-`--all` runs, in order: formatting, `nix flake check --no-build`, every
-`eval-*` derivation, every host build, every `vm-*` check, `cargo test
---workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
-and `nix build` of every Rust package (which runs the crate tests under
-the nix build sandbox — catches environment-dependent failures that
-dev-shell `cargo test` misses).
-
-Faster slices for inner-loop iteration when a full `--all` isn't
-warranted:
-
-| Flag | What it adds to the base |
-|---|---|
-| (none) | format + flake check + eval + hosts only (fast, seconds) |
-| `--rust` | + cargo test + clippy + rust package builds |
-| `--vm` | + every `vm-*` check (slow, minutes per check) |
-| `--all` | everything |
-
-Tiers:
-
-- **Eval** (`modules/tests/eval.nix`) — config correctness at Nix eval time, instant.
-- **Integration** (`modules/tests/integration/mock-client-test.nix`) — simulates a consumer flake importing `nixfleet.lib.mkHost`.
-- **VM framework** (`modules/tests/vm*.nix`) — subsystem VMs that boot `mkHost` without a fleet: `vm-core`, `vm-minimal`, `vm-firewall`, `vm-monitoring`, `vm-backup`, `vm-backup-restic`, `vm-secrets`, `vm-cache-server`. Plus `vm-fleet` (4-node fleet with mTLS + rollouts).
-- **VM scenarios** (`modules/tests/_vm-fleet-scenarios/`) — per-scenario subtests, each independently buildable as `.#checks.x86_64-linux.vm-fleet-<name>`. Discovered dynamically by validate so new ones land in `--all` / `--vm` automatically.
-- **Rust unit** — in-file `#[cfg(test)] mod tests` in every crate.
-- **Rust integration scenarios** — `control-plane/tests/*_scenarios.rs` and `cli/tests/*_scenarios.rs` cover release CRUD, deploy strategies, generation gating, failure threshold, hydration, rollback, polling, machine lifecycle, auth/RBAC, audit, metrics, migrations, CLI config precedence.
-
-VM scenario helpers live in `modules/tests/_lib/helpers.nix`: `mkCpNode`, `mkAgentNode`, `tlsCertsModule`, `testPrelude`, `mkTlsCerts`, `sharedTestCerts`, `nix-shim`, `testConstants`. The aggregator `modules/tests/vm-fleet-scenarios.nix` pre-binds them into a single `scenarioArgs` attrset so every scenario file's import is narrow. The top-level `vm-fleet.nix` and every `_vm-fleet-scenarios/*.nix` use the same helper set.
+Full testing guide: `docs/mdbook/testing/overview.md`
 
 ## Multi-Repo
 
@@ -299,12 +172,13 @@ VM scenario helpers live in `modules/tests/_lib/helpers.nix`: `mkCpNode`, `mkAge
 
 ## Architecture
 
-- **mkHost** is a closure over framework inputs (nixpkgs, home-manager, disko, impermanence, microvm)
-- It calls `nixosSystem`/`darwinSystem` directly, injecting core modules and scopes
-- **Scopes** are plain NixOS/HM modules (`_`-prefixed for import-tree exclusion) that self-activate via hostSpec flags
-- **Service modules** (agent, CP, cache-server, cache, microvm-host) are auto-included by mkHost, disabled by default
-- **hostSpec** provides base options; fleet repos extend with their own flags via plain NixOS modules
-- **Framework inputs via specialArgs:** mkHost passes framework inputs (nixpkgs, home-manager, disko, etc.) to modules via `specialArgs = { inherit inputs; }`. Fleet repos access these as `inputs` in their modules. Fleet-specific customization uses hostSpec extensions and plain NixOS modules, not a separate input namespace.
+See `ARCHITECTURE.md` for system overview, module graph, and design decisions. See `TECHNICAL.md` for Rust workspace, lifecycle states, and Nix gotchas.
+
+Key principles:
+- **mkHost** is the single API — closure over framework inputs, returns `nixosSystem`/`darwinSystem`
+- **Scopes** self-activate via `lib.mkIf` on hostSpec flags — `_`-prefixed for import-tree exclusion
+- **Service modules** (agent, CP, cache-server, cache, microvm-host) auto-included by mkHost, disabled by default
+- **specialArgs** passes framework inputs to all modules; fleet repos extend via hostSpec and plain NixOS modules
 
 ## Critical Rules
 

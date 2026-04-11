@@ -231,6 +231,10 @@ cert (can verify server) but no client key pair sends curl against
 - Positive control with a valid client cert → HTTP response comes back
   (any status — what matters is the handshake completed).
 
+### `vm-fleet-mtls-cn-mismatch`
+
+Application-layer test on top of mTLS. A client with a valid fleet-CA-signed cert (CN = `wrong-agent`) hits another agent's endpoints (`/api/v1/machines/web-01/...`). The `cn_matches_path_machine_id` middleware rejects with 403 because the cert CN does not match the `{id}` path segment. Closes the impersonation gap: CA proves fleet membership, CN proves specific agent identity.
+
 ### `vm-fleet-rollback-ssh`
 
 Real `nixfleet rollback --host target --ssh --generation <G1>` end-to-end:

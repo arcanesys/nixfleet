@@ -17,7 +17,7 @@ in {
     allowUnsupportedSystem = true;
   };
 
-  # --- nix settings (from hosts/nixos/common/core/nix.nix) ---
+  # --- nix settings ---
   nix = {
     nixPath = lib.mkDefault [];
     settings = {
@@ -48,7 +48,7 @@ in {
     };
   };
 
-  # --- boot (from hosts/nixos/common/core/boot.nix) ---
+  # --- boot ---
   boot = {
     loader = {
       systemd-boot = {

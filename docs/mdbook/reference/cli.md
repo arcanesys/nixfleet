@@ -70,7 +70,7 @@ nixfleet deploy [FLAGS]
 | `--flake <REF>` | string | `.` | Flake reference |
 | `--strategy <STRATEGY>` | string | `all-at-once` | Rollout strategy: `canary`, `staged`, `all-at-once` |
 | `--batch-size <SIZES>` | string (comma-separated) | -- | Batch sizes (e.g., `1,25%,100%`) |
-| `--failure-threshold <N>` | string | `1` | Max failures before pausing/reverting |
+| `--failure-threshold <N>` | string | `0` | Max unhealthy machines per batch before pausing/reverting. Accepts absolute count or percentage (e.g. `30%`) |
 | `--on-failure <ACTION>` | string | `pause` | Action on failure: `pause` or `revert` |
 | `--health-timeout <SECS>` | u64 | `300` | Seconds to wait for health reports per batch |
 | `--wait` | bool | `false` | Stream rollout progress to stdout |
@@ -216,12 +216,7 @@ nixfleet rollback --host <HOST> --ssh [FLAGS]
 | `--ssh` | bool | `false` | **Required.** SSH mode |
 | `--generation <PATH>` | string | -- | Store path to roll back to (default: previous generation from `system-1-link`) |
 
-Running without `--ssh` exits with an error explaining the alternatives (see below).
-
-**For control-plane-driven rollback**, there is no direct endpoint. The rollback model is release-based, so use one of:
-
-1. **Rollout-level revert** — Create the originating rollout with `--on-failure revert`. The CP reverts completed batches using each batch's `previous_generations` (captured at batch start), restoring every machine to its own prior store path.
-2. **Deploy an older release** — Check out a previous flake commit, `nixfleet release create --push-to <cache>`, then `nixfleet deploy --release <old-id>`. Uses normal rollout semantics (health gates, batching, etc.).
+Running without `--ssh` exits with an error. For CP-driven rollback, use `--on-failure revert` on rollouts, or deploy an older release.
 
 ---
 
