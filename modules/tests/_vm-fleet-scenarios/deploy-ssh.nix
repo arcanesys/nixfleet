@@ -26,6 +26,7 @@
   lib,
   mkTestNode,
   defaultTestSpec,
+  ...
 }: let
   # Certs are unused by deploy-ssh itself (no CP, no mTLS), but mkTestNode
   # does not care and we keep the helper symmetric with the other subtests.
