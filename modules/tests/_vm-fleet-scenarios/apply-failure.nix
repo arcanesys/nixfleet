@@ -267,13 +267,29 @@ in
       # ------------------------------------------------------------------
       web_01.succeed("rm -f /var/lib/fail-next-health")
 
-      # Wait for the CP's most recent general report for web-01 to
-      # show success=true (which `run_health_report` sets from
-      # `health_report.all_passed`). This confirms both the agent
-      # picked up the fresh state and the CP persisted it.
+      # Verify the file is actually gone on the agent node. If
+      # something (systemd-tmpfiles, state-directory activation,
+      # whatever) is recreating it, the health check will keep
+      # failing forever.
+      print("### post-rm file check on web-01:")
+      rc, out = web_01.execute("ls -la /var/lib/fail-next-health")
+      print(f"rc={rc} out={out!r}")
+      assert rc != 0, (
+          f"/var/lib/fail-next-health still exists after rm -f! "
+          f"rc={rc} out={out!r}"
+      )
+
+      # Wait for a HEALTH report (not a deploy-cycle report) with
+      # all_passed=1. The `reports` table is populated by BOTH
+      # run_deploy_cycle (always success=true under dryRun) and
+      # run_health_report (success=health_report.all_passed), so
+      # polling `reports.success=1` is trivially satisfied by the
+      # deploy cycle and tells us nothing about health. Poll the
+      # `health_reports` table directly — it is only populated by
+      # run_health_report.
       cp.wait_until_succeeds(
           "sqlite3 /var/lib/nixfleet-cp/state.db "
-          "\"SELECT success FROM reports WHERE machine_id='web-01' "
+          "\"SELECT all_passed FROM health_reports WHERE machine_id='web-01' "
           "ORDER BY received_at DESC, id DESC LIMIT 1\" | grep -q '^1$'",
           timeout=30,
       )
@@ -327,8 +343,12 @@ in
           print("### post-resume-timeout health_reports (web-01):")
           print(cp.execute(
               "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
-              "\"SELECT id,machine_id,all_passed,received_at FROM health_reports WHERE machine_id='web-01' ORDER BY received_at DESC, id DESC LIMIT 10\""
+              "\"SELECT id,machine_id,all_passed,received_at,substr(results,1,200) as results FROM health_reports WHERE machine_id='web-01' ORDER BY received_at DESC, id DESC LIMIT 5\""
           )[1])
+          print("### post-resume-timeout fail-flag file on web-01:")
+          print(web_01.execute("ls -la /var/lib/fail-next-health 2>&1")[1])
+          print("### post-resume-timeout agent journal (tail 40):")
+          print(web_01.execute("journalctl -u nixfleet-agent --no-pager -n 40 2>&1")[1])
           print("### post-resume-timeout rollout_events:")
           print(cp.execute(
               "sqlite3 -header -column /var/lib/nixfleet-cp/state.db "
