@@ -65,12 +65,10 @@
   pkgs,
   mkCpNode,
   mkAgentNode,
-  mkTlsCerts,
+  testCerts,
   testPrelude,
   ...
 }: let
-  testCerts = mkTlsCerts {hostnames = ["web-01" "web-02"];};
-
   failFlagHealthCheck = {
     name = "fail-flag";
     command = "test ! -f /var/lib/fail-next-health";
@@ -94,26 +92,18 @@ in
     nodes."web-02" = mkWebAgent "web-02";
 
     testScript = ''
-      import json
-
       ${testPrelude {}}
 
       # ------------------------------------------------------------------
-      # Phase 1 — Start CP, seed admin API key
+      # Phase 1 — Boot CP + seed admin API key
       # ------------------------------------------------------------------
-      cp.start()
-      cp.wait_for_unit("nixfleet-control-plane.service")
-      cp.wait_for_open_port(8080)
-      seed_admin_key(cp)
+      cp_boot_and_seed(cp)
 
       # ------------------------------------------------------------------
       # Phase 2 — Start both agents. Flag file is NOT present yet, so
       # both report healthy on their first tick.
       # ------------------------------------------------------------------
-      web_01.start()
-      web_02.start()
-      web_01.wait_for_unit("nixfleet-agent.service")
-      web_02.wait_for_unit("nixfleet-agent.service")
+      start_agents(web_01, web_02)
 
       # Wait for both agents to register with the CP.
       cp.wait_until_succeeds(
@@ -166,45 +156,17 @@ in
       assert web_01_toplevel != web_02_toplevel, \
           "sanity: web-01 and web-02 should have distinct toplevel closures"
 
-      release_body = json.dumps({
-          "flake_ref": "vm-fleet-revert",
-          "entries": [
-              {
-                  "hostname": "web-01",
-                  "store_path": web_01_toplevel,
-                  "platform": "x86_64-linux",
-                  "tags": ["web"],
-              },
-              {
-                  "hostname": "web-02",
-                  "store_path": web_02_toplevel,
-                  "platform": "x86_64-linux",
-                  "tags": ["web"],
-              },
-          ],
-      })
-      release = json.loads(cp.succeed(
-          f"{CURL} {AUTH} -X POST {API}/api/v1/releases "
-          f"-H 'Content-Type: application/json' "
-          f"-d '{release_body}'"
-      ))
-      release_id = release["id"]
-
-      rollout_body = json.dumps({
-          "release_id": release_id,
-          "strategy": "staged",
-          "batch_sizes": ["1", "1"],
-          "failure_threshold": "0",
-          "on_failure": "revert",
-          "health_timeout": 10,
-          "target": {"tags": ["web"]},
-      })
-      rollout = json.loads(cp.succeed(
-          f"{CURL} {AUTH} -X POST {API}/api/v1/rollouts "
-          f"-H 'Content-Type: application/json' "
-          f"-d '{rollout_body}'"
-      ))
-      rollout_id = rollout["rollout_id"]
+      release_id = create_release(cp, [
+          {"hostname": "web-01", "store_path": web_01_toplevel, "tags": ["web"]},
+          {"hostname": "web-02", "store_path": web_02_toplevel, "tags": ["web"]},
+      ])
+      rollout_id = create_rollout(
+          cp, release_id, "web",
+          strategy="staged",
+          batch_sizes=["1", "1"],
+          on_failure="revert",
+          health_timeout=10,
+      )
 
       # ------------------------------------------------------------------
       # Phase 4 — Wait for batch 0 to reach `succeeded`. With the

@@ -291,7 +291,7 @@ All scenario tests use helpers from `modules/tests/_lib/helpers.nix`
   '';
   ```
 
-- **`mkTlsCerts { hostnames }`** (from `_lib/tls-certs.nix`) — builds the
+- **`mkTlsCerts { hostnames }`** (from `_lib/helpers.nix`) — builds the
   fleet CA + per-host cert pairs at Nix-eval time. Deterministic, no
   runtime setup.
 - **`nix-shim`** (from `_lib/nix-shim.nix`) — a `writeShellApplication`

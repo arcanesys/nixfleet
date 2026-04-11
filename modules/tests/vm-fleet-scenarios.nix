@@ -10,8 +10,8 @@
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib;};
-    mkTlsCerts = import ./_lib/tls-certs.nix {inherit pkgs lib;};
+    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
+    inherit (helpers) mkTlsCerts sharedTestCerts;
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
@@ -30,9 +30,17 @@
     testPrelude = helpers.testPrelude;
     tlsCertsModule = helpers.tlsCertsModule;
 
+    # Every scenario receives `testCerts = sharedTestCerts` by default.
+    # Because the store path is identical, mkCpNode / mkAgentNode produce
+    # IDENTICAL system closures across scenarios that differ only in
+    # testScript. Nix dedupes those closures, so each unique node shape
+    # is built at most once across the entire VM suite rather than once
+    # per scenario. `mkTlsCerts` is still exposed for any future scenario
+    # that genuinely needs a different CA / hostname shape.
     scenarioArgs = {
       inherit pkgs lib mkTestNode defaultTestSpec mkTlsCerts;
       inherit mkCpNode mkAgentNode testPrelude tlsCertsModule;
+      testCerts = sharedTestCerts;
     };
 
     subtests = {

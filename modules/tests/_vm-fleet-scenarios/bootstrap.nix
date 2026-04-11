@@ -19,12 +19,10 @@
   defaultTestSpec,
   mkCpNode,
   mkAgentNode,
-  mkTlsCerts,
+  testCerts,
   tlsCertsModule,
   ...
 }: let
-  testCerts = mkTlsCerts {hostnames = ["operator" "web-01" "web-02"];};
-
   nixfleetCli = pkgs.callPackage ../../../cli {};
 in
   pkgs.testers.nixosTest {

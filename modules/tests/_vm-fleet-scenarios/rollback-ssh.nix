@@ -28,8 +28,9 @@
   defaultTestSpec,
   ...
 }: let
-  # mkTlsCerts is not strictly needed (no mTLS here) but we accept it to
-  # keep the subtest signature symmetric with the other scenarios.
+  # No TLS / mTLS involved here — the scenarioArgs `...` catch-all
+  # absorbs the unused `testCerts` / `mkTlsCerts` arguments.
+  #
   # Build two stub closures. Each has a real `bin/switch-to-configuration`
   # that writes a distinct marker file so the testScript can observe which
   # generation was most recently applied.

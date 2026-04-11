@@ -29,94 +29,92 @@
   pkgs,
   mkCpNode,
   mkAgentNode,
-  mkTlsCerts,
+  testCerts,
   testPrelude,
   ...
-}: let
-  testCerts = mkTlsCerts {hostnames = ["agent"];};
-in
-  pkgs.testers.nixosTest {
-    name = "vm-fleet-poll-retry";
+}:
+pkgs.testers.nixosTest {
+  name = "vm-fleet-poll-retry";
 
-    nodes.cp = mkCpNode {inherit testCerts;};
+  nodes.cp = mkCpNode {inherit testCerts;};
 
-    nodes.agent = mkAgentNode {
-      inherit testCerts;
-      hostName = "agent";
-      pollInterval = 5;
-      # Short retry interval so the VM test can observe multiple retry
-      # cycles within a reasonable wall-clock budget.
-      agentExtraConfig.retryInterval = 5;
-    };
+  nodes.agent = mkAgentNode {
+    inherit testCerts;
+    hostName = "agent";
+    pollInterval = 5;
+    # Short retry interval so the VM test can observe multiple retry
+    # cycles within a reasonable wall-clock budget.
+    agentExtraConfig.retryInterval = 5;
+  };
 
-    testScript = ''
-      ${testPrelude {}}
+  testScript = ''
+    ${testPrelude {}}
 
-      # ------------------------------------------------------------------
-      # Phase 1 — Start the agent BEFORE the cp. The agent's first poll
-      # will hit a closed port and fail.
-      # ------------------------------------------------------------------
-      agent.start()
-      agent.wait_for_unit("nixfleet-agent.service")
+    # ------------------------------------------------------------------
+    # Phase 1 — Start the agent BEFORE the cp. The agent's first poll
+    # will hit a closed port and fail.
+    # ------------------------------------------------------------------
+    agent.start()
+    agent.wait_for_unit("nixfleet-agent.service")
 
-      # Give the agent enough time to execute at least one initial poll
-      # attempt and log the failure. The "Initial poll failed, scheduling
-      # retry" line is emitted from the main loop in agent/src/main.rs
-      # after `PollOutcome::Failed` (see agent/src/main.rs:153–156).
-      agent.wait_until_succeeds(
-          "journalctl -u nixfleet-agent.service --no-pager "
-          "| grep -F 'Initial poll failed, scheduling retry'",
-          timeout=60,
-      )
+    # Give the agent enough time to execute at least one initial poll
+    # attempt and log the failure. The "Initial poll failed, scheduling
+    # retry" line is emitted from the main loop in agent/src/main.rs
+    # after `PollOutcome::Failed` (see agent/src/main.rs:153–156).
+    agent.wait_until_succeeds(
+        "journalctl -u nixfleet-agent.service --no-pager "
+        "| grep -F 'Initial poll failed, scheduling retry'",
+        timeout=60,
+    )
 
-      # Sanity: the agent unit is still active after the poll failure —
-      # the retry path must NOT crash the daemon.
-      status_pre = agent.execute("systemctl is-active nixfleet-agent.service")[1].strip()
-      assert status_pre == "active", \
-          f"agent unit unexpectedly not active after failed poll: {status_pre!r}"
+    # Sanity: the agent unit is still active after the poll failure —
+    # the retry path must NOT crash the daemon.
+    status_pre = agent.execute("systemctl is-active nixfleet-agent.service")[1].strip()
+    assert status_pre == "active", \
+        f"agent unit unexpectedly not active after failed poll: {status_pre!r}"
 
-      # ------------------------------------------------------------------
-      # Phase 2 — Start the cp, seed the admin API key.
-      # ------------------------------------------------------------------
-      cp.start()
-      cp.wait_for_unit("nixfleet-control-plane.service")
-      cp.wait_for_open_port(8080)
+    # ------------------------------------------------------------------
+    # Phase 2 — Start the cp, seed the admin API key.
+    # ------------------------------------------------------------------
+    cp.start()
+    cp.wait_for_unit("nixfleet-control-plane.service")
+    cp.wait_for_open_port(8080)
 
-      seed_admin_key(cp)
+    seed_admin_key(cp)
 
-      # ------------------------------------------------------------------
-      # Phase 3 — Negative check: the cp is reachable, admin auth works,
-      # but NO machines are registered yet. This proves the registration
-      # we observe in Phase 4 happens strictly AFTER the cp came up.
-      # ------------------------------------------------------------------
-      machines_pre = cp.succeed(
-          f"{CURL} {AUTH} {API}/api/v1/machines "
-          f"| python3 -c \"import sys,json; ms=json.load(sys.stdin); "
-          f"print(len(ms))\""
-      ).strip()
-      assert machines_pre == "0", \
-          f"expected zero machines before agent recovery, got {machines_pre}"
+    # ------------------------------------------------------------------
+    # Phase 3 — Negative check: the cp is reachable, admin auth works,
+    # but NO machines are registered yet. This proves the registration
+    # we observe in Phase 4 happens strictly AFTER the cp came up.
+    # ------------------------------------------------------------------
+    machines_pre = cp.succeed(
+        f"{CURL} {AUTH} {API}/api/v1/machines "
+        f"| python3 -c \"import sys,json; ms=json.load(sys.stdin); "
+        f"print(len(ms))\""
+    ).strip()
+    assert machines_pre == "0", \
+        f"expected zero machines before agent recovery, got {machines_pre}"
 
-      # ------------------------------------------------------------------
-      # Phase 4 — Positive: the agent's retry loop recovers and the
-      # machine registers. The generous timeout covers multiple
-      # retryInterval cycles (5s each) plus one health report round.
-      # ------------------------------------------------------------------
-      cp.wait_until_succeeds(
-          f"{CURL} {AUTH} {API}/api/v1/machines "
-          f"| python3 -c \"import sys,json; ms=json.load(sys.stdin); "
-          f"assert len(ms) == 1, f'expected 1 machine got {{len(ms)}}'; "
-          f"assert ms[0]['machine_id'] == 'agent'\"",
-          timeout=90,
-      )
+    # ------------------------------------------------------------------
+    # Phase 4 — Positive: the agent's retry loop recovers and the
+    # machine registers. The generous timeout covers multiple
+    # retryInterval cycles (5s each) plus one health report round.
+    # ------------------------------------------------------------------
+    cp.wait_until_succeeds(
+        f"{CURL} {AUTH} {API}/api/v1/machines "
+        f"| python3 -c \"import sys,json; ms=json.load(sys.stdin); "
+        f"assert len(ms) == 1, f'expected 1 machine got {{len(ms)}}'; "
+        f"assert ms[0]['machine_id'] == 'agent'\"",
+        timeout=90,
+    )
 
-      # ------------------------------------------------------------------
-      # Phase 5 — Positive: the agent unit is STILL active after the
-      # retry + recovery cycle. The auto-retry path did not crash the
-      # daemon at any point.
-      # ------------------------------------------------------------------
-      status_post = agent.execute("systemctl is-active nixfleet-agent.service")[1].strip()
-      assert status_post == "active", \
-          f"agent unit unexpectedly not active after recovery: {status_post!r}"
-    '';
-  }
+    # ------------------------------------------------------------------
+    # Phase 5 — Positive: the agent unit is STILL active after the
+    # retry + recovery cycle. The auto-retry path did not crash the
+    # daemon at any point.
+    # ------------------------------------------------------------------
+    status_post = agent.execute("systemctl is-active nixfleet-agent.service")[1].strip()
+    assert status_post == "active", \
+        f"agent unit unexpectedly not active after recovery: {status_post!r}"
+  '';
+}

@@ -11,7 +11,7 @@
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib;};
+    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
     mkEvalCheck = helpers.mkEvalCheck pkgs;
     nixosCfg = name: self.nixosConfigurations.${name}.config;
   in

@@ -21,12 +21,10 @@
   mkTestNode,
   defaultTestSpec,
   mkCpNode,
-  mkTlsCerts,
+  testCerts,
   tlsCertsModule,
   ...
 }: let
-  testCerts = mkTlsCerts {hostnames = ["builder" "cache" "agent"];};
-
   # Real trivial closure that the shim returns from `nix build`. It exists
   # on the builder node's /nix/store because it's pulled in by the shim
   # derivation's closure (writeTextDir is a runtime dependency via string

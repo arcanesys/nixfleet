@@ -13,12 +13,12 @@
 # cycle). The "pre-seeded path + up-to-date report" case that used to live
 # here was dropped as trivially duplicated by vm-nixfleet and vm-fleet-*.
 #
-# Uses the shared _lib/helpers.nix + _lib/tls-certs.nix infrastructure
-# (same as the _vm-fleet-scenarios/*.nix files) instead of inlining its
-# own openssl cert generation and CP/agent service wiring. The only
-# scenario-specific override is `dryRun = false` on mkAgentNode — every
-# other test (including every _vm-fleet-scenarios subtest) runs dryRun
-# because they only need to prove the reporting cycle.
+# Uses the shared _lib/helpers.nix infrastructure (same as the
+# _vm-fleet-scenarios/*.nix files) instead of inlining its own openssl
+# cert generation and CP/agent service wiring. The only scenario-
+# specific override is `dryRun = false` on mkAgentNode — every other
+# test (including every _vm-fleet-scenarios subtest) runs dryRun because
+# they only need to prove the reporting cycle.
 #
 # Run: nix build .#checks.x86_64-linux.vm-agent-rebuild --no-link
 {inputs, ...}: {
@@ -28,8 +28,7 @@
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib;};
-    mkTlsCerts = import ./_lib/tls-certs.nix {inherit pkgs lib;};
+    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
@@ -43,9 +42,10 @@
     mkAgentNode = args:
       helpers.mkAgentNode ({inherit mkTestNode defaultTestSpec;} // args);
 
-    # CP needs an "agent"-CN client cert to make admin HTTP calls back
-    # into itself, and the agent node needs its own matching cert.
-    testCerts = mkTlsCerts {hostnames = ["agent"];};
+    # Use the shared cert derivation so this test's CP / agent node
+    # closures dedupe with the `_vm-fleet-scenarios/*.nix` scenarios
+    # that use the same mkCpNode / mkAgentNode shape.
+    testCerts = helpers.sharedTestCerts;
   in
     lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
