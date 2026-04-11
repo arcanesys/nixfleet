@@ -38,6 +38,17 @@ nix flake check --no-build         # eval tests (instant)
 nix run .#validate                 # full validation (eval + host builds)
 nix run .#validate -- --vm         # include VM tests (slow)
 nix build .#checks.x86_64-linux.vm-fleet --no-link  # 4-node fleet test (CP + 3 agents, TLS/mTLS, rollouts)
+# Phase 3 scenario subtests (each independently buildable)
+nix build .#checks.x86_64-linux.vm-fleet-release --no-link        # R1, R2
+nix build .#checks.x86_64-linux.vm-fleet-bootstrap --no-link      # D1
+nix build .#checks.x86_64-linux.vm-fleet-deploy-ssh --no-link     # D4
+nix build .#checks.x86_64-linux.vm-fleet-apply-failure --no-link  # F1, RB1
+nix build .#checks.x86_64-linux.vm-fleet-revert --no-link         # F2, C3
+nix build .#checks.x86_64-linux.vm-fleet-timeout --no-link        # F3
+nix build .#checks.x86_64-linux.vm-fleet-poll-retry --no-link     # F7
+nix build .#checks.x86_64-linux.vm-fleet-mtls-missing --no-link   # A3
+nix build .#checks.x86_64-linux.vm-fleet-rollback-ssh --no-link   # RB2
+nix build .#checks.x86_64-linux.vm-fleet-tag-sync --no-link       # M3
 nix run .#build-vm -- -h web-02    # install VM (ISO + nixos-anywhere)
 nix run .#build-vm -- --all        # install all hosts
 nix run .#build-vm -- --all --vlan 1234  # install all with inter-VM VLAN
@@ -258,6 +269,8 @@ See `examples/` for standalone-host, batch-hosts, and client-fleet patterns.
 - **VM** (`modules/tests/vm.nix`, `vm-nixfleet.nix`) — runtime assertions. `nix run .#validate -- --vm`
 - **VM Infrastructure** (`modules/tests/vm-infra.nix`) — firewall, node exporter, backup timer, secrets key generation. `nix run .#validate -- --vm`
 - **VM Fleet** (`modules/tests/vm-fleet.nix`) — 4-node fleet test (CP + 3 agents) with required mTLS, canary rollout on web tag (passes), all-at-once on db tag (pauses on health gate failure), pause/resume. `nix build .#checks.x86_64-linux.vm-fleet --no-link`
+- **VM Fleet scenarios** (`modules/tests/_vm-fleet-scenarios/`) — Phase 3 per-scenario VM subtests covering release lifecycle, deploy happy paths, failure/rollback/revert, timeout, poll retry, mTLS, and tag sync. Each subtest is independently buildable as `.#checks.x86_64-linux.vm-fleet-<name>`.
+- **Phase 3 Rust scenarios** — integration tests in `control-plane/tests/*_scenarios.rs` and `cli/tests/*_scenarios.rs` cover release CRUD, deploy strategies, generation gating, threshold, hydration, rollback, polling, machine lifecycle, auth/RBAC, audit, metrics, and config precedence. Run with `cargo test -p nixfleet-control-plane --tests` / `cargo test -p nixfleet-cli --tests`.
 - **Integration** (`modules/tests/integration/`) — mock client consumption pattern
 
 ## Multi-Repo
