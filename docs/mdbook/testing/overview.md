@@ -68,12 +68,15 @@ including the fleet scenario subtests under `_vm-fleet-scenarios/`.
 
 High-level categories:
 
-- **Framework-level VMs** (`vm-core`, `vm-minimal`, `vm-infra`,
-  `vm-nixfleet`, `vm-agent-rebuild`) — each one boots one or two nodes and
-  exercises a single subsystem.
-- **Fleet-level VMs** (`vm-fleet` and the `vm-fleet-*` scenario subtests)
-  — exercise multi-node topologies, mTLS, rollout strategies, failure
-  paths, SSH-direct deploys, etc.
+- **Framework-level VMs** (`vm-core`, `vm-minimal`, `vm-firewall`,
+  `vm-monitoring`, `vm-backup`, `vm-backup-restic`, `vm-secrets`,
+  `vm-cache-server`) — each one boots one or two nodes and exercises a
+  single subsystem in isolation. These prove the framework produces
+  bootable configs even when no fleet is enabled.
+- **Fleet-level VMs** (`vm-fleet` and the `vm-fleet-*` scenario subtests
+  under `_vm-fleet-scenarios/`) — exercise multi-node topologies,
+  mTLS, rollout strategies, failure paths, SSH-direct deploys, and the
+  real `fetch → apply → verify` pipeline (`vm-fleet-agent-rebuild`).
 
 ## Rust tests
 
@@ -87,9 +90,9 @@ See [Rust Tests](rust-tests.md) for the full breakdown.
 |---|---|
 | "Option X isn't being set correctly" | Eval test for that option |
 | "My consumer flake doesn't build with mkHost" | `integration-mock-client` |
-| "The agent service won't start on a real VM" | `vm-core`, `vm-nixfleet` |
-| "A scope module (firewall, backup, monitoring) is broken" | `vm-infra` |
-| "The fetch→apply pipeline isn't working" | `vm-agent-rebuild` |
+| "The agent service won't start on a real VM" | `vm-core`, `vm-fleet-tag-sync` |
+| "A scope module (firewall, backup, monitoring) is broken" | `vm-firewall`, `vm-backup`, `vm-monitoring` (per scope) |
+| "The fetch→apply pipeline isn't working" | `vm-fleet-agent-rebuild` |
 | "Rollout state machine is wrong" | `vm-fleet` + Rust `failure_scenarios.rs`, `deploy_scenarios.rs` |
 | "mTLS / auth / RBAC is wrong" | `vm-fleet-mtls-missing`, Rust `auth_scenarios.rs` |
 | "Release CRUD or release push-hook is wrong" | `vm-fleet-release`, Rust `release_scenarios.rs` |
@@ -105,7 +108,7 @@ See [Rust Tests](rust-tests.md) for the full breakdown.
 
 - **Real `switch-to-configuration`**: most VM tests run agents with `dryRun = true`
   so the actual apply path is not exercised. The exception is
-  `vm-agent-rebuild`, which runs with `dryRun = false` and exercises the
-  missing-path guard end-to-end. Production bootstraps cover the happy
-  apply path.
+  `vm-fleet-agent-rebuild`, which runs with `dryRun = false` and
+  exercises the missing-path guard end-to-end. Production bootstraps
+  cover the happy apply path.
 - **Multi-CP topologies** and **agenix secret rotation** have no tests.

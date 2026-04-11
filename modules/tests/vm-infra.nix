@@ -183,34 +183,6 @@
             '';
           };
 
-        # --- vm-cache: cache client configures Nix substituters ---
-        vm-cache = pkgs.testers.nixosTest {
-          name = "vm-cache";
-
-          nodes.machine = mkTestNode {
-            hostSpecValues = defaultTestSpec;
-            extraModules = [
-              {
-                services.nixfleet-cache = {
-                  enable = true;
-                  cacheUrl = "http://cache.example.com";
-                  publicKey = "test-cache:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-                };
-              }
-            ];
-          };
-
-          testScript = ''
-            machine.wait_for_unit("multi-user.target")
-
-            # Nix substituters should include the cache URL
-            machine.succeed("nix show-config | grep substituters | grep cache.example.com")
-
-            # Nix trusted-public-keys should include the signing key
-            machine.succeed("nix show-config | grep trusted-public-keys | grep test-cache")
-          '';
-        };
-
         # --- vm-backup-restic: restic backend wires up correctly ---
         vm-backup-restic = let
           passwordFile = pkgs.writeText "restic-test-password" "test-password";

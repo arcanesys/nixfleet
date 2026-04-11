@@ -86,30 +86,6 @@ One node, four scopes in one VM for speed:
 - **Secrets** — SSH host key generated at
   `/etc/ssh/ssh_host_ed25519_key` with mode 600.
 
-### `vm-nixfleet`
-
-Minimal CP ↔ agent handshake (2 nodes):
-
-1. CP starts, `nixfleet-control-plane.service` listens on 8080.
-2. Agent starts with `pollInterval = 2`, `dryRun = true`.
-3. Test bootstraps an admin API key, creates a release + rollout.
-4. Rollout executor sets the agent's desired generation.
-5. Agent detects mismatch, runs dry-run cycle (skips apply), reports back.
-6. CP inventory reflects the agent's report.
-
-This is the lowest-level end-to-end proof that the agent and CP can
-actually talk to each other.
-
-### `vm-agent-rebuild`
-
-The fetch → apply → verify pipeline with two sub-scenarios:
-
-- **Test B (no-cache)**: closure pre-seeded in agent store, agent verifies
-  path exists via `nix path-info` and reports up-to-date.
-- **Test C (missing path guard)**: non-existent store path, no cache URL,
-  agent detects the missing path and reports an error without advancing
-  its generation.
-
 ### `vm-fleet` — "Tier A headline test"
 
 4-node fleet: `cp` + `web-01` + `web-02` + `db-01`, with full mTLS

@@ -283,12 +283,12 @@ Tiers:
 
 - **Eval** (`modules/tests/eval.nix`) — config correctness at Nix eval time, instant.
 - **Integration** (`modules/tests/integration/mock-client-test.nix`) — simulates a consumer flake importing `nixfleet.lib.mkHost`.
-- **VM framework** (`modules/tests/vm*.nix`) — `vm-core`, `vm-minimal`, `vm-infra` (firewall/monitoring/backup/secrets in one VM), `vm-nixfleet` (minimal CP↔agent), `vm-agent-rebuild` (fetch→apply→verify with `dryRun = false`), `vm-fleet` (4-node fleet with mTLS + rollouts).
+- **VM framework** (`modules/tests/vm*.nix`) — subsystem VMs that boot `mkHost` without a fleet: `vm-core`, `vm-minimal`, `vm-firewall`, `vm-monitoring`, `vm-backup`, `vm-backup-restic`, `vm-secrets`, `vm-cache-server`. Plus `vm-fleet` (4-node fleet with mTLS + rollouts).
 - **VM scenarios** (`modules/tests/_vm-fleet-scenarios/`) — per-scenario subtests, each independently buildable as `.#checks.x86_64-linux.vm-fleet-<name>`. Discovered dynamically by validate so new ones land in `--all` / `--vm` automatically.
 - **Rust unit** — in-file `#[cfg(test)] mod tests` in every crate.
 - **Rust integration scenarios** — `control-plane/tests/*_scenarios.rs` and `cli/tests/*_scenarios.rs` cover release CRUD, deploy strategies, generation gating, failure threshold, hydration, rollback, polling, machine lifecycle, auth/RBAC, audit, metrics, migrations, CLI config precedence.
 
-VM scenario helpers live in `modules/tests/_lib/helpers.nix`: `mkCpNode`, `mkAgentNode`, `tlsCertsModule`, `testPrelude`, `mkTlsCerts`, `nix-shim`, `testConstants`. The aggregator `modules/tests/vm-fleet-scenarios.nix` pre-binds them into a single `scenarioArgs` attrset so every scenario file's import is narrow. The toplevel `vm-fleet.nix`, `vm-agent-rebuild.nix`, and every `_vm-fleet-scenarios/*.nix` use the same helper set; the only deliberate divergence is `vm-nixfleet.nix`, which is a plaintext-HTTP smoke test by design.
+VM scenario helpers live in `modules/tests/_lib/helpers.nix`: `mkCpNode`, `mkAgentNode`, `tlsCertsModule`, `testPrelude`, `mkTlsCerts`, `sharedTestCerts`, `nix-shim`, `testConstants`. The aggregator `modules/tests/vm-fleet-scenarios.nix` pre-binds them into a single `scenarioArgs` attrset so every scenario file's import is narrow. The top-level `vm-fleet.nix` and every `_vm-fleet-scenarios/*.nix` use the same helper set.
 
 ## Multi-Repo
 
