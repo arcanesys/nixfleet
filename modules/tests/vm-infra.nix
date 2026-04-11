@@ -123,9 +123,23 @@
 
         # --- vm-cache-server: harmonia binary cache server starts and responds ---
         vm-cache-server = let
-          # Generate a signing key at build time for the test
-          signingKeyFile = pkgs.runCommand "cache-test-signing-key" {} ''
-            ${pkgs.nix}/bin/nix-store --generate-binary-cache-key test-cache "$out" /dev/null
+          # Generate a signing key at build time for the test.
+          # `nix-store --generate-binary-cache-key` tries to mkdir
+          # /nix/var/nix/profiles on startup, which is forbidden in
+          # the build sandbox — redirect NIX_STATE_DIR into $TMPDIR
+          # so it writes its profile scratch space there instead.
+          # Also write the key into a subdirectory of $out so $out
+          # remains a directory (what the nix build environment expects)
+          # and the file is reachable via ${signingKeyFile}/signing.secret.
+          signingKeyPair = pkgs.runCommand "cache-test-signing-key" {} ''
+            mkdir -p $out
+            export NIX_STATE_DIR="$TMPDIR/nix-state"
+            mkdir -p "$NIX_STATE_DIR"
+            ${pkgs.nix}/bin/nix-store --generate-binary-cache-key \
+              test-cache \
+              $out/signing.secret \
+              $out/signing.public
+            chmod 0444 $out/signing.secret
           '';
         in
           pkgs.testers.nixosTest {
@@ -137,7 +151,7 @@
                 {
                   services.nixfleet-cache-server = {
                     enable = true;
-                    signingKeyFile = "${signingKeyFile}";
+                    signingKeyFile = "${signingKeyPair}/signing.secret";
                   };
                 }
               ];
@@ -145,7 +159,23 @@
 
             testScript = ''
               server.wait_for_unit("multi-user.target")
-              server.wait_for_unit("nixfleet-cache-server.service")
+              # services.nixfleet-cache-server is a thin wrapper around
+              # services.harmonia.cache — the actual systemd unit is
+              # `harmonia.service`, not `nixfleet-cache-server.service`.
+              # Use a bounded wait_until_succeeds so a regression in
+              # the signing-key LoadCredential path (see TODO.md Phase
+              # 3 bug log / commit 5d4ab30) produces an informative
+              # failure rather than an opaque wait_for_unit hang.
+              try:
+                  server.wait_until_succeeds(
+                      "systemctl is-active harmonia.service", timeout=60
+                  )
+              except Exception:
+                  print("=== harmonia status ===")
+                  print(server.execute("systemctl status harmonia.service --no-pager")[1])
+                  print("=== harmonia journal ===")
+                  print(server.execute("journalctl -u harmonia.service --no-pager -n 80")[1])
+                  raise
               server.wait_for_open_port(5000)
 
               # Harmonia should respond with nix-cache-info

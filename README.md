@@ -131,6 +131,8 @@ nix fmt                            # format (alejandra + shfmt)
 cargo test --workspace             # Rust tests
 ```
 
+Phase 3 scenario tests live in `control-plane/tests/*_scenarios.rs`, `cli/tests/*_scenarios.rs`, and `modules/tests/_vm-fleet-scenarios/`. Each VM subtest is independently buildable as `nix build .#checks.x86_64-linux.vm-fleet-<name> --no-link`. See `docs/adr/009-core-hardening-audit.md` for the audit that drove them.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed contributor guidelines.
 
 ## License

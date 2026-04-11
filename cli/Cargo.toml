@@ -12,6 +12,10 @@ authors = ["nixfleet contributors"]
 name = "nixfleet"
 path = "src/main.rs"
 
+[lib]
+name = "nixfleet"
+path = "src/lib.rs"
+
 [dependencies]
 nixfleet-types = { path = "../shared" }
 clap = { version = "4", features = ["derive", "env"] }
@@ -28,3 +32,5 @@ hostname = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+assert_cmd = "2"
+predicates = "3"

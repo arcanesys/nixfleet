@@ -96,7 +96,7 @@ fn resolve_var(name: &str) -> String {
 
 /// Expand environment variables in a string: `${VAR}` → value of $VAR.
 /// `${HOSTNAME}` and `${HOST}` fall back to gethostname() if not in env.
-fn expand_env_vars(s: &str) -> String {
+pub fn expand_env_vars(s: &str) -> String {
     let mut result = s.to_string();
     while let Some(start) = result.find("${") {
         if let Some(end) = result[start..].find('}') {

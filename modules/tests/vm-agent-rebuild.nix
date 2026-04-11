@@ -1,9 +1,17 @@
-# Tier A — VM agent rebuild tests: verify the full fetch → apply → verify pipeline.
+# Tier A — VM agent rebuild test: verify the agent's missing-path guard.
 #
-# Test B: No-cache — CP + agent. Closure pre-seeded in agent store.
-#         Agent verifies path exists, reports up-to-date.
-# Test C: Missing path guard — CP + agent. Non-existent store path, no cache URL.
-#         Agent detects missing path, reports error, stays at old generation.
+# Scope: one negative scenario — the agent is told (via a real release +
+# rollout) to deploy a fabricated store path that does NOT exist anywhere,
+# with no cache URL configured. The agent's `fetch_closure` must log the
+# "not found locally and no cache URL configured" error and MUST NOT
+# advance `/run/current-system`.
+#
+# This is the only VM test that runs with `dryRun = false`, so it is the
+# only one that exercises the real `fetch → apply → verify` code path end
+# to end. Other fetch-path coverage is indirect (vm-fleet-release proves
+# `nix copy` + harmonia; vm-fleet-bootstrap proves the happy-path report
+# cycle). The "pre-seeded path + up-to-date report" case that used to live
+# here was dropped as trivially duplicated by vm-nixfleet and vm-fleet-*.
 #
 # Run: nix build .#checks.x86_64-linux.vm-agent-rebuild --no-link
 {inputs, ...}: {
@@ -132,17 +140,17 @@
             CURL = "curl -sf --cacert /etc/nixfleet-tls/ca.pem --cert /etc/nixfleet-tls/cp-cert.pem --key /etc/nixfleet-tls/cp-key.pem"
             API = "https://localhost:8080"
 
-            # --- Phase 1: Start CP, bootstrap API key ---
+            # --- Phase 1: Start CP, seed admin API key, register agent ---
             cp.start()
             cp.wait_for_unit("nixfleet-control-plane.service")
             cp.wait_for_open_port(8080)
 
             cp.succeed(
                 f"sqlite3 /var/lib/nixfleet-cp/state.db "
-                f"\"INSERT INTO api_keys (key_hash, name, role) VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
+                f"\"INSERT INTO api_keys (key_hash, name, role) "
+                f"VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
             )
 
-            # Register agent
             cp.succeed(
                 f"{CURL} -X POST {API}/api/v1/machines/agent/register "
                 f"{AUTH} "
@@ -150,63 +158,84 @@
                 f"-d '{{\"tags\": [\"test\"]}}'"
             )
 
-            # --- Phase 2: Start agent, wait for registration ---
+            # --- Phase 2: Start the agent and wait for it to post its
+            # first report so the CP has current_generation on file. ---
             agent.start()
             agent.wait_for_unit("nixfleet-agent.service")
 
             cp.wait_until_succeeds(
                 f"{CURL} {AUTH} {API}/api/v1/machines "
-                f"| python3 -c \"import sys,json; machines=json.load(sys.stdin); "
-                f"assert any(m['id'] == 'agent' for m in machines), 'agent not registered'\"",
+                f"| python3 -c \"import sys,json; ms=json.load(sys.stdin); "
+                f"agent=[m for m in ms if m['machine_id'] == 'agent'][0]; "
+                f"assert agent.get('current_generation'), "
+                f"f'agent has no current_generation yet: {{agent}}'\"",
+                timeout=120,
+            )
+
+            # Record the agent's original /run/current-system. The test's
+            # load-bearing assertion is that this symlink does NOT move
+            # even after the CP tells the agent to deploy a fake path.
+            original_gen = agent.succeed("readlink /run/current-system").strip()
+
+            # --- Phase 3: Missing path guard ---
+            # Create a release whose entry points at a fabricated store
+            # path that does NOT exist anywhere. The agent's cacheUrl is
+            # not configured, so `fetch_closure` calls `nix path-info
+            # <fake>` which fails with "not found locally and no cache
+            # URL configured" and the agent refuses to advance.
+            #
+            # The release + rollout machinery is the only way to
+            # populate the agent's desired_generation (the legacy
+            # `set-generation` admin endpoint was removed in Phase 2);
+            # the executor's batch state is not asserted by this test,
+            # only the agent's behaviour in response.
+            fake_path = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nixos-system-fake"
+
+            release_body = json.dumps({
+                "flake_ref": "vm-agent-rebuild",
+                "entries": [
+                    {
+                        "hostname": "agent",
+                        "store_path": fake_path,
+                        "platform": "x86_64-linux",
+                        "tags": ["test"],
+                    },
+                ],
+            })
+            release = json.loads(cp.succeed(
+                f"{CURL} {AUTH} -X POST {API}/api/v1/releases "
+                f"-H 'Content-Type: application/json' "
+                f"-d '{release_body}'"
+            ))
+
+            rollout_body = json.dumps({
+                "release_id": release["id"],
+                "strategy": "all_at_once",
+                "failure_threshold": "1",
+                "on_failure": "pause",
+                "health_timeout": 30,
+                "target": {"tags": ["test"]},
+            })
+            cp.succeed(
+                f"{CURL} {AUTH} -X POST {API}/api/v1/rollouts "
+                f"-H 'Content-Type: application/json' "
+                f"-d '{rollout_body}'"
+            )
+
+            # --- Phase 4: Wait for the agent to log the "not found
+            # locally" error from fetch_closure. This is the load-bearing
+            # signal that the agent's refuse-to-switch branch fired. ---
+            agent.wait_until_succeeds(
+                "journalctl -u nixfleet-agent.service --no-pager "
+                "| grep -q 'not found locally and no cache URL configured'",
                 timeout=60,
             )
 
-            # --- Test B: No-cache, pre-seeded store path ---
-            # Get agent's current system store path (it's already in the store)
-            current_gen = agent.succeed("readlink /run/current-system").strip()
-
-            # Set the agent's own current generation as desired
-            set_gen_body = json.dumps({"hash": current_gen})
-            cp.succeed(
-                f"{CURL} -X POST {API}/api/v1/machines/agent/set-generation "
-                f"{AUTH} "
-                f"-H 'Content-Type: application/json' "
-                f"-d '{set_gen_body}'"
-            )
-
-            # Agent should poll, nix path-info succeeds, agent reports up-to-date
-            cp.wait_until_succeeds(
-                f"{CURL} {AUTH} {API}/api/v1/machines "
-                f"| python3 -c \"import sys,json; machines=json.load(sys.stdin); "
-                f"agent = [m for m in machines if m['id'] == 'agent'][0]; "
-                f"assert agent.get('current_generation') == '{current_gen}', "
-                f"f'Expected {current_gen}, got {{agent.get(\\\"current_generation\\\")}}'\"",
-                timeout=30,
-            )
-
-            # --- Test C: Missing path guard ---
-            # Set a fabricated store path that doesn't exist
-            fake_path = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nixos-system-fake"
-            fake_body = json.dumps({"hash": fake_path})
-            cp.succeed(
-                f"{CURL} -X POST {API}/api/v1/machines/agent/set-generation "
-                f"{AUTH} "
-                f"-H 'Content-Type: application/json' "
-                f"-d '{fake_body}'"
-            )
-
-            # Wait a few poll cycles — agent should NOT switch
-            import time
-            time.sleep(10)
-
-            # Agent should still be at original generation
+            # --- Phase 5: /run/current-system must not have moved ---
             actual_gen = agent.succeed("readlink /run/current-system").strip()
-            assert actual_gen == current_gen, f"Agent switched unexpectedly! Expected {current_gen}, got {actual_gen}"
-
-            # Verify agent logged the error
-            agent.succeed(
-                "journalctl -u nixfleet-agent.service --no-pager "
-                "| grep -q 'not found locally and no cache URL configured'"
+            assert actual_gen == original_gen, (
+                f"agent switched unexpectedly after being told to deploy a "
+                f"non-existent path: expected {original_gen}, got {actual_gen}"
             )
           '';
         };

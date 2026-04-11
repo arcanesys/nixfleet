@@ -71,5 +71,7 @@
 
 # Testing
 
+- [Overview](testing/overview.md)
 - [Eval Tests](testing/eval-tests.md)
 - [VM Tests](testing/vm-tests.md)
+- [Rust Tests](testing/rust-tests.md)

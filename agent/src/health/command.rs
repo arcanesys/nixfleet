@@ -24,9 +24,19 @@ impl Check for CommandChecker {
 
     async fn run(&self) -> HealthCheckResult {
         let start = Instant::now();
+        // Use an absolute path to /bin/sh so the check does not depend
+        // on whatever PATH the parent process (e.g. a systemd service)
+        // happens to have. On NixOS, `Command::new("sh")` with no
+        // absolute path and no custom PATH fails with ENOENT because
+        // the default systemd unit PATH does not include a directory
+        // providing `sh`. /bin/sh is a stable binary on every Linux
+        // distribution (on NixOS it is a symlink managed by
+        // environment.binsh, pointing at bash by default).
         let result = tokio::time::timeout(
             Duration::from_secs(self.timeout_secs),
-            Command::new("sh").args(["-c", &self.command]).output(),
+            Command::new("/bin/sh")
+                .args(["-c", &self.command])
+                .output(),
         )
         .await;
         let duration_ms = start.elapsed().as_millis() as u64;

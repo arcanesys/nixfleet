@@ -38,7 +38,7 @@ in {
 
     apps =
       {
-        "validate" = mkScript "validate" "Run format checks, eval tests, and host builds" ''
+        "validate" = mkScript "validate" "Run format, eval, host, VM, and Rust tests" ''
           set -uo pipefail
 
           GREEN='\033[1;32m'
@@ -51,11 +51,18 @@ in {
           SKIP=0
           FAST=0
           VM=0
+          RUST=0
 
+          # Default: fast mode (format + eval + host builds). Flags add tiers.
+          #   --vm      also build all VM tests under checks.${system} (slow)
+          #   --rust    also run `cargo test --workspace` (medium)
+          #   --all     shorthand for --vm --rust
           while [[ ''${#} -gt 0 ]]; do
             case "''${1}" in
               --fast) FAST=1; shift ;;
               --vm) VM=1; shift ;;
+              --rust) RUST=1; shift ;;
+              --all) VM=1; RUST=1; shift ;;
               *) echo "Unknown option: ''${1}"; exit 1 ;;
             esac
           done
@@ -63,13 +70,13 @@ in {
           check() {
             local name="$1"
             shift
-            printf "%-30s" "$name"
+            printf "%-40s" "$name"
             if OUTPUT=$("$@" 2>&1); then
               echo -e "''${GREEN}OK''${NC}"
               PASS=$((PASS + 1))
             else
               echo -e "''${RED}FAIL''${NC}"
-              echo "$OUTPUT" | tail -3
+              echo "$OUTPUT" | tail -5
               FAIL=$((FAIL + 1))
             fi
           }
@@ -77,7 +84,7 @@ in {
           check_eval() {
             local name="$1"
             local attr="$2"
-            printf "%-30s" "$name"
+            printf "%-40s" "$name"
             if nix eval "$attr" --apply 'x: x.config.system.build.toplevel.name or "ok"' 2>/dev/null 1>/dev/null; then
               echo -e "''${GREEN}OK (eval)''${NC}"
               PASS=$((PASS + 1))
@@ -118,13 +125,30 @@ in {
               if [ "$VM" = "1" ]; then
                 echo ""
                 echo "=== VM Integration Tests ==="
-                for t in vm-core vm-minimal vm-fleet; do
+                # Discover all vm-* checks dynamically so new scenario
+                # subtests are picked up automatically without touching
+                # this script.
+                VM_TESTS=$(nix eval ".#checks.${system}" \
+                    --apply 'cs: builtins.concatStringsSep " " (builtins.filter (n: builtins.match "vm-.*" n != null) (builtins.attrNames cs))' \
+                    --raw 2>/dev/null)
+                for t in $VM_TESTS; do
                   check "$t" nix build ".#checks.${system}.$t" --no-link
                 done
               fi
             ''
             else ""
           }
+
+          if [ "$RUST" = "1" ]; then
+            echo ""
+            echo "=== Rust Tests ==="
+            # `cargo test --workspace` runs every crate's unit tests
+            # and every integration test under control-plane/tests and
+            # cli/tests. Runs inside the dev shell so rustc/cargo are
+            # on PATH even when invoked from outside `nix develop`.
+            check "cargo test --workspace" \
+              nix develop --command cargo test --workspace --quiet
+          fi
 
           echo ""
           echo "==================================="

@@ -197,16 +197,20 @@ pub async fn list_machines(
 /// Request body for registering a machine.
 #[derive(Debug, Deserialize)]
 pub struct RegisterMachineRequest {
-    /// Optional initial lifecycle state (defaults to "pending").
-    #[serde(default = "default_pending")]
+    /// Optional initial lifecycle state. Defaults to "active" because the
+    /// common case for operator-driven registration is onboarding a
+    /// known-good machine into the fleet. Callers who want to reserve
+    /// an identifier for hardware that is not yet online can pass
+    /// `lifecycle: "pending"` explicitly.
+    #[serde(default = "default_active")]
     pub lifecycle: String,
     /// Optional initial tags for the machine.
     #[serde(default)]
     pub tags: Vec<String>,
 }
 
-fn default_pending() -> String {
-    "pending".to_string()
+fn default_active() -> String {
+    "active".to_string()
 }
 
 /// Response for registration.

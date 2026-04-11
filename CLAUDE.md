@@ -23,8 +23,9 @@ examples/
 ├── standalone-host/   # Example: single machine in its own repo
 └── batch-hosts/       # Example: 50 edge devices from a template
 docs/
-├── adr/               # Architecture Decision Records (8 ADRs)
+├── adr/               # Architecture Decision Records
 └── mdbook/            # Technical reference + user guide (mdbook)
+TODO.md                # Discovered work, grouped by target phase
 ```
 
 ## Commands
@@ -37,6 +38,17 @@ nix flake check --no-build         # eval tests (instant)
 nix run .#validate                 # full validation (eval + host builds)
 nix run .#validate -- --vm         # include VM tests (slow)
 nix build .#checks.x86_64-linux.vm-fleet --no-link  # 4-node fleet test (CP + 3 agents, TLS/mTLS, rollouts)
+# Phase 3 scenario subtests (each independently buildable)
+nix build .#checks.x86_64-linux.vm-fleet-release --no-link        # R1, R2
+nix build .#checks.x86_64-linux.vm-fleet-bootstrap --no-link      # D1
+nix build .#checks.x86_64-linux.vm-fleet-deploy-ssh --no-link     # D4
+nix build .#checks.x86_64-linux.vm-fleet-apply-failure --no-link  # F1, RB1
+nix build .#checks.x86_64-linux.vm-fleet-revert --no-link         # F2, C3
+nix build .#checks.x86_64-linux.vm-fleet-timeout --no-link        # F3
+nix build .#checks.x86_64-linux.vm-fleet-poll-retry --no-link     # F7
+nix build .#checks.x86_64-linux.vm-fleet-mtls-missing --no-link   # A3
+nix build .#checks.x86_64-linux.vm-fleet-rollback-ssh --no-link   # RB2
+nix build .#checks.x86_64-linux.vm-fleet-tag-sync --no-link       # M3
 nix run .#build-vm -- -h web-02    # install VM (ISO + nixos-anywhere)
 nix run .#build-vm -- --all        # install all hosts
 nix run .#build-vm -- --all --vlan 1234  # install all with inter-VM VLAN
@@ -252,12 +264,29 @@ See `examples/` for standalone-host, batch-hosts, and client-fleet patterns.
 
 ## Testing
 
-3-tier pyramid:
-- **Eval** (`modules/tests/eval.nix`) — config correctness, instant. `nix flake check --no-build`
-- **VM** (`modules/tests/vm.nix`, `vm-nixfleet.nix`) — runtime assertions. `nix run .#validate -- --vm`
-- **VM Infrastructure** (`modules/tests/vm-infra.nix`) — firewall, node exporter, backup timer, secrets key generation. `nix run .#validate -- --vm`
-- **VM Fleet** (`modules/tests/vm-fleet.nix`) — 4-node fleet test (CP + 3 agents) with required mTLS, canary rollout on web tag (passes), all-at-once on db tag (pauses on health gate failure), pause/resume. `nix build .#checks.x86_64-linux.vm-fleet --no-link`
-- **Integration** (`modules/tests/integration/`) — mock client consumption pattern
+Full reference: `docs/mdbook/testing/overview.md` (plus per-tier pages:
+`eval-tests.md`, `vm-tests.md`, `rust-tests.md`).
+
+One-liner runners:
+
+| Command | Runs |
+|---|---|
+| `nix run .#validate` | format + eval tests + all host builds (fast) |
+| `nix run .#validate -- --vm` | ^ + every `vm-*` check (dynamically discovered) |
+| `nix run .#validate -- --rust` | ^ + `cargo test --workspace` |
+| `nix run .#validate -- --all` | everything |
+
+Tiers:
+
+- **Eval** (`modules/tests/eval.nix`) — config correctness at Nix eval time, instant.
+- **Integration** (`modules/tests/integration/mock-client-test.nix`) — simulates a consumer flake importing `nixfleet.lib.mkHost`.
+- **VM framework** (`modules/tests/vm*.nix`) — `vm-core`, `vm-minimal`, `vm-infra` (firewall/monitoring/backup/secrets in one VM), `vm-nixfleet` (minimal CP↔agent), `vm-agent-rebuild` (fetch→apply→verify), `vm-fleet` (4-node fleet with mTLS + rollouts).
+- **VM scenarios** (`modules/tests/_vm-fleet-scenarios/`) — Phase 3 per-scenario subtests. Each one is independently buildable as `.#checks.x86_64-linux.vm-fleet-<name>`:
+  `vm-fleet-tag-sync`, `vm-fleet-bootstrap`, `vm-fleet-release`, `vm-fleet-deploy-ssh`, `vm-fleet-apply-failure`, `vm-fleet-revert`, `vm-fleet-timeout`, `vm-fleet-poll-retry`, `vm-fleet-mtls-missing`, `vm-fleet-rollback-ssh`.
+- **Rust unit** — in-file `#[cfg(test)] mod tests` in every Rust module (control-plane auth/db/state/tls/metrics, rollout batch/executor, agent comms/config/store/health/nix, shared types).
+- **Rust integration scenarios** — `control-plane/tests/*_scenarios.rs` and `cli/tests/*_scenarios.rs` cover release CRUD (R3-R6), deploy strategies (D2, D3), generation gating + threshold + hydration + CP restart (F4-F6, H1), rollback (RB3, RB4), polling (P1, P2), machine lifecycle (M1, M2), auth/RBAC (A1, A2, A4), audit (AU1, AU2), metrics (ME1, ME2), migrations idempotency (I1), CLI config precedence (I2 `#[ignore]` pending Phase 4, I3).
+
+VM scenario helpers live in `modules/tests/_lib/helpers.nix`: `mkCpNode`, `mkAgentNode`, `tlsCertsModule`, `testPrelude`, `mkTlsCerts`, `nix-shim`. The aggregator `modules/tests/vm-fleet-scenarios.nix` pre-binds them into a single `scenarioArgs` attrset so every scenario file's import is narrow.
 
 ## Multi-Repo
 

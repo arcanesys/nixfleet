@@ -13,13 +13,19 @@
     ...
   }: let
     helpers = import ./_lib/helpers.nix {inherit lib;};
+    mkTlsCerts = import ./_lib/tls-certs.nix {inherit pkgs lib;};
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
       hostSpecModule = ../_shared/host-spec-module.nix;
     };
-
     defaultTestSpec = helpers.defaultTestSpec;
+
+    mkCpNode = args:
+      helpers.mkCpNode ({inherit mkTestNode defaultTestSpec;} // args);
+    mkAgentNode = args:
+      helpers.mkAgentNode ({inherit mkTestNode defaultTestSpec;} // args);
+    testPrelude = helpers.testPrelude;
 
     # Shared modules for web agent nodes (nginx health endpoint + node exporter)
     webAgentModules = [
@@ -47,113 +53,17 @@
 
     # Build-time TLS certificates: fleet CA + CP server cert + 3 agent client certs.
     # Deterministic — no runtime setup needed.
-    testCerts =
-      pkgs.runCommand "nixfleet-fleet-test-certs" {
-        nativeBuildInputs = [pkgs.openssl];
-      } ''
-        mkdir -p $out
-
-        # Fleet CA (self-signed, EC P-256)
-        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-          -keyout $out/ca-key.pem -out $out/ca.pem -days 365 -nodes \
-          -subj '/CN=nixfleet-test-ca'
-
-        # CP server cert (CN=cp, SAN includes cp + localhost for test curl)
-        openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-          -keyout $out/cp-key.pem -out $out/cp-csr.pem -nodes \
-          -subj '/CN=cp' \
-          -addext 'subjectAltName=DNS:cp,DNS:localhost'
-        openssl x509 -req -in $out/cp-csr.pem -CA $out/ca.pem -CAkey $out/ca-key.pem \
-          -CAcreateserial -out $out/cp-cert.pem -days 365 \
-          -copy_extensions copyall
-
-        # Agent client certs (CN = hostname)
-        for host in web-01 web-02 db-01; do
-          openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-            -keyout $out/$host-key.pem -out $out/$host-csr.pem -nodes \
-            -subj "/CN=$host"
-          openssl x509 -req -in $out/$host-csr.pem -CA $out/ca.pem -CAkey $out/ca-key.pem \
-            -CAcreateserial -out $out/$host-cert.pem -days 365
-        done
-
-        rm -f $out/*.csr.pem $out/*.srl
-      '';
-
-    # Helper: build an agent node with TLS, tags, and optional extra modules.
-    mkAgentNode = {
-      hostName,
-      tags,
-      healthChecks ? {},
-      extraAgentModules ? [],
-    }:
-      mkTestNode {
-        hostSpecValues =
-          defaultTestSpec
-          // {
-            inherit hostName;
-          };
-        extraModules =
-          [
-            {
-              # Trust the fleet CA so the agent can verify the CP's TLS cert
-              security.pki.certificateFiles = ["${testCerts}/ca.pem"];
-
-              environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-              environment.etc."nixfleet-tls/${hostName}-cert.pem".source = "${testCerts}/${hostName}-cert.pem";
-              environment.etc."nixfleet-tls/${hostName}-key.pem".source = "${testCerts}/${hostName}-key.pem";
-
-              services.nixfleet-agent = {
-                enable = true;
-                controlPlaneUrl = "https://cp:8080";
-                machineId = hostName;
-                pollInterval = 2;
-                healthInterval = 5;
-                dryRun = true;
-                inherit tags;
-                tls = {
-                  clientCert = "/etc/nixfleet-tls/${hostName}-cert.pem";
-                  clientKey = "/etc/nixfleet-tls/${hostName}-key.pem";
-                };
-                inherit healthChecks;
-              };
-            }
-          ]
-          ++ extraAgentModules;
-      };
+    testCerts = mkTlsCerts {hostnames = ["web-01" "web-02" "db-01"];};
   in
     lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
         vm-fleet = pkgs.testers.nixosTest {
           name = "vm-fleet";
 
-          nodes.cp = mkTestNode {
-            hostSpecValues =
-              defaultTestSpec
-              // {
-                hostName = "cp";
-              };
-            extraModules = [
-              ({pkgs, ...}: {
-                environment.etc."nixfleet-tls/ca.pem".source = "${testCerts}/ca.pem";
-                environment.etc."nixfleet-tls/cp-cert.pem".source = "${testCerts}/cp-cert.pem";
-                environment.etc."nixfleet-tls/cp-key.pem".source = "${testCerts}/cp-key.pem";
-
-                services.nixfleet-control-plane = {
-                  enable = true;
-                  openFirewall = true;
-                  tls = {
-                    cert = "/etc/nixfleet-tls/cp-cert.pem";
-                    key = "/etc/nixfleet-tls/cp-key.pem";
-                    clientCa = "/etc/nixfleet-tls/ca.pem";
-                  };
-                };
-
-                environment.systemPackages = [pkgs.sqlite pkgs.python3];
-              })
-            ];
-          };
+          nodes.cp = mkCpNode {inherit testCerts;};
 
           nodes.web-01 = mkAgentNode {
+            inherit testCerts;
             hostName = "web-01";
             tags = ["web"];
             healthChecks = webHealthChecks;
@@ -161,6 +71,7 @@
           };
 
           nodes.web-02 = mkAgentNode {
+            inherit testCerts;
             hostName = "web-02";
             tags = ["web"];
             healthChecks = webHealthChecks;
@@ -168,6 +79,7 @@
           };
 
           nodes.db-01 = mkAgentNode {
+            inherit testCerts;
             hostName = "db-01";
             tags = ["db"];
             healthChecks.http = [
@@ -182,21 +94,14 @@
           testScript = ''
             import json
 
-            TEST_KEY = "test-admin-key"
-            KEY_HASH = "944650a7cd0f9e14d5c4fb15edbffb7fa45fb9ed36a4fa9be3d7e5476ae51bd9"
-            AUTH = f"-H 'Authorization: Bearer {TEST_KEY}'"
-            CURL = "curl -sf --cacert /etc/nixfleet-tls/ca.pem --cert /etc/nixfleet-tls/cp-cert.pem --key /etc/nixfleet-tls/cp-key.pem"
-            API = "https://localhost:8080"
+            ${testPrelude {}}
 
             # --- Phase 1: Start CP, bootstrap API key ---
             cp.start()
             cp.wait_for_unit("nixfleet-control-plane.service")
             cp.wait_for_open_port(8080)
 
-            cp.succeed(
-                f"sqlite3 /var/lib/nixfleet-cp/state.db "
-                f"\"INSERT INTO api_keys (key_hash, name, role) VALUES ('{KEY_HASH}', 'test-admin', 'admin')\""
-            )
+            seed_admin_key(cp)
 
             # --- Phase 2: Register all agents with their tags ---
             for host, tags in [("web-01", ["web"]), ("web-02", ["web"]), ("db-01", ["db"])]:
@@ -226,8 +131,43 @@
             )
 
             # --- Phase 4: Canary rollout on web tag (should succeed) ---
+            # Since the agents run in dryRun=true they do not actually switch,
+            # but they still report nix::current_generation() which resolves
+            # to /run/current-system. We therefore build the release whose
+            # entries point at each agent's actual current toplevel — that
+            # way the executor's generation gate (report.generation ==
+            # release_entry.store_path) matches immediately and the rollout
+            # can proceed to health evaluation normally.
+            web_01_toplevel = web_01.succeed("readlink -f /run/current-system").strip()
+            web_02_toplevel = web_02.succeed("readlink -f /run/current-system").strip()
+
+            web_release_body = json.dumps({
+                "flake_ref": "test",
+                "flake_rev": "web-release",
+                "entries": [
+                    {
+                        "hostname": "web-01",
+                        "store_path": web_01_toplevel,
+                        "platform": "x86_64-linux",
+                        "tags": ["web"],
+                    },
+                    {
+                        "hostname": "web-02",
+                        "store_path": web_02_toplevel,
+                        "platform": "x86_64-linux",
+                        "tags": ["web"],
+                    },
+                ],
+            })
+            web_release_resp = cp.succeed(
+                f"{CURL} -X POST {API}/api/v1/releases {AUTH} "
+                f"-H 'Content-Type: application/json' "
+                f"-d '{web_release_body}'"
+            )
+            web_release_id = json.loads(web_release_resp)["id"]
+
             rollout_body = json.dumps({
-                "generation_hash": "/nix/store/fake-web-generation",
+                "release_id": web_release_id,
                 "strategy": "staged",
                 "batch_sizes": ["1", "100%"],
                 "failure_threshold": "1",
@@ -260,8 +200,33 @@
             web_01.succeed("curl -sf http://localhost:9100/metrics | grep node_cpu")
 
             # --- Phase 6: Rollout on db tag — health gate fails, rollout pauses ---
+            # Same trick as phase 4: release entry points at db-01's real
+            # toplevel so the generation gate matches and evaluate_batch
+            # proceeds to health evaluation, which then fails because
+            # db-01's configured health check hits :9999 (nothing listening).
+            db_01_toplevel = db_01.succeed("readlink -f /run/current-system").strip()
+
+            db_release_body = json.dumps({
+                "flake_ref": "test",
+                "flake_rev": "db-release",
+                "entries": [
+                    {
+                        "hostname": "db-01",
+                        "store_path": db_01_toplevel,
+                        "platform": "x86_64-linux",
+                        "tags": ["db"],
+                    },
+                ],
+            })
+            db_release_resp = cp.succeed(
+                f"{CURL} -X POST {API}/api/v1/releases {AUTH} "
+                f"-H 'Content-Type: application/json' "
+                f"-d '{db_release_body}'"
+            )
+            db_release_id = json.loads(db_release_resp)["id"]
+
             db_rollout_body = json.dumps({
-                "generation_hash": "/nix/store/fake-db-generation",
+                "release_id": db_release_id,
                 "strategy": "all_at_once",
                 "failure_threshold": "0",
                 "on_failure": "pause",
