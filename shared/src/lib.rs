@@ -313,4 +313,73 @@ mod tests {
         assert!(api::REPORT.starts_with("/api/v1/machines/"));
         assert!(api::MACHINES.starts_with("/api/v1/machines"));
     }
+
+    /// Exhaustive matrix for `can_transition_to`. Pins every cell of
+    /// the 5×5 lifecycle state graph so adding or removing a valid
+    /// transition requires updating both the impl AND this table.
+    /// Self-transitions are invalid per the current impl.
+    #[test]
+    fn test_lifecycle_can_transition_to_full_matrix() {
+        use MachineLifecycle::*;
+
+        // (from, to, expected_valid)
+        let cases: &[(MachineLifecycle, MachineLifecycle, bool)] = &[
+            // From Pending
+            (Pending, Pending, false),
+            (Pending, Provisioning, true),
+            (Pending, Active, true),
+            (Pending, Maintenance, false),
+            (Pending, Decommissioned, true),
+            // From Provisioning
+            (Provisioning, Pending, true),
+            (Provisioning, Provisioning, false),
+            (Provisioning, Active, true),
+            (Provisioning, Maintenance, false),
+            (Provisioning, Decommissioned, false),
+            // From Active
+            (Active, Pending, false),
+            (Active, Provisioning, false),
+            (Active, Active, false),
+            (Active, Maintenance, true),
+            (Active, Decommissioned, true),
+            // From Maintenance
+            (Maintenance, Pending, false),
+            (Maintenance, Provisioning, false),
+            (Maintenance, Active, true),
+            (Maintenance, Maintenance, false),
+            (Maintenance, Decommissioned, true),
+            // From Decommissioned (terminal)
+            (Decommissioned, Pending, false),
+            (Decommissioned, Provisioning, false),
+            (Decommissioned, Active, false),
+            (Decommissioned, Maintenance, false),
+            (Decommissioned, Decommissioned, false),
+        ];
+
+        for (from, to, expected) in cases {
+            assert_eq!(
+                from.can_transition_to(to),
+                *expected,
+                "transition {from:?} → {to:?}: expected {expected}, got {}",
+                from.can_transition_to(to)
+            );
+        }
+    }
+
+    /// from_str_lc must round-trip every variant + reject unknown.
+    #[test]
+    fn test_lifecycle_from_str_lc_exhaustive() {
+        use MachineLifecycle::*;
+        for v in [Pending, Provisioning, Active, Maintenance, Decommissioned] {
+            let s = v.to_string();
+            assert_eq!(
+                MachineLifecycle::from_str_lc(&s),
+                Some(v.clone()),
+                "round-trip failed for {v:?}"
+            );
+        }
+        assert_eq!(MachineLifecycle::from_str_lc("not-a-state"), None);
+        assert_eq!(MachineLifecycle::from_str_lc(""), None);
+        assert_eq!(MachineLifecycle::from_str_lc("ACTIVE"), None); // case-sensitive
+    }
 }
