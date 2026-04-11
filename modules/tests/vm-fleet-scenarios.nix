@@ -48,7 +48,9 @@
       vm-fleet-mtls-missing = import ./_vm-fleet-scenarios/mtls-missing.nix {
         inherit pkgs mkTestNode defaultTestSpec mkTlsCerts;
       };
-      # Task 25: vm-fleet-rollback-ssh = ...
+      vm-fleet-rollback-ssh = import ./_vm-fleet-scenarios/rollback-ssh.nix {
+        inherit pkgs lib mkTestNode defaultTestSpec mkTlsCerts;
+      };
     };
   in
     lib.optionalAttrs (system == "x86_64-linux") {
