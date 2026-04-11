@@ -42,7 +42,9 @@
       vm-fleet-timeout = import ./_vm-fleet-scenarios/timeout.nix {
         inherit pkgs lib mkTestNode defaultTestSpec mkTlsCerts;
       };
-      # Task 23: vm-fleet-poll-retry = ...
+      vm-fleet-poll-retry = import ./_vm-fleet-scenarios/poll-retry.nix {
+        inherit pkgs mkTestNode defaultTestSpec mkTlsCerts;
+      };
       # Task 24: vm-fleet-mtls-missing = ...
       # Task 25: vm-fleet-rollback-ssh = ...
     };
