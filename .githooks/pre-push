@@ -3,9 +3,14 @@ set -euo pipefail
 
 # Pre-push: eval tests + cargo test (fast, ~15s)
 # Full validate (host builds) runs in CI, not here
+#
+# `--no-cache` is deliberate: see the rationale in .githooks/pre-commit.
+# Short version: treefmt's per-inode cache can hide drift that CI's
+# empty cache surfaces, producing the "passed locally, failed in CI"
+# class of Format check regression.
 echo "=== Checking formatting ==="
-nix fmt -- --fail-on-change || {
-  echo "Formatting issues. Run: nix fmt"
+nix fmt -- --no-cache --fail-on-change || {
+  echo "Formatting issues. Run: nix fmt -- --no-cache"
   exit 1
 }
 
