@@ -197,8 +197,43 @@
             )
 
             # --- Phase 4: Canary rollout on web tag (should succeed) ---
+            # Since the agents run in dryRun=true they do not actually switch,
+            # but they still report nix::current_generation() which resolves
+            # to /run/current-system. We therefore build the release whose
+            # entries point at each agent's actual current toplevel — that
+            # way the executor's generation gate (report.generation ==
+            # release_entry.store_path) matches immediately and the rollout
+            # can proceed to health evaluation normally.
+            web_01_toplevel = web_01.succeed("readlink -f /run/current-system").strip()
+            web_02_toplevel = web_02.succeed("readlink -f /run/current-system").strip()
+
+            web_release_body = json.dumps({
+                "flake_ref": "test",
+                "flake_rev": "web-release",
+                "entries": [
+                    {
+                        "hostname": "web-01",
+                        "store_path": web_01_toplevel,
+                        "platform": "x86_64-linux",
+                        "tags": ["web"],
+                    },
+                    {
+                        "hostname": "web-02",
+                        "store_path": web_02_toplevel,
+                        "platform": "x86_64-linux",
+                        "tags": ["web"],
+                    },
+                ],
+            })
+            web_release_resp = cp.succeed(
+                f"{CURL} -X POST {API}/api/v1/releases {AUTH} "
+                f"-H 'Content-Type: application/json' "
+                f"-d '{web_release_body}'"
+            )
+            web_release_id = json.loads(web_release_resp)["id"]
+
             rollout_body = json.dumps({
-                "generation_hash": "/nix/store/fake-web-generation",
+                "release_id": web_release_id,
                 "strategy": "staged",
                 "batch_sizes": ["1", "100%"],
                 "failure_threshold": "1",
@@ -231,8 +266,33 @@
             web_01.succeed("curl -sf http://localhost:9100/metrics | grep node_cpu")
 
             # --- Phase 6: Rollout on db tag — health gate fails, rollout pauses ---
+            # Same trick as phase 4: release entry points at db-01's real
+            # toplevel so the generation gate matches and evaluate_batch
+            # proceeds to health evaluation, which then fails because
+            # db-01's configured health check hits :9999 (nothing listening).
+            db_01_toplevel = db_01.succeed("readlink -f /run/current-system").strip()
+
+            db_release_body = json.dumps({
+                "flake_ref": "test",
+                "flake_rev": "db-release",
+                "entries": [
+                    {
+                        "hostname": "db-01",
+                        "store_path": db_01_toplevel,
+                        "platform": "x86_64-linux",
+                        "tags": ["db"],
+                    },
+                ],
+            })
+            db_release_resp = cp.succeed(
+                f"{CURL} -X POST {API}/api/v1/releases {AUTH} "
+                f"-H 'Content-Type: application/json' "
+                f"-d '{db_release_body}'"
+            )
+            db_release_id = json.loads(db_release_resp)["id"]
+
             db_rollout_body = json.dumps({
-                "generation_hash": "/nix/store/fake-db-generation",
+                "release_id": db_release_id,
                 "strategy": "all_at_once",
                 "failure_threshold": "0",
                 "on_failure": "pause",
