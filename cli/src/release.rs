@@ -221,7 +221,7 @@ pub async fn create(
     client: &Client,
     base_url: &str,
     flake: &str,
-    hosts_pattern: &str,
+    host_patterns: &[String],
     push_to: Option<&str>,
     push_hook: Option<&str>,
     copy: bool,
@@ -230,9 +230,9 @@ pub async fn create(
 ) -> Result<Option<String>> {
     tracing::info!("discovering hosts");
     let all_hosts = discover_hosts(flake)?;
-    let hosts = filter_hosts(&all_hosts, hosts_pattern);
+    let hosts = filter_hosts(&all_hosts, host_patterns);
     if hosts.is_empty() {
-        anyhow::bail!("no hosts match pattern '{}'", hosts_pattern);
+        anyhow::bail!("no hosts match pattern '{}'", host_patterns.join(","));
     }
     tracing::info!(count = hosts.len(), "found hosts");
 

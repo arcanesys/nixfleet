@@ -25,8 +25,8 @@ nixfleet machines list
 Filter by tag:
 
 ```sh
-nixfleet machines list --tag prod
-nixfleet machines list --tag web
+nixfleet machines list --tags prod
+nixfleet machines list --tags web
 ```
 
 ## Tags

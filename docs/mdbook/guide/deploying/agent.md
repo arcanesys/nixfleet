@@ -125,7 +125,7 @@ Agents auto-register on first report (gated by mTLS). Tags from `services.nixfle
 
 ```sh
 nixfleet machines list              # verify enrollment
-nixfleet machines list --tag prod   # filter by tag
+nixfleet machines list --tags prod  # filter by tag
 ```
 
 ## Persistence

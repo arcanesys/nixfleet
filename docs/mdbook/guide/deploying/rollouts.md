@@ -8,13 +8,13 @@ Every rollout targets a **release** — an immutable CP-managed manifest mapping
 
 ```
 nixfleet release create --push-to ssh://root@cache   # build + push + register
-nixfleet deploy --release rel-abc123 --tag web --strategy canary --wait
+nixfleet deploy --release rel-abc123 --tags web --strategy canary --wait
 ```
 
 Or use the convenience shorthand — `nixfleet deploy` with `--push-to` / `--copy` implicitly creates a release first:
 
 ```
-nixfleet deploy --push-to ssh://root@cache --tag web --strategy canary --wait
+nixfleet deploy --push-to ssh://root@cache --tags web --strategy canary --wait
 ```
 
 Both forms do the same thing. The explicit form is useful when you want to deploy the same release multiple times (e.g., staging then prod, or rolling forward then back).
@@ -26,7 +26,7 @@ Both forms do the same thing. The explicit form is useful when you want to deplo
 Deploy to every targeted machine simultaneously. No batching, no gates. Suitable for dev/staging environments or non-critical updates.
 
 ```sh
-nixfleet deploy --release rel-abc123 --tag staging --strategy all-at-once
+nixfleet deploy --release rel-abc123 --tags staging --strategy all-at-once
 ```
 
 ### Canary
@@ -34,7 +34,7 @@ nixfleet deploy --release rel-abc123 --tag staging --strategy all-at-once
 Deploy to a single machine first. If that machine passes health checks within the timeout, deploy to all remaining machines. Suitable for production environments where you want a quick smoke test.
 
 ```sh
-nixfleet deploy --release rel-abc123 --tag prod --strategy canary \
+nixfleet deploy --release rel-abc123 --tags prod --strategy canary \
   --health-timeout 120 --wait
 ```
 
@@ -45,7 +45,7 @@ This creates two batches: batch 0 with 1 machine, batch 1 with the rest.
 Define explicit batch sizes for fine-grained control. Batch sizes can be absolute numbers or percentages.
 
 ```sh
-nixfleet deploy --release rel-abc123 --tag prod --strategy staged \
+nixfleet deploy --release rel-abc123 --tags prod --strategy staged \
   --batch-size 1,25%,100% \
   --health-timeout 300 --wait
 ```
@@ -95,7 +95,7 @@ See [CLI reference — deploy](../../reference/cli.md#deploy) for the full flag 
 Stream progress in real time with `--wait`:
 
 ```sh
-nixfleet deploy --release rel-abc123 --tag prod --strategy canary --wait
+nixfleet deploy --release rel-abc123 --tags prod --strategy canary --wait
 ```
 
 List rollouts:
@@ -154,7 +154,7 @@ Output includes the release ID, for example `rel-abc123-...`.
 ```sh
 nixfleet deploy \
   --release rel-abc123 \
-  --tag prod --tag web \
+  --tags prod,web \
   --strategy canary \
   --health-timeout 120 \
   --failure-threshold 1 \
@@ -175,5 +175,5 @@ What happens:
 
 ```sh
 # Same release, redeploy to a different subset with a different strategy
-nixfleet deploy --release rel-abc123 --tag staging --strategy all-at-once --wait
+nixfleet deploy --release rel-abc123 --tags staging --strategy all-at-once --wait
 ```

@@ -46,6 +46,10 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Path to .nixfleet.toml config file (default: walk up from cwd)
+    #[arg(long, global = true)]
+    config: Option<String>,
+
     /// Increase verbosity (-v for info, -vv for debug)
     #[arg(short = 'v', long = "verbose", global = true, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -55,9 +59,9 @@ struct Cli {
 enum Commands {
     /// Deploy config to fleet hosts
     Deploy {
-        /// Host pattern (glob-style, e.g. "web*" or "*") — used with --ssh mode
-        #[arg(long, default_value = "*")]
-        hosts: String,
+        /// Host patterns (glob-style, comma-separated, e.g. "web-*,db-01" or "*")
+        #[arg(long, value_delimiter = ',', default_value = "*")]
+        hosts: Vec<String>,
 
         /// Dry run: build closures and show what would happen, but don't push
         #[arg(long)]
@@ -77,8 +81,8 @@ enum Commands {
         #[arg(long, default_value = ".")]
         flake: String,
 
-        /// Target tag for rollout deploy (repeatable)
-        #[arg(long = "tag", value_name = "TAG", help_heading = "Rollout")]
+        /// Target tags for rollout deploy (comma-separated or repeatable)
+        #[arg(long, value_delimiter = ',', value_name = "TAG", help_heading = "Rollout")]
         tags: Vec<String>,
 
         /// Rollout strategy: canary, staged, or all-at-once
@@ -272,8 +276,9 @@ enum ReleaseAction {
     Create {
         #[arg(long, default_value = ".")]
         flake: String,
-        #[arg(long, default_value = "*")]
-        hosts: String,
+        /// Host patterns (glob-style, comma-separated, e.g. "web-*,db-01" or "*")
+        #[arg(long, value_delimiter = ',', default_value = "*")]
+        hosts: Vec<String>,
         /// Push closures to a Nix binary cache (s3://, ssh://, or HTTP URL)
         #[arg(long)]
         push_to: Option<String>,
@@ -309,9 +314,9 @@ enum ReleaseAction {
 enum MachineAction {
     /// List machines
     List {
-        /// Filter by tag
-        #[arg(long)]
-        tag: Option<String>,
+        /// Filter by tags (comma-separated or repeatable)
+        #[arg(long, value_delimiter = ',', value_name = "TAG")]
+        tags: Vec<String>,
     },
 
     /// Remove a tag from a machine
@@ -328,8 +333,8 @@ enum MachineAction {
         /// Machine ID
         id: String,
 
-        /// Initial tags
-        #[arg(long = "tag", value_name = "TAG")]
+        /// Initial tags (comma-separated or repeatable)
+        #[arg(long, value_delimiter = ',', value_name = "TAG")]
         tags: Vec<String>,
     },
 }
@@ -358,9 +363,13 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    // Load config file (walk up from cwd)
+    // Load config file (--config flag or walk up from cwd)
     let cwd = std::env::current_dir().unwrap_or_default();
-    let config_path = config::find_config_file(&cwd);
+    let config_path = cli
+        .config
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| config::find_config_file(&cwd));
     let (config_file, config_dir) = match &config_path {
         Some(path) => {
             let cfg = config::load_config_file(path).unwrap_or_else(|e| {
@@ -505,15 +514,11 @@ async fn main() -> Result<()> {
                     bail!("--release, --push-to, or --copy is required for non-SSH deploys");
                 };
 
-                // Parse --hosts for rollout targeting (comma or space separated)
+                // --tags takes precedence; otherwise pass explicit host names
                 let rollout_hosts: Vec<String> = if !tags.is_empty() {
-                    vec![] // --tag takes precedence
+                    vec![]
                 } else {
-                    hosts
-                        .split(|c: char| c == ',' || c.is_whitespace())
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty() && s != "*")
-                        .collect()
+                    hosts.iter().filter(|s| *s != "*").cloned().collect()
                 };
 
                 deploy::deploy_rollout(
@@ -639,8 +644,8 @@ async fn main() -> Result<()> {
         Commands::Machines { action } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
             match action {
-                MachineAction::List { tag } => {
-                    machines::list(&http_client, effective_cp_url, tag.as_deref(), json_output).await
+                MachineAction::List { tags } => {
+                    machines::list(&http_client, effective_cp_url, &tags, json_output).await
                 }
                 MachineAction::Untag { id, tag } => {
                     machines::untag(&http_client, effective_cp_url, &id, &tag).await

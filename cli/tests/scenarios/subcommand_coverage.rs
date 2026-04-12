@@ -203,7 +203,7 @@ async fn status_lists_machines() {
 }
 
 // =====================================================================
-// machines list — GET /api/v1/machines (with and without --tag)
+// machines list — GET /api/v1/machines (with and without --tags)
 // =====================================================================
 
 #[tokio::test]
@@ -239,7 +239,7 @@ async fn machines_list_filters_client_side_by_tag() {
 
     // The CLI fetches all machines and filters client-side (it does
     // NOT pass tag as a query param). This test asserts that
-    // --tag web shows web-01 but excludes db-01.
+    // --tags web shows web-01 but excludes db-01.
     Mock::given(method("GET"))
         .and(path("/api/v1/machines"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
@@ -258,7 +258,7 @@ async fn machines_list_filters_client_side_by_tag() {
             "test-key",
             "machines",
             "list",
-            "--tag",
+            "--tags",
             "web",
         ])
         .assert()
@@ -384,9 +384,9 @@ async fn machines_register_posts_with_tags() {
             "machines",
             "register",
             "edge-99",
-            "--tag",
+            "--tags",
             "edge",
-            "--tag",
+            "--tags",
             "us-west",
         ])
         .assert()
@@ -608,4 +608,136 @@ async fn release_diff_renders_changes() {
         .success()
         .stdout(predicate::str::contains("new-host"))
         .stdout(predicate::str::contains("old-host"));
+}
+
+// =====================================================================
+// --config flag — loads .nixfleet.toml from explicit path
+// =====================================================================
+
+#[tokio::test]
+async fn config_flag_loads_from_explicit_path() {
+    let server = cp_mock().await;
+
+    // Write a config file pointing at the mock server
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join(".nixfleet.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            "[control-plane]\nurl = \"{}\"\n",
+            server.uri()
+        ),
+    )
+    .unwrap();
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/machines"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            fake_machine_status_json("cfg-host", &["test"]),
+        ])))
+        .mount(&server)
+        .await;
+
+    // Run from a different directory with --config pointing at the file
+    let other_dir = tempfile::tempdir().unwrap();
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .current_dir(other_dir.path())
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "--api-key",
+            "test-key",
+            "status",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cfg-host"));
+}
+
+// =====================================================================
+// --tags comma-separated — machines list with "web,db"
+// =====================================================================
+
+#[tokio::test]
+async fn machines_list_comma_separated_tags() {
+    let server = cp_mock().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/machines"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            fake_machine_status_json("web-01", &["web"]),
+            fake_machine_status_json("db-01", &["db"]),
+            fake_machine_status_json("cache-01", &["cache"]),
+        ])))
+        .mount(&server)
+        .await;
+
+    let assert = Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "--control-plane-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "machines",
+            "list",
+            "--tags",
+            "web,db",
+        ])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("web-01"), "expected web-01: {stdout}");
+    assert!(stdout.contains("db-01"), "expected db-01: {stdout}");
+    assert!(
+        !stdout.contains("cache-01"),
+        "cache-01 must be excluded: {stdout}"
+    );
+}
+
+// =====================================================================
+// --tags repeatable — machines register with --tags a --tags b
+// =====================================================================
+
+#[tokio::test]
+async fn machines_register_repeatable_tags() {
+    let server = cp_mock().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/machines/node-01/register"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "--control-plane-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "machines",
+            "register",
+            "node-01",
+            "--tags",
+            "web",
+            "--tags",
+            "prod",
+        ])
+        .assert()
+        .success();
+
+    let received = server.received_requests().await.unwrap();
+    let req = received
+        .iter()
+        .find(|r| r.url.path() == "/api/v1/machines/node-01/register")
+        .expect("register request must reach the mock");
+    let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+    let tags = body
+        .get("tags")
+        .and_then(|t| t.as_array())
+        .expect("body must have tags array");
+    assert!(tags.iter().any(|t| t == "web"), "expected web tag");
+    assert!(tags.iter().any(|t| t == "prod"), "expected prod tag");
 }

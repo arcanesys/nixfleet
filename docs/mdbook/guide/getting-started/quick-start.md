@@ -156,7 +156,7 @@ This writes `.nixfleet.toml` to the repo and saves the API key to `~/.config/nix
 Now deploy — the one-command form builds all targeted hosts, pushes them to the cache, registers a release, and triggers a canary rollout:
 
 ```bash
-nixfleet deploy --push-to ssh://root@cache.example.com --tag web --strategy canary --wait
+nixfleet deploy --push-to ssh://root@cache.example.com --tags web --strategy canary --wait
 ```
 
 Or split it into explicit steps if you want to inspect or replay the release:
@@ -164,7 +164,7 @@ Or split it into explicit steps if you want to inspect or replay the release:
 ```bash
 nixfleet release create --push-to ssh://root@cache.example.com
 # Output: Release rel-abc123 created (2 hosts)
-nixfleet deploy --release rel-abc123 --tag web --strategy canary --wait
+nixfleet deploy --release rel-abc123 --tags web --strategy canary --wait
 ```
 
 The `--strategy` flag controls rollout behavior:
