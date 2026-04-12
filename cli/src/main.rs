@@ -119,9 +119,9 @@ enum Commands {
         #[arg(long, conflicts_with = "release", help_heading = "Build & Push")]
         push_to: Option<String>,
 
-        /// Run command on push target for each path ({} = store path)
+        /// Use hook mode: push via configured push-cmd instead of nix copy
         #[arg(long, help_heading = "Build & Push")]
-        push_hook: Option<String>,
+        hook: bool,
 
         /// Implicitly create a release and copy closures via SSH
         #[arg(long, conflicts_with = "release", conflicts_with = "push_to", help_heading = "Build & Push")]
@@ -206,9 +206,12 @@ enum Commands {
         /// Default push destination (nix copy --to)
         #[arg(long)]
         push_to: Option<String>,
-        /// Default push hook command ({} is replaced with store path)
+        /// Cache URL when using --hook mode (e.g. http://lab:8081/fleet)
         #[arg(long)]
-        push_hook: Option<String>,
+        hook_url: Option<String>,
+        /// Push command for --hook mode ({} is replaced with store path)
+        #[arg(long)]
+        hook_push_cmd: Option<String>,
         /// Default deploy strategy (canary, staged, all-at-once)
         #[arg(long)]
         strategy: Option<String>,
@@ -285,9 +288,9 @@ enum ReleaseAction {
         /// Push closures to a Nix binary cache (s3://, ssh://, or HTTP URL)
         #[arg(long)]
         push_to: Option<String>,
-        /// Run command on push target for each path ({} = store path)
+        /// Use hook mode: push via configured push-cmd instead of nix copy
         #[arg(long)]
-        push_hook: Option<String>,
+        hook: bool,
         /// Copy closures to each host via nix-copy-closure
         #[arg(long, conflicts_with = "push_to")]
         copy: bool,
@@ -456,26 +459,25 @@ async fn main() -> Result<()> {
             wait,
             release,
             push_to,
-            push_hook,
+            hook,
             copy,
             cache_url,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
 
-            // Apply config defaults for deploy
-            let effective_cache_url = cache_url
-                .as_deref()
-                .or(resolved.cache_url.as_deref());
-            let effective_push_hook = push_hook
-                .as_deref()
-                .or(resolved.push_hook.as_deref());
-            let effective_push_to = if effective_push_hook.is_some() {
-                // push-hook replaces push-to — the hook IS the push
-                push_to.as_deref()
-            } else if push_to.is_some() {
-                push_to.as_deref()
+            // --hook mode: use hook config for push-cmd and cache-url
+            let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
+                let push_cmd = resolved.hook_push_cmd.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("--hook requires [cache.hook] push-cmd in .nixfleet.toml")
+                })?;
+                let hook_cache = cache_url.as_deref()
+                    .or(resolved.hook_url.as_deref())
+                    .or(resolved.cache_url.as_deref());
+                (push_to.as_deref(), Some(push_cmd), hook_cache)
             } else {
-                resolved.push_to.as_deref()
+                let pt = push_to.as_deref().or(resolved.push_to.as_deref());
+                let cu = cache_url.as_deref().or(resolved.cache_url.as_deref());
+                (pt, None, cu)
             };
             let effective_strategy = if strategy == "all-at-once" {
                 // "all-at-once" is the clap default — check if config has a different default
@@ -517,7 +519,7 @@ async fn main() -> Result<()> {
                         None => return Ok(()), // dry-run, nothing to deploy
                     }
                 } else {
-                    bail!("--release, --push-to, or --copy is required for non-SSH deploys");
+                    bail!("--release, --push-to, --hook, or --copy is required for non-SSH deploys");
                 };
 
                 // --tags takes precedence; otherwise pass explicit host names
@@ -600,22 +602,24 @@ async fn main() -> Result<()> {
                     flake,
                     hosts,
                     push_to,
-                    push_hook,
+                    hook,
                     copy,
                     cache_url,
                     dry_run,
                 } => {
-                    let effective_push_hook = push_hook
-                        .as_deref()
-                        .or(resolved.push_hook.as_deref());
-                    // push-hook replaces push-to — the hook IS the push.
-                    let effective_push_to = if effective_push_hook.is_some() {
-                        push_to
+                    let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
+                        let push_cmd = resolved.hook_push_cmd.as_deref().ok_or_else(|| {
+                            anyhow::anyhow!("--hook requires [cache.hook] push-cmd in .nixfleet.toml")
+                        })?;
+                        let hook_cache = cache_url.as_deref()
+                            .or(resolved.hook_url.as_deref())
+                            .or(resolved.cache_url.as_deref());
+                        (push_to.as_deref().map(str::to_string), Some(push_cmd), hook_cache.map(str::to_string))
                     } else {
-                        push_to.or_else(|| resolved.push_to.clone())
+                        let pt = push_to.or_else(|| resolved.push_to.clone());
+                        let cu = cache_url.or_else(|| resolved.cache_url.clone());
+                        (pt, None, cu)
                     };
-                    let effective_cache_url =
-                        cache_url.or_else(|| resolved.cache_url.clone());
                     release::create(
                         &http_client,
                         effective_cp_url,
@@ -689,7 +693,8 @@ async fn main() -> Result<()> {
             client_key,
             cache_url,
             push_to,
-            push_hook,
+            hook_url,
+            hook_push_cmd,
             strategy,
             on_failure,
         } => {
@@ -702,7 +707,8 @@ async fn main() -> Result<()> {
                 client_key.as_deref(),
                 cache_url.as_deref(),
                 push_to.as_deref(),
-                push_hook.as_deref(),
+                hook_url.as_deref(),
+                hook_push_cmd.as_deref(),
                 strategy.as_deref(),
                 on_failure.as_deref(),
             )?;
