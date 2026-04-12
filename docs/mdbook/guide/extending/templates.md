@@ -3,7 +3,7 @@
 NixFleet ships flake templates for common fleet structures. Initialize a new project with:
 
 ```sh
-nix flake init -t github:your-org/nixfleet
+nix flake init -t github:abstracts33d/nixfleet
 ```
 
 ## Available templates
@@ -21,7 +21,7 @@ Minimal setup for a single machine. No flake-parts, no import-tree. Just nixflee
 ```nix
 {
   inputs = {
-    nixfleet.url = "github:your-org/nixfleet";
+    nixfleet.url = "github:abstracts33d/nixfleet";
     nixpkgs.follows = "nixfleet/nixpkgs";
   };
 
@@ -60,7 +60,7 @@ Every template uses this pattern:
 
 ```nix
 inputs = {
-  nixfleet.url = "github:your-org/nixfleet";
+  nixfleet.url = "github:abstracts33d/nixfleet";
   nixpkgs.follows = "nixfleet/nixpkgs";
 };
 ```

@@ -16,7 +16,7 @@ NixFleet is a framework for managing fleets of NixOS and macOS machines. It prov
 ```nix
 # flake.nix — single machine, no ceremony
 {
-  inputs.nixfleet.url = "github:your-org/nixfleet";
+  inputs.nixfleet.url = "github:abstracts33d/nixfleet";
   inputs.nixpkgs.follows = "nixfleet/nixpkgs";
 
   outputs = {nixfleet, ...}: {
@@ -47,10 +47,10 @@ See `examples/` for more patterns, or use `nix flake init -t nixfleet#fleet` for
 
 ## Documentation
 
-Full documentation: [your-org.github.io/nixfleet](https://your-org.github.io/nixfleet/)
+Full documentation: [abstracts33d.github.io/nixfleet](https://abstracts33d.github.io/nixfleet/)
 
-- [Quick Start](https://your-org.github.io/nixfleet/guide/getting-started/quick-start.html) — first fleet in 15 minutes
-- [Deploying](https://your-org.github.io/nixfleet/guide/deploying/rollouts.html) — rollout strategies, health checks
+- [Quick Start](https://abstracts33d.github.io/nixfleet/guide/getting-started/quick-start.html) — first fleet in 15 minutes
+- [Deploying](https://abstracts33d.github.io/nixfleet/guide/deploying/rollouts.html) — rollout strategies, health checks
 - [ADRs](docs/adr/) — architecture decision records
 
 ## Layout

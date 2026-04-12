@@ -8,4 +8,4 @@ src = "."
 build-dir = "../../result-docs"
 
 [output.html]
-git-repository-url = "https://github.com/your-org/nixfleet"
+git-repository-url = "https://github.com/abstracts33d/nixfleet"

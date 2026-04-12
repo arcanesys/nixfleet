@@ -9,7 +9,7 @@ Thank you for your interest in contributing to NixFleet!
 
 **Getting started:**
 ```sh
-git clone https://github.com/your-org/nixfleet.git
+git clone https://github.com/abstracts33d/nixfleet.git
 cd nixfleet
 nix develop  # enters the dev shell with Rust toolchain, cargo, rustfmt, clippy
 ```

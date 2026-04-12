@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "NixFleet fleet management agent"
 license = "MIT"
-repository = "https://github.com/your-org/nixfleet"
-homepage = "https://github.com/your-org/nixfleet"
+repository = "https://github.com/abstracts33d/nixfleet"
+homepage = "https://github.com/abstracts33d/nixfleet"
 authors = ["nixfleet contributors"]
 
 [lib]
@@ -19,6 +19,10 @@ path = "src/main.rs"
 [dependencies]
 nixfleet-types = { path = "../shared" }
 tokio = { version = "1", features = ["full"] }
+# The agent uses `rustls-tls-native-roots` (not bare `rustls-tls`) so it
+# validates the control-plane's server certificate against the system CA
+# store. This matters for mTLS deployments where the fleet CA is installed
+# into the OS trust store rather than passed via --ca-cert.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
