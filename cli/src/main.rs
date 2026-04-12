@@ -704,16 +704,15 @@ async fn rollback(
     let store_path = match generation {
         Some(path) => path,
         None => {
-            // Resolve previous generation: read the current profile
-            // number, subtract 1, then readlink that profile.
-            // The old code hardcoded "system-1-link" which is gen 1
-            // (the oldest), not "current minus one".
+            // Resolve previous generation: list profile links, sort
+            // numerically, take the second-to-last. More robust than
+            // parsing the current profile number with sed.
             let output = tokio::process::Command::new("ssh")
                 .args([
                     ssh_dest,
                     "sh",
                     "-c",
-                    "CURRENT=$(readlink /nix/var/nix/profiles/system | sed 's/system-\\([0-9]*\\)-link/\\1/'); PREV=$((CURRENT - 1)); readlink -f /nix/var/nix/profiles/system-${PREV}-link",
+                    "ls -dv /nix/var/nix/profiles/system-*-link | tail -2 | head -1 | xargs readlink -f",
                 ])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())

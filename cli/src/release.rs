@@ -19,6 +19,7 @@ fn discover_hosts(flake: &str) -> Result<Vec<String>> {
             "--apply",
             "builtins.attrNames",
             "--json",
+            "--quiet",
         ])
         .output()
         .context("failed to run nix eval")?;
@@ -40,6 +41,7 @@ fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
             "eval",
             &format!("{}#nixosConfigurations.{}.pkgs.system", flake, hostname),
             "--raw",
+            "--quiet",
         ])
         .output()
         .context("failed to detect platform")?;
@@ -63,6 +65,7 @@ fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
                 flake, hostname
             ),
             "--json",
+            "--quiet",
         ])
         .output();
     match output {
@@ -83,6 +86,7 @@ fn build_host(flake: &str, hostname: &str) -> Result<String> {
             ),
             "--print-out-paths",
             "--no-link",
+            "--quiet",
         ])
         .output()
         .context("failed to run nix build")?;
@@ -99,12 +103,17 @@ fn build_host(flake: &str, hostname: &str) -> Result<String> {
 /// Copy a store path to a Nix binary cache (S3, SSH, HTTP, etc.).
 fn nix_copy_to(cache_url: &str, store_path: &str) -> Result<()> {
     tracing::info!(store_path, dest = cache_url, "copying closure");
-    let status = Command::new("nix")
-        .args(["copy", "--to", cache_url, store_path])
-        .status()
+    let output = Command::new("nix")
+        .args(["copy", "--to", cache_url, store_path, "--quiet"])
+        .output()
         .context("failed to run nix copy --to")?;
-    if !status.success() {
-        anyhow::bail!("nix copy --to {} failed for {}", cache_url, store_path);
+    if !output.status.success() {
+        anyhow::bail!(
+            "nix copy --to {} failed for {}: {}",
+            cache_url,
+            store_path,
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     Ok(())
 }
@@ -112,12 +121,16 @@ fn nix_copy_to(cache_url: &str, store_path: &str) -> Result<()> {
 /// Copy a closure to a remote host via SSH.
 fn copy_to_host(hostname: &str, store_path: &str) -> Result<()> {
     tracing::info!(store_path, dest = hostname, "copying closure");
-    let status = Command::new("nix-copy-closure")
+    let output = Command::new("nix-copy-closure")
         .args(["--to", &format!("root@{}", hostname), store_path])
-        .status()
+        .output()
         .context("failed to run nix-copy-closure")?;
-    if !status.success() {
-        anyhow::bail!("nix-copy-closure failed for {}", hostname);
+    if !output.status.success() {
+        anyhow::bail!(
+            "nix-copy-closure failed for {}: {}",
+            hostname,
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     Ok(())
 }
@@ -185,26 +198,29 @@ pub async fn create(
     tracing::info!(count = hosts.len(), "found hosts");
 
     // Build all hosts
-    let build_span = tracing::info_span!("Building closures");
-    build_span.pb_set_length(hosts.len() as u64);
     let mut entries = Vec::new();
-    for hostname in &hosts {
-        let _guard = build_span.enter();
-        let platform = detect_platform(flake, hostname)?;
-        let tags = detect_tags(flake, hostname);
-        let store_path = build_host(flake, hostname)?;
+    {
+        let span = tracing::info_span!("building");
+        span.pb_set_length(hosts.len() as u64);
+        span.pb_set_style(&crate::display::progress_style());
+        for hostname in &hosts {
+            let _guard = span.enter();
+            let platform = detect_platform(flake, hostname)?;
+            let tags = detect_tags(flake, hostname);
+            let store_path = build_host(flake, hostname)?;
 
-        if platform.contains("darwin") {
-            tracing::info!(hostname, "Darwin host — built and cached but not deployable via agent");
+            if platform.contains("darwin") {
+                tracing::info!(hostname, "Darwin host — built and cached but not deployable via agent");
+            }
+
+            entries.push(ReleaseEntry {
+                hostname: hostname.clone(),
+                store_path,
+                platform,
+                tags,
+            });
+            span.pb_inc(1);
         }
-
-        entries.push(ReleaseEntry {
-            hostname: hostname.clone(),
-            store_path,
-            platform,
-            tags,
-        });
-        build_span.pb_inc(1);
     }
 
     // Distribute
@@ -215,13 +231,16 @@ pub async fn create(
             .map(|e| &e.store_path)
             .collect::<std::collections::HashSet<_>>()
             .len();
-        let push_span = tracing::info_span!("pushing", dest = %push_url);
-        push_span.pb_set_length(unique_count as u64);
-        for entry in &entries {
-            let _guard = push_span.enter();
-            if pushed.insert(entry.store_path.clone()) {
-                nix_copy_to(push_url, &entry.store_path)?;
-                push_span.pb_inc(1);
+        {
+            let span = tracing::info_span!("pushing", dest = %push_url);
+            span.pb_set_length(unique_count as u64);
+        span.pb_set_style(&crate::display::progress_style());
+            for entry in &entries {
+                let _guard = span.enter();
+                if pushed.insert(entry.store_path.clone()) {
+                    nix_copy_to(push_url, &entry.store_path)?;
+                    span.pb_inc(1);
+                }
             }
         }
 
@@ -243,19 +262,22 @@ pub async fn create(
             run_push_hook(None, hook, &entry.store_path)?;
         }
     } else if copy {
-        let copy_span = tracing::info_span!("Copying to hosts");
-        copy_span.pb_set_length(entries.len() as u64);
-        for entry in &entries {
-            let _guard = copy_span.enter();
-            if entry.platform.contains("darwin") {
-                tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
-                copy_span.pb_inc(1);
-                continue;
+        {
+            let span = tracing::info_span!("copying");
+            span.pb_set_length(entries.len() as u64);
+        span.pb_set_style(&crate::display::progress_style());
+            for entry in &entries {
+                let _guard = span.enter();
+                if entry.platform.contains("darwin") {
+                    tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
+                    span.pb_inc(1);
+                    continue;
+                }
+                if let Err(e) = copy_to_host(&entry.hostname, &entry.store_path) {
+                    tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
+                }
+                span.pb_inc(1);
             }
-            if let Err(e) = copy_to_host(&entry.hostname, &entry.store_path) {
-                tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
-            }
-            copy_span.pb_inc(1);
         }
     }
 

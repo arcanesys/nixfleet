@@ -17,6 +17,7 @@ async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
             "--apply",
             "builtins.attrNames",
             "--json",
+            "--quiet",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -49,6 +50,7 @@ async fn build_host(flake: &str, host: &str) -> Result<String> {
             ),
             "--print-out-paths",
             "--no-link",
+            "--quiet",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -77,34 +79,36 @@ async fn build_host(flake: &str, host: &str) -> Result<String> {
 async fn deploy_via_ssh(host: &str, store_path: &str, ssh_target: &str) -> Result<()> {
     tracing::info!(host, ssh_target, store_path, "Copying closure via SSH");
 
-    let copy_status = tokio::process::Command::new("nix-copy-closure")
+    let copy_output = tokio::process::Command::new("nix-copy-closure")
         .args(["--to", ssh_target, store_path])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
         .await
         .context(format!("nix-copy-closure failed for {}", host))?;
 
-    if !copy_status.success() {
-        bail!("nix-copy-closure failed for {}", host);
+    if !copy_output.status.success() {
+        let stderr = String::from_utf8_lossy(&copy_output.stderr);
+        bail!("nix-copy-closure failed for {}: {}", host, stderr);
     }
 
     tracing::info!(host, "Switching configuration");
 
-    let switch_status = tokio::process::Command::new("ssh")
+    let switch_output = tokio::process::Command::new("ssh")
         .args([
             ssh_target,
             &format!("{}/bin/switch-to-configuration", store_path),
             "switch",
         ])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
         .await
         .context(format!("SSH switch failed for {}", host))?;
 
-    if !switch_status.success() {
-        bail!("switch-to-configuration failed on {}", host);
+    if !switch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&switch_output.stderr);
+        bail!("switch-to-configuration failed on {}: {}", host, stderr);
     }
 
     Ok(())
@@ -143,24 +147,26 @@ pub async fn run(
     let mut results: HashMap<String, Result<String>> = HashMap::new();
 
     // Build all targets
-    let build_span = tracing::info_span!("Building closures");
-    build_span.pb_set_length(targets.len() as u64);
-    let _build_guard = build_span.enter();
+    {
+        let span = tracing::info_span!("building");
+        span.pb_set_length(targets.len() as u64);
+        span.pb_set_style(&crate::display::progress_style());
+        let _guard = span.enter();
 
-    for host in &targets {
-        match build_host(flake, host).await {
-            Ok(path) => {
-                tracing::info!(host, path = %crate::display::truncate_store_path(&path, 60), "built");
-                results.insert(host.clone(), Ok(path));
+        for host in &targets {
+            match build_host(flake, host).await {
+                Ok(path) => {
+                    tracing::info!(host, path = %crate::display::truncate_store_path(&path, 60), "built");
+                    results.insert(host.clone(), Ok(path));
+                }
+                Err(e) => {
+                    tracing::warn!(host, error = %e, "build failed");
+                    results.insert(host.clone(), Err(e));
+                }
             }
-            Err(e) => {
-                tracing::warn!(host, error = %e, "build failed");
-                results.insert(host.clone(), Err(e));
-            }
+            span.pb_inc(1);
         }
-        tracing::Span::current().pb_inc(1);
     }
-    drop(_build_guard);
 
     if dry_run {
         println!("\n--- Dry run summary ---");
@@ -179,32 +185,34 @@ pub async fn run(
     let mut success_count = 0;
     let mut fail_count = 0;
 
-    let deploy_span = tracing::info_span!("Deploying via SSH");
-    deploy_span.pb_set_length(targets.len() as u64);
-    let _deploy_guard = deploy_span.enter();
+    {
+        let span = tracing::info_span!("deploying");
+        span.pb_set_length(targets.len() as u64);
+        span.pb_set_style(&crate::display::progress_style());
+        let _guard = span.enter();
 
-    for host in &targets {
-        if let Some(Ok(store_path)) = results.get(host) {
-            let ssh_dest = match target_override {
-                Some(t) => t.to_string(),
-                None => format!("root@{}", host),
-            };
-            match deploy_via_ssh(host, store_path, &ssh_dest).await {
-                Ok(()) => {
-                    tracing::info!(host, "deployed");
-                    success_count += 1;
+        for host in &targets {
+            if let Some(Ok(store_path)) = results.get(host) {
+                let ssh_dest = match target_override {
+                    Some(t) => t.to_string(),
+                    None => format!("root@{}", host),
+                };
+                match deploy_via_ssh(host, store_path, &ssh_dest).await {
+                    Ok(()) => {
+                        tracing::info!(host, "deployed");
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(host, error = %e, "deploy failed");
+                        fail_count += 1;
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(host, error = %e, "deploy failed");
-                    fail_count += 1;
-                }
+            } else {
+                fail_count += 1;
             }
-        } else {
-            fail_count += 1;
+            span.pb_inc(1);
         }
-        tracing::Span::current().pb_inc(1);
     }
-    drop(_deploy_guard);
 
     println!(
         "\nDeploy complete: {} succeeded, {} failed",

@@ -139,10 +139,27 @@ pub fn print_detail(pairs: &[(&str, String)]) {
     }
 }
 
-// Progress bars are managed by the `tracing-indicatif` layer (see main.rs).
-// Use `tracing::info_span!("label")` + `span.pb_set_length(n)` /
-// `span.pb_inc(1)` from `tracing_indicatif::span_ext::IndicatifSpanExt`.
-// Log lines via `tracing::info!` automatically appear above active bars.
+// ---------------------------------------------------------------
+// Progress bars (tracing-indicatif span-based)
+// ---------------------------------------------------------------
+
+/// Style for counted progress bars managed by tracing-indicatif.
+///
+/// Apply after `span.pb_set_length(n)` to get a visual bar instead
+/// of the default spinner:
+///
+/// ```ignore
+/// let span = tracing::info_span!("building");
+/// span.pb_set_length(5);
+/// span.pb_set_style(&display::progress_style());
+/// ```
+pub fn progress_style() -> tracing_indicatif::style::ProgressStyle {
+    tracing_indicatif::style::ProgressStyle::with_template(
+        "{span_child_prefix}{spinner} {span_name} {bar:30} {pos}/{len}",
+    )
+    .unwrap()
+    .progress_chars("█▓░")
+}
 
 #[cfg(test)]
 mod tests {
