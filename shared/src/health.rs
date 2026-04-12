@@ -37,13 +37,12 @@ impl fmt::Display for HealthCheckResult {
             Self::Pass {
                 check_name,
                 duration_ms,
-                ..
-            } => write!(f, "PASS: {} ({}ms)", check_name, duration_ms),
+            } => write!(f, "PASS: {check_name} ({duration_ms}ms)"),
             Self::Fail {
                 check_name,
                 duration_ms,
-                ..
-            } => write!(f, "FAIL: {} ({}ms)", check_name, duration_ms),
+                message,
+            } => write!(f, "FAIL: {check_name} ({duration_ms}ms): {message}"),
         }
     }
 }
@@ -81,5 +80,21 @@ mod tests {
         };
         assert!(!fail.is_pass());
         assert_eq!(fail.check_name(), "http_ping");
+    }
+
+    #[test]
+    fn display_includes_fail_message() {
+        let fail = HealthCheckResult::Fail {
+            check_name: "disk".to_string(),
+            duration_ms: 12,
+            message: "free space below 5%".to_string(),
+        };
+        let rendered = fail.to_string();
+        assert!(rendered.contains("disk"));
+        assert!(rendered.contains("12ms"));
+        assert!(
+            rendered.contains("free space below 5%"),
+            "Display should surface the failure message; got {rendered:?}"
+        );
     }
 }
