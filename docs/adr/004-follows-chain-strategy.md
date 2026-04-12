@@ -15,7 +15,7 @@ Fleet repos use `follows` to inherit NixFleet's dependency pins:
 
 ```nix
 {
-  inputs.nixfleet.url = "github:abstracts33d/nixfleet";
+  inputs.nixfleet.url = "github:your-org/nixfleet";
   inputs.nixpkgs.follows = "nixfleet/nixpkgs";
   inputs.home-manager.follows = "nixfleet/home-manager";
   inputs.disko.follows = "nixfleet/disko";

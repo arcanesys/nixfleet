@@ -15,7 +15,7 @@ Create a new directory and initialize a `flake.nix`:
 # flake.nix
 {
   inputs = {
-    nixfleet.url = "github:abstracts33d/nixfleet";
+    nixfleet.url = "github:your-org/nixfleet";
     nixpkgs.follows = "nixfleet/nixpkgs";
   };
 

@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "Shared types for the NixFleet control plane and agent"
 license = "MIT"
-repository = "https://github.com/abstracts33d/nixfleet"
-homepage = "https://github.com/abstracts33d/nixfleet"
+repository = "https://github.com/your-org/nixfleet"
+homepage = "https://github.com/your-org/nixfleet"
 authors = ["nixfleet contributors"]
 
 [dependencies]

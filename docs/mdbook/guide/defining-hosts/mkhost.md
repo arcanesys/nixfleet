@@ -27,7 +27,7 @@ The simplest pattern. One machine, one repo, no fleet infrastructure.
 # flake.nix
 {
   inputs = {
-    nixfleet.url = "github:abstracts33d/nixfleet";
+    nixfleet.url = "github:your-org/nixfleet";
     nixpkgs.follows = "nixfleet/nixpkgs";
   };
 

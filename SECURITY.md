@@ -6,8 +6,8 @@
 
 Instead, use one of these methods:
 
-1. **GitHub Security Advisory** (preferred): Go to the [Security tab](https://github.com/abstracts33d/nixfleet/security/advisories/new) and click "Report a vulnerability"
-2. **Email:** abstract.s33d@gmail.com
+1. **GitHub Security Advisory** (preferred): Go to the [Security tab](https://github.com/your-org/nixfleet/security/advisories/new) and click "Report a vulnerability"
+2. **Email:** Open a private security advisory on GitHub (see above)
 
 Include:
 - Description of the vulnerability
