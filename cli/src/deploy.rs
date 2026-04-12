@@ -139,28 +139,25 @@ pub async fn run(
         );
     }
 
-    println!(
-        "Deploying to {} host(s): {}",
-        targets.len(),
-        targets.join(", ")
-    );
-
     let mut results: HashMap<String, Result<String>> = HashMap::new();
 
     // Build all targets
+    let build_bar = crate::display::ProgressContext::bar(targets.len() as u64, "Building closures");
+
     for host in &targets {
-        print!("  Building {}... ", host);
         match build_host(flake, host).await {
             Ok(path) => {
-                println!("{}", path);
+                tracing::info!(host, path = %crate::display::truncate_store_path(&path, 60), "built");
                 results.insert(host.clone(), Ok(path));
             }
             Err(e) => {
-                println!("FAILED: {}", e);
+                tracing::warn!(host, error = %e, "build failed");
                 results.insert(host.clone(), Err(e));
             }
         }
+        build_bar.inc(1);
     }
+    build_bar.finish_and_clear();
 
     if dry_run {
         println!("\n--- Dry run summary ---");
@@ -179,27 +176,30 @@ pub async fn run(
     let mut success_count = 0;
     let mut fail_count = 0;
 
+    let deploy_bar = crate::display::ProgressContext::bar(targets.len() as u64, "Deploying via SSH");
+
     for host in &targets {
         if let Some(Ok(store_path)) = results.get(host) {
             let ssh_dest = match target_override {
                 Some(t) => t.to_string(),
                 None => format!("root@{}", host),
             };
-            print!("  Deploying {} via SSH ({})... ", host, ssh_dest);
             match deploy_via_ssh(host, store_path, &ssh_dest).await {
                 Ok(()) => {
-                    println!("OK");
+                    tracing::info!(host, "deployed");
                     success_count += 1;
                 }
                 Err(e) => {
-                    println!("FAILED: {}", e);
+                    tracing::warn!(host, error = %e, "deploy failed");
                     fail_count += 1;
                 }
             }
         } else {
             fail_count += 1;
         }
+        deploy_bar.inc(1);
     }
+    deploy_bar.finish_and_clear();
 
     println!(
         "\nDeploy complete: {} succeeded, {} failed",
