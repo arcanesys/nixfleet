@@ -8,5 +8,6 @@
 
 pub mod client;
 pub mod config;
+pub mod display;
 pub mod glob;
 pub mod release;

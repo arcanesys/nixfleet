@@ -1,7 +1,6 @@
 //! AU1, AU2 — audit logging and CSV export.
 
-#[path = "harness.rs"]
-mod harness;
+use super::harness;
 
 use nixfleet_types::rollout::{OnFailure, RolloutStrategy};
 

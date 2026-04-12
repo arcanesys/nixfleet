@@ -41,10 +41,8 @@
 //! rollout strategies in `deploy_scenarios.rs`) are skipped here to
 //! avoid duplication.
 
-#[path = "harness.rs"]
-mod harness;
-
-use harness::{client_anonymous, client_with_key, TEST_DEPLOY_KEY, TEST_READONLY_KEY};
+use super::harness;
+use super::harness::{client_anonymous, client_with_key, TEST_DEPLOY_KEY, TEST_READONLY_KEY};
 use nixfleet_types::rollout::{
     CreateRolloutRequest, OnFailure, RolloutStatus, RolloutStrategy, RolloutTarget,
 };

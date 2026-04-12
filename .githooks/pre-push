@@ -24,7 +24,7 @@ done
 
 echo "=== Rust workspace tests ==="
 if [[ -f Cargo.toml ]]; then
-  nix develop --command cargo test --workspace --bins --tests --lib --quiet 2>&1 || {
+  nix develop --command cargo nextest run --workspace 2>&1 || {
     echo "Rust tests failed."
     exit 1
   }

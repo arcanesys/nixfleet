@@ -4,21 +4,35 @@ use nixfleet_types::rollout::{
 };
 use std::collections::HashMap;
 use std::process::Stdio;
+use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 use crate::glob::filter_hosts;
 
+/// Stderr mode: inherit for -vv passthrough, pipe otherwise.
+fn stderr_mode() -> Stdio {
+    if crate::display::passthrough_output() {
+        Stdio::inherit()
+    } else {
+        Stdio::piped()
+    }
+}
+
 /// Discover NixOS host names from the flake by evaluating nixosConfigurations attribute names.
 async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
+    let mut args = vec![
+        "eval".to_string(),
+        format!("{}#nixosConfigurations", flake),
+        "--apply".to_string(),
+        "builtins.attrNames".to_string(),
+        "--json".to_string(),
+    ];
+    if !crate::display::passthrough_output() {
+        args.push("--quiet".to_string());
+    }
     let output = tokio::process::Command::new("nix")
-        .args([
-            "eval",
-            &format!("{}#nixosConfigurations", flake),
-            "--apply",
-            "builtins.attrNames",
-            "--json",
-        ])
+        .args(&args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(stderr_mode())
         .output()
         .await
         .context("Failed to run nix eval for host discovery")?;
@@ -39,18 +53,22 @@ async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
 async fn build_host(flake: &str, host: &str) -> Result<String> {
     tracing::info!(host, "Building closure");
 
+    let mut args = vec![
+        "build".to_string(),
+        format!(
+            "{}#nixosConfigurations.{}.config.system.build.toplevel",
+            flake, host
+        ),
+        "--print-out-paths".to_string(),
+        "--no-link".to_string(),
+    ];
+    if !crate::display::passthrough_output() {
+        args.push("--quiet".to_string());
+    }
     let output = tokio::process::Command::new("nix")
-        .args([
-            "build",
-            &format!(
-                "{}#nixosConfigurations.{}.config.system.build.toplevel",
-                flake, host
-            ),
-            "--print-out-paths",
-            "--no-link",
-        ])
+        .args(&args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(stderr_mode())
         .output()
         .await
         .context(format!("Failed to build closure for {}", host))?;
@@ -76,34 +94,38 @@ async fn build_host(flake: &str, host: &str) -> Result<String> {
 async fn deploy_via_ssh(host: &str, store_path: &str, ssh_target: &str) -> Result<()> {
     tracing::info!(host, ssh_target, store_path, "Copying closure via SSH");
 
-    let copy_status = tokio::process::Command::new("nix-copy-closure")
+    let copy_output = tokio::process::Command::new("nix-copy-closure")
         .args(["--to", ssh_target, store_path])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+        .stdout(stderr_mode())
+        .stderr(stderr_mode())
+        .output()
         .await
         .context(format!("nix-copy-closure failed for {}", host))?;
 
-    if !copy_status.success() {
-        bail!("nix-copy-closure failed for {}", host);
+    if !copy_output.status.success() {
+        let stderr = String::from_utf8_lossy(&copy_output.stderr);
+        bail!("nix-copy-closure failed for {}: {}", host, stderr);
     }
 
     tracing::info!(host, "Switching configuration");
 
-    let switch_status = tokio::process::Command::new("ssh")
+    let switch_output = tokio::process::Command::new("ssh")
         .args([
+            "-o",
+            "BatchMode=yes",
             ssh_target,
             &format!("{}/bin/switch-to-configuration", store_path),
             "switch",
         ])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+        .stdout(stderr_mode())
+        .stderr(stderr_mode())
+        .output()
         .await
         .context(format!("SSH switch failed for {}", host))?;
 
-    if !switch_status.success() {
-        bail!("switch-to-configuration failed on {}", host);
+    if !switch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&switch_output.stderr);
+        bail!("switch-to-configuration failed on {}: {}", host, stderr);
     }
 
     Ok(())
@@ -139,26 +161,26 @@ pub async fn run(
         );
     }
 
-    println!(
-        "Deploying to {} host(s): {}",
-        targets.len(),
-        targets.join(", ")
-    );
-
     let mut results: HashMap<String, Result<String>> = HashMap::new();
 
     // Build all targets
-    for host in &targets {
-        print!("  Building {}... ", host);
-        match build_host(flake, host).await {
-            Ok(path) => {
-                println!("{}", path);
-                results.insert(host.clone(), Ok(path));
+    {
+        let span = tracing::info_span!("building");
+        crate::display::setup_progress(&span, targets.len() as u64);
+        let _guard = crate::display::maybe_enter(&span);
+
+        for host in &targets {
+            match build_host(flake, host).await {
+                Ok(path) => {
+                    tracing::info!(host, path = %crate::display::truncate_store_path(&path, 60), "built");
+                    results.insert(host.clone(), Ok(path));
+                }
+                Err(e) => {
+                    tracing::warn!(host, error = %e, "build failed");
+                    results.insert(host.clone(), Err(e));
+                }
             }
-            Err(e) => {
-                println!("FAILED: {}", e);
-                results.insert(host.clone(), Err(e));
-            }
+            span.pb_inc(1);
         }
     }
 
@@ -179,25 +201,31 @@ pub async fn run(
     let mut success_count = 0;
     let mut fail_count = 0;
 
-    for host in &targets {
-        if let Some(Ok(store_path)) = results.get(host) {
-            let ssh_dest = match target_override {
-                Some(t) => t.to_string(),
-                None => format!("root@{}", host),
-            };
-            print!("  Deploying {} via SSH ({})... ", host, ssh_dest);
-            match deploy_via_ssh(host, store_path, &ssh_dest).await {
-                Ok(()) => {
-                    println!("OK");
-                    success_count += 1;
+    {
+        let span = tracing::info_span!("deploying");
+        crate::display::setup_progress(&span, targets.len() as u64);
+        let _guard = crate::display::maybe_enter(&span);
+
+        for host in &targets {
+            if let Some(Ok(store_path)) = results.get(host) {
+                let ssh_dest = match target_override {
+                    Some(t) => t.to_string(),
+                    None => format!("root@{}", host),
+                };
+                match deploy_via_ssh(host, store_path, &ssh_dest).await {
+                    Ok(()) => {
+                        tracing::info!(host, "deployed");
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(host, error = %e, "deploy failed");
+                        fail_count += 1;
+                    }
                 }
-                Err(e) => {
-                    println!("FAILED: {}", e);
-                    fail_count += 1;
-                }
+            } else {
+                fail_count += 1;
             }
-        } else {
-            fail_count += 1;
+            span.pb_inc(1);
         }
     }
 
@@ -284,13 +312,7 @@ pub async fn deploy_rollout(
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let created: CreateRolloutResponse = resp
         .json()

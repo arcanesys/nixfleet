@@ -2,10 +2,13 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::Path;
 use std::process::Stdio;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 mod client;
 mod config;
 mod deploy;
+mod display;
 mod glob;
 mod host;
 mod machines;
@@ -38,6 +41,14 @@ struct Cli {
     /// CA certificate for TLS verification (optional, uses system trust store if omitted)
     #[arg(long, global = true, default_value = "")]
     ca_cert: String,
+
+    /// Output as JSON (for commands that produce structured output)
+    #[arg(long, global = true)]
+    json: bool,
+
+    /// Increase verbosity (-v for info, -vv for debug)
+    #[arg(short = 'v', long = "verbose", global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
 }
 
 #[derive(Subcommand)]
@@ -53,13 +64,13 @@ enum Commands {
         dry_run: bool,
 
         /// SSH fallback mode: copy closures and switch via SSH instead of control plane
-        #[arg(long)]
+        #[arg(long, help_heading = "SSH Mode")]
         ssh: bool,
 
         /// SSH target override (e.g. root@192.168.1.10). When set with --ssh,
         /// uses this address instead of resolving the hostname.
         /// Only valid with a single host (--hosts must match exactly one).
-        #[arg(long)]
+        #[arg(long, help_heading = "SSH Mode")]
         target: Option<String>,
 
         /// Flake reference (default: current directory)
@@ -67,63 +78,59 @@ enum Commands {
         flake: String,
 
         /// Target tag for rollout deploy (repeatable)
-        #[arg(long = "tag", value_name = "TAG")]
+        #[arg(long = "tag", value_name = "TAG", help_heading = "Rollout")]
         tags: Vec<String>,
 
         /// Rollout strategy: canary, staged, or all-at-once
-        #[arg(long, default_value = "all-at-once")]
+        #[arg(long, default_value = "all-at-once", help_heading = "Rollout")]
         strategy: String,
 
         /// Batch sizes (comma-separated, e.g. "1,25%,100%")
-        #[arg(long, value_delimiter = ',')]
+        #[arg(long, value_delimiter = ',', help_heading = "Rollout")]
         batch_size: Option<Vec<String>>,
 
         /// Allow up to N unhealthy machines per batch (the (N+1)th fails the batch).
         /// 0 means zero tolerance — any single failure pauses the rollout.
         /// Accepts an absolute count (e.g. "3") or a percentage (e.g. "30%").
-        #[arg(long, default_value = "0")]
+        #[arg(long, default_value = "0", help_heading = "Rollout")]
         failure_threshold: String,
 
         /// Action on failure: pause or revert
-        #[arg(long, default_value = "pause")]
+        #[arg(long, default_value = "pause", help_heading = "Rollout")]
         on_failure: String,
 
         /// Health check timeout in seconds
-        #[arg(long, default_value = "300")]
+        #[arg(long, default_value = "300", help_heading = "Rollout")]
         health_timeout: u64,
 
         /// Wait and stream rollout progress
-        #[arg(long)]
+        #[arg(long, help_heading = "Rollout")]
         wait: bool,
 
         /// Release ID to deploy
-        #[arg(long)]
+        #[arg(long, help_heading = "Rollout")]
         release: Option<String>,
 
         /// Implicitly create a release and push to a Nix binary cache (s3://, ssh://, or HTTP URL)
-        #[arg(long, conflicts_with = "release")]
+        #[arg(long, conflicts_with = "release", help_heading = "Build & Push")]
         push_to: Option<String>,
 
         /// Run command on push target for each path ({} = store path)
-        #[arg(long)]
+        #[arg(long, help_heading = "Build & Push")]
         push_hook: Option<String>,
 
         /// Implicitly create a release and copy closures via SSH
-        #[arg(long, conflicts_with = "release", conflicts_with = "push_to")]
+        #[arg(long, conflicts_with = "release", conflicts_with = "push_to", help_heading = "Build & Push")]
         copy: bool,
 
         /// Binary cache URL for agents to fetch closures from (e.g. http://cache:5000)
-        #[arg(long)]
+        #[arg(long, help_heading = "Build & Push")]
         cache_url: Option<String>,
 
     },
 
     /// Show fleet status from the control plane
-    Status {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
+    Status {},
 
     /// Rollback a host to a previous generation
     Rollback {
@@ -135,9 +142,13 @@ enum Commands {
         #[arg(long)]
         generation: Option<String>,
 
-        /// SSH fallback mode
-        #[arg(long)]
+        /// SSH mode (always enabled, accepted for compatibility)
+        #[arg(long, hide = true)]
         ssh: bool,
+
+        /// SSH target override (e.g. root@192.168.1.10)
+        #[arg(long)]
+        target: Option<String>,
     },
 
     /// Manage fleet hosts
@@ -169,10 +180,6 @@ enum Commands {
         /// Name for the admin key
         #[arg(long, default_value = "admin")]
         name: String,
-
-        /// Output raw JSON instead of human-friendly format
-        #[arg(long)]
-        json: bool,
     },
 
     /// Initialize a .nixfleet.toml config file
@@ -195,6 +202,12 @@ enum Commands {
         /// Default push destination
         #[arg(long)]
         push_to: Option<String>,
+        /// Default deploy strategy (canary, staged, all-at-once)
+        #[arg(long)]
+        strategy: Option<String>,
+        /// Default deploy failure action (pause, revert)
+        #[arg(long)]
+        on_failure: Option<String>,
     },
 }
 
@@ -323,14 +336,27 @@ enum MachineAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    let cli = Cli::parse();
+    display::set_verbosity(cli.verbose);
+
+    let default_level = match cli.verbose {
+        0 => "nixfleet=warn",
+        1 => "nixfleet=info",
+        _ => "nixfleet=debug",
+    };
+    let indicatif_layer = tracing_indicatif::IndicatifLayer::new()
+        .with_max_progress_bars(12, None);
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(indicatif_layer.get_stderr_writer()),
+        )
+        .with(indicatif_layer)
+        .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "nixfleet=info".into()),
+                .unwrap_or_else(|_| default_level.into()),
         )
         .init();
-
-    let cli = Cli::parse();
 
     // Load config file (walk up from cwd)
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -402,6 +428,8 @@ async fn main() -> Result<()> {
         client_key: effective_client_key,
         ca_cert: effective_ca_cert,
     };
+
+    let json_output = cli.json;
 
     match cli.command {
         Commands::Deploy {
@@ -505,17 +533,18 @@ async fn main() -> Result<()> {
                 .await
             }
         }
-        Commands::Status { json } => {
+        Commands::Status {} => {
             let http_client = client::build_client(&tls, effective_api_key)?;
-            status::run(&http_client, effective_cp_url, json).await
+            status::run(&http_client, effective_cp_url, json_output).await
         }
         Commands::Rollback {
             host,
             generation,
-            ssh,
+            ssh: _,
+            target,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
-            rollback(&http_client, effective_cp_url, &host, generation, ssh).await
+            rollback(&http_client, effective_cp_url, &host, generation, target.as_deref()).await
         }
         Commands::Host { action } => match action {
             HostAction::Add {
@@ -540,10 +569,10 @@ async fn main() -> Result<()> {
             let http_client = client::build_client(&tls, effective_api_key)?;
             match action {
                 RolloutAction::List { status } => {
-                    rollout::list(&http_client, effective_cp_url, status.as_deref()).await
+                    rollout::list(&http_client, effective_cp_url, status.as_deref(), json_output).await
                 }
                 RolloutAction::Status { id } => {
-                    rollout::status(&http_client, effective_cp_url, &id).await
+                    rollout::status(&http_client, effective_cp_url, &id, json_output).await
                 }
                 RolloutAction::Resume { id } => {
                     rollout::resume(&http_client, effective_cp_url, &id).await
@@ -584,10 +613,10 @@ async fn main() -> Result<()> {
                     Ok(())
                 }
                 ReleaseAction::List { limit } => {
-                    release::list(&http_client, effective_cp_url, limit).await
+                    release::list(&http_client, effective_cp_url, limit, json_output).await
                 }
                 ReleaseAction::Show { release_id } => {
-                    release::show(&http_client, effective_cp_url, &release_id).await
+                    release::show(&http_client, effective_cp_url, &release_id, json_output).await
                 }
                 ReleaseAction::Diff {
                     release_id_a,
@@ -598,6 +627,7 @@ async fn main() -> Result<()> {
                         effective_cp_url,
                         &release_id_a,
                         &release_id_b,
+                        json_output,
                     )
                     .await
                 }
@@ -610,7 +640,7 @@ async fn main() -> Result<()> {
             let http_client = client::build_client(&tls, effective_api_key)?;
             match action {
                 MachineAction::List { tag } => {
-                    machines::list(&http_client, effective_cp_url, tag.as_deref()).await
+                    machines::list(&http_client, effective_cp_url, tag.as_deref(), json_output).await
                 }
                 MachineAction::Untag { id, tag } => {
                     machines::untag(&http_client, effective_cp_url, &id, &tag).await
@@ -620,10 +650,10 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Bootstrap { name, json } => {
+        Commands::Bootstrap { name } => {
             // Bootstrap does not require an API key, but does use mTLS
             let http_client = client::build_client(&tls, "")?;
-            let result = bootstrap(&http_client, effective_cp_url, &name, json).await;
+            let result = bootstrap(&http_client, effective_cp_url, &name, json_output).await;
             // Save API key to credentials file
             if let Ok(Some(ref key_str)) = result {
                 if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
@@ -641,6 +671,8 @@ async fn main() -> Result<()> {
             client_key,
             cache_url,
             push_to,
+            strategy,
+            on_failure,
         } => {
             let path = cwd.join(".nixfleet.toml");
             config::write_config_file(
@@ -651,6 +683,8 @@ async fn main() -> Result<()> {
                 client_key.as_deref(),
                 cache_url.as_deref(),
                 push_to.as_deref(),
+                strategy.as_deref(),
+                on_failure.as_deref(),
             )?;
             println!("Config written to {}", path.display());
             Ok(())
@@ -663,35 +697,21 @@ async fn rollback(
     _cp_url: &str,
     host: &str,
     generation: Option<String>,
-    ssh: bool,
+    target: Option<&str>,
 ) -> Result<()> {
-    if !ssh {
-        bail!(
-            "nixfleet rollback requires --ssh mode.\n\
-             \n\
-             For a control-plane-driven rollback:\n\
-             \n\
-               - Deploy an older release:\n\
-                 nixfleet release create --flake <old-rev> --push-to <cache>\n\
-                 nixfleet deploy --release <id> --hosts {host}\n\
-             \n\
-               - Use --on-failure revert on rollouts, which reverts machines\n\
-                 to their previous generations stored per batch.\n\
-             \n\
-             Or use --ssh to rollback this machine directly over SSH."
-        );
-    }
+    let default_dest = format!("root@{}", host);
+    let ssh_dest = target.unwrap_or(&default_dest);
 
     let store_path = match generation {
         Some(path) => path,
         None => {
-            // Get previous generation via SSH
+            // Resolve previous generation: list profile links, sort
+            // numerically, take the second-to-last. More robust than
+            // parsing the current profile number with sed.
             let output = tokio::process::Command::new("ssh")
                 .args([
-                    &format!("root@{}", host),
-                    "readlink",
-                    "-f",
-                    "/nix/var/nix/profiles/system-1-link",
+                    ssh_dest,
+                    "ls -dv /nix/var/nix/profiles/system-*-link | tail -2 | head -1 | xargs readlink -f",
                 ])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -712,20 +732,23 @@ async fn rollback(
     println!("Rolling back {} to {}", host, store_path);
 
     // SSH rollback: switch to the specified profile on the target
+    let stderr = if display::passthrough_output() { Stdio::inherit() } else { Stdio::piped() };
     let switch_output = tokio::process::Command::new("ssh")
         .args([
-            &format!("root@{}", host),
+            "-o", "BatchMode=yes",
+            ssh_dest,
             &format!("{}/bin/switch-to-configuration", store_path),
             "switch",
         ])
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+        .stderr(stderr)
+        .output()
         .await
         .context("SSH switch-to-configuration failed")?;
 
-    if !switch_output.success() {
-        bail!("Rollback failed on {}", host);
+    if !switch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&switch_output.stderr);
+        bail!("Rollback failed on {}: {}", host, stderr);
     }
     println!("Rollback complete on {}", host);
 

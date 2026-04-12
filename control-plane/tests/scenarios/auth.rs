@@ -17,8 +17,7 @@
 //! 401 (not 403), and an Authorization header without the `Bearer ` prefix
 //! also surfaces as 401. These are the gaps route_coverage and A1–A4 leave.
 
-#[path = "harness.rs"]
-mod harness;
+use super::harness;
 
 use nixfleet_types::rollout::{
     CreateRolloutRequest, OnFailure, RolloutStrategy, RolloutTarget,

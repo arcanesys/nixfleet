@@ -1,0 +1,250 @@
+//! Shared display helpers for CLI output.
+//!
+//! All formatted terminal output (tables, progress bars, colors,
+//! store path truncation) lives here. Subcommand files build data
+//! and call these helpers — no hardcoded column widths or separator
+//! arithmetic anywhere else.
+
+use comfy_table::{ContentArrangement, Table};
+use console::style;
+use serde::Serialize;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+/// Global verbosity level set by main.rs from the `-v` flag count.
+/// 0 = warn (default), 1 = info (-v), 2+ = debug (-vv).
+///
+/// At level 2+, subprocess output (nix build, ssh, nix-copy-closure)
+/// is inherited instead of piped, giving full passthrough of build
+/// progress, agenix decryption, and systemd switch output.
+static VERBOSITY: AtomicU8 = AtomicU8::new(0);
+
+/// Set the global verbosity level. Called once from main.rs.
+pub fn set_verbosity(level: u8) {
+    VERBOSITY.store(level, Ordering::Relaxed);
+}
+
+/// Returns true when verbosity is >= 2 (-vv). Subprocess commands
+/// should inherit stdout/stderr instead of piping.
+pub fn passthrough_output() -> bool {
+    VERBOSITY.load(Ordering::Relaxed) >= 2
+}
+
+// ---------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------
+
+/// Render a table with auto-sized columns to stdout.
+///
+/// Uses comfy-table: no outer borders, header underline, columns
+/// sized to content and constrained to terminal width.
+pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
+    if rows.is_empty() {
+        return;
+    }
+    let mut table = Table::new();
+    table
+        .load_preset(comfy_table::presets::NOTHING)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(headers);
+
+    for row in rows {
+        table.add_row(row);
+    }
+
+    println!("{table}");
+}
+
+/// Print structured data as JSON or as a table, depending on the
+/// `json` flag. When `json` is true, `data` is serialized with
+/// `serde_json::to_string_pretty`. Otherwise `print_table` is called.
+pub fn print_list<T: Serialize>(
+    json: bool,
+    headers: &[&str],
+    rows: &[Vec<String>],
+    data: &T,
+) {
+    if json {
+        match serde_json::to_string_pretty(data) {
+            Ok(s) => println!("{s}"),
+            Err(e) => eprintln!("failed to serialize JSON: {e}"),
+        }
+    } else {
+        print_table(headers, rows);
+    }
+}
+
+// ---------------------------------------------------------------
+// Store path truncation
+// ---------------------------------------------------------------
+
+/// Truncate a Nix store path for display.
+///
+/// Preserves the hash prefix and derivation name:
+/// `/nix/store/abc1234…-nixos-system-web-01` instead of cutting
+/// at an arbitrary byte offset. Falls back to simple prefix
+/// truncation for non-store-path strings.
+pub fn truncate_store_path(path: &str, max_len: usize) -> String {
+    if path.len() <= max_len || path.is_empty() {
+        return path.to_string();
+    }
+
+    // /nix/store/<32-char-hash>-<name>
+    if let Some(rest) = path.strip_prefix("/nix/store/") {
+        if let Some(dash_pos) = rest.find('-') {
+            let hash = &rest[..dash_pos.min(7)];
+            let name = &rest[dash_pos + 1..];
+            let short = format!("/nix/store/{hash}…-{name}");
+            if short.len() <= max_len {
+                return short;
+            }
+            // Name still too long — truncate the name part
+            let budget = max_len.saturating_sub("/nix/store/…-…".len() + hash.len());
+            if budget > 3 {
+                return format!(
+                    "/nix/store/{hash}…-{}…",
+                    &name[..budget.min(name.len())]
+                );
+            }
+        }
+    }
+
+    // Fallback: simple prefix truncation.
+    // '…' is 3 bytes in UTF-8, so reserve that many bytes from the budget.
+    let ellipsis = '…';
+    let ellipsis_len = ellipsis.len_utf8();
+    let end = max_len.saturating_sub(ellipsis_len);
+    format!("{}…", &path[..end.min(path.len())])
+}
+
+// ---------------------------------------------------------------
+// Status coloring
+// ---------------------------------------------------------------
+
+/// Color a status string for terminal display.
+///
+/// - Green: ok, completed, healthy, succeeded, active
+/// - Red: ERROR, failed, unhealthy
+/// - Yellow: paused, pending, waiting_health, deploying, maintenance
+///
+/// Returns the original string unmodified when stdout is not a TTY.
+pub fn color_status(s: &str) -> String {
+    let lower = s.to_lowercase();
+    let styled = match lower.as_str() {
+        "ok" | "completed" | "healthy" | "succeeded" | "active" => {
+            style(s).green()
+        }
+        "error" | "failed" | "unhealthy" => style(s).red(),
+        "paused" | "pending" | "waiting_health" | "deploying" | "maintenance"
+        | "provisioning" => style(s).yellow(),
+        _ => style(s).force_styling(false),
+    };
+    styled.to_string()
+}
+
+// ---------------------------------------------------------------
+// Key-value detail view
+// ---------------------------------------------------------------
+
+/// Print a key-value detail view with aligned labels.
+///
+/// ```text
+/// Rollout:         r-abc123
+/// Status:          completed
+/// Strategy:        canary
+/// ```
+pub fn print_detail(pairs: &[(&str, String)]) {
+    let max_key = pairs.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+    for (key, value) in pairs {
+        println!("{:<width$}  {}", format!("{}:", key), value, width = max_key + 1);
+    }
+}
+
+// ---------------------------------------------------------------
+// Progress bars (tracing-indicatif span-based)
+// ---------------------------------------------------------------
+
+/// Set up a tracing span as a progress bar. In passthrough mode (-vv),
+/// does nothing. Call `maybe_enter_span` to conditionally enter.
+pub fn setup_progress(span: &tracing::Span, len: u64) {
+    if !passthrough_output() {
+        use tracing_indicatif::span_ext::IndicatifSpanExt;
+        span.pb_set_length(len);
+        span.pb_set_style(&progress_style());
+    }
+}
+
+/// Conditionally enter a span. Returns None in passthrough mode
+/// so no spinner/bar is created by tracing-indicatif.
+pub fn maybe_enter<'a>(span: &'a tracing::Span) -> Option<tracing::span::Entered<'a>> {
+    if passthrough_output() { None } else { Some(span.enter()) }
+}
+
+/// Style for counted progress bars managed by tracing-indicatif.
+///
+/// Apply after `span.pb_set_length(n)` to get a visual bar instead
+/// of the default spinner:
+///
+/// ```ignore
+/// let span = tracing::info_span!("building");
+/// span.pb_set_length(5);
+/// span.pb_set_style(&display::progress_style());
+/// ```
+pub fn progress_style() -> tracing_indicatif::style::ProgressStyle {
+    tracing_indicatif::style::ProgressStyle::with_template(
+        "{span_child_prefix}{spinner} {span_name} {bar:30} {pos}/{len}",
+    )
+    .unwrap()
+    .progress_chars("█▓░")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_short_path_unchanged() {
+        assert_eq!(
+            truncate_store_path("/nix/store/abc", 50),
+            "/nix/store/abc"
+        );
+    }
+
+    #[test]
+    fn truncate_preserves_hash_and_name() {
+        let long =
+            "/nix/store/abc123def456ghi789jkl012mno345pqr678-nixos-system-web-01-25.05";
+        let result = truncate_store_path(long, 50);
+        assert!(result.contains("abc123d"), "should keep hash prefix: {result}");
+        assert!(
+            result.contains("nixos-system"),
+            "should keep name: {result}"
+        );
+        assert!(
+            result.len() <= 50,
+            "should be <=50 chars: {result} ({})",
+            result.len()
+        );
+    }
+
+    #[test]
+    fn truncate_empty() {
+        assert_eq!(truncate_store_path("", 50), "");
+    }
+
+    #[test]
+    fn truncate_non_store_path() {
+        let long = "a".repeat(60);
+        let result = truncate_store_path(&long, 30);
+        assert!(result.len() <= 30);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn color_status_returns_string() {
+        // Just verify it doesn't panic and returns non-empty
+        assert!(!color_status("ok").is_empty());
+        assert!(!color_status("failed").is_empty());
+        assert!(!color_status("paused").is_empty());
+        assert!(!color_status("unknown_value").is_empty());
+    }
+}

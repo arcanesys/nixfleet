@@ -206,8 +206,8 @@ in
           "--target root@target"
           "'"
       )
-      assert "target" in deploy_out, \
-          f"expected target in deploy output, got: {deploy_out!r}"
+      assert "1 succeeded" in deploy_out, \
+          f"expected '1 succeeded' in deploy output, got: {deploy_out!r}"
 
       # --- Step 4: Positive assertions on the target ---
       # Prove that `nix-copy-closure --to root@target` actually registered

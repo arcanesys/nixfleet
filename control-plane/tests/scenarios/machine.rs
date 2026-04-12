@@ -13,8 +13,7 @@
 //! Every scenario spins up a fresh in-process CP via `harness::spawn_cp`
 //! and drives it over real HTTP.
 
-#[path = "harness.rs"]
-mod harness;
+use super::harness;
 
 use nixfleet_types::{DesiredGeneration, MachineStatus, Report};
 

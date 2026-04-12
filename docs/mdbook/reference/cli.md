@@ -11,8 +11,10 @@ Flat reference for all `nixfleet` CLI commands and flags.
 | `--client-cert` | `NIXFLEET_CLIENT_CERT` | `""` | Client certificate for mTLS authentication |
 | `--client-key` | `NIXFLEET_CLIENT_KEY` | `""` | Client key for mTLS authentication |
 | `--ca-cert` | `NIXFLEET_CA_CERT` | `""` | CA certificate for TLS verification (uses system trust store if omitted) |
+| `--json` | — | `false` | Output structured JSON (on commands that produce tables/detail views) |
+| `-v`, `--verbose` | — | `0` | Increase verbosity (-v for info, -vv for debug). Default: warn. |
 
-Logging is controlled via `RUST_LOG` (default: `nixfleet=info`).
+Logging is controlled via `RUST_LOG` (overrides `-v`/`--verbose` when set).
 
 ### Configuration sources
 
@@ -193,12 +195,10 @@ Exit codes:
 Show fleet status from the control plane.
 
 ```sh
-nixfleet status [FLAGS]
+nixfleet status
 ```
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--json` | bool | `false` | Output as JSON |
+Outputs a table of all machines. Pass `--json` (global flag) for structured JSON output.
 
 ---
 
@@ -215,6 +215,7 @@ nixfleet rollback --host <HOST> --ssh [FLAGS]
 | `--host <HOST>` | string | -- (required) | Target host name |
 | `--ssh` | bool | `false` | **Required.** SSH mode |
 | `--generation <PATH>` | string | -- | Store path to roll back to (default: previous generation from `system-1-link`) |
+| `--target` | string | — | SSH target override (e.g. `root@192.168.1.10`) |
 
 Running without `--ssh` exits with an error. For CP-driven rollback, use `--on-failure revert` on rollouts, or deploy an older release.
 
@@ -305,7 +306,6 @@ nixfleet bootstrap [FLAGS]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--name <NAME>` | string | `admin` | Name for the admin key |
-| `--json` | bool | `false` | Output full JSON instead of human-friendly format |
 
 **Output:** Human-friendly info to stderr, raw key to stdout. Scriptable:
 

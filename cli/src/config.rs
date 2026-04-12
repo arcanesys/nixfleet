@@ -221,6 +221,8 @@ struct WritableConfigFile {
     tls: Option<WritableTls>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cache: Option<WritableCache>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deploy: Option<WritableDeploy>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -249,12 +251,22 @@ struct WritableCache {
     push_to: Option<String>,
 }
 
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct WritableDeploy {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strategy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    on_failure: Option<String>,
+}
+
 /// Write a `.nixfleet.toml` config file.
 ///
 /// Uses the `toml` crate's serializer so values containing quotes,
 /// backslashes, or other special characters are escaped correctly.
 /// Previously this was hand-rolled via `format!("url = \"{}\"\n", ...)`
 /// which silently produced broken TOML on unusual input.
+#[allow(clippy::too_many_arguments)]
 pub fn write_config_file(
     path: &Path,
     cp_url: &str,
@@ -263,6 +275,8 @@ pub fn write_config_file(
     client_key: Option<&str>,
     cache_url: Option<&str>,
     push_to: Option<&str>,
+    strategy: Option<&str>,
+    on_failure: Option<&str>,
 ) -> Result<()> {
     let file = WritableConfigFile {
         control_plane: Some(WritableControlPlane {
@@ -281,6 +295,14 @@ pub fn write_config_file(
             Some(WritableCache {
                 url: cache_url.map(str::to_string),
                 push_to: push_to.map(str::to_string),
+            })
+        } else {
+            None
+        },
+        deploy: if strategy.is_some() || on_failure.is_some() {
+            Some(WritableDeploy {
+                strategy: strategy.map(str::to_string),
+                on_failure: on_failure.map(str::to_string),
             })
         } else {
             None

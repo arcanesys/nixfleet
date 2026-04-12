@@ -1,6 +1,9 @@
 use anyhow::{bail, Context, Result};
 use nixfleet_types::rollout::{RolloutDetail, RolloutStatus};
 use std::time::{Duration, Instant};
+use tracing_indicatif::span_ext::IndicatifSpanExt;
+
+use crate::display;
 
 /// Default upper bound on how long `deploy --wait` / `rollout status --wait`
 /// will block before aborting with a timeout error. Keeps CI jobs from
@@ -16,6 +19,7 @@ pub async fn list(
     client: &reqwest::Client,
     cp_url: &str,
     status_filter: Option<&str>,
+    json: bool,
 ) -> Result<()> {
     let mut url = format!("{}/api/v1/rollouts", cp_url);
     if let Some(status) = status_filter {
@@ -28,47 +32,54 @@ pub async fn list(
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let rollouts: Vec<RolloutDetail> = resp.json().await.context("Failed to parse rollout list")?;
 
     if rollouts.is_empty() {
-        println!("No rollouts found.");
+        if json {
+            println!("[]");
+        } else {
+            println!("No rollouts found.");
+        }
         return Ok(());
     }
 
-    println!(
-        "{:<38} {:<12} {:<14} {:<8} {:<20} RELEASE",
-        "ID", "STATUS", "STRATEGY", "BATCHES", "CREATED"
-    );
-    println!("{}", "-".repeat(110));
+    let rows: Vec<Vec<String>> = rollouts
+        .iter()
+        .map(|r| {
+            vec![
+                r.id.clone(),
+                display::color_status(&r.status.to_string()),
+                r.strategy.to_string(),
+                r.batches.len().to_string(),
+                r.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                truncate(&r.release_id, 30),
+            ]
+        })
+        .collect();
 
-    for rollout in &rollouts {
-        let created = rollout.created_at.format("%Y-%m-%d %H:%M:%S");
-        let release = truncate(&rollout.release_id, 30);
-        println!(
-            "{:<38} {:<12} {:<14} {:<8} {:<20} {}",
-            rollout.id,
-            rollout.status,
-            rollout.strategy,
-            rollout.batches.len(),
-            created,
-            release,
-        );
+    display::print_list(
+        json,
+        &["ID", "STATUS", "STRATEGY", "BATCHES", "CREATED", "RELEASE"],
+        &rows,
+        &rollouts,
+    );
+
+    if !json {
+        println!("\n{} rollout(s)", rollouts.len());
     }
 
-    println!("\n{} rollout(s)", rollouts.len());
     Ok(())
 }
 
 /// GET /api/v1/rollouts/{id} — show rollout detail with batch breakdown.
-pub async fn status(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<()> {
+pub async fn status(
+    client: &reqwest::Client,
+    cp_url: &str,
+    id: &str,
+    json: bool,
+) -> Result<()> {
     let url = format!("{}/api/v1/rollouts/{}", cp_url, id);
 
     let resp = client
@@ -77,18 +88,18 @@ pub async fn status(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let rollout: RolloutDetail = resp
         .json()
         .await
         .context("Failed to parse rollout detail")?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rollout)?);
+        return Ok(());
+    }
+
     print_rollout_detail(&rollout);
     Ok(())
 }
@@ -103,13 +114,7 @@ pub async fn resume(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    crate::client::check_response(resp).await?;
 
     println!("Rollout {} resumed.", id);
     Ok(())
@@ -125,13 +130,7 @@ pub async fn cancel(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    crate::client::check_response(resp).await?;
 
     println!("Rollout {} cancelled.", id);
     Ok(())
@@ -151,6 +150,9 @@ pub async fn wait_for_completion(
     let timeout = max_wait.unwrap_or(DEFAULT_WAIT_TIMEOUT);
     let started = Instant::now();
 
+    let wait_span = tracing::info_span!("rollout_wait", rollout_id = %id);
+    let _wait_guard = crate::display::maybe_enter(&wait_span);
+
     loop {
         let resp = client
             .get(&url)
@@ -159,6 +161,7 @@ pub async fn wait_for_completion(
             .context("Failed to reach control plane")?;
 
         if !resp.status().is_success() {
+            drop(_wait_guard);
             bail!(
                 "Control plane returned {}: {}",
                 resp.status(),
@@ -173,10 +176,38 @@ pub async fn wait_for_completion(
             .await
             .context("Failed to parse rollout detail")?;
 
-        print_progress(&rollout);
+        let total_machines: usize = rollout.batches.iter().map(|b| b.machine_ids.len()).sum();
+        let healthy_machines: usize = rollout
+            .batches
+            .iter()
+            .flat_map(|b| b.machine_health.values())
+            .filter(|h| matches!(h, nixfleet_types::rollout::MachineHealthStatus::Healthy))
+            .count();
+        let current_batch = rollout
+            .batches
+            .iter()
+            .position(|b| {
+                matches!(
+                    b.status,
+                    nixfleet_types::rollout::BatchStatus::Deploying
+                        | nixfleet_types::rollout::BatchStatus::WaitingHealth
+                )
+            })
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        wait_span.pb_set_message(&format!(
+            "batch {}/{} — {}/{} healthy — {}",
+            current_batch, rollout.batches.len(),
+            healthy_machines, total_machines, rollout.status,
+        ));
 
         if !rollout.status.is_active() {
-            println!("\nRollout {} finished with status: {}", id, rollout.status);
+            drop(_wait_guard);
+            println!(
+                "Rollout {} finished: {} ({} machines, {} batches)",
+                id, rollout.status, total_machines, rollout.batches.len()
+            );
             if rollout.status == RolloutStatus::Failed {
                 bail!("Rollout failed");
             }
@@ -184,6 +215,7 @@ pub async fn wait_for_completion(
         }
 
         if !timeout.is_zero() && started.elapsed() >= timeout {
+            drop(_wait_guard);
             bail!(
                 "Timed out after {}s waiting for rollout {} to finish (last status: {}). \
                  Re-run with --wait-timeout 0 to block indefinitely, or inspect with \
@@ -200,47 +232,65 @@ pub async fn wait_for_completion(
 }
 
 fn print_rollout_detail(rollout: &RolloutDetail) {
-    println!("Rollout:       {}", rollout.id);
-    println!("Status:        {}", rollout.status);
-    println!("Strategy:      {}", rollout.strategy);
-    println!("Release:       {}", rollout.release_id);
-    println!("On failure:    {}", rollout.on_failure);
-    println!("Fail threshold:{}", rollout.failure_threshold);
-    println!("Health timeout:{}s", rollout.health_timeout);
-    println!("Created by:    {}", rollout.created_by);
-    println!(
-        "Created at:    {}",
-        rollout.created_at.format("%Y-%m-%d %H:%M:%S UTC")
-    );
-    println!(
-        "Updated at:    {}",
-        rollout.updated_at.format("%Y-%m-%d %H:%M:%S UTC")
-    );
+    display::print_detail(&[
+        ("Rollout", rollout.id.clone()),
+        ("Status", display::color_status(&rollout.status.to_string())),
+        ("Strategy", rollout.strategy.to_string()),
+        ("Release", rollout.release_id.clone()),
+        ("On failure", rollout.on_failure.to_string()),
+        ("Fail threshold", rollout.failure_threshold.clone()),
+        ("Health timeout", format!("{}s", rollout.health_timeout)),
+        ("Created by", rollout.created_by.clone()),
+        (
+            "Created at",
+            rollout
+                .created_at
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string(),
+        ),
+        (
+            "Updated at",
+            rollout
+                .updated_at
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string(),
+        ),
+    ]);
 
-    println!("\nBatches ({}):", rollout.batches.len());
-    println!("  {:<6} {:<16} {:<8} HEALTH", "INDEX", "STATUS", "MACHINES");
-    println!("  {}", "-".repeat(60));
+    println!();
+    let batch_rows: Vec<Vec<String>> = rollout
+        .batches
+        .iter()
+        .map(|batch| {
+            let healthy = batch
+                .machine_health
+                .values()
+                .filter(|h| matches!(h, nixfleet_types::rollout::MachineHealthStatus::Healthy))
+                .count();
+            let total = batch.machine_ids.len();
+            vec![
+                batch.batch_index.to_string(),
+                display::color_status(&batch.status.to_string()),
+                total.to_string(),
+                format!("{}/{}", healthy, total),
+            ]
+        })
+        .collect();
+
+    display::print_table(&["BATCH", "STATUS", "MACHINES", "HEALTHY"], &batch_rows);
 
     for batch in &rollout.batches {
-        let healthy = batch
-            .machine_health
-            .values()
-            .filter(|h| matches!(h, nixfleet_types::rollout::MachineHealthStatus::Healthy))
-            .count();
-        let total = batch.machine_ids.len();
-
-        println!(
-            "  {:<6} {:<16} {:<8} {}/{}",
-            batch.batch_index, batch.status, total, healthy, total,
-        );
-
         for machine_id in &batch.machine_ids {
             let health = batch
                 .machine_health
                 .get(machine_id)
                 .map(|h| h.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            println!("    {} -> {}", machine_id, health);
+            println!(
+                "  {} → {}",
+                machine_id,
+                display::color_status(&health)
+            );
         }
     }
 
@@ -255,39 +305,6 @@ fn print_rollout_detail(rollout: &RolloutDetail) {
             );
         }
     }
-}
-
-fn print_progress(rollout: &RolloutDetail) {
-    let total_machines: usize = rollout.batches.iter().map(|b| b.machine_ids.len()).sum();
-    let healthy_machines: usize = rollout
-        .batches
-        .iter()
-        .flat_map(|b| b.machine_health.values())
-        .filter(|h| matches!(h, nixfleet_types::rollout::MachineHealthStatus::Healthy))
-        .count();
-
-    let current_batch = rollout
-        .batches
-        .iter()
-        .position(|b| {
-            matches!(
-                b.status,
-                nixfleet_types::rollout::BatchStatus::Deploying
-                    | nixfleet_types::rollout::BatchStatus::WaitingHealth
-            )
-        })
-        .map(|i| i + 1)
-        .unwrap_or(0);
-
-    println!(
-        "[{}] batch {}/{} | {}/{} machines healthy | status: {}",
-        rollout.id,
-        current_batch,
-        rollout.batches.len(),
-        healthy_machines,
-        total_machines,
-        rollout.status,
-    );
 }
 
 fn truncate(s: &str, max_len: usize) -> String {
