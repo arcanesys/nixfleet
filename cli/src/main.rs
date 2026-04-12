@@ -203,9 +203,12 @@ enum Commands {
         /// Default cache URL
         #[arg(long)]
         cache_url: Option<String>,
-        /// Default push destination
+        /// Default push destination (nix copy --to)
         #[arg(long)]
         push_to: Option<String>,
+        /// Default push hook command ({} is replaced with store path)
+        #[arg(long)]
+        push_hook: Option<String>,
         /// Default deploy strategy (canary, staged, all-at-once)
         #[arg(long)]
         strategy: Option<String>,
@@ -463,8 +466,11 @@ async fn main() -> Result<()> {
             let effective_cache_url = cache_url
                 .as_deref()
                 .or(resolved.cache_url.as_deref());
-            let effective_push_to = if push_hook.is_some() {
-                // --push-hook replaces --push-to entirely — the hook IS the push
+            let effective_push_hook = push_hook
+                .as_deref()
+                .or(resolved.push_hook.as_deref());
+            let effective_push_to = if effective_push_hook.is_some() {
+                // push-hook replaces push-to — the hook IS the push
                 push_to.as_deref()
             } else if push_to.is_some() {
                 push_to.as_deref()
@@ -493,14 +499,14 @@ async fn main() -> Result<()> {
                 // Resolve release ID: explicit, or implicit via --push-to/--copy
                 let release_id = if let Some(id) = release {
                     id
-                } else if effective_push_to.is_some() || copy || push_hook.is_some() {
+                } else if effective_push_to.is_some() || copy || effective_push_hook.is_some() {
                     let id = crate::release::create(
                         &http_client,
                         effective_cp_url,
                         &flake,
                         &hosts,
                         effective_push_to,
-                        push_hook.as_deref(),
+                        effective_push_hook,
                         copy,
                         effective_cache_url,
                         dry_run,
@@ -599,9 +605,11 @@ async fn main() -> Result<()> {
                     cache_url,
                     dry_run,
                 } => {
-                    // --push-hook replaces --push-to — the hook IS the push.
-                    // Only fall back to config push_to when no hook is specified.
-                    let effective_push_to = if push_hook.is_some() {
+                    let effective_push_hook = push_hook
+                        .as_deref()
+                        .or(resolved.push_hook.as_deref());
+                    // push-hook replaces push-to — the hook IS the push.
+                    let effective_push_to = if effective_push_hook.is_some() {
                         push_to
                     } else {
                         push_to.or_else(|| resolved.push_to.clone())
@@ -614,7 +622,7 @@ async fn main() -> Result<()> {
                         &flake,
                         &hosts,
                         effective_push_to.as_deref(),
-                        push_hook.as_deref(),
+                        effective_push_hook,
                         copy,
                         effective_cache_url.as_deref(),
                         dry_run,
@@ -681,6 +689,7 @@ async fn main() -> Result<()> {
             client_key,
             cache_url,
             push_to,
+            push_hook,
             strategy,
             on_failure,
         } => {
@@ -693,6 +702,7 @@ async fn main() -> Result<()> {
                 client_key.as_deref(),
                 cache_url.as_deref(),
                 push_to.as_deref(),
+                push_hook.as_deref(),
                 strategy.as_deref(),
                 on_failure.as_deref(),
             )?;

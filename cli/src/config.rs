@@ -36,6 +36,7 @@ pub struct TlsConfig {
 pub struct CacheConfig {
     pub url: Option<String>,
     pub push_to: Option<String>,
+    pub push_hook: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -70,6 +71,7 @@ pub struct ResolvedConfig {
     pub client_key: Option<String>,
     pub cache_url: Option<String>,
     pub push_to: Option<String>,
+    pub push_hook: Option<String>,
     pub strategy: Option<String>,
     pub health_timeout: Option<u64>,
     pub failure_threshold: Option<String>,
@@ -249,6 +251,8 @@ struct WritableCache {
     url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     push_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    push_hook: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -275,6 +279,7 @@ pub fn write_config_file(
     client_key: Option<&str>,
     cache_url: Option<&str>,
     push_to: Option<&str>,
+    push_hook: Option<&str>,
     strategy: Option<&str>,
     on_failure: Option<&str>,
 ) -> Result<()> {
@@ -291,10 +296,11 @@ pub fn write_config_file(
         } else {
             None
         },
-        cache: if cache_url.is_some() || push_to.is_some() {
+        cache: if cache_url.is_some() || push_to.is_some() || push_hook.is_some() {
             Some(WritableCache {
                 url: cache_url.map(str::to_string),
                 push_to: push_to.map(str::to_string),
+                push_hook: push_hook.map(str::to_string),
             })
         } else {
             None
@@ -368,6 +374,7 @@ pub fn resolve(
         if let Some(ref cache) = cfg.cache {
             resolved.cache_url = cache.url.clone();
             resolved.push_to = cache.push_to.clone();
+            resolved.push_hook = cache.push_hook.clone();
         }
         if let Some(ref deploy) = cfg.deploy {
             resolved.strategy = deploy.strategy.clone();
