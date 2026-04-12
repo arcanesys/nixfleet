@@ -1,6 +1,16 @@
 use anyhow::{Context, Result};
 use std::fs;
 
+/// Read the body of a failed HTTP response as a String, falling back to
+/// a descriptive placeholder (not an empty string) if the read itself
+/// fails. Centralizing this so callers can't accidentally print a blank
+/// error body.
+pub async fn read_error_body(resp: reqwest::Response) -> String {
+    resp.text()
+        .await
+        .unwrap_or_else(|e| format!("<failed to read response body: {e}>"))
+}
+
 /// TLS configuration for the HTTP client.
 pub struct TlsConfig<'a> {
     pub client_cert: &'a str,

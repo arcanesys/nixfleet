@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -155,11 +155,17 @@ pub fn load_credentials() -> Result<CredentialsFile> {
 }
 
 /// Path to the credentials file.
+///
+/// Prefers `$XDG_CONFIG_HOME` (via `dirs::config_dir`). Falls back to
+/// `$HOME/.config` when XDG is not set, and finally to the current
+/// working directory — the literal string `"~/.config"` is never
+/// produced, because a tilde is not expanded by the filesystem API
+/// and would materialize a directory named `~` on disk.
 pub fn credentials_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("~/.config"))
-        .join("nixfleet")
-        .join("credentials.toml")
+    let base = dirs::config_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("nixfleet").join("credentials.toml")
 }
 
 /// Save an API key to the credentials file.
@@ -170,10 +176,15 @@ pub fn save_api_key(cp_url: &str, api_key: &str) -> Result<()> {
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
-    // Load existing credentials or create new
+    // Load existing credentials or create new. A corrupt credentials
+    // file previously vanished silently via `unwrap_or_default`,
+    // leaving the operator with no clue why their saved key no longer
+    // existed. Surface the parse error instead.
     let mut creds: HashMap<String, HashMap<String, String>> = if path.is_file() {
-        let content = std::fs::read_to_string(&path)?;
-        toml::from_str(&content).unwrap_or_default()
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        toml::from_str(&content)
+            .with_context(|| format!("failed to parse existing {}", path.display()))?
     } else {
         HashMap::new()
     };
@@ -198,7 +209,52 @@ pub fn save_api_key(cp_url: &str, api_key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Shape of the on-disk `.nixfleet.toml` produced by [`write_config_file`].
+/// Mirrors [`ConfigFile`] but with owned strings so it can be serialized
+/// without lifetime plumbing.
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct WritableConfigFile {
+    #[serde(skip_serializing_if = "Option::is_none", rename = "control-plane")]
+    control_plane: Option<WritableControlPlane>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls: Option<WritableTls>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache: Option<WritableCache>,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct WritableControlPlane {
+    url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ca_cert: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct WritableTls {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_cert: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_key: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct WritableCache {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    push_to: Option<String>,
+}
+
 /// Write a `.nixfleet.toml` config file.
+///
+/// Uses the `toml` crate's serializer so values containing quotes,
+/// backslashes, or other special characters are escaped correctly.
+/// Previously this was hand-rolled via `format!("url = \"{}\"\n", ...)`
+/// which silently produced broken TOML on unusual input.
 pub fn write_config_file(
     path: &Path,
     cp_url: &str,
@@ -208,33 +264,31 @@ pub fn write_config_file(
     cache_url: Option<&str>,
     push_to: Option<&str>,
 ) -> Result<()> {
-    let mut content = String::new();
+    let file = WritableConfigFile {
+        control_plane: Some(WritableControlPlane {
+            url: cp_url.to_string(),
+            ca_cert: ca_cert.map(str::to_string),
+        }),
+        tls: if client_cert.is_some() || client_key.is_some() {
+            Some(WritableTls {
+                client_cert: client_cert.map(str::to_string),
+                client_key: client_key.map(str::to_string),
+            })
+        } else {
+            None
+        },
+        cache: if cache_url.is_some() || push_to.is_some() {
+            Some(WritableCache {
+                url: cache_url.map(str::to_string),
+                push_to: push_to.map(str::to_string),
+            })
+        } else {
+            None
+        },
+    };
 
-    content.push_str("[control-plane]\n");
-    content.push_str(&format!("url = \"{}\"\n", cp_url));
-    if let Some(ca) = ca_cert {
-        content.push_str(&format!("ca-cert = \"{}\"\n", ca));
-    }
-
-    if client_cert.is_some() || client_key.is_some() {
-        content.push_str("\n[tls]\n");
-        if let Some(cert) = client_cert {
-            content.push_str(&format!("client-cert = \"{}\"\n", cert));
-        }
-        if let Some(key) = client_key {
-            content.push_str(&format!("client-key = \"{}\"\n", key));
-        }
-    }
-
-    if cache_url.is_some() || push_to.is_some() {
-        content.push_str("\n[cache]\n");
-        if let Some(url) = cache_url {
-            content.push_str(&format!("url = \"{}\"\n", url));
-        }
-        if let Some(pt) = push_to {
-            content.push_str(&format!("push-to = \"{}\"\n", pt));
-        }
-    }
+    let content =
+        toml::to_string_pretty(&file).context("failed to serialize .nixfleet.toml")?;
 
     std::fs::write(path, &content)
         .with_context(|| format!("failed to write {}", path.display()))?;

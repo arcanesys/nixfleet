@@ -16,7 +16,6 @@ pub struct Config {
     /// Binary cache URL for `nix copy --from` (optional; falls back to control plane default)
     pub cache_url: Option<String>,
     /// Path to the SQLite database for local state persistence
-    #[allow(dead_code)]
     pub db_path: String,
     /// When true, fetch but do not apply generations
     pub dry_run: bool,

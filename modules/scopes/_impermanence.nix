@@ -27,9 +27,9 @@
       # --- Ensure persist home has correct ownership ---
       system.activationScripts.persistHomeOwnership = {
         text = ''
-          install -d -o ${hS.userName} -g users /persist/home/${hS.userName}
-          if [ -d /persist/home/${hS.userName}/.keys ]; then
-            chown -R ${hS.userName}:users /persist/home/${hS.userName}/.keys
+          install -d -o ${lib.escapeShellArg hS.userName} -g users ${lib.escapeShellArg "/persist/home/${hS.userName}"}
+          if [ -d ${lib.escapeShellArg "/persist/home/${hS.userName}/.keys"} ]; then
+            chown -R ${lib.escapeShellArg hS.userName}:users ${lib.escapeShellArg "/persist/home/${hS.userName}/.keys"}
           fi
         '';
         deps = [];

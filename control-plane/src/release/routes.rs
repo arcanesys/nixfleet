@@ -7,7 +7,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::auth::Actor;
-use crate::AppState;
+use crate::{AppState, MAX_ID_LEN, MAX_PAGE_SIZE};
 use nixfleet_types::release::{
     CreateReleaseRequest, CreateReleaseResponse, Release, ReleaseDiff, ReleaseDiffEntry,
     ReleaseEntry,
@@ -32,18 +32,28 @@ pub async fn create_release(
     let host_count = req.entries.len() as i64;
     let actor_name = actor.identifier();
 
+    // Serialize tags. Vec<String> cannot realistically fail to
+    // serialize, but we propagate the error instead of silently
+    // coercing to `"[]"` so a corrupted entry surfaces as a 500.
     let entries: Vec<(String, String, String, String)> = req
         .entries
         .iter()
         .map(|e| {
-            (
+            let tags_json = serde_json::to_string(&e.tags).map_err(|err| {
+                tracing::error!(hostname = %e.hostname, error = %err, "failed to serialize release tags");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to serialize release tags".to_string(),
+                )
+            })?;
+            Ok((
                 e.hostname.clone(),
                 e.store_path.clone(),
                 e.platform.clone(),
-                serde_json::to_string(&e.tags).unwrap_or_else(|_| "[]".to_string()),
-            )
+                tags_json,
+            ))
         })
-        .collect();
+        .collect::<Result<Vec<_>, (StatusCode, String)>>()?;
 
     db.create_release(
         &id,
@@ -86,10 +96,13 @@ pub async fn list_releases(
             "requires readonly, deploy, or admin role".into(),
         ));
     }
+    // Cap the requested page size at MAX_PAGE_SIZE so a rogue client
+    // cannot trigger a full-table scan via `?limit=99999999`.
     let limit: i64 = params
         .get("limit")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(20);
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(20)
+        .clamp(1, MAX_PAGE_SIZE);
 
     let rows = db
         .list_releases(limit)
@@ -117,6 +130,9 @@ pub async fn get_release(
             "requires readonly, deploy, or admin role".into(),
         ));
     }
+    if id.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "release id too long".into()));
+    }
     let row = db
         .get_release(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -139,6 +155,9 @@ pub async fn diff_releases(
             StatusCode::FORBIDDEN,
             "requires readonly, deploy, or admin role".into(),
         ));
+    }
+    if id_a.len() > MAX_ID_LEN || id_b.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "release id too long".into()));
     }
     let entries_a = db
         .get_release_entries(&id_a)
@@ -213,6 +232,9 @@ pub async fn delete_release(
 ) -> Result<StatusCode, (StatusCode, String)> {
     if !actor.has_role(&["admin"]) {
         return Err((StatusCode::FORBIDDEN, "requires admin role".into()));
+    }
+    if id.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "release id too long".into()));
     }
     let referenced = db
         .release_referenced_by_rollout(&id)

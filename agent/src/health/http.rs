@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use nixfleet_types::health::HealthCheckResult;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use super::Check;
@@ -9,6 +10,35 @@ pub struct HttpChecker {
     pub url: String,
     pub timeout_secs: u64,
     pub expected_status: u16,
+    /// Cached `reqwest::Client` — built on first run and reused on every
+    /// subsequent invocation so the TCP connection pool and TLS session
+    /// cache survive across periodic health checks.
+    client: OnceLock<reqwest::Client>,
+}
+
+impl HttpChecker {
+    /// Create a new HTTP checker. The underlying `reqwest::Client` is
+    /// built lazily on first use.
+    pub fn new(url: String, timeout_secs: u64, expected_status: u16) -> Self {
+        Self {
+            url,
+            timeout_secs,
+            expected_status,
+            client: OnceLock::new(),
+        }
+    }
+
+    /// Return the cached client, building it on first call.
+    fn client(&self) -> reqwest::Result<&reqwest::Client> {
+        if let Some(existing) = self.client.get() {
+            return Ok(existing);
+        }
+        let built = reqwest::Client::builder()
+            .timeout(Duration::from_secs(self.timeout_secs))
+            .build()?;
+        // If two threads race, one will lose — we take whichever landed.
+        Ok(self.client.get_or_init(|| built))
+    }
 }
 
 #[async_trait]
@@ -25,10 +55,7 @@ impl Check for HttpChecker {
         let check_name = self.url.clone();
         let start = Instant::now();
 
-        let client = match reqwest::Client::builder()
-            .timeout(Duration::from_secs(self.timeout_secs))
-            .build()
-        {
+        let client = match self.client() {
             Ok(c) => c,
             Err(e) => {
                 return HealthCheckResult::Fail {
@@ -84,11 +111,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let checker = HttpChecker {
-            url: format!("{}/health", server.uri()),
-            timeout_secs: 5,
-            expected_status: 200,
-        };
+        let checker = HttpChecker::new(format!("{}/health", server.uri()), 5, 200);
         let result = checker.run().await;
         assert!(
             matches!(result, HealthCheckResult::Pass { .. }),
@@ -107,11 +130,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let checker = HttpChecker {
-            url: format!("{}/health", server.uri()),
-            timeout_secs: 5,
-            expected_status: 200,
-        };
+        let checker = HttpChecker::new(format!("{}/health", server.uri()), 5, 200);
         let result = checker.run().await;
         match result {
             HealthCheckResult::Fail { message, .. } => {
@@ -136,11 +155,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let checker = HttpChecker {
-            url: format!("{}/missing", server.uri()),
-            timeout_secs: 5,
-            expected_status: 404,
-        };
+        let checker = HttpChecker::new(format!("{}/missing", server.uri()), 5, 404);
         let result = checker.run().await;
         assert!(
             matches!(result, HealthCheckResult::Pass { .. }),
@@ -153,14 +168,10 @@ mod tests {
     /// immediately dropping its accept loop.
     #[tokio::test]
     async fn http_checker_fails_on_network_error() {
-        let checker = HttpChecker {
-            // RFC 5737 TEST-NET-1; guaranteed not routable. Combined
-            // with a short timeout this fails fast without DNS or
-            // a real connection attempt to a live host.
-            url: "http://192.0.2.1:1/".to_string(),
-            timeout_secs: 1,
-            expected_status: 200,
-        };
+        // RFC 5737 TEST-NET-1; guaranteed not routable. Combined with a
+        // short timeout this fails fast without DNS or a real connection
+        // attempt to a live host.
+        let checker = HttpChecker::new("http://192.0.2.1:1/".to_string(), 1, 200);
         let result = checker.run().await;
         match result {
             HealthCheckResult::Fail { message, .. } => {

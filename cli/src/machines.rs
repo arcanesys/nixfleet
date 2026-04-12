@@ -15,7 +15,7 @@ pub async fn list(client: &reqwest::Client, cp_url: &str, tag_filter: Option<&st
         bail!(
             "Control plane returned {}: {}",
             resp.status(),
-            resp.text().await.unwrap_or_default()
+            crate::client::read_error_body(resp).await
         );
     }
 
@@ -73,7 +73,7 @@ pub async fn untag(
         bail!(
             "Control plane returned {}: {}",
             resp.status(),
-            resp.text().await.unwrap_or_default()
+            crate::client::read_error_body(resp).await
         );
     }
 
@@ -102,7 +102,7 @@ pub async fn register(
         bail!(
             "Control plane returned {}: {}",
             resp.status(),
-            resp.text().await.unwrap_or_default()
+            crate::client::read_error_body(resp).await
         );
     }
 

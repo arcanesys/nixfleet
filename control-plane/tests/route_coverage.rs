@@ -393,7 +393,6 @@ fn valid_rollout_body(release_id: String, tag: &str) -> CreateRolloutRequest {
         on_failure: OnFailure::Pause,
         health_timeout: Some(60),
         target: RolloutTarget::Tags(vec![tag.to_string()]),
-        policy: None,
     }
 }
 

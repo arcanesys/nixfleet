@@ -12,27 +12,42 @@ in {
   # --- dock option module ---
   options.local.dock = {
     enable = lib.mkOption {
-      description = "Enable dock";
+      type = lib.types.bool;
+      description = "Whether to manage the macOS Dock from Nix.";
       default = true;
       example = false;
     };
     entries = lib.mkOption {
-      description = "Entries on the Dock";
-      type = with lib.types;
-        listOf (lib.types.submodule {
-          options = {
-            path = lib.mkOption {type = str;};
-            section = lib.mkOption {
-              type = str;
-              default = "apps";
-            };
-            options = lib.mkOption {
-              type = str;
-              default = "";
-            };
+      description = ''
+        Entries to place on the Dock. Fleet repos populate this list
+        with the apps, folders, and URLs they want managed.
+      '';
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          path = lib.mkOption {
+            type = lib.types.str;
+            description = "Filesystem path or URL of the dock entry.";
+            example = "/Applications/Safari.app";
           };
-        });
-      readOnly = true;
+          section = lib.mkOption {
+            type = lib.types.enum ["apps" "others"];
+            default = "apps";
+            description = "Dock section this entry belongs to.";
+          };
+          options = lib.mkOption {
+            type = lib.types.str;
+            default = "";
+            description = "Extra options forwarded to dockutil.";
+          };
+        };
+      });
+      default = [];
+      example = lib.literalExpression ''
+        [
+          { path = "/Applications/Safari.app"; }
+          { path = "/Applications/Terminal.app"; }
+        ]
+      '';
     };
   };
 

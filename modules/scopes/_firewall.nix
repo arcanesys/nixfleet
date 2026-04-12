@@ -24,6 +24,18 @@
       # this is intentional, forcing migration before the kernel forces it.
       networking.nftables.enable = true;
 
+      # `lib.escapeShellArg` is wrong for nftables rule text (which is
+      # parsed by nft, not the shell); emit the bridge name verbatim
+      # and defend against injection with an assertion.
+      assertions = lib.optional microvmEnabled {
+        assertion = builtins.match "[A-Za-z][A-Za-z0-9_-]*" bridgeName != null;
+        message = ''
+          services.nixfleet-microvm-host.bridge.name (${bridgeName}) must match
+          [A-Za-z][A-Za-z0-9_-]* — the name is interpolated verbatim into
+          nftables rules by the firewall scope.
+        '';
+      };
+
       networking.firewall = {
         # Log dropped connections for debugging
         logRefusedConnections = true;
@@ -37,14 +49,14 @@
           ]
           # Allow DHCP on bridge interface when microVM host is enabled
           ++ lib.optionals microvmEnabled [
-            "iifname ${lib.escapeShellArg bridgeName} udp dport 67 accept"
+            "iifname \"${bridgeName}\" udp dport 67 accept"
           ]
         );
 
         # Allow forwarding through the microVM bridge
         extraForwardRules = lib.mkIf microvmEnabled ''
-          iifname ${lib.escapeShellArg bridgeName} accept
-          oifname ${lib.escapeShellArg bridgeName} ct state established,related accept
+          iifname "${bridgeName}" accept
+          oifname "${bridgeName}" ct state established,related accept
         '';
       };
     };

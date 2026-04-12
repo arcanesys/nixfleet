@@ -5,7 +5,7 @@ use nixfleet_types::{DesiredGeneration, MachineLifecycle, MachineStatus, Report}
 use serde::{Deserialize, Serialize};
 
 use crate::auth::Actor;
-use crate::AppState;
+use crate::{log_insert_err, AppState, MAX_ID_LEN};
 
 /// GET /api/v1/machines/{id}/desired-generation
 ///
@@ -14,7 +14,7 @@ pub async fn get_desired_generation(
     State((state, db)): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<DesiredGeneration>, StatusCode> {
-    if id.len() > 256 {
+    if id.len() > MAX_ID_LEN {
         return Err(StatusCode::BAD_REQUEST);
     }
     let fleet = state.read().await;
@@ -44,7 +44,7 @@ pub async fn post_report(
     Json(report): Json<Report>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     // Validate path and report fields before any DB writes
-    if id.len() > 256 {
+    if id.len() > MAX_ID_LEN {
         return Err((StatusCode::BAD_REQUEST, "machine_id too long".to_string()));
     }
     if report.current_generation.len() > 512 {
@@ -74,10 +74,21 @@ pub async fn post_report(
         )
     })?;
 
-    // Persist health report if present
+    // Persist health report if present. Serialization of a well-typed
+    // Vec<HealthCheckResult> cannot realistically fail, but we still
+    // propagate the error as a 500 rather than silently storing "".
     if let Some(ref health) = report.health {
-        let results_json = serde_json::to_string(&health.results).unwrap_or_default();
-        let _ = db.insert_health_report(&id, &results_json, health.all_passed);
+        let results_json = serde_json::to_string(&health.results).map_err(|e| {
+            tracing::error!(error = %e, machine_id = %id, "Failed to serialize health results");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to serialize health results".to_string(),
+            )
+        })?;
+        log_insert_err(
+            "health_report",
+            db.insert_health_report(&id, &results_json, health.all_passed),
+        );
     }
 
     // Update in-memory state — auto-register unknown machines on first report
@@ -89,7 +100,7 @@ pub async fn post_report(
 
     // Auto-register: persist to DB on first report from unknown machine
     if is_new {
-        let _ = db.register_machine(&id, "active");
+        log_insert_err("register_machine", db.register_machine(&id, "active"));
         machine.lifecycle = MachineLifecycle::Active;
         machine.registered_at = Some(chrono::Utc::now());
         tracing::info!(machine_id = %id, "Auto-registered on first report");
@@ -99,7 +110,7 @@ pub async fn post_report(
     if let Some(ref report) = machine.last_report {
         if !report.tags.is_empty() && machine.tags != report.tags {
             machine.tags = report.tags.clone();
-            let _ = db.set_machine_tags(&id, &report.tags);
+            log_insert_err("set_machine_tags", db.set_machine_tags(&id, &report.tags));
             tracing::info!(machine_id = %id, tags = ?report.tags, "Tags synced from report");
         }
     }
@@ -109,23 +120,28 @@ pub async fn post_report(
         || machine.lifecycle == MachineLifecycle::Provisioning
     {
         machine.lifecycle = MachineLifecycle::Active;
-        // Persist lifecycle change — best-effort (report already saved)
-        let _ = db.set_machine_lifecycle(&id, "active");
+        log_insert_err(
+            "set_machine_lifecycle",
+            db.set_machine_lifecycle(&id, "active"),
+        );
         tracing::info!(machine_id = %id, "Auto-activated on first report");
     }
 
     let actor_id = format!("machine:{id}");
     let detail = if report_success { "success" } else { "failure" };
-    let _ = db.insert_audit_event(&actor_id, "report", &id, Some(detail));
+    log_insert_err(
+        "audit_event",
+        db.insert_audit_event(&actor_id, "report", &id, Some(detail)),
+    );
+
+    // Update fleet gauges while we still hold the write guard — avoids
+    // racing with another writer and skips a second lock acquisition.
+    // `update_fleet_gauges` takes `&FleetState`, which auto-derefs from
+    // the write guard.
+    crate::metrics::update_fleet_gauges(&fleet);
+    drop(fleet);
 
     tracing::info!(machine_id = %id, "Report received");
-
-    // Update fleet gauges — drop write lock first, then take read lock
-    drop(fleet);
-    {
-        let fleet = state.read().await;
-        crate::metrics::update_fleet_gauges(&fleet);
-    }
 
     Ok(StatusCode::OK)
 }
@@ -272,21 +288,21 @@ pub async fn register_machine(
         machine.tags = req.tags;
     }
 
-    let _ = db.insert_audit_event(
-        &actor.identifier(),
-        "register",
-        &id,
-        Some(&lifecycle.to_string()),
+    log_insert_err(
+        "audit_event",
+        db.insert_audit_event(
+            &actor.identifier(),
+            "register",
+            &id,
+            Some(&lifecycle.to_string()),
+        ),
     );
 
     tracing::info!(machine_id = %id, lifecycle = %lifecycle, "Machine registered");
 
-    // Update fleet gauges — drop write lock first, then take read lock
+    // Update fleet gauges while still under the write guard.
+    crate::metrics::update_fleet_gauges(&fleet);
     drop(fleet);
-    {
-        let fleet = state.read().await;
-        crate::metrics::update_fleet_gauges(&fleet);
-    }
 
     Ok((
         StatusCode::CREATED,
@@ -349,11 +365,14 @@ pub async fn update_lifecycle(
     let from = machine.lifecycle.to_string();
     machine.lifecycle = target.clone();
 
-    let _ = db.insert_audit_event(
-        &actor.identifier(),
-        "update_lifecycle",
-        &id,
-        Some(&format!("{from} -> {target}")),
+    log_insert_err(
+        "audit_event",
+        db.insert_audit_event(
+            &actor.identifier(),
+            "update_lifecycle",
+            &id,
+            Some(&format!("{from} -> {target}")),
+        ),
     );
 
     tracing::info!(
@@ -363,12 +382,9 @@ pub async fn update_lifecycle(
         "Lifecycle state changed"
     );
 
-    // Update fleet gauges — drop write lock first, then take read lock
+    // Update fleet gauges while still under the write guard.
+    crate::metrics::update_fleet_gauges(&fleet);
     drop(fleet);
-    {
-        let fleet = state.read().await;
-        crate::metrics::update_fleet_gauges(&fleet);
-    }
 
     Ok(StatusCode::OK)
 }
@@ -397,7 +413,10 @@ pub async fn remove_tag(
     let machine = fleet.get_or_create(&id);
     machine.tags.retain(|t| t != &tag);
 
-    let _ = db.insert_audit_event(&actor.identifier(), "remove_tag", &id, Some(&tag));
+    log_insert_err(
+        "audit_event",
+        db.insert_audit_event(&actor.identifier(), "remove_tag", &id, Some(&tag)),
+    );
 
     tracing::info!(machine_id = %id, tag = %tag, "Tag removed");
     Ok(StatusCode::OK)
@@ -437,11 +456,14 @@ pub async fn bootstrap_api_key(
         )
     })?;
 
-    let _ = db.insert_audit_event(
-        "system:bootstrap",
-        "bootstrap",
-        name,
-        Some("first admin key created"),
+    log_insert_err(
+        "audit_event",
+        db.insert_audit_event(
+            "system:bootstrap",
+            "bootstrap",
+            name,
+            Some("first admin key created"),
+        ),
     );
 
     tracing::info!(name = %name, "Bootstrap API key created");

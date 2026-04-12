@@ -14,7 +14,7 @@ pub async fn run(client: &reqwest::Client, cp_url: &str, json_output: bool) -> R
         anyhow::bail!(
             "Control plane returned {}: {}",
             resp.status(),
-            resp.text().await.unwrap_or_default()
+            crate::client::read_error_body(resp).await
         );
     }
 

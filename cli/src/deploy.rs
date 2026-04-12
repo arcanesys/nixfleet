@@ -5,6 +5,8 @@ use nixfleet_types::rollout::{
 use std::collections::HashMap;
 use std::process::Stdio;
 
+use crate::glob::filter_hosts;
+
 /// Discover NixOS host names from the flake by evaluating nixosConfigurations attribute names.
 async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
     let output = tokio::process::Command::new("nix")
@@ -31,52 +33,6 @@ async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
     let hosts: Vec<String> =
         serde_json::from_slice(&output.stdout).context("Failed to parse host list")?;
     Ok(hosts)
-}
-
-/// Filter hosts by a glob-like pattern. Supports '*' as wildcard.
-fn filter_hosts(hosts: &[String], pattern: &str) -> Vec<String> {
-    if pattern == "*" {
-        return hosts.to_vec();
-    }
-
-    hosts
-        .iter()
-        .filter(|h| glob_match(pattern, h))
-        .cloned()
-        .collect()
-}
-
-/// Simple glob matching: '*' matches any sequence of characters.
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let parts: Vec<&str> = pattern.split('*').collect();
-    if parts.len() == 1 {
-        // No wildcard — exact match
-        return pattern == text;
-    }
-
-    let mut pos = 0;
-    for (i, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        match text[pos..].find(part) {
-            Some(idx) => {
-                // First part must match at start
-                if i == 0 && idx != 0 {
-                    return false;
-                }
-                pos += idx + part.len();
-            }
-            None => return false,
-        }
-    }
-
-    // Last part must match at end (unless pattern ends with *)
-    if !pattern.ends_with('*') {
-        return pos == text.len();
-    }
-
-    true
 }
 
 /// Build the system closure for a host and return the store path.
@@ -318,7 +274,6 @@ pub async fn deploy_rollout(
         on_failure: parsed_on_failure,
         health_timeout: Some(health_timeout),
         target,
-        policy: None,
     };
 
     let url = format!("{}/api/v1/rollouts", cp_url);
@@ -333,7 +288,7 @@ pub async fn deploy_rollout(
         bail!(
             "Control plane returned {}: {}",
             resp.status(),
-            resp.text().await.unwrap_or_default()
+            crate::client::read_error_body(resp).await
         );
     }
 
@@ -360,7 +315,7 @@ pub async fn deploy_rollout(
 
     if wait {
         println!("\nWaiting for rollout to complete...");
-        crate::rollout::wait_for_completion(client, cp_url, &created.rollout_id).await?;
+        crate::rollout::wait_for_completion(client, cp_url, &created.rollout_id, None).await?;
     } else {
         println!(
             "\nRollout {} started. Use `nixfleet rollout status {}` to track progress.",
@@ -372,58 +327,5 @@ pub async fn deploy_rollout(
 }
 
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_glob_match_star() {
-        assert!(glob_match("*", "anything"));
-        assert!(glob_match("*", ""));
-    }
-
-    #[test]
-    fn test_glob_match_prefix() {
-        assert!(glob_match("web*", "web-01"));
-        assert!(glob_match("web*", "web-02"));
-        assert!(!glob_match("web*", "dev-01"));
-    }
-
-    #[test]
-    fn test_glob_match_suffix() {
-        assert!(glob_match("*-01", "web-01"));
-        assert!(glob_match("*-02", "web-02"));
-    }
-
-    #[test]
-    fn test_glob_match_exact() {
-        assert!(glob_match("web-01", "web-01"));
-        assert!(!glob_match("web-01", "web-02"));
-    }
-
-    #[test]
-    fn test_glob_match_middle() {
-        assert!(glob_match("edge-*-test", "edge-01-test"));
-        assert!(!glob_match("edge-*-test", "edge-01-prod"));
-    }
-
-    #[test]
-    fn test_filter_hosts_all() {
-        let hosts = vec!["web-01".into(), "dev-01".into(), "srv-01".into()];
-        assert_eq!(filter_hosts(&hosts, "*"), hosts);
-    }
-
-    #[test]
-    fn test_filter_hosts_pattern() {
-        let hosts = vec!["web-01".into(), "web-02".into(), "dev-01".into()];
-        let filtered = filter_hosts(&hosts, "web*");
-        assert_eq!(filtered, vec!["web-01", "web-02"]);
-    }
-
-    #[test]
-    fn test_filter_hosts_no_match() {
-        let hosts = vec!["web-01".into(), "dev-01".into()];
-        let filtered = filter_hosts(&hosts, "nonexistent*");
-        assert!(filtered.is_empty());
-    }
-}
+// Glob-matching tests live in `cli/src/glob.rs`; the deploy module
+// just consumes `filter_hosts` from there now.

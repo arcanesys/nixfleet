@@ -48,7 +48,12 @@
       resolvedIdentityPaths = lib.mkOption {
         type = types.listOf types.str;
         readOnly = true;
-        description = "Computed identity paths list. Fleet modules pass this to agenix/sops.";
+        internal = true;
+        description = ''
+          Computed identity paths list. Consumed by fleet secret
+          modules (agenix/sops/...) that need the resolved list —
+          this is an introspection hook, not an operator option.
+        '';
       };
     };
 

@@ -192,6 +192,20 @@
     };
 
     config = lib.mkIf cfg.enable {
+      # Fail early at eval time if the selected backend's required
+      # fields are left at their empty defaults. A runtime failure
+      # from restic/borg would be harder to diagnose.
+      assertions = [
+        {
+          assertion = cfg.backend != "restic" || (cfg.restic.repository != "" && cfg.restic.passwordFile != "");
+          message = "nixfleet.backup: restic backend requires restic.repository and restic.passwordFile";
+        }
+        {
+          assertion = cfg.backend != "borgbackup" || cfg.borgbackup.repository != "";
+          message = "nixfleet.backup: borgbackup backend requires borgbackup.repository";
+        }
+      ];
+
       # Systemd timer with staggered delay across fleet
       systemd.timers.nixfleet-backup = {
         wantedBy = ["timers.target"];

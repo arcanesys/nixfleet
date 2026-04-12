@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use nixfleet_types::AuditEvent;
 use rusqlite::Connection;
 use serde_json;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 mod embedded {
     use refinery::embed_migrations;
@@ -38,9 +38,18 @@ impl Db {
         })
     }
 
+    /// Acquire the database connection lock, converting a poisoned mutex
+    /// into an anyhow error instead of panicking. Every method on `Db`
+    /// that touches the connection must go through this helper.
+    fn conn(&self) -> Result<MutexGuard<'_, Connection>> {
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("database lock poisoned: {e}"))
+    }
+
     /// Run all pending database migrations.
     pub fn migrate(&self) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn()?;
         embedded::migrations::runner()
             .run(&mut *conn)
             .context("failed to run database migrations")?;
@@ -49,7 +58,7 @@ impl Db {
 
     /// Set (upsert) the desired generation for a machine.
     pub fn set_desired_generation(&self, machine_id: &str, hash: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO generations (machine_id, hash)
              VALUES (?1, ?2)
@@ -62,7 +71,7 @@ impl Db {
 
     /// Get the desired generation for a machine, if set.
     pub fn get_desired_generation(&self, machine_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let result = conn.query_row(
             "SELECT hash FROM generations WHERE machine_id = ?1",
             rusqlite::params![machine_id],
@@ -77,7 +86,7 @@ impl Db {
 
     /// List all desired generations (machine_id, hash).
     pub fn list_desired_generations(&self) -> Result<Vec<(String, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare("SELECT machine_id, hash FROM generations")?;
         let rows = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
@@ -93,7 +102,7 @@ impl Db {
         success: bool,
         message: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO reports (machine_id, generation, success, message)
              VALUES (?1, ?2, ?3, ?4)",
@@ -105,7 +114,7 @@ impl Db {
 
     /// Register a machine (upsert) with a given lifecycle state.
     pub fn register_machine(&self, machine_id: &str, lifecycle: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO machines (machine_id, lifecycle)
              VALUES (?1, ?2)
@@ -118,7 +127,7 @@ impl Db {
 
     /// Get the lifecycle state for a machine.
     pub fn get_machine_lifecycle(&self, machine_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let result = conn.query_row(
             "SELECT lifecycle FROM machines WHERE machine_id = ?1",
             rusqlite::params![machine_id],
@@ -133,7 +142,7 @@ impl Db {
 
     /// Update a machine's lifecycle state.
     pub fn set_machine_lifecycle(&self, machine_id: &str, lifecycle: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let rows = conn
             .execute(
                 "UPDATE machines SET lifecycle = ?2 WHERE machine_id = ?1",
@@ -145,7 +154,7 @@ impl Db {
 
     /// Insert an API key record.
     pub fn insert_api_key(&self, key_hash: &str, name: &str, role: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO api_keys (key_hash, name, role) VALUES (?1, ?2, ?3)",
             rusqlite::params![key_hash, name, role],
@@ -156,14 +165,14 @@ impl Db {
 
     /// Check if any API keys exist in the database.
     pub fn has_api_keys(&self) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM api_keys", [], |row| row.get(0))?;
         Ok(count > 0)
     }
 
     /// Verify an API key and return its role if found.
     pub fn verify_api_key(&self, key_hash: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let result = conn.query_row(
             "SELECT role FROM api_keys WHERE key_hash = ?1",
             rusqlite::params![key_hash],
@@ -178,7 +187,7 @@ impl Db {
 
     /// Get the name associated with an API key.
     pub fn get_api_key_name(&self, key_hash: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let result = conn.query_row(
             "SELECT name FROM api_keys WHERE key_hash = ?1",
             rusqlite::params![key_hash],
@@ -193,7 +202,7 @@ impl Db {
 
     /// List all registered machines.
     pub fn list_machines(&self) -> Result<Vec<MachineRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare("SELECT machine_id, lifecycle, registered_at FROM machines")?;
         let rows = stmt
             .query_map([], |row| {
@@ -215,7 +224,7 @@ impl Db {
         target: &str,
         detail: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO audit_events (actor, action, target, detail) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![actor, action, target, detail],
@@ -225,6 +234,11 @@ impl Db {
     }
 
     /// Query audit events with optional filters, ordered by timestamp DESC.
+    ///
+    /// Uses named parameters so adding a new filter dimension is a
+    /// one-line change rather than coordinating placeholder indices
+    /// across push_str call sites. `IS NULL OR actor = :actor` folds
+    /// optional filters into a single static query.
     pub fn query_audit_events(
         &self,
         actor: Option<&str>,
@@ -232,53 +246,43 @@ impl Db {
         target: Option<&str>,
         limit: usize,
     ) -> Result<Vec<AuditEvent>> {
-        let conn = self.conn.lock().unwrap();
-        let mut sql = String::from(
-            "SELECT id, timestamp, actor, action, target, detail FROM audit_events WHERE 1=1",
-        );
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-        if let Some(a) = actor {
-            sql.push_str(&format!(" AND actor = ?{}", params.len() + 1));
-            params.push(Box::new(a.to_string()));
-        }
-        if let Some(a) = action {
-            sql.push_str(&format!(" AND action = ?{}", params.len() + 1));
-            params.push(Box::new(a.to_string()));
-        }
-        if let Some(t) = target {
-            sql.push_str(&format!(" AND target = ?{}", params.len() + 1));
-            params.push(Box::new(t.to_string()));
-        }
-
-        sql.push_str(&format!(
-            " ORDER BY timestamp DESC LIMIT ?{}",
-            params.len() + 1
-        ));
-        params.push(Box::new(limit as i64));
-
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
-
-        let mut stmt = conn.prepare(&sql)?;
+        let conn = self.conn()?;
+        const SQL: &str = "\
+            SELECT id, timestamp, actor, action, target, detail \
+            FROM audit_events \
+            WHERE (:actor IS NULL OR actor = :actor) \
+              AND (:action IS NULL OR action = :action) \
+              AND (:target IS NULL OR target = :target) \
+            ORDER BY timestamp DESC \
+            LIMIT :limit";
+        let mut stmt = conn.prepare(SQL)?;
+        let limit_i64 = limit as i64;
         let rows = stmt
-            .query_map(param_refs.as_slice(), |row| {
-                Ok(AuditEvent {
-                    id: row.get(0)?,
-                    timestamp: row.get(1)?,
-                    actor: row.get(2)?,
-                    action: row.get(3)?,
-                    target: row.get(4)?,
-                    detail: row.get(5)?,
-                })
-            })?
+            .query_map(
+                rusqlite::named_params! {
+                    ":actor": actor,
+                    ":action": action,
+                    ":target": target,
+                    ":limit": limit_i64,
+                },
+                |row| {
+                    Ok(AuditEvent {
+                        id: row.get(0)?,
+                        timestamp: row.get(1)?,
+                        actor: row.get(2)?,
+                        action: row.get(3)?,
+                        target: row.get(4)?,
+                        detail: row.get(5)?,
+                    })
+                },
+            )?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
     /// Replace all tags for a machine.
     pub fn set_machine_tags(&self, machine_id: &str, tags: &[String]) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn()?;
         let tx = conn.transaction().context("failed to start transaction")?;
         tx.execute(
             "DELETE FROM machine_tags WHERE machine_id = ?1",
@@ -298,7 +302,7 @@ impl Db {
 
     /// Get all tags for a machine, ordered by tag name.
     pub fn get_machine_tags(&self, machine_id: &str) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt =
             conn.prepare("SELECT tag FROM machine_tags WHERE machine_id = ?1 ORDER BY tag")?;
         let rows = stmt
@@ -325,7 +329,7 @@ impl Db {
             placeholders.join(", "),
             tags.len() + 1
         );
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         for tag in tags {
             params.push(Box::new(tag.clone()));
@@ -342,7 +346,7 @@ impl Db {
 
     /// Remove a single tag from a machine.
     pub fn remove_machine_tag(&self, machine_id: &str, tag: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "DELETE FROM machine_tags WHERE machine_id = ?1 AND tag = ?2",
             rusqlite::params![machine_id, tag],
@@ -353,7 +357,7 @@ impl Db {
 
     /// Get recent reports for a machine (most recent first).
     pub fn get_recent_reports(&self, machine_id: &str, limit: usize) -> Result<Vec<ReportRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT machine_id, generation, success, message, received_at
              FROM reports
@@ -391,7 +395,7 @@ impl Db {
         target_hosts: Option<&str>,
         created_by: &str,
     ) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO rollouts (id, release_id, cache_url, strategy, batch_sizes,
              failure_threshold, on_failure, health_timeout, status, target_tags, target_hosts,
@@ -424,7 +428,7 @@ impl Db {
         batch_index: i64,
         machine_ids: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO rollout_batches (id, rollout_id, batch_index, machine_ids)
              VALUES (?1, ?2, ?3, ?4)",
@@ -436,7 +440,7 @@ impl Db {
 
     /// Get a rollout by id.
     pub fn get_rollout(&self, id: &str) -> Result<Option<RolloutRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let result = conn.query_row(
             "SELECT id, release_id, cache_url, strategy, batch_sizes, failure_threshold,
              on_failure, health_timeout, status, target_tags, target_hosts,
@@ -475,7 +479,7 @@ impl Db {
         status: Option<&str>,
         limit: usize,
     ) -> Result<Vec<RolloutRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut sql = String::from(
             "SELECT id, release_id, cache_url, strategy, batch_sizes, failure_threshold,
              on_failure, health_timeout, status, target_tags, target_hosts,
@@ -523,7 +527,7 @@ impl Db {
 
     /// Update a rollout's status.
     pub fn update_rollout_status(&self, id: &str, status: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let rows = conn
             .execute(
                 "UPDATE rollouts SET status = ?2, updated_at = datetime('now') WHERE id = ?1",
@@ -535,7 +539,7 @@ impl Db {
 
     /// Get all batches for a rollout, ordered by batch_index.
     pub fn get_rollout_batches(&self, rollout_id: &str) -> Result<Vec<RolloutBatchRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, rollout_id, batch_index, machine_ids, status, started_at, completed_at, previous_generations
              FROM rollout_batches WHERE rollout_id = ?1 ORDER BY batch_index",
@@ -562,7 +566,7 @@ impl Db {
     /// Update a batch's status with conditional timestamps.
     /// "deploying" sets started_at, "succeeded"/"failed" sets completed_at.
     pub fn update_batch_status(&self, batch_id: &str, status: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let sql = match status {
             "deploying" => {
                 "UPDATE rollout_batches SET status = ?2, started_at = datetime('now') WHERE id = ?1"
@@ -584,7 +588,7 @@ impl Db {
         batch_id: &str,
         previous_generations: &str,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "UPDATE rollout_batches SET previous_generations = ?1 WHERE id = ?2",
             rusqlite::params![previous_generations, batch_id],
@@ -599,7 +603,7 @@ impl Db {
         results: &str,
         all_passed: bool,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO health_reports (machine_id, results, all_passed)
              VALUES (?1, ?2, ?3)",
@@ -615,7 +619,7 @@ impl Db {
         machine_id: &str,
         since: &str,
     ) -> Result<Vec<HealthReportRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, machine_id, results, all_passed, received_at
              FROM health_reports
@@ -638,7 +642,7 @@ impl Db {
 
     /// Delete health reports older than retention_hours. Returns number of deleted rows.
     pub fn cleanup_old_health_reports(&self, retention_hours: i64) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let rows = conn
             .execute(
                 "DELETE FROM health_reports WHERE received_at < datetime('now', ?1)",
@@ -660,7 +664,7 @@ impl Db {
         detail: &str,
         actor: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO rollout_events (rollout_id, event_type, detail, actor)
              VALUES (?1, ?2, ?3, ?4)",
@@ -672,7 +676,7 @@ impl Db {
 
     /// Get all events for a rollout, ordered by created_at ASC.
     pub fn get_rollout_events(&self, rollout_id: &str) -> Result<Vec<RolloutEventRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, rollout_id, event_type, detail, actor, created_at
              FROM rollout_events WHERE rollout_id = ?1 ORDER BY created_at ASC",
@@ -695,7 +699,7 @@ impl Db {
     /// Check if a machine is part of any active rollout (status: created/running/paused).
     /// Returns the rollout id if found.
     pub fn machine_in_active_rollout(&self, machine_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT r.id, rb.machine_ids FROM rollouts r
              JOIN rollout_batches rb ON rb.rollout_id = r.id
@@ -734,7 +738,7 @@ impl Db {
         created_by: &str,
         entries: &[(String, String, String, String)], // (hostname, store_path, platform, tags_json)
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let tx = conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO releases (id, flake_ref, flake_rev, cache_url, host_count, created_at, created_by)
@@ -754,7 +758,7 @@ impl Db {
 
     /// Get a release by id.
     pub fn get_release(&self, id: &str) -> anyhow::Result<Option<ReleaseRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         match conn.query_row(
             "SELECT id, flake_ref, flake_rev, cache_url, host_count, created_at, created_by
              FROM releases WHERE id = ?1",
@@ -779,7 +783,7 @@ impl Db {
 
     /// Get all entries for a release, ordered by hostname.
     pub fn get_release_entries(&self, release_id: &str) -> anyhow::Result<Vec<ReleaseEntryRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT release_id, hostname, store_path, platform, tags
              FROM release_entries WHERE release_id = ?1 ORDER BY hostname",
@@ -804,7 +808,7 @@ impl Db {
         release_id: &str,
         hostname: &str,
     ) -> anyhow::Result<Option<ReleaseEntryRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         match conn.query_row(
             "SELECT release_id, hostname, store_path, platform, tags
              FROM release_entries WHERE release_id = ?1 AND hostname = ?2",
@@ -827,7 +831,7 @@ impl Db {
 
     /// List releases ordered by created_at DESC.
     pub fn list_releases(&self, limit: i64) -> anyhow::Result<Vec<ReleaseRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, flake_ref, flake_rev, cache_url, host_count, created_at, created_by
              FROM releases ORDER BY created_at DESC LIMIT ?1",
@@ -850,7 +854,7 @@ impl Db {
 
     /// Check if a release is referenced by any rollout.
     pub fn release_referenced_by_rollout(&self, release_id: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let rollout_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM rollouts WHERE release_id = ?1",
             rusqlite::params![release_id],
@@ -861,7 +865,7 @@ impl Db {
 
     /// Delete a release and its entries. Returns true if the release existed.
     pub fn delete_release(&self, id: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let tx = conn.unchecked_transaction()?;
         tx.execute(
             "DELETE FROM release_entries WHERE release_id = ?1",

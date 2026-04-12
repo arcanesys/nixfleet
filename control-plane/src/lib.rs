@@ -1,5 +1,7 @@
 use axum::extract::DefaultBodyLimit;
+use axum::http::StatusCode;
 use axum::middleware;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::Router;
 use metrics_exporter_prometheus::PrometheusHandle;
@@ -18,6 +20,115 @@ pub mod state;
 pub mod tls;
 
 pub type AppState = (Arc<RwLock<state::FleetState>>, Arc<db::Db>);
+
+/// Maximum number of items any paginated admin endpoint will return in
+/// a single response. Ceiling exists to cap DB work and response size
+/// regardless of what a client passes in `?limit=…`.
+pub const MAX_PAGE_SIZE: i64 = 500;
+
+/// Maximum length of a caller-supplied identifier (machine_id,
+/// rollout_id, release_id) that will be accepted by any handler. This
+/// is a defensive bound to prevent pathologically large strings from
+/// flowing into DB queries. Real IDs are under 64 chars.
+pub const MAX_ID_LEN: usize = 128;
+
+/// Unified error type for Axum handlers.
+///
+/// Previously every handler returned `Result<_, (StatusCode, String)>`
+/// and constructed tuples by hand, producing inconsistent mapping
+/// between `anyhow::Error`, `rusqlite::Error`, and HTTP status codes.
+/// This type centralizes the translation so each handler can use `?`
+/// against infallible boilerplate.
+#[derive(Debug)]
+pub enum ControlPlaneError {
+    /// 400 — client supplied malformed or invalid input.
+    BadRequest(String),
+    /// 401 — missing or invalid authentication.
+    Unauthorized(String),
+    /// 403 — authenticated but not allowed to perform this action.
+    Forbidden(String),
+    /// 404 — target resource does not exist.
+    NotFound(String),
+    /// 409 — request conflicts with current state (duplicate, dependency).
+    Conflict(String),
+    /// 500 — unexpected internal error. Message is logged but not
+    /// leaked to the client verbatim.
+    Internal(anyhow::Error),
+}
+
+impl ControlPlaneError {
+    /// Convenience: wrap any error as an Internal variant.
+    pub fn internal<E: Into<anyhow::Error>>(err: E) -> Self {
+        Self::Internal(err.into())
+    }
+}
+
+impl std::fmt::Display for ControlPlaneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BadRequest(m) => write!(f, "bad request: {m}"),
+            Self::Unauthorized(m) => write!(f, "unauthorized: {m}"),
+            Self::Forbidden(m) => write!(f, "forbidden: {m}"),
+            Self::NotFound(m) => write!(f, "not found: {m}"),
+            Self::Conflict(m) => write!(f, "conflict: {m}"),
+            Self::Internal(e) => write!(f, "internal error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ControlPlaneError {}
+
+impl From<anyhow::Error> for ControlPlaneError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Internal(err)
+    }
+}
+
+impl From<rusqlite::Error> for ControlPlaneError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Internal(anyhow::Error::from(err))
+    }
+}
+
+impl From<serde_json::Error> for ControlPlaneError {
+    fn from(err: serde_json::Error) -> Self {
+        Self::Internal(anyhow::Error::from(err))
+    }
+}
+
+impl IntoResponse for ControlPlaneError {
+    fn into_response(self) -> Response {
+        let (status, body) = match self {
+            Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
+            Self::Unauthorized(m) => (StatusCode::UNAUTHORIZED, m),
+            Self::Forbidden(m) => (StatusCode::FORBIDDEN, m),
+            Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
+            Self::Conflict(m) => (StatusCode::CONFLICT, m),
+            Self::Internal(e) => {
+                // Log the full chain internally; return a generic
+                // message to the client. We do not leak raw rusqlite
+                // or anyhow error messages across a trust boundary.
+                tracing::error!(error = %e, "control-plane internal error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error".to_string(),
+                )
+            }
+        };
+        (status, body).into_response()
+    }
+}
+
+/// Log an error from a non-essential event/audit insert without
+/// aborting the caller. Rollout and audit events are diagnostic: an
+/// insert failure must not crash a live rollout, but it must not
+/// silently disappear either. Accepts any `Result<T, E: Display>`
+/// so the call site doesn't need to discard a success value first.
+pub fn log_insert_err<T, E: std::fmt::Display>(kind: &str, result: Result<T, E>) {
+    if let Err(e) = result {
+        tracing::warn!(event = kind, error = %e, "failed to record audit/event");
+    }
+}
 
 /// Build the Axum router with the given shared state.
 ///
