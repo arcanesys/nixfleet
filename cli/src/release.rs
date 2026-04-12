@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
+use console::style;
 use nixfleet_types::release::{
     CreateReleaseRequest, CreateReleaseResponse, Release, ReleaseDiff, ReleaseEntry,
 };
 use reqwest::Client;
 use std::process::Command;
 
+use crate::display;
 use crate::glob::filter_hosts;
 
 /// Discover all nixosConfigurations host names from a flake.
@@ -155,7 +157,8 @@ pub fn run_push_hook(push_to_host: Option<&str>, hook_cmd: &str, store_path: &st
 
 /// Extract SSH host from a URL like ssh://root@host or ssh://host.
 pub fn extract_ssh_host(url: &str) -> Option<String> {
-    url.strip_prefix("ssh://").map(|rest| rest.trim_end_matches('/').to_string())
+    url.strip_prefix("ssh://")
+        .map(|rest| rest.trim_end_matches('/').to_string())
 }
 
 /// `nixfleet release create`
@@ -244,14 +247,19 @@ pub async fn create(
     }
 
     // Print summary
+    let manifest_rows: Vec<Vec<String>> = entries
+        .iter()
+        .map(|entry| {
+            vec![
+                entry.hostname.clone(),
+                entry.platform.clone(),
+                entry.store_path.clone(),
+            ]
+        })
+        .collect();
+
     println!("\nRelease manifest:");
-    println!("{:<20} {:<18} STORE PATH", "HOST", "PLATFORM");
-    for entry in &entries {
-        println!(
-            "{:<20} {:<18} {}",
-            entry.hostname, entry.platform, entry.store_path
-        );
-    }
+    display::print_table(&["HOST", "PLATFORM", "STORE PATH"], &manifest_rows);
 
     if dry_run {
         println!("\n(dry-run: not registering with control plane)");
@@ -289,7 +297,7 @@ pub async fn create(
 }
 
 /// `nixfleet release list`
-pub async fn list(client: &Client, base_url: &str, limit: u32) -> Result<()> {
+pub async fn list(client: &Client, base_url: &str, limit: u32, json: bool) -> Result<()> {
     let resp = client
         .get(format!("{}/api/v1/releases?limit={}", base_url, limit))
         .send()
@@ -304,31 +312,41 @@ pub async fn list(client: &Client, base_url: &str, limit: u32) -> Result<()> {
 
     let releases: Vec<Release> = resp.json().await?;
     if releases.is_empty() {
-        println!("No releases found.");
+        if json {
+            println!("[]");
+        } else {
+            println!("No releases found.");
+        }
         return Ok(());
     }
 
-    println!(
-        "{:<16} {:<12} {:>6} {:<22} BY",
-        "ID", "REVISION", "HOSTS", "CREATED"
+    let rows: Vec<Vec<String>> = releases
+        .iter()
+        .map(|r| {
+            let rev = r.flake_rev.as_deref().unwrap_or("-");
+            let rev_short = if rev.len() > 8 { &rev[..8] } else { rev };
+            vec![
+                r.id.clone(),
+                rev_short.to_string(),
+                r.host_count.to_string(),
+                r.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                r.created_by.clone(),
+            ]
+        })
+        .collect();
+
+    display::print_list(
+        json,
+        &["ID", "REVISION", "HOSTS", "CREATED", "BY"],
+        &rows,
+        &releases,
     );
-    for r in releases {
-        let rev = r.flake_rev.as_deref().unwrap_or("-");
-        let rev_short = if rev.len() > 8 { &rev[..8] } else { rev };
-        println!(
-            "{:<16} {:<12} {:>6} {:<22} {}",
-            r.id,
-            rev_short,
-            r.host_count,
-            r.created_at.format("%Y-%m-%d %H:%M:%S"),
-            r.created_by
-        );
-    }
+
     Ok(())
 }
 
 /// `nixfleet release show`
-pub async fn show(client: &Client, base_url: &str, release_id: &str) -> Result<()> {
+pub async fn show(client: &Client, base_url: &str, release_id: &str, json: bool) -> Result<()> {
     let resp = client
         .get(format!("{}/api/v1/releases/{}", base_url, release_id))
         .send()
@@ -342,37 +360,81 @@ pub async fn show(client: &Client, base_url: &str, release_id: &str) -> Result<(
     }
 
     let release: Release = resp.json().await?;
-    println!("Release:   {}", release.id);
-    println!("Flake ref: {}", release.flake_ref.as_deref().unwrap_or("-"));
-    println!("Flake rev: {}", release.flake_rev.as_deref().unwrap_or("-"));
-    println!("Cache URL: {}", release.cache_url.as_deref().unwrap_or("-"));
-    println!("Hosts:     {}", release.host_count);
-    println!(
-        "Created:   {}",
-        release.created_at.format("%Y-%m-%d %H:%M:%S")
-    );
-    println!("By:        {}", release.created_by);
-    println!();
-    println!(
-        "{:<20} {:<18} {:<50} TAGS",
-        "HOST", "PLATFORM", "STORE PATH"
-    );
-    for entry in &release.entries {
-        let tags = if entry.tags.is_empty() {
-            "-".to_string()
-        } else {
-            entry.tags.join(", ")
-        };
-        println!(
-            "{:<20} {:<18} {:<50} {}",
-            entry.hostname, entry.platform, entry.store_path, tags
-        );
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&release)?);
+        return Ok(());
     }
+
+    display::print_detail(&[
+        ("Release", release.id.clone()),
+        (
+            "Flake ref",
+            release
+                .flake_ref
+                .as_deref()
+                .unwrap_or("-")
+                .to_string(),
+        ),
+        (
+            "Flake rev",
+            release
+                .flake_rev
+                .as_deref()
+                .unwrap_or("-")
+                .to_string(),
+        ),
+        (
+            "Cache URL",
+            release
+                .cache_url
+                .as_deref()
+                .unwrap_or("-")
+                .to_string(),
+        ),
+        ("Hosts", release.host_count.to_string()),
+        (
+            "Created",
+            release.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        ),
+        ("By", release.created_by.clone()),
+    ]);
+
+    println!();
+    let entry_rows: Vec<Vec<String>> = release
+        .entries
+        .iter()
+        .map(|e| {
+            let tags = if e.tags.is_empty() {
+                "-".to_string()
+            } else {
+                e.tags.join(", ")
+            };
+            vec![
+                e.hostname.clone(),
+                e.platform.clone(),
+                display::truncate_store_path(&e.store_path, 50),
+                tags,
+            ]
+        })
+        .collect();
+
+    display::print_table(
+        &["HOST", "PLATFORM", "STORE PATH", "TAGS"],
+        &entry_rows,
+    );
+
     Ok(())
 }
 
 /// `nixfleet release diff`
-pub async fn diff(client: &Client, base_url: &str, id_a: &str, id_b: &str) -> Result<()> {
+pub async fn diff(
+    client: &Client,
+    base_url: &str,
+    id_a: &str,
+    id_b: &str,
+    json: bool,
+) -> Result<()> {
     let resp = client
         .get(format!(
             "{}/api/v1/releases/{}/diff/{}",
@@ -390,22 +452,27 @@ pub async fn diff(client: &Client, base_url: &str, id_a: &str, id_b: &str) -> Re
 
     let diff: ReleaseDiff = resp.json().await?;
 
+    if json {
+        println!("{}", serde_json::to_string_pretty(&diff)?);
+        return Ok(());
+    }
+
     if !diff.added.is_empty() {
         println!("Added hosts:");
         for host in &diff.added {
-            println!("  + {}", host);
+            println!("  {} {}", style("+").green(), host);
         }
     }
     if !diff.removed.is_empty() {
         println!("Removed hosts:");
         for host in &diff.removed {
-            println!("  - {}", host);
+            println!("  {} {}", style("-").red(), host);
         }
     }
     if !diff.changed.is_empty() {
         println!("Changed hosts:");
         for entry in &diff.changed {
-            println!("  ~ {}", entry.hostname);
+            println!("  {} {}", style("~").yellow(), entry.hostname);
             println!("    old: {}", entry.old_store_path);
             println!("    new: {}", entry.new_store_path);
         }
