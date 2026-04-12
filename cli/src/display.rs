@@ -166,7 +166,7 @@ impl RollingWindow {
         }
     }
 
-    /// Set a prefix that will be prepended to every line (e.g. "[lab] ").
+    /// Set a prefix that will be prepended to every line (e.g. "[web-01] ").
     pub fn set_line_prefix(&mut self, prefix: &str) {
         self.line_prefix = if prefix.is_empty() {
             String::new()

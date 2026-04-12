@@ -80,7 +80,7 @@ Full scope table with activation conditions and details: `docs/mdbook/guide/defi
 Commands: `init`, `bootstrap`, `status`, `deploy`, `rollback`, `release` (create/list/show/diff/delete), `rollout` (list/status/resume/cancel), `machines` (list/register/untag), `host` (add).
 
 ```bash
-nixfleet init --control-plane-url https://lab:8080 --ca-cert fleet-ca.pem
+nixfleet init --control-plane-url https://cp:8080 --ca-cert fleet-ca.pem
 nixfleet bootstrap                                                       # first admin API key
 nixfleet deploy --push-to ssh://root@cache --tags web --strategy canary --wait
 nixfleet deploy --hook --tags web --strategy canary --wait               # push via [cache.hook]

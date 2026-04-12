@@ -526,7 +526,7 @@ mod tests {
     fn test_parse_config_file() {
         let toml_str = r#"
 [control-plane]
-url = "https://lab:8080"
+url = "https://cp-01:8080"
 ca-cert = "modules/_config/fleet-ca.pem"
 
 [tls]
@@ -534,8 +534,8 @@ client-cert = "/run/agenix/agent-${HOSTNAME}-cert"
 client-key = "/run/agenix/agent-${HOSTNAME}-key"
 
 [cache]
-url = "http://lab:5000"
-push-to = "ssh://root@lab"
+url = "http://cache-01:5000"
+push-to = "ssh://root@cache-01"
 
 [deploy]
 strategy = "staged"
@@ -543,13 +543,13 @@ health-timeout = 300
 "#;
         let config: ConfigFile = toml::from_str(toml_str).unwrap();
         let cp = config.control_plane.unwrap();
-        assert_eq!(cp.url, Some("https://lab:8080".to_string()));
+        assert_eq!(cp.url, Some("https://cp-01:8080".to_string()));
         assert_eq!(cp.ca_cert, Some("modules/_config/fleet-ca.pem".to_string()));
         let tls = config.tls.unwrap();
         assert_eq!(tls.client_cert, Some("/run/agenix/agent-${HOSTNAME}-cert".to_string()));
         let cache = config.cache.unwrap();
-        assert_eq!(cache.url, Some("http://lab:5000".to_string()));
-        assert_eq!(cache.push_to, Some("ssh://root@lab".to_string()));
+        assert_eq!(cache.url, Some("http://cache-01:5000".to_string()));
+        assert_eq!(cache.push_to, Some("ssh://root@cache-01".to_string()));
         let deploy = config.deploy.unwrap();
         assert_eq!(deploy.strategy, Some("staged".to_string()));
         assert_eq!(deploy.health_timeout, Some(300));
@@ -558,7 +558,7 @@ health-timeout = 300
     #[test]
     fn test_parse_credentials_file() {
         let toml_str = r#"
-["https://lab:8080"]
+["https://cp-01:8080"]
 api-key = "nfk-abc123"
 
 ["https://prod:8080"]
@@ -566,7 +566,7 @@ api-key = "nfk-def456"
 "#;
         let creds: CredentialsFile = toml::from_str(toml_str).unwrap();
         assert_eq!(
-            creds.entries.get("https://lab:8080").unwrap().api_key,
+            creds.entries.get("https://cp-01:8080").unwrap().api_key,
             Some("nfk-abc123".to_string())
         );
         assert_eq!(
@@ -579,7 +579,7 @@ api-key = "nfk-def456"
     fn test_resolve_cli_overrides_config() {
         let toml_str = r#"
 [control-plane]
-url = "https://lab:8080"
+url = "https://cp-01:8080"
 "#;
         let config: ConfigFile = toml::from_str(toml_str).unwrap();
         let creds = CredentialsFile::default();
@@ -599,7 +599,7 @@ url = "https://lab:8080"
     fn test_resolve_default_cli_values_dont_override() {
         let toml_str = r#"
 [control-plane]
-url = "https://lab:8080"
+url = "https://cp-01:8080"
 "#;
         let config: ConfigFile = toml::from_str(toml_str).unwrap();
         let creds = CredentialsFile::default();
@@ -612,7 +612,7 @@ url = "https://lab:8080"
                 ..CliOverrides::default()
             },
         );
-        assert_eq!(resolved.control_plane_url, Some("https://lab:8080".to_string()));
+        assert_eq!(resolved.control_plane_url, Some("https://cp-01:8080".to_string()));
     }
 
     #[cfg(unix)]

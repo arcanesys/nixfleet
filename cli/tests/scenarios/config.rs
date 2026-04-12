@@ -308,15 +308,15 @@ fn cache_hook_config_is_parsed() {
     let cfg = parse_config(
         r#"
 [control-plane]
-url = "https://lab:8080"
+url = "https://cp-01:8080"
 
 [cache]
-url = "http://lab:5000"
-push-to = "ssh://root@lab"
+url = "http://cache-01:5000"
+push-to = "ssh://root@cache-01"
 
 [cache.hook]
-url = "http://lab:8081/fleet"
-push-cmd = "attic push fleet {}"
+url = "http://cache-01:8081/mycache"
+push-cmd = "attic push mycache {}"
 "#,
     );
 
@@ -330,11 +330,11 @@ push-cmd = "attic push fleet {}"
         },
     );
 
-    assert_eq!(resolved.cache_url.as_deref(), Some("http://lab:5000"));
-    assert_eq!(resolved.push_to.as_deref(), Some("ssh://root@lab"));
-    assert_eq!(resolved.hook_url.as_deref(), Some("http://lab:8081/fleet"));
+    assert_eq!(resolved.cache_url.as_deref(), Some("http://cache-01:5000"));
+    assert_eq!(resolved.push_to.as_deref(), Some("ssh://root@cache-01"));
+    assert_eq!(resolved.hook_url.as_deref(), Some("http://cache-01:8081/mycache"));
     assert_eq!(
         resolved.hook_push_cmd.as_deref(),
-        Some("attic push fleet {}")
+        Some("attic push mycache {}")
     );
 }
