@@ -10,7 +10,7 @@ use console::style;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Serialize;
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Read as IoRead, Write as IoWrite};
+use std::io::{Read as IoRead, Write as IoWrite};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -265,18 +265,33 @@ pub fn run_cmd(cmd: &mut Command, mut window: Option<&mut RollingWindow>) -> std
 
     let stderr_handle = child.stderr.take();
     let mut stderr_buf = Vec::new();
-    if let Some(stderr) = stderr_handle {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    if let Some(ref mut w) = window {
-                        w.log_line(&l);
+    if let Some(mut stderr) = stderr_handle {
+        let mut buf = [0u8; 4096];
+        let mut line_buf = String::new();
+        loop {
+            let n = stderr.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            stderr_buf.extend_from_slice(&buf[..n]);
+            let chunk = String::from_utf8_lossy(&buf[..n]);
+            for ch in chunk.chars() {
+                if ch == '\n' || ch == '\r' {
+                    if !line_buf.is_empty() {
+                        if let Some(ref mut w) = window {
+                            w.log_line(&line_buf);
+                        }
+                        line_buf.clear();
                     }
-                    stderr_buf.extend_from_slice(l.as_bytes());
-                    stderr_buf.push(b'\n');
+                } else {
+                    line_buf.push(ch);
                 }
-                Err(_) => break,
+            }
+        }
+        // Flush remaining partial line
+        if !line_buf.is_empty() {
+            if let Some(ref mut w) = window {
+                w.log_line(&line_buf);
             }
         }
     }
@@ -304,16 +319,34 @@ pub async fn run_cmd_async(
 
     let stderr_handle = child.stderr.take();
     let mut stderr_buf = Vec::new();
-    if let Some(stderr) = stderr_handle {
-        use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
-        let reader = TokioBufReader::new(stderr);
-        let mut lines = reader.lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(ref mut w) = window {
-                w.log_line(&line);
+    if let Some(mut stderr) = stderr_handle {
+        use tokio::io::AsyncReadExt;
+        let mut buf = [0u8; 4096];
+        let mut line_buf = String::new();
+        loop {
+            let n = stderr.read(&mut buf).await?;
+            if n == 0 {
+                break;
             }
-            stderr_buf.extend_from_slice(line.as_bytes());
-            stderr_buf.push(b'\n');
+            stderr_buf.extend_from_slice(&buf[..n]);
+            let chunk = String::from_utf8_lossy(&buf[..n]);
+            for ch in chunk.chars() {
+                if ch == '\n' || ch == '\r' {
+                    if !line_buf.is_empty() {
+                        if let Some(ref mut w) = window {
+                            w.log_line(&line_buf);
+                        }
+                        line_buf.clear();
+                    }
+                } else {
+                    line_buf.push(ch);
+                }
+            }
+        }
+        if !line_buf.is_empty() {
+            if let Some(ref mut w) = window {
+                w.log_line(&line_buf);
+            }
         }
     }
 
