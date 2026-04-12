@@ -125,6 +125,7 @@ pub struct RollingWindow {
     bar: ProgressBar,
     ring: VecDeque<String>,
     had_error: bool,
+    line_prefix: String,
 }
 
 impl RollingWindow {
@@ -155,7 +156,17 @@ impl RollingWindow {
             bar,
             ring: VecDeque::with_capacity(WINDOW_SIZE),
             had_error: false,
+            line_prefix: String::new(),
         }
+    }
+
+    /// Set a prefix that will be prepended to every line (e.g. "[lab] ").
+    pub fn set_line_prefix(&mut self, prefix: &str) {
+        self.line_prefix = if prefix.is_empty() {
+            String::new()
+        } else {
+            format!("[{}] ", prefix)
+        };
     }
 
     /// Push a line of subprocess output into the rolling window.
@@ -166,10 +177,12 @@ impl RollingWindow {
             return;
         }
 
+        let prefixed = format!("{}{}", self.line_prefix, trimmed);
+
         if self.ring.len() >= WINDOW_SIZE {
             self.ring.pop_front();
         }
-        self.ring.push_back(trimmed.to_string());
+        self.ring.push_back(prefixed);
 
         // Grow the line pool if we need more visible lines
         let line_style = ProgressStyle::with_template("  {msg}").unwrap();

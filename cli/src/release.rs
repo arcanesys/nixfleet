@@ -278,6 +278,9 @@ pub async fn create(
         };
 
         for hostname in &hosts {
+            if let Some(ref mut w) = window {
+                w.set_line_prefix(hostname);
+            }
             let platform = detect_platform(flake, hostname)?;
             let tags = detect_tags(flake, hostname);
             match build_host(flake, hostname, window.as_mut()) {
@@ -314,7 +317,7 @@ pub async fn create(
             .collect::<std::collections::HashSet<_>>()
             .len();
         {
-            let mut window = if !display::passthrough_output() {
+            let mut window = if display::use_progress() {
                 Some(display::RollingWindow::new("pushing", unique_count as u64))
             } else {
                 None
@@ -352,13 +355,16 @@ pub async fn create(
         }
     } else if copy {
         {
-            let mut window = if !display::passthrough_output() {
+            let mut window = if display::use_progress() {
                 Some(display::RollingWindow::new("copying", entries.len() as u64))
             } else {
                 None
             };
 
             for entry in &entries {
+                if let Some(ref mut w) = window {
+                    w.set_line_prefix(&entry.hostname);
+                }
                 if entry.platform.contains("darwin") {
                     tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
                     if let Some(ref w) = window {

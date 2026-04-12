@@ -199,6 +199,9 @@ pub async fn run(
         };
 
         for host in &targets {
+            if let Some(ref mut w) = window {
+                w.set_line_prefix(host);
+            }
             match build_host(flake, host, window.as_mut()).await {
                 Ok(path) => {
                     tracing::info!(host, path = %display::truncate_store_path(&path, 60), "built");
@@ -243,6 +246,9 @@ pub async fn run(
         };
 
         for host in &targets {
+            if let Some(ref mut w) = window {
+                w.set_line_prefix(host);
+            }
             if let Some(Ok(store_path)) = results.get(host) {
                 let ssh_dest = match target_override {
                     Some(t) => t.to_string(),
