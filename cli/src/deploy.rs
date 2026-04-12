@@ -274,7 +274,6 @@ pub async fn deploy_rollout(
         on_failure: parsed_on_failure,
         health_timeout: Some(health_timeout),
         target,
-        policy: None,
     };
 
     let url = format!("{}/api/v1/rollouts", cp_url);

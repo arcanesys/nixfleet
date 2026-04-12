@@ -10,6 +10,7 @@ use std::fmt;
 /// Strategy for rolling out a new generation across machines.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RolloutStrategy {
     Canary,
     Staged,
@@ -29,6 +30,7 @@ impl fmt::Display for RolloutStrategy {
 /// What to do when a health check fails during rollout.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum OnFailure {
     #[default]
     Pause,
@@ -47,6 +49,7 @@ impl fmt::Display for OnFailure {
 /// Overall status of a rollout.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RolloutStatus {
     Created,
     Running,
@@ -92,6 +95,7 @@ impl RolloutStatus {
 /// Status of a single batch within a rollout.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum BatchStatus {
     Pending,
     Deploying,
@@ -129,6 +133,7 @@ impl BatchStatus {
 /// Health status of an individual machine during a rollout.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MachineHealthStatus {
     Pending,
     Healthy,
@@ -148,6 +153,7 @@ impl fmt::Display for MachineHealthStatus {
 /// Which machines a rollout targets.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RolloutTarget {
     Tags(Vec<String>),
     Hosts(Vec<String>),
@@ -192,9 +198,6 @@ pub struct CreateRolloutRequest {
     #[serde(default)]
     pub health_timeout: Option<u64>,
     pub target: RolloutTarget,
-    /// Optional policy name — if set, policy values are used as defaults.
-    #[serde(default)]
-    pub policy: Option<String>,
 }
 
 /// Summary of a single batch returned in the create response.

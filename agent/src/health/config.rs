@@ -19,9 +19,6 @@ pub struct SystemdConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct HttpConfig {
     pub url: String,
-    #[serde(default = "default_interval", alias = "interval")]
-    #[allow(dead_code)]
-    pub interval: i64,
     #[serde(default = "default_timeout", alias = "timeout")]
     pub timeout: i64,
     #[serde(default = "default_expected_status", alias = "expectedStatus")]
@@ -32,24 +29,15 @@ pub struct HttpConfig {
 pub struct CommandConfig {
     pub name: String,
     pub command: String,
-    #[serde(default = "default_cmd_interval")]
-    #[allow(dead_code)]
-    pub interval: i64,
     #[serde(default = "default_cmd_timeout")]
     pub timeout: i64,
 }
 
-fn default_interval() -> i64 {
-    5
-}
 fn default_timeout() -> i64 {
     3
 }
 fn default_expected_status() -> i64 {
     200
-}
-fn default_cmd_interval() -> i64 {
-    10
 }
 fn default_cmd_timeout() -> i64 {
     5
@@ -60,4 +48,3 @@ pub fn load_config(path: &str) -> Result<HealthConfig> {
         .with_context(|| format!("failed to read health config: {path}"))?;
     serde_json::from_str(&content).with_context(|| format!("failed to parse health config: {path}"))
 }
-

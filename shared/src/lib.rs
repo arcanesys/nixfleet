@@ -69,6 +69,7 @@ pub mod api {
 /// Machine lifecycle states for fleet management.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MachineLifecycle {
     /// Pre-registered, no agent report yet.
     Pending,

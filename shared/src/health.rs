@@ -5,6 +5,7 @@ use std::fmt;
 /// Result of a single health check performed on a machine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "status")]
+#[non_exhaustive]
 pub enum HealthCheckResult {
     Pass {
         check_name: String,

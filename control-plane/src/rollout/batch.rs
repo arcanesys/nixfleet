@@ -63,7 +63,7 @@ pub fn effective_batch_sizes(
     match strategy {
         RolloutStrategy::Canary => vec!["1".to_string(), "100%".to_string()],
         RolloutStrategy::AllAtOnce => vec!["100%".to_string()],
-        RolloutStrategy::Staged => batch_sizes
+        RolloutStrategy::Staged | _ => batch_sizes
             .clone()
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| vec!["100%".to_string()]),

@@ -80,6 +80,7 @@ impl HealthRunner {
             let (duration_ms, passed) = match &result {
                 HealthCheckResult::Pass { duration_ms, .. } => (*duration_ms, true),
                 HealthCheckResult::Fail { duration_ms, .. } => (*duration_ms, false),
+                _ => (0, false),
             };
             crate::metrics::record_health_check(
                 check.name(),

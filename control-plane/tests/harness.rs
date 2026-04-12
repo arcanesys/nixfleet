@@ -216,7 +216,6 @@ pub async fn create_rollout_for_tag(
         on_failure,
         health_timeout: Some(health_timeout),
         target: RolloutTarget::Tags(vec![tag.to_string()]),
-        policy: None,
     };
     let resp = cp
         .admin

@@ -102,6 +102,7 @@ pub fn update_fleet_gauges(state: &FleetState) {
             MachineLifecycle::Active => active += 1,
             MachineLifecycle::Maintenance => maintenance += 1,
             MachineLifecycle::Decommissioned => decommissioned += 1,
+            _ => {}
         }
 
         if let Some(last_seen) = machine.last_seen {

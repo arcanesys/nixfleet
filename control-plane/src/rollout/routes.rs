@@ -45,6 +45,12 @@ pub async fn create_rollout(
             )
         })?,
         RolloutTarget::Hosts(hosts) => hosts.clone(),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "unsupported rollout target type".to_string(),
+            ))
+        }
     };
 
     if machine_ids.is_empty() {
@@ -121,13 +127,13 @@ pub async fn create_rollout(
         RolloutTarget::Tags(tags) => {
             Some(serde_json::to_string(tags).map_err(serialize_err("target_tags"))?)
         }
-        RolloutTarget::Hosts(_) => None,
+        _ => None,
     };
     let target_hosts = match &req.target {
-        RolloutTarget::Tags(_) => None,
         RolloutTarget::Hosts(hosts) => {
             Some(serde_json::to_string(hosts).map_err(serialize_err("target_hosts"))?)
         }
+        _ => None,
     };
     let batch_sizes_json =
         serde_json::to_string(&effective_sizes).map_err(serialize_err("batch_sizes"))?;

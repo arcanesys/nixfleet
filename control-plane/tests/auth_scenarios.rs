@@ -140,7 +140,6 @@ async fn a4_role_enforcement_on_rollout_creation() {
         on_failure: OnFailure::Pause,
         health_timeout: Some(60),
         target: RolloutTarget::Tags(vec!["web".to_string()]),
-        policy: None,
     };
 
     // readonly must be forbidden.
