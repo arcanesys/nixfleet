@@ -136,6 +136,46 @@ pub fn print_detail(pairs: &[(&str, String)]) {
     }
 }
 
+// ---------------------------------------------------------------
+// Progress bars & spinners
+// ---------------------------------------------------------------
+
+use indicatif::{ProgressBar, ProgressStyle};
+
+/// Convenience helpers for progress bars with consistent styling.
+///
+/// The 10-line rolling log window is handled automatically by the
+/// `tracing-indicatif` layer initialized in main.rs — every
+/// `tracing::info!` call appears above active progress bars.
+pub struct ProgressContext;
+
+impl ProgressContext {
+    /// Create a counted progress bar (e.g. "Building closures 3/6").
+    pub fn bar(len: u64, msg: &str) -> ProgressBar {
+        let bar = ProgressBar::new(len);
+        bar.set_style(
+            ProgressStyle::with_template("  {msg} {bar:30} {pos}/{len}")
+                .unwrap()
+                .progress_chars("█▓░"),
+        );
+        bar.set_message(msg.to_string());
+        bar
+    }
+
+    /// Create a spinner (e.g. "Rollout r-abc123 ◐ waiting...").
+    pub fn spinner(msg: &str) -> ProgressBar {
+        let bar = ProgressBar::new_spinner();
+        bar.set_style(
+            ProgressStyle::with_template("  {spinner} {msg}")
+                .unwrap()
+                .tick_strings(&["◐", "◓", "◑", "◒"]),
+        );
+        bar.set_message(msg.to_string());
+        bar.enable_steady_tick(std::time::Duration::from_millis(200));
+        bar
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
