@@ -46,7 +46,7 @@ pub mod api {
     /// Path parameter: `{id}` = rollout ID.
     pub const ROLLOUT_CANCEL: &str = "/api/v1/rollouts/{id}/cancel";
 
-    /// GET/PUT: Manage tags for a machine.
+    /// Tags base path for a machine.
     /// Path parameter: `{id}` = machine ID.
     pub const MACHINE_TAGS: &str = "/api/v1/machines/{id}/tags";
 

@@ -7,22 +7,29 @@ Flake apps provided by NixFleet. Available via `nix run .#<app>`. VM lifecycle a
 Runs the full validation suite: formatting, eval tests, host builds, and optionally VM tests.
 
 ```sh
-nix run .#validate
-nix run .#validate -- --vm
-nix run .#validate -- --fast
+nix run .#validate                 # format + flake check + eval + hosts (fast)
+nix run .#validate -- --rust       # + cargo test + clippy + rust package builds
+nix run .#validate -- --vm         # + every vm-* check (slow)
+nix run .#validate -- --all        # everything
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--fast` | Reserved for future use |
-| `--vm` | Include VM integration tests (`vm-core`, `vm-minimal`) |
+| Flag | What it adds to the base |
+|------|--------------------------|
+| (none) | format + flake check + eval + hosts only |
+| `--rust` | + cargo test + clippy + rust package builds |
+| `--vm` | + every `vm-*` check (dynamically discovered) |
+| `--all` | everything |
 
-### Checks performed
+### Checks performed (with `--all`)
 
-1. **Formatting** -- `nix fmt -- --fail-on-change`
-2. **Eval tests** (Linux only) -- `eval-hostspec-defaults`, `eval-ssh-hardening`, `eval-username-override`, `eval-locale-timezone`, `eval-ssh-authorized`, `eval-password-files`
-3. **NixOS test hosts** -- Builds `system.build.toplevel` for every host in `nixosConfigurations`
-4. **VM tests** (Linux only, with `--vm`) -- `vm-core`, `vm-minimal`
+1. **Formatting** -- `nix fmt --fail-on-change`
+2. **Flake eval** -- `nix flake check --no-build`
+3. **Eval tests** -- all `eval-*` derivations under `.#checks`
+4. **Host builds** -- every `nixosConfigurations.<host>.config.system.build.toplevel`
+5. **VM tests** -- every `vm-*` under `.#checks`, discovered dynamically
+6. **Rust workspace tests** -- `cargo test --workspace`
+7. **Rust lints** -- `cargo clippy --workspace --all-targets -- -D warnings`
+8. **Rust package builds** -- `nix build` of every Rust package (sandboxed test run)
 
 Reports pass/fail/skip counts. Exits with code 1 if any check fails.
 

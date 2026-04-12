@@ -42,7 +42,6 @@ The framework persists common user paths. Fleet repos extend this list with thei
 | `.keys` | Encryption/decryption keys |
 | `.local/share/nix` | Nix user state |
 | `.ssh/known_hosts` | SSH known hosts (file) |
-| `.config/nixfleet` | nixfleet CLI credentials (API keys from `nixfleet bootstrap`) |
 
 The framework also persists paths for tools included in the base scope (shell history, plugin state, CLI auth). See `modules/scopes/_impermanence.nix` for the full list.
 

@@ -94,7 +94,7 @@ See [Rust Tests](rust-tests.md) for the full breakdown.
 | "A scope module (firewall, backup, monitoring) is broken" | `vm-firewall`, `vm-backup`, `vm-monitoring` (per scope) |
 | "The fetch→apply pipeline isn't working" | `vm-fleet-agent-rebuild` |
 | "Rollout state machine is wrong" | `vm-fleet` + Rust `failure_scenarios.rs`, `deploy_scenarios.rs` |
-| "mTLS / auth / RBAC is wrong" | `vm-fleet-mtls-missing`, Rust `auth_scenarios.rs` |
+| "mTLS / auth / RBAC is wrong" | `vm-fleet-mtls-missing`, `vm-fleet-mtls-cn-mismatch`, Rust `auth_scenarios.rs` |
 | "Release CRUD or release push-hook is wrong" | `vm-fleet-release`, Rust `release_scenarios.rs` |
 | "Bootstrap / admin-key flow is wrong" | `vm-fleet-bootstrap` |
 | "SSH-direct deploy is broken" | `vm-fleet-deploy-ssh`, `vm-fleet-rollback-ssh` |

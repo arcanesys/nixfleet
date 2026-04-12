@@ -22,18 +22,18 @@ non-zero on the first failure.
 Eval tests run against a minimal test fleet defined in `modules/fleet.nix`. These
 hosts exist solely to exercise framework config paths -- they are not a real org.
 
-| Host | Platform | Key flags | Purpose |
-|------|----------|-----------|---------|
-| `web-01` | x86\_64-linux | `isImpermanent = true` | Default web server, impermanent root |
-| `web-02` | x86\_64-linux | `isImpermanent = true` | Second web server (SSH hardening tests) |
-| `dev-01` | x86\_64-linux | `userName = "alice"` | Developer workstation, custom user override |
-| `edge-01` | x86\_64-linux | `isMinimal = true` | Minimal edge device (no base scope packages) |
-| `srv-01` | x86\_64-linux | `isServer = true` | Production server flag |
-| `agent-test` | x86\_64-linux | agent enabled, tags, health checks | Exercises NixFleet agent module options |
+The test fleet is defined in `modules/fleet.nix`. Key hosts used by eval checks:
 
-All hosts share org-level defaults (`userName = "deploy"`, `timeZone = "UTC"`,
-`locale = "en_US.UTF-8"`, a test SSH key) and use `isVm = true` so mkHost
-injects QEMU hardware stubs.
+| Host | Key flags | Purpose |
+|------|-----------|---------|
+| `web-01` | `isImpermanent = true` | Default web server, impermanent root |
+| `web-02` | `isImpermanent = true` | SSH hardening tests |
+| `dev-01` | `userName = "alice"` | Custom user override |
+| `edge-01` | `isMinimal = true` | Minimal edge device |
+| `srv-01` | `isServer = true` | Production server flag |
+| `agent-test` | agent enabled, tags, health checks | Agent module options |
+
+Additional hosts (`secrets-test`, `infra-test`, `cache-test`, `microvm-test`, `backup-restic-test`) exercise other subsystems. All hosts share org-level defaults and use `isVm = true`.
 
 ## Current checks
 

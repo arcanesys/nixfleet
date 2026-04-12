@@ -93,7 +93,7 @@ in {
       '';
     };
 
-    # --- system defaults (from hosts/darwin/common/core/system.nix) ---
+    # --- system defaults ---
     system = {
       stateVersion = 4;
       checks.verifyNixPath = false;

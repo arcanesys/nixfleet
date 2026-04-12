@@ -30,24 +30,16 @@ nixfleet rollback --host web-01 --ssh
 nixfleet rollback --host web-01 --ssh --generation /nix/store/abc123-nixos-system
 ```
 
-This runs `switch-to-configuration switch` on the target via SSH. Useful when the control plane is unreachable, for one-off emergency rollbacks, or during bootstrap before the agent is running.
+This runs `switch-to-configuration switch` on the target via SSH. Useful when the control plane is unreachable or during bootstrap before the agent is running.
 
-### Control-plane-driven rollback
+For CP-driven rollback of a bad deploy discovered after health checks pass, deploy an older release:
 
-There is no `set-generation`-based rollback endpoint anymore. For a CP-driven rollback, either:
-
-1. **Roll back within an active rollout** — if the failing rollout was created with `--on-failure revert`, the CP automatically reverts completed batches to each machine's `previous_generations` (captured at batch start). This is mechanism #2 above.
-
-2. **Deploy an older release** — build and register a release from a previous flake commit, then deploy it with `nixfleet deploy --release <old-id>`:
-
-   ```sh
-   git checkout <old-commit>
-   nixfleet release create --push-to ssh://root@cache
-   git checkout -
-   nixfleet deploy --release <old-id> --tag prod --wait
-   ```
-
-   This uses the normal rollout machinery (health gates, per-host store paths, etc.).
+```sh
+git checkout <old-commit>
+nixfleet release create --push-to ssh://root@cache
+git checkout -
+nixfleet deploy --release <old-id> --tag prod --wait
+```
 
 ## 4. Manual via NixOS
 

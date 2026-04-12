@@ -2,7 +2,7 @@
 
 The control plane is a lightweight HTTP server that coordinates fleet deployments. It provides:
 
-- **Machine registry** — agents auto-register on first poll; machines are tracked with tags and lifecycle states
+- **Machine registry** — agents auto-register on first report; machines are tracked with tags and lifecycle states
 - **Rollout orchestration** — staged, canary, and all-at-once deployment strategies with health-check gates
 - **Tag storage** — group machines by role, environment, or any arbitrary label
 - **Deployment audit log** — every action (deploy, rollback, tag change, lifecycle transition) is recorded
@@ -21,12 +21,7 @@ services.nixfleet-control-plane = {
 
 ## Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enable` | bool | `false` | Enable the control plane service |
-| `listen` | string | `"0.0.0.0:8080"` | Address and port to bind |
-| `dbPath` | string | `"/var/lib/nixfleet-cp/state.db"` | SQLite database path |
-| `openFirewall` | bool | `false` | Open the listen port in the NixOS firewall |
+See [Control Plane Options](../../reference/control-plane-options.md) for the full option reference including TLS, metrics, and systemd service details.
 
 ## Verify
 
@@ -37,11 +32,11 @@ curl http://localhost:8080/health
 
 ## What it manages
 
-**Machines** auto-register when their agent first polls the control plane. Each machine has:
+**Machines** auto-register when the agent sends its first report to the control plane. Each machine has:
 
 - A unique ID (defaults to hostname)
 - Tags for grouping (`web`, `prod`, `eu-west`, etc.)
-- A lifecycle state: `pending` → `provisioning` → `active` ⇄ `maintenance` → `decommissioned`
+- A lifecycle state (see [TECHNICAL.md](../../../../TECHNICAL.md) for the full transition graph)
 
 **Releases** are immutable manifests mapping each host to its built Nix store path. A release captures "what the flake means for each host at a point in time". Created via `nixfleet release create`, they can be inspected, diffed, listed, and referenced by rollouts multiple times (e.g., staging then prod, or rollback to a previous release). See [CLI reference](../../reference/cli.md#release-create).
 
@@ -50,7 +45,8 @@ curl http://localhost:8080/health
 **Audit events** record every mutation (deployment, rollback, tag change, lifecycle transition) with actor, timestamp, and detail. Query them with:
 
 ```sh
-curl http://localhost:8080/api/v1/audit
+curl http://localhost:8080/api/v1/audit           # JSON
+curl http://localhost:8080/api/v1/audit/export     # CSV
 ```
 
 ## Monitoring
@@ -75,25 +71,26 @@ The control plane uses two independent auth layers: the TLS layer (authenticatio
 | Layer | Mechanism | Who | Purpose |
 |-------|-----------|-----|---------|
 | **TLS** | mTLS client certs | Agents + admin clients | Authenticate the connection |
-| **API** | API keys | Admin clients only | Authorize specific operations |
+| **API** | API keys (role-gated) | Admin clients only | Authorize specific operations |
+
+API keys have one of three roles: `admin` (full access), `deploy` (create releases and rollouts), `readonly` (read-only). The bootstrap endpoint creates an `admin` key.
 
 ### Configuration
 
-TLS and mTLS are configured via:
+```nix
+services.nixfleet-control-plane = {
+  enable = true;
+  tls.cert = "/run/secrets/cp-cert.pem";      # enables HTTPS
+  tls.key = "/run/secrets/cp-key.pem";
+  tls.clientCa = "/run/secrets/fleet-ca.pem";  # enables required mTLS
+};
+```
 
-| Flag | Env var | Description |
-|------|---------|-------------|
-| `--tls-cert` | `NIXFLEET_CP_TLS_CERT` | Path to server certificate PEM (enables HTTPS) |
-| `--tls-key` | `NIXFLEET_CP_TLS_KEY` | Path to server private key PEM |
-| `--client-ca` | `NIXFLEET_CP_CLIENT_CA` | Path to client CA PEM (enables required mTLS for all connections) |
+When `tls.clientCa` is set, **all** connections must present a valid client certificate:
+- **Agents** authenticate via client cert alone (no API key)
+- **Admin clients** require both a client cert AND an API key (`Authorization: Bearer <key>`)
 
-Both `--tls-cert` and `--tls-key` must be provided together to enable HTTPS.
-
-When `--client-ca` is set, **all** TLS connections must present a client certificate signed by that CA:
-- **Agents** authenticate via their client certificate; no API key needed. Agents are auto-registered on their first health report — any client with a valid fleet cert can register as a machine.
-- **Admin clients** (CLI, REST API) must present both a client certificate AND an API key (defense-in-depth)
-
-API keys are passed via the `Authorization: Bearer <key>` header.
+See [Control Plane Options](../../reference/control-plane-options.md) for full TLS option details.
 
 ### Bootstrap
 
@@ -108,7 +105,7 @@ curl -X POST https://cp-host:8080/api/v1/keys/bootstrap \
 
 Save the returned key — it's only shown once. Subsequent calls return 409 Conflict.
 
-> **Production recommendation:** Always enable TLS. When managing a fleet with agent certificates, set `--client-ca` to require mTLS from all clients. Admin clients must have access to both their client certificate and an API key.
+> **Production recommendation:** Always enable TLS. Set `tls.clientCa` to require mTLS from all clients. Admin clients need both a client certificate and an API key.
 
 ## Persistence
 

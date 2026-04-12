@@ -32,18 +32,7 @@ services.nixfleet-agent = {
 
 ## Agent options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enable` | bool | `false` | Enable the agent service |
-| `controlPlaneUrl` | string | — (required) | URL of the control plane |
-| `machineId` | string | `config.networking.hostName` | Machine identifier reported to the CP |
-| `pollInterval` | int | `300` | Steady-state poll interval. Overridden per-cycle by `poll_hint` from the CP during active rollouts (typically to `5s`). |
-| `retryInterval` | int | `30` | Retry interval after a failed poll. Shorter than `pollInterval` so the agent recovers quickly from bootstrap races and transient failures. |
-| `cacheUrl` | string or null | `null` | Binary cache URL for `nix copy --from` |
-| `dbPath` | string | `"/var/lib/nixfleet/state.db"` | SQLite state database path |
-| `dryRun` | bool | `false` | Check and fetch but do not apply generations |
-| `tags` | list of string | `[]` | Tags for grouping in fleet operations |
-| `healthInterval` | int | `60` | Seconds between continuous health reports |
+See [Agent Options](../../reference/agent-options.md) for the full option reference including TLS, metrics, health checks, and systemd service details.
 
 ## Deploy cycle
 
@@ -113,12 +102,7 @@ healthChecks.command = [{
 
 ## Continuous health reporting
 
-Independent of the deployment cycle, the agent sends periodic health reports to the control plane at the `healthInterval` cadence (default: 60 seconds). These reports run only while the agent is idle (not mid-deployment) and include the results of all configured health checks.
-
-The control plane uses these continuous reports to:
-- Track fleet health over time
-- Inform rollout health gates (a machine reporting unhealthy will affect batch success evaluation)
-- Surface issues in `nixfleet status` output
+The agent sends periodic health reports at `healthInterval` (default: 60s), independent of deploy cycles. The CP uses these to track fleet health, evaluate rollout health gates, and surface issues in `nixfleet status`.
 
 ## Prometheus Metrics
 
@@ -135,26 +119,13 @@ services.nixfleet-agent = {
 
 Scrape from Prometheus at `http://agent-host:9101/metrics`. See [Agent Options](../../reference/agent-options.md) for the full list of exposed metrics.
 
-## Registration
+## Registration & tags
 
-On first health report, the control plane automatically registers the agent, setting it to `active` and syncing its tags. No manual registration step is required.
-
-Auto-registration is gated by mTLS — only agents presenting a valid client certificate signed by the fleet CA can register. Admins can also pre-register machines via `POST /api/v1/machines/{id}/register` before agents come online.
-
-## Tag Sync
-
-Tags configured via `services.nixfleet-agent.tags` are sent in every health report and automatically synced to the control plane. No manual tag management needed — change the NixOS config, rebuild, and the CP picks up the new tags on the next report cycle.
-
-To verify enrollment:
+Agents auto-register on first report (gated by mTLS). Tags from `services.nixfleet-agent.tags` sync on every report — change the NixOS config, rebuild, and the CP picks up the new tags automatically. Admins can pre-register machines via `nixfleet machines register <id>`.
 
 ```sh
-nixfleet machines list
-```
-
-To filter by tag:
-
-```sh
-nixfleet machines list --tag prod
+nixfleet machines list              # verify enrollment
+nixfleet machines list --tag prod   # filter by tag
 ```
 
 ## Persistence
@@ -163,14 +134,6 @@ Agent state is stored in a SQLite database at `dbPath`. On impermanent NixOS hos
 
 ## Security
 
-The agent supports mTLS for control plane communication via CLI flags / environment variables:
+Configure mTLS via the NixOS module options `tls.clientCert` and `tls.clientKey`. Set `allowInsecure = true` for dev-only HTTP mode.
 
-| Flag | Env var | Description |
-|------|---------|-------------|
-| `--client-cert` | `NIXFLEET_CLIENT_CERT` | Client certificate PEM file |
-| `--client-key` | `NIXFLEET_CLIENT_KEY` | Client private key PEM file |
-| `--allow-insecure` | `NIXFLEET_ALLOW_INSECURE` | Allow HTTP (dev only, default: false) |
-
-The systemd service keeps `NoNewPrivileges = true` to prevent setuid escalation, but does **not** apply additional sandboxing (no `ProtectHome`, `PrivateDevices`, `ProtectKernel*`, etc.). The agent runs `switch-to-configuration` as a subprocess which inherits the service's namespace, and sandboxing would break operations that need `/dev` (bootloader UUID via `blkid`), `/home` (user activation), cgroups (systemctl), and kernel module loading. The threat model is equivalent to `sudo nixos-rebuild switch` running as a daemon.
-
-See the [Agent Options](../../reference/agent-options.md#systemd-service) reference for the full rationale.
+The systemd service runs without sandboxing because `switch-to-configuration` needs full system access. See [Agent Options — Systemd service](../../reference/agent-options.md#systemd-service) for the full hardening rationale.

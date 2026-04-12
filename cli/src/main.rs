@@ -668,15 +668,14 @@ async fn rollback(
         bail!(
             "nixfleet rollback requires --ssh mode.\n\
              \n\
-             The control-plane rollback path (via the removed set-generation endpoint)\n\
-             no longer exists. For a control-plane-driven rollback, either:\n\
+             For a control-plane-driven rollback:\n\
              \n\
-               - Create a release pointing at the previous closures and deploy it:\n\
+               - Deploy an older release:\n\
                  nixfleet release create --flake <old-rev> --push-to <cache>\n\
                  nixfleet deploy --release <id> --hosts {host}\n\
              \n\
-               - Use --on-failure revert on the originating rollout, which reverts\n\
-                 machines from the previous_generations stored per batch.\n\
+               - Use --on-failure revert on rollouts, which reverts machines\n\
+                 to their previous generations stored per batch.\n\
              \n\
              Or use --ssh to rollback this machine directly over SSH."
         );

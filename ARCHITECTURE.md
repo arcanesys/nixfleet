@@ -34,7 +34,7 @@ mkHost closure (binds framework inputs) ->
   - scopes/_base.nix, scopes/_impermanence.nix
   - scopes/_firewall.nix (auto on !isMinimal)
   - scopes/_secrets.nix, scopes/_backup.nix, scopes/_monitoring.nix (opt-in)
-  - services: _agent.nix, _control-plane.nix (disabled by default)
+  - services: _agent.nix, _control-plane.nix, _cache-server.nix, _cache.nix, _microvm-host.nix (disabled by default)
   - home-manager (user config)
   - user-provided modules
 ```
@@ -76,58 +76,11 @@ nixfleet CLI (operator commands)
 
 **Framework** (`nixfleet` repo): `mkHost`, core modules, scopes, Rust crates, tests. Generic with no org-specific assumptions.
 
-**Client** (your fleet repo): Org defaults as `let` bindings, host definitions via `mkHost`, fleet-specific scopes, secrets wiring, HM programs, wrappers. The framework provides a minimal test fleet for CI.
-
-This separation means an external organization can consume the framework without forking:
-
-```nix
-{
-  inputs.nixfleet.url = "github:your-org/nixfleet";
-
-  outputs = { nixfleet, ... }:
-    let
-      mkHost = nixfleet.lib.mkHost;
-    in {
-      nixosConfigurations.my-host = mkHost { ... };
-    };
-}
-```
-
-## Nix Module Layers
-
-### Core (always active, framework-provided)
-
-`modules/core/` -- boot, networking, user accounts, security, zsh, git. Every host gets these regardless of flags.
-
-### Scopes (flag-gated, framework + fleet-provided)
-
-Scope modules are plain NixOS/Darwin modules that self-activate with `lib.mkIf hS.<flag>` and co-locate impermanence persist paths. Framework scopes: base, impermanence, firewall (automatic); secrets, backup, monitoring, agent, control-plane (opt-in). Fleet repos add their own scopes (dev tools, desktop environments, theming, etc.).
-
-### Fleet-Provided Modules
-
-Home Manager program configs, additional NixOS modules, and fleet-specific scopes live in consuming fleet repos — not in the framework.
+**Client** (your fleet repo): Org defaults as `let` bindings, host definitions via `mkHost`, fleet-specific scopes, secrets wiring. See `examples/` for consumption patterns.
 
 ## Rust Workspace
 
-Four crates, one Cargo workspace:
-
-| Crate | Type | Purpose |
-|-------|------|---------|
-| `agent/` | Binary | State machine on each managed host. Registers, polls for config, deploys, reports status |
-| `control-plane/` | Binary | Axum HTTP server. Machine registry, deployment scheduling, health tracking |
-| `cli/` | Binary | Operator-facing commands: deploy, status, rollback |
-| `shared/` | Library | Common types and API contracts shared across crates |
-
-Each Rust binary is packaged as a Nix derivation and can be included in host configurations.
-
-## Repo Structure
-
-| Repo | Content |
-|------|---------|
-| `nixfleet` (this repo) | Framework lib, core modules, scopes, Rust crates, tests |
-| `fleet` (your repo) | Org config, host definitions, fleet scopes, secrets wiring |
-
-Secrets are referenced by path in the public repo. The private repo is a flake input (`inputs.secrets`).
+See [TECHNICAL.md](TECHNICAL.md) for crate details, agent/CP communication, lifecycle states, and flake inputs.
 
 ## Key Design Decisions
 

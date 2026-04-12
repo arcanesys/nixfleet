@@ -170,16 +170,19 @@ fn is_dynamic_segment(segment: &str) -> bool {
         "v1",
         "machines",
         "rollouts",
+        "releases",
+        "keys",
         "audit",
         "export",
+        "bootstrap",
         "desired-generation",
-        "set-generation",
         "register",
         "lifecycle",
         "tags",
         "report",
         "resume",
         "cancel",
+        "diff",
         "health",
         "metrics",
     ];
@@ -235,10 +238,6 @@ mod tests {
             normalize_path("/api/v1/machines/web-01/lifecycle"),
             "/api/v1/machines/{id}/lifecycle"
         );
-        assert_eq!(
-            normalize_path("/api/v1/machines/web-01/set-generation"),
-            "/api/v1/machines/{id}/set-generation"
-        );
     }
 
     #[test]
@@ -271,6 +270,32 @@ mod tests {
         assert_eq!(
             normalize_path("/api/v1/machines/web-01/tags/env:prod"),
             "/api/v1/machines/{id}/tags/{tag}"
+        );
+    }
+
+    #[test]
+    fn test_normalize_release_paths() {
+        assert_eq!(
+            normalize_path("/api/v1/releases"),
+            "/api/v1/releases"
+        );
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+        assert_eq!(
+            normalize_path(&format!("/api/v1/releases/{uuid}")),
+            "/api/v1/releases/{id}"
+        );
+        let uuid2 = "660e8400-e29b-41d4-a716-446655440001";
+        assert_eq!(
+            normalize_path(&format!("/api/v1/releases/{uuid}/diff/{uuid2}")),
+            "/api/v1/releases/{id}/diff/{id}"
+        );
+    }
+
+    #[test]
+    fn test_normalize_bootstrap_path() {
+        assert_eq!(
+            normalize_path("/api/v1/keys/bootstrap"),
+            "/api/v1/keys/bootstrap"
         );
     }
 

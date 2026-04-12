@@ -24,12 +24,13 @@ Metrics exposed:
 
 | Metric | Description |
 |--------|-------------|
-| `nixfleet_cp_fleet_size` | Total number of registered machines |
-| `nixfleet_cp_machines_by_lifecycle` | Machine count grouped by lifecycle state (label: `state`) |
-| `nixfleet_cp_machine_last_seen_seconds` | Unix timestamp of each machine's last poll (label: `machine_id`) |
-| `nixfleet_cp_http_requests_total` | HTTP request count by method, path, and status code |
-| `nixfleet_cp_http_request_duration_seconds` | HTTP request latency histogram |
-| `nixfleet_cp_rollout_total` | Rollout count by strategy and outcome |
+| `nixfleet_fleet_size` | Total number of registered machines |
+| `nixfleet_machines_by_lifecycle` | Machine count grouped by lifecycle state (label: `lifecycle`) |
+| `nixfleet_machine_last_seen_timestamp_seconds` | Unix timestamp of each machine's last report (label: `machine_id`) |
+| `nixfleet_http_requests_total` | HTTP request count by method, path, and status code |
+| `nixfleet_http_request_duration_seconds` | HTTP request latency histogram |
+| `nixfleet_rollouts_total` | Rollout count by status (label: `status`) |
+| `nixfleet_rollouts_active` | Number of currently active rollouts (created, running, or paused) |
 
 Example:
 

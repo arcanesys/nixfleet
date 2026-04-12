@@ -1,41 +1,21 @@
 # The mkHost API
 
-`mkHost` is the single entry point for defining hosts in NixFleet. It is a closure over framework inputs (nixpkgs, home-manager, disko, impermanence) that returns a standard `nixosSystem` or `darwinSystem`.
+`mkHost` is the single entry point for defining hosts in NixFleet. It is a closure over framework inputs (nixpkgs, home-manager, disko, impermanence, microvm) that returns a standard `nixosSystem` or `darwinSystem`.
 
 The result is a standard NixOS/Darwin system configuration. All existing NixOS tooling (`nixos-rebuild`, `nixos-anywhere`, `darwin-rebuild`) works unchanged.
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `hostName` | string | yes | -- | Machine hostname. Injected into `hostSpec.hostName` and `networking.hostName`. |
-| `platform` | string | yes | -- | Target platform: `x86_64-linux`, `aarch64-linux`, `aarch64-darwin`, `x86_64-darwin`. |
-| `stateVersion` | string | no | `"24.11"` | NixOS/Home Manager state version. |
-| `hostSpec` | attrset | no | `{}` | Host identity and capability flags. See [hostSpec Configuration](hostspec.md). |
-| `modules` | list | no | `[]` | Additional NixOS/Darwin modules (hardware config, disk layout, fleet-specific modules). |
-| `isVm` | bool | no | `false` | Inject QEMU VM hardware for testing. Adds SPICE, DHCP, and software GL. |
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `hostName` | string | yes | Machine hostname |
+| `platform` | string | yes | `x86_64-linux`, `aarch64-linux`, `aarch64-darwin`, `x86_64-darwin` |
+| `stateVersion` | string | no | NixOS/Darwin state version (default: `"24.11"`) |
+| `hostSpec` | attrset | no | Host configuration flags. See [hostSpec](hostspec.md) |
+| `modules` | list | no | Additional NixOS/Darwin modules |
+| `isVm` | bool | no | Inject QEMU VM hardware (default: `false`) |
 
-## What mkHost injects
-
-Every call to `mkHost` automatically includes:
-
-**NixOS hosts:**
-- `hostSpec` module (host identity and capability options)
-- Your `hostSpec` values (applied with `lib.mkDefault` so you can override in modules)
-- disko and impermanence NixOS modules
-- Core NixOS module (boot, networking, users, SSH, nix settings)
-- Base scope (CLI packages, conditional on `!isMinimal`)
-- Impermanence scope (btrfs root wipe, persist paths, conditional on `isImpermanent`)
-- Agent, control-plane, cache-server (harmonia), and cache client service modules (included but disabled by default)
-- Home Manager with hostSpec, base HM module, and impermanence HM module
-
-**Darwin hosts:**
-- `hostSpec` module with `isDarwin = true` auto-set
-- Core Darwin module (nix settings, system defaults, TouchID sudo, dock management)
-- Base scope (Darwin-specific system packages)
-- Home Manager with hostSpec and base HM module
-
-Framework inputs are passed via `specialArgs`, so all injected modules can access `inputs`.
+For the full parameter reference, injected module order, return types, Home Manager integration, and exports, see the [mkHost API reference](../../reference/mkhost-api.md).
 
 ## Examples
 

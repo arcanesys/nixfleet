@@ -16,40 +16,18 @@ nix develop  # enters the dev shell with Rust toolchain, cargo, rustfmt, clippy
 
 ## Project Structure
 
-```
-agent/          # Fleet agent (Rust) — runs on each managed machine
-control-plane/  # Control plane server (Rust) — orchestrates deployments
-cli/            # Operator CLI (Rust) — manages the fleet
-shared/         # Shared types (Rust) — API contracts between crates
-modules/        # Nix modules — framework core, scopes, tests
-examples/       # Consumption patterns — standalone, batch, client fleet
-docs/           # ADRs and mdbook documentation
-```
+See [README.md](README.md#layout) for the directory layout.
 
 ## Running Tests
 
-**One command runs everything:**
-
 ```sh
-nix run .#validate -- --all
+nix run .#validate -- --all        # full suite (format, eval, hosts, VM, Rust, clippy, package builds)
+nix run .#validate                 # fast inner-loop (format + eval + hosts only)
+nix run .#validate -- --rust       # + Rust tests and clippy
+nix run .#validate -- --vm         # + VM tests
 ```
 
-That's the entry point for pre-commit, pre-merge, and pre-release. It runs
-(in order): formatting, `nix flake check --no-build`, eval tests, host
-builds, every `vm-*` VM scenario, `cargo test --workspace`,
-`cargo clippy --workspace --all-targets -- -D warnings`, and a nix build
-of every Rust package (which runs cargo test under the nix sandbox).
-
-For faster inner-loop iteration when `--all` is too much:
-
-```sh
-nix run .#validate                 # format + flake check + eval + hosts only
-nix run .#validate -- --rust       # + cargo test + clippy + rust package builds
-nix run .#validate -- --vm         # + every vm-* check
-```
-
-See `docs/mdbook/testing/overview.md` for what each tier contains and how
-to drill down into a specific failure.
+See [Testing Overview](docs/mdbook/testing/overview.md) for tier details and how to drill into specific failures.
 
 ## Code Style
 

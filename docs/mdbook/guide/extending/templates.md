@@ -81,8 +81,10 @@ darwin            follows nixpkgs
 home-manager      follows nixpkgs
 disko             follows nixpkgs
 impermanence      follows nixpkgs
-agenix            follows nixpkgs, home-manager, darwin
+lanzaboote        follows nixpkgs
+microvm           follows nixpkgs
 nixos-anywhere    follows nixpkgs, flake-parts, disko, treefmt-nix
+treefmt-nix       follows nixpkgs
 ```
 
 All major inputs share a single nixpkgs, ensuring consistent package versions throughout the dependency tree.
