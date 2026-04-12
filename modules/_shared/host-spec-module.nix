@@ -59,6 +59,11 @@
         if hS.isDarwin
         then "/Users/${hS.userName}"
         else "/home/${hS.userName}";
+      defaultText = lib.literalExpression ''
+        if config.hostSpec.isDarwin
+        then "/Users/''${config.hostSpec.userName}"
+        else "/home/''${config.hostSpec.userName}"
+      '';
     };
 
     # Configuration Settings
