@@ -5,7 +5,7 @@ pub mod systemd;
 
 use async_trait::async_trait;
 use nixfleet_types::health::{HealthCheckResult, HealthReport};
-use tracing::debug;
+use tracing::{debug, warn};
 
 #[async_trait]
 pub trait Check: Send + Sync {
@@ -27,7 +27,15 @@ impl HealthRunner {
         match config::load_config(path) {
             Ok(cfg) => Self::from_config(cfg),
             Err(e) => {
-                debug!("No health config loaded ({e}), using systemd fallback");
+                // An operator who set a custom health config path
+                // expects their checks to run; a silent fallback to the
+                // systemd default masks typos and missing files. Warn
+                // so it surfaces at the default log level.
+                warn!(
+                    health_config = path,
+                    error = %e,
+                    "health config not loaded; falling back to systemd default"
+                );
                 Self::new(vec![Box::new(systemd::SystemdFallback)])
             }
         }
@@ -41,11 +49,11 @@ impl HealthRunner {
             }
         }
         for hc in cfg.http {
-            checks.push(Box::new(http::HttpChecker {
-                url: hc.url,
-                timeout_secs: hc.timeout as u64,
-                expected_status: hc.expected_status as u16,
-            }));
+            checks.push(Box::new(http::HttpChecker::new(
+                hc.url,
+                hc.timeout as u64,
+                hc.expected_status as u16,
+            )));
         }
         for cc in cfg.command {
             checks.push(Box::new(command::CommandChecker {

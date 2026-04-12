@@ -23,7 +23,7 @@ pub mod types;
 
 pub use config::Config;
 use health::HealthRunner;
-use store::Store;
+use store::{AsyncStore, Store};
 
 /// Outcome of a poll cycle — tells the main loop how to schedule the next tick.
 #[derive(Debug)]
@@ -58,6 +58,10 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
 
     let store = Store::new(&config.db_path)?;
     store.init()?;
+    // Wrap in an async facade so every subsequent call offloads the
+    // blocking SQLite work via spawn_blocking instead of pinning a
+    // tokio worker thread to a Mutex acquire.
+    let store = AsyncStore::new(store);
 
     let client = comms::Client::new(&config)?;
     let health_runner = HealthRunner::from_config_path(&config.health_config_path);
@@ -128,6 +132,22 @@ pub fn build_interval(period: Duration) -> Interval {
     tick
 }
 
+/// Read the current system generation, logging a warning on failure.
+///
+/// The agent's loop must not abort when `/run/current-system` cannot be
+/// read (e.g. during rare early-boot windows), so we fall back to an
+/// empty string but surface the warning to operators instead of
+/// silently swallowing it with `.unwrap_or_default()`.
+async fn current_generation_or_warn() -> String {
+    match nix::current_generation().await {
+        Ok(gen) => gen,
+        Err(e) => {
+            warn!(error = %e, "failed to read current generation");
+            String::new()
+        }
+    }
+}
+
 /// Send a periodic health report to the control plane.
 async fn run_health_report(
     client: &comms::Client,
@@ -138,7 +158,7 @@ async fn run_health_report(
     let health_report = health_runner.run_all().await;
     let report = types::Report {
         machine_id: config.machine_id.clone(),
-        current_generation: nix::current_generation().await.unwrap_or_default(),
+        current_generation: current_generation_or_warn().await,
         success: health_report.all_passed,
         message: "health-check".to_string(),
         timestamp: chrono::Utc::now(),
@@ -156,7 +176,7 @@ async fn run_health_report(
 async fn run_deploy_cycle(
     client: &comms::Client,
     config: &Config,
-    store: &Store,
+    store: &AsyncStore,
     health_runner: &HealthRunner,
 ) -> PollOutcome {
     metrics::record_state_transition("idle", "checking");
@@ -180,9 +200,9 @@ async fn run_deploy_cycle(
         }
         Err(e) => {
             warn!("Failed to check desired generation: {e}");
-            store
-                .log_error(&format!("check failed: {e}"))
-                .unwrap_or_else(|e| warn!("store error: {e}"));
+            if let Err(se) = store.log_error(&format!("check failed: {e}")).await {
+                warn!("store error: {se}");
+            }
             metrics::record_poll(poll_start.elapsed());
             metrics::record_state_transition("checking", "idle");
             return PollOutcome::Failed;
@@ -191,14 +211,14 @@ async fn run_deploy_cycle(
     metrics::record_poll(poll_start.elapsed());
 
     let poll_hint = desired.poll_hint;
-    let current = nix::current_generation().await.unwrap_or_default();
+    let current = current_generation_or_warn().await;
     metrics::record_generation(&current);
 
     if current == desired.hash {
         info!("Already at desired generation");
-        store
-            .log_check(&desired.hash, "up-to-date")
-            .unwrap_or_else(|e| warn!("store error: {e}"));
+        if let Err(e) = store.log_check(&desired.hash, "up-to-date").await {
+            warn!("store error: {e}");
+        }
         metrics::record_state_transition("checking", "reporting");
         send_report(client, config, true, "up-to-date").await;
         return PollOutcome::Success { poll_hint };
@@ -218,9 +238,9 @@ async fn run_deploy_cycle(
         .or(config.cache_url.as_deref());
     if let Err(e) = nix::fetch_closure(&desired.hash, cache).await {
         error!("Failed to fetch closure: {e}");
-        store
-            .log_error(&format!("fetch failed: {e}"))
-            .unwrap_or_else(|e| warn!("store error: {e}"));
+        if let Err(se) = store.log_error(&format!("fetch failed: {e}")).await {
+            warn!("store error: {se}");
+        }
         metrics::record_state_transition("fetching", "idle");
         // Fetch failure is transient — retry sooner than full poll_interval.
         return PollOutcome::Failed;
@@ -267,9 +287,9 @@ async fn run_deploy_cycle(
     }
 
     info!("Health checks passed");
-    store
-        .log_deploy(&desired.hash, true)
-        .unwrap_or_else(|e| warn!("store error: {e}"));
+    if let Err(e) = store.log_deploy(&desired.hash, true).await {
+        warn!("store error: {e}");
+    }
     metrics::record_state_transition("verifying", "reporting");
     send_report(client, config, true, "deployed").await;
 
@@ -280,23 +300,23 @@ async fn run_deploy_cycle(
 async fn rollback_and_report(
     client: &comms::Client,
     config: &Config,
-    store: &Store,
+    store: &AsyncStore,
     reason: &str,
 ) {
     warn!(reason, "Rolling back to previous generation");
     match nix::rollback().await {
         Ok(()) => {
-            store
-                .log_rollback(reason)
-                .unwrap_or_else(|e| warn!("store error: {e}"));
+            if let Err(e) = store.log_rollback(reason).await {
+                warn!("store error: {e}");
+            }
             metrics::record_state_transition("rolling_back", "reporting");
             send_report(client, config, false, &format!("rolled back: {reason}")).await;
         }
         Err(e) => {
             error!("Rollback failed: {e}");
-            store
-                .log_error(&format!("rollback failed: {e}"))
-                .unwrap_or_else(|e| warn!("store error: {e}"));
+            if let Err(se) = store.log_error(&format!("rollback failed: {e}")).await {
+                warn!("store error: {se}");
+            }
             metrics::record_state_transition("rolling_back", "idle");
         }
     }
@@ -306,7 +326,7 @@ async fn rollback_and_report(
 async fn send_report(client: &comms::Client, config: &Config, success: bool, message: &str) {
     let report = types::Report {
         machine_id: config.machine_id.clone(),
-        current_generation: nix::current_generation().await.unwrap_or_default(),
+        current_generation: current_generation_or_warn().await,
         success,
         message: message.to_string(),
         timestamp: chrono::Utc::now(),

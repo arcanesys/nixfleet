@@ -1,15 +1,27 @@
 use metrics::{gauge, histogram};
 use nixfleet_types::metrics as m;
+use std::sync::Once;
 use std::time::Duration;
 
+static METRICS_INIT: Once = Once::new();
+
 /// Initialize the Prometheus metrics exporter with an HTTP listener.
-/// Call only when --metrics-port is set.
+///
+/// Safe to call more than once: subsequent calls are silent no-ops.
+/// This matters for tests, supervisors, and embedded usage where
+/// `run_loop` may be invoked multiple times in a single process — the
+/// underlying `metrics_exporter_prometheus::PrometheusBuilder::install`
+/// panics on a duplicate global install, which we hide behind `Once`.
 pub fn init(port: u16) {
-    metrics_exporter_prometheus::PrometheusBuilder::new()
-        .with_http_listener(([0, 0, 0, 0], port))
-        .install()
-        .expect("failed to install metrics recorder");
-    tracing::info!(port, "Prometheus metrics listener started");
+    METRICS_INIT.call_once(|| {
+        match metrics_exporter_prometheus::PrometheusBuilder::new()
+            .with_http_listener(([0, 0, 0, 0], port))
+            .install()
+        {
+            Ok(()) => tracing::info!(port, "Prometheus metrics listener started"),
+            Err(e) => tracing::warn!(port, error = %e, "failed to install metrics recorder"),
+        }
+    });
 }
 
 /// Record a state machine transition.

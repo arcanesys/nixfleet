@@ -1,6 +1,60 @@
 use anyhow::{Context, Result};
+use std::time::Duration;
 use tokio::process::Command;
 use tracing::info;
+
+/// Maximum time any single `nix`/`nix-env` subprocess is allowed to run
+/// before we give up and return a timeout error. A hung nix command
+/// would otherwise block the agent's deploy cycle indefinitely.
+const NIX_CMD_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Maximum number of bytes of stderr to include in a bail! error message.
+/// Nix commands can produce very large stderr (credentials from failed
+/// substituter pushes, full build logs); we truncate to keep log lines
+/// and error reports bounded.
+const MAX_STDERR_BYTES: usize = 2048;
+
+/// Validate that a string looks like a `/nix/store/<hash>-<name>` path.
+///
+/// The store path is supplied by the control plane; even though the CP
+/// is authenticated via mTLS, we still defend against malformed input
+/// flowing into `Command::new` or `nix` subcommand arguments.
+pub fn validate_store_path(store_path: &str) -> Result<()> {
+    let rest = store_path
+        .strip_prefix("/nix/store/")
+        .with_context(|| format!("store path must start with /nix/store/: {store_path}"))?;
+    if rest.is_empty() || rest.contains('/') || rest.contains("..") {
+        anyhow::bail!("invalid store path: {store_path}");
+    }
+    // Hash prefix must be alphanumeric (nixbase32); name may contain
+    // alnum, '.', '-', '_', '+'.
+    let bytes = rest.as_bytes();
+    if !bytes.iter().all(|b| {
+        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'+')
+    }) {
+        anyhow::bail!("invalid characters in store path: {store_path}");
+    }
+    Ok(())
+}
+
+/// Truncate stderr bytes to a displayable, length-bounded lossy string.
+fn truncated_stderr(bytes: &[u8]) -> String {
+    let lossy = String::from_utf8_lossy(bytes);
+    if lossy.len() <= MAX_STDERR_BYTES {
+        lossy.into_owned()
+    } else {
+        let truncated: String = lossy.chars().take(MAX_STDERR_BYTES).collect();
+        format!("{truncated}… [truncated, {} total bytes]", bytes.len())
+    }
+}
+
+/// Run a tokio::process::Command with a hard timeout, returning its output.
+async fn run_with_timeout(mut cmd: Command, label: &'static str) -> Result<std::process::Output> {
+    tokio::time::timeout(NIX_CMD_TIMEOUT, cmd.output())
+        .await
+        .with_context(|| format!("{label} timed out after {:?}", NIX_CMD_TIMEOUT))?
+        .with_context(|| format!("failed to spawn {label}"))
+}
 
 /// Read the current system generation by resolving the `/run/current-system` symlink.
 /// Returns the full nix store path (e.g. `/nix/store/abc123...-nixos-system-web-01-25.05`).
@@ -17,25 +71,22 @@ pub async fn current_generation() -> Result<String> {
 /// If no cache URL is provided, assumes the closure is already available
 /// (e.g. via a substituter configured in nix.conf).
 pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<()> {
+    validate_store_path(store_path)?;
     if let Some(cache) = cache_url {
         info!(store_path, cache, "Fetching closure from cache");
-        let output = Command::new("nix")
-            .args(["copy", "--from", cache, store_path])
-            .output()
-            .await
-            .context("failed to spawn nix copy")?;
+        let mut cmd = Command::new("nix");
+        cmd.args(["copy", "--from", cache, store_path]);
+        let output = run_with_timeout(cmd, "nix copy").await?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = truncated_stderr(&output.stderr);
             anyhow::bail!("nix copy failed: {stderr}");
         }
     } else {
         info!(store_path, "No cache URL — verifying path exists locally");
-        let output = Command::new("nix")
-            .args(["path-info", store_path])
-            .output()
-            .await
-            .context("failed to spawn nix path-info")?;
+        let mut cmd = Command::new("nix");
+        cmd.args(["path-info", store_path]);
+        let output = run_with_timeout(cmd, "nix path-info").await?;
 
         if !output.status.success() {
             anyhow::bail!("store path {store_path} not found locally and no cache URL configured");
@@ -48,17 +99,16 @@ pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<
 ///
 /// Runs: `<store_path>/bin/switch-to-configuration switch`
 pub async fn apply_generation(store_path: &str) -> Result<()> {
+    validate_store_path(store_path)?;
     let switch_bin = format!("{store_path}/bin/switch-to-configuration");
     info!(switch_bin, "Applying generation");
 
-    let output = Command::new(&switch_bin)
-        .arg("switch")
-        .output()
-        .await
-        .context("failed to spawn switch-to-configuration")?;
+    let mut cmd = Command::new(&switch_bin);
+    cmd.arg("switch");
+    let output = run_with_timeout(cmd, "switch-to-configuration").await?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = truncated_stderr(&output.stderr);
         anyhow::bail!("switch-to-configuration failed: {stderr}");
     }
     Ok(())
@@ -71,23 +121,27 @@ pub async fn rollback() -> Result<()> {
     info!("Rolling back to previous generation");
 
     // List system profiles to find the previous one
-    let output = Command::new("nix-env")
-        .args([
-            "--list-generations",
-            "--profile",
-            "/nix/var/nix/profiles/system",
-        ])
-        .output()
-        .await
-        .context("failed to list generations")?;
+    let mut cmd = Command::new("nix-env");
+    cmd.args([
+        "--list-generations",
+        "--profile",
+        "/nix/var/nix/profiles/system",
+    ]);
+    let output = run_with_timeout(cmd, "nix-env --list-generations").await?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = truncated_stderr(&output.stderr);
         anyhow::bail!("nix-env --list-generations failed: {stderr}");
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let generations: Vec<&str> = stdout.lines().collect();
+    // Ignore blank/whitespace-only lines defensively — nix-env output is
+    // normally well-formed, but we don't want an empty trailing line to
+    // pass the `len() >= 2` gate and crash parsing below.
+    let generations: Vec<&str> = stdout
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
 
     if generations.len() < 2 {
         anyhow::bail!("no previous generation to roll back to");
@@ -98,8 +152,9 @@ pub async fn rollback() -> Result<()> {
     let gen_num: u64 = prev_line
         .split_whitespace()
         .next()
-        .and_then(|s| s.parse().ok())
-        .context("failed to parse generation number")?;
+        .with_context(|| format!("empty generation line: {prev_line:?}"))?
+        .parse()
+        .with_context(|| format!("failed to parse generation number from line: {prev_line:?}"))?;
 
     let prev_path = format!("/nix/var/nix/profiles/system-{gen_num}-link");
     info!(prev_path, "Switching to previous generation");
@@ -114,6 +169,37 @@ pub async fn rollback() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_store_path_accepts_valid() {
+        assert!(validate_store_path("/nix/store/abc123-hello").is_ok());
+        assert!(validate_store_path(
+            "/nix/store/0abc123def45678-nixos-system-web-01-25.05"
+        )
+        .is_ok());
+        assert!(validate_store_path("/nix/store/a-b.c+d_e").is_ok());
+    }
+
+    #[test]
+    fn test_validate_store_path_rejects_bad() {
+        assert!(validate_store_path("/etc/passwd").is_err());
+        assert!(validate_store_path("/nix/store/").is_err());
+        assert!(validate_store_path("/nix/store/abc/../etc").is_err());
+        assert!(validate_store_path("/nix/store/abc;rm -rf /").is_err());
+        assert!(validate_store_path("/nix/store/abc nested/sub").is_err());
+    }
+
+    #[test]
+    fn test_truncated_stderr_bounds_length() {
+        let small = b"short error";
+        assert_eq!(truncated_stderr(small), "short error");
+        let big = vec![b'x'; MAX_STDERR_BYTES + 100];
+        let out = truncated_stderr(&big);
+        assert!(out.contains("truncated"));
+        assert!(out.len() < MAX_STDERR_BYTES + 128);
+    }
+
     #[test]
     fn test_parse_generation_hash_starts_with_store() {
         let path = "/nix/store/abc123-nixos-system-25.05";

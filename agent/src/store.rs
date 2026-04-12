@@ -1,15 +1,17 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// SQLite-backed local state persistence.
 ///
-/// Stores generation checks, deployments, rollbacks, and errors
-/// so the agent has a local audit trail even when the control plane
-/// is unreachable.
+/// Stores generation checks, deployments, rollbacks, and errors so
+/// the agent has a local audit trail even when the control plane is
+/// unreachable.
 ///
-/// TODO: Store methods are synchronous and block the tokio runtime.
-/// Wrap calls in `tokio::task::spawn_blocking` for production use.
+/// `Store`'s methods are synchronous. Async callers running on tokio
+/// MUST go through [`AsyncStore`], which offloads each operation to
+/// `spawn_blocking` so the runtime thread is never held across an
+/// in-process `Mutex<Connection>` acquire or a SQLite disk write.
 pub struct Store {
     conn: Mutex<Connection>,
 }
@@ -157,6 +159,72 @@ impl Store {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
+    }
+}
+
+/// Async facade over a [`Store`] for callers running on the tokio
+/// runtime. Every method offloads the underlying blocking SQLite
+/// operation via `tokio::task::spawn_blocking`, so holding the
+/// connection mutex never blocks a runtime worker thread.
+///
+/// Cheap to clone: wraps an `Arc<Store>`.
+#[derive(Clone)]
+pub struct AsyncStore {
+    inner: Arc<Store>,
+}
+
+impl AsyncStore {
+    /// Wrap an existing [`Store`] in an async facade.
+    pub fn new(inner: Store) -> Self {
+        Self {
+            inner: Arc::new(inner),
+        }
+    }
+
+    /// Initialize the database schema (delegates to [`Store::init`]).
+    ///
+    /// Runs synchronously because it is expected to be called once at
+    /// startup, before the main loop begins, and the initialization
+    /// work is short.
+    pub fn init_blocking(&self) -> Result<()> {
+        self.inner.init()
+    }
+
+    /// Log a generation check event.
+    pub async fn log_check(&self, hash: &str, status: &str) -> Result<()> {
+        let inner = self.inner.clone();
+        let hash = hash.to_string();
+        let status = status.to_string();
+        tokio::task::spawn_blocking(move || inner.log_check(&hash, &status))
+            .await
+            .context("store log_check task panicked")?
+    }
+
+    /// Log a deploy result event.
+    pub async fn log_deploy(&self, hash: &str, success: bool) -> Result<()> {
+        let inner = self.inner.clone();
+        let hash = hash.to_string();
+        tokio::task::spawn_blocking(move || inner.log_deploy(&hash, success))
+            .await
+            .context("store log_deploy task panicked")?
+    }
+
+    /// Log a rollback event with a human-readable reason.
+    pub async fn log_rollback(&self, reason: &str) -> Result<()> {
+        let inner = self.inner.clone();
+        let reason = reason.to_string();
+        tokio::task::spawn_blocking(move || inner.log_rollback(&reason))
+            .await
+            .context("store log_rollback task panicked")?
+    }
+
+    /// Log an error event.
+    pub async fn log_error(&self, message: &str) -> Result<()> {
+        let inner = self.inner.clone();
+        let message = message.to_string();
+        tokio::task::spawn_blocking(move || inner.log_error(&message))
+            .await
+            .context("store log_error task panicked")?
     }
 }
 
