@@ -1,5 +1,15 @@
 use anyhow::{bail, Context, Result};
 use nixfleet_types::rollout::{RolloutDetail, RolloutStatus};
+use std::time::{Duration, Instant};
+
+/// Default upper bound on how long `deploy --wait` / `rollout status --wait`
+/// will block before aborting with a timeout error. Keeps CI jobs from
+/// hanging forever on a stuck rollout.
+const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(3600);
+
+/// Default poll cadence inside the wait loop. Low enough to feel
+/// interactive, high enough not to hammer the control plane.
+const WAIT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// GET /api/v1/rollouts — list rollouts, optionally filtered by status.
 pub async fn list(
@@ -22,7 +32,7 @@ pub async fn list(
         bail!(
             "Control plane returned {}: {}",
             resp.status(),
-            resp.text().await.unwrap_or_default()
+            crate::client::read_error_body(resp).await
         );
     }
 
@@ -71,7 +81,7 @@ pub async fn status(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         bail!(
             "Control plane returned {}: {}",
             resp.status(),
-            resp.text().await.unwrap_or_default()
+            crate::client::read_error_body(resp).await
         );
     }
 
@@ -97,7 +107,7 @@ pub async fn resume(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         bail!(
             "Control plane returned {}: {}",
             resp.status(),
-            resp.text().await.unwrap_or_default()
+            crate::client::read_error_body(resp).await
         );
     }
 
@@ -119,7 +129,7 @@ pub async fn cancel(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         bail!(
             "Control plane returned {}: {}",
             resp.status(),
-            resp.text().await.unwrap_or_default()
+            crate::client::read_error_body(resp).await
         );
     }
 
@@ -128,8 +138,18 @@ pub async fn cancel(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
 }
 
 /// Poll a rollout until it reaches a terminal state, printing progress every interval.
-pub async fn wait_for_completion(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<()> {
+///
+/// Falls back to [`DEFAULT_WAIT_TIMEOUT`] if `max_wait` is `None`.
+/// Using `Some(Duration::ZERO)` disables the timeout (wait forever).
+pub async fn wait_for_completion(
+    client: &reqwest::Client,
+    cp_url: &str,
+    id: &str,
+    max_wait: Option<Duration>,
+) -> Result<()> {
     let url = format!("{}/api/v1/rollouts/{}", cp_url, id);
+    let timeout = max_wait.unwrap_or(DEFAULT_WAIT_TIMEOUT);
+    let started = Instant::now();
 
     loop {
         let resp = client
@@ -142,7 +162,9 @@ pub async fn wait_for_completion(client: &reqwest::Client, cp_url: &str, id: &st
             bail!(
                 "Control plane returned {}: {}",
                 resp.status(),
-                resp.text().await.unwrap_or_default()
+                resp.text()
+                    .await
+                    .unwrap_or_else(|e| format!("<failed to read body: {e}>"))
             );
         }
 
@@ -161,7 +183,19 @@ pub async fn wait_for_completion(client: &reqwest::Client, cp_url: &str, id: &st
             return Ok(());
         }
 
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        if !timeout.is_zero() && started.elapsed() >= timeout {
+            bail!(
+                "Timed out after {}s waiting for rollout {} to finish (last status: {}). \
+                 Re-run with --wait-timeout 0 to block indefinitely, or inspect with \
+                 `nixfleet rollout status {}`.",
+                timeout.as_secs(),
+                id,
+                rollout.status,
+                id,
+            );
+        }
+
+        tokio::time::sleep(WAIT_POLL_INTERVAL).await;
     }
 }
 

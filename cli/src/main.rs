@@ -6,6 +6,7 @@ use std::process::Stdio;
 mod client;
 mod config;
 mod deploy;
+mod glob;
 mod host;
 mod machines;
 mod release;
@@ -750,7 +751,7 @@ async fn bootstrap(
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = client::read_error_body(resp).await;
         if status.as_u16() == 409 {
             bail!("Bootstrap failed: API keys already exist. Use an existing admin key to create new keys.");
         }

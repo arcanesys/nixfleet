@@ -5,6 +5,8 @@ use nixfleet_types::release::{
 use reqwest::Client;
 use std::process::Command;
 
+use crate::glob::filter_hosts;
+
 /// Discover all nixosConfigurations host names from a flake.
 fn discover_hosts(flake: &str) -> Result<Vec<String>> {
     let output = Command::new("nix")
@@ -26,48 +28,6 @@ fn discover_hosts(flake: &str) -> Result<Vec<String>> {
     let hosts: Vec<String> =
         serde_json::from_slice(&output.stdout).context("failed to parse nix eval output")?;
     Ok(hosts)
-}
-
-/// Filter hosts by glob pattern.
-fn filter_hosts(hosts: &[String], pattern: &str) -> Vec<String> {
-    if pattern == "*" {
-        return hosts.to_vec();
-    }
-    hosts
-        .iter()
-        .filter(|h| glob_match(pattern, h))
-        .cloned()
-        .collect()
-}
-
-fn glob_match(pattern: &str, text: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    let parts: Vec<&str> = pattern.split('*').collect();
-    if parts.len() == 1 {
-        return pattern == text;
-    }
-    let mut pos = 0;
-    for (i, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        match text[pos..].find(part) {
-            Some(idx) => {
-                if i == 0 && idx != 0 {
-                    return false;
-                }
-                pos += idx + part.len();
-            }
-            None => return false,
-        }
-    }
-    if !parts.last().unwrap_or(&"").is_empty() {
-        pos == text.len()
-    } else {
-        true
-    }
 }
 
 /// Detect platform for a host.
@@ -316,7 +276,7 @@ pub async fn create(
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = crate::client::read_error_body(resp).await;
         anyhow::bail!("failed to create release: {} {}", status, body);
     }
 
@@ -338,7 +298,7 @@ pub async fn list(client: &Client, base_url: &str, limit: u32) -> Result<()> {
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = crate::client::read_error_body(resp).await;
         anyhow::bail!("failed to list releases: {} {}", status, body);
     }
 
@@ -377,7 +337,7 @@ pub async fn show(client: &Client, base_url: &str, release_id: &str) -> Result<(
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = crate::client::read_error_body(resp).await;
         anyhow::bail!("failed to get release: {} {}", status, body);
     }
 
@@ -424,7 +384,7 @@ pub async fn diff(client: &Client, base_url: &str, id_a: &str, id_b: &str) -> Re
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = crate::client::read_error_body(resp).await;
         anyhow::bail!("failed to diff releases: {} {}", status, body);
     }
 
@@ -483,6 +443,6 @@ pub async fn delete(client: &Client, base_url: &str, release_id: &str) -> Result
     if status.as_u16() == 404 {
         anyhow::bail!("Release {release_id} not found");
     }
-    let body = resp.text().await.unwrap_or_default();
+    let body = crate::client::read_error_body(resp).await;
     anyhow::bail!("failed to delete release: {} {}", status, body);
 }
