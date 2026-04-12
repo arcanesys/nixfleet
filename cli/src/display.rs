@@ -88,8 +88,11 @@ pub fn truncate_store_path(path: &str, max_len: usize) -> String {
         }
     }
 
-    // Fallback: simple prefix truncation
-    let end = max_len.saturating_sub(1);
+    // Fallback: simple prefix truncation.
+    // '…' is 3 bytes in UTF-8, so reserve that many bytes from the budget.
+    let ellipsis = '…';
+    let ellipsis_len = ellipsis.len_utf8();
+    let end = max_len.saturating_sub(ellipsis_len);
     format!("{}…", &path[..end.min(path.len())])
 }
 
