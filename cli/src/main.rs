@@ -2,6 +2,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::Path;
 use std::process::Stdio;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 mod client;
 mod config;
@@ -39,6 +41,14 @@ struct Cli {
     /// CA certificate for TLS verification (optional, uses system trust store if omitted)
     #[arg(long, global = true, default_value = "")]
     ca_cert: String,
+
+    /// Output as JSON (for commands that produce structured output)
+    #[arg(long, global = true)]
+    json: bool,
+
+    /// Increase verbosity (-v for info, -vv for debug)
+    #[arg(short = 'v', long = "verbose", global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
 }
 
 #[derive(Subcommand)]
@@ -120,11 +130,7 @@ enum Commands {
     },
 
     /// Show fleet status from the control plane
-    Status {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
+    Status {},
 
     /// Rollback a host to a previous generation
     Rollback {
@@ -139,6 +145,10 @@ enum Commands {
         /// SSH fallback mode
         #[arg(long)]
         ssh: bool,
+
+        /// SSH target override (e.g. root@192.168.1.10)
+        #[arg(long)]
+        target: Option<String>,
     },
 
     /// Manage fleet hosts
@@ -170,10 +180,6 @@ enum Commands {
         /// Name for the admin key
         #[arg(long, default_value = "admin")]
         name: String,
-
-        /// Output raw JSON instead of human-friendly format
-        #[arg(long)]
-        json: bool,
     },
 
     /// Initialize a .nixfleet.toml config file
@@ -324,14 +330,26 @@ enum MachineAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    let cli = Cli::parse();
+
+    let default_level = match cli.verbose {
+        0 => "nixfleet=warn",
+        1 => "nixfleet=info",
+        _ => "nixfleet=debug",
+    };
+    let indicatif_layer = tracing_indicatif::IndicatifLayer::new()
+        .with_max_progress_bars(12, None);
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(indicatif_layer.get_stderr_writer()),
+        )
+        .with(indicatif_layer)
+        .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "nixfleet=info".into()),
+                .unwrap_or_else(|_| default_level.into()),
         )
         .init();
-
-    let cli = Cli::parse();
 
     // Load config file (walk up from cwd)
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -403,6 +421,8 @@ async fn main() -> Result<()> {
         client_key: effective_client_key,
         ca_cert: effective_ca_cert,
     };
+
+    let json_output = cli.json;
 
     match cli.command {
         Commands::Deploy {
@@ -506,17 +526,18 @@ async fn main() -> Result<()> {
                 .await
             }
         }
-        Commands::Status { json } => {
+        Commands::Status {} => {
             let http_client = client::build_client(&tls, effective_api_key)?;
-            status::run(&http_client, effective_cp_url, json).await
+            status::run(&http_client, effective_cp_url, json_output).await
         }
         Commands::Rollback {
             host,
             generation,
             ssh,
+            target,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
-            rollback(&http_client, effective_cp_url, &host, generation, ssh).await
+            rollback(&http_client, effective_cp_url, &host, generation, ssh, target.as_deref()).await
         }
         Commands::Host { action } => match action {
             HostAction::Add {
@@ -541,10 +562,10 @@ async fn main() -> Result<()> {
             let http_client = client::build_client(&tls, effective_api_key)?;
             match action {
                 RolloutAction::List { status } => {
-                    rollout::list(&http_client, effective_cp_url, status.as_deref()).await
+                    rollout::list(&http_client, effective_cp_url, status.as_deref(), json_output).await
                 }
                 RolloutAction::Status { id } => {
-                    rollout::status(&http_client, effective_cp_url, &id).await
+                    rollout::status(&http_client, effective_cp_url, &id, json_output).await
                 }
                 RolloutAction::Resume { id } => {
                     rollout::resume(&http_client, effective_cp_url, &id).await
@@ -585,10 +606,10 @@ async fn main() -> Result<()> {
                     Ok(())
                 }
                 ReleaseAction::List { limit } => {
-                    release::list(&http_client, effective_cp_url, limit).await
+                    release::list(&http_client, effective_cp_url, limit, json_output).await
                 }
                 ReleaseAction::Show { release_id } => {
-                    release::show(&http_client, effective_cp_url, &release_id).await
+                    release::show(&http_client, effective_cp_url, &release_id, json_output).await
                 }
                 ReleaseAction::Diff {
                     release_id_a,
@@ -599,6 +620,7 @@ async fn main() -> Result<()> {
                         effective_cp_url,
                         &release_id_a,
                         &release_id_b,
+                        json_output,
                     )
                     .await
                 }
@@ -611,7 +633,7 @@ async fn main() -> Result<()> {
             let http_client = client::build_client(&tls, effective_api_key)?;
             match action {
                 MachineAction::List { tag } => {
-                    machines::list(&http_client, effective_cp_url, tag.as_deref()).await
+                    machines::list(&http_client, effective_cp_url, tag.as_deref(), json_output).await
                 }
                 MachineAction::Untag { id, tag } => {
                     machines::untag(&http_client, effective_cp_url, &id, &tag).await
@@ -621,10 +643,10 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Bootstrap { name, json } => {
+        Commands::Bootstrap { name } => {
             // Bootstrap does not require an API key, but does use mTLS
             let http_client = client::build_client(&tls, "")?;
-            let result = bootstrap(&http_client, effective_cp_url, &name, json).await;
+            let result = bootstrap(&http_client, effective_cp_url, &name, json_output).await;
             // Save API key to credentials file
             if let Ok(Some(ref key_str)) = result {
                 if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
@@ -665,6 +687,7 @@ async fn rollback(
     host: &str,
     generation: Option<String>,
     ssh: bool,
+    target: Option<&str>,
 ) -> Result<()> {
     if !ssh {
         bail!(
@@ -683,13 +706,16 @@ async fn rollback(
         );
     }
 
+    let default_dest = format!("root@{}", host);
+    let ssh_dest = target.unwrap_or(&default_dest);
+
     let store_path = match generation {
         Some(path) => path,
         None => {
             // Get previous generation via SSH
             let output = tokio::process::Command::new("ssh")
                 .args([
-                    &format!("root@{}", host),
+                    ssh_dest,
                     "readlink",
                     "-f",
                     "/nix/var/nix/profiles/system-1-link",
@@ -715,7 +741,7 @@ async fn rollback(
     // SSH rollback: switch to the specified profile on the target
     let switch_output = tokio::process::Command::new("ssh")
         .args([
-            &format!("root@{}", host),
+            ssh_dest,
             &format!("{}/bin/switch-to-configuration", store_path),
             "switch",
         ])
