@@ -463,7 +463,10 @@ async fn main() -> Result<()> {
             let effective_cache_url = cache_url
                 .as_deref()
                 .or(resolved.cache_url.as_deref());
-            let effective_push_to = if push_to.is_some() {
+            let effective_push_to = if push_hook.is_some() {
+                // --push-hook replaces --push-to entirely — the hook IS the push
+                push_to.as_deref()
+            } else if push_to.is_some() {
                 push_to.as_deref()
             } else {
                 resolved.push_to.as_deref()
@@ -596,8 +599,13 @@ async fn main() -> Result<()> {
                     cache_url,
                     dry_run,
                 } => {
-                    // CLI flags override config file values
-                    let effective_push_to = push_to.or_else(|| resolved.push_to.clone());
+                    // --push-hook replaces --push-to — the hook IS the push.
+                    // Only fall back to config push_to when no hook is specified.
+                    let effective_push_to = if push_hook.is_some() {
+                        push_to
+                    } else {
+                        push_to.or_else(|| resolved.push_to.clone())
+                    };
                     let effective_cache_url =
                         cache_url.or_else(|| resolved.cache_url.clone());
                     release::create(
