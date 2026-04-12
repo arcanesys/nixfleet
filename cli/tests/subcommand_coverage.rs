@@ -272,6 +272,54 @@ async fn machines_list_filters_client_side_by_tag() {
 }
 
 // =====================================================================
+// machines list --json — verify output is valid JSON
+// =====================================================================
+
+#[tokio::test]
+async fn machines_list_json_output_is_valid() {
+    let server = cp_mock().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/machines"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "machine_id": "web-01",
+                    "current_generation": "/nix/store/abc-system",
+                    "desired_generation": null,
+                    "agent_version": "",
+                    "system_state": "ok",
+                    "uptime_seconds": 0,
+                    "last_report": null,
+                    "lifecycle": "active",
+                    "tags": ["web"]
+                }
+            ])),
+        )
+        .mount(&server)
+        .await;
+
+    let assert = Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "--control-plane-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "--json",
+            "machines",
+            "list",
+        ])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    // Verify it's valid JSON
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("expected valid JSON, got: {stdout}"));
+    assert!(parsed.is_array(), "expected JSON array, got: {parsed}");
+}
+
+// =====================================================================
 // machines untag — DELETE /api/v1/machines/{id}/tags/{tag}
 // =====================================================================
 
