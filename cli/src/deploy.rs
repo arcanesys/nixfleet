@@ -284,13 +284,7 @@ pub async fn deploy_rollout(
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let created: CreateRolloutResponse = resp
         .json()

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use nixfleet_types::MachineStatus;
 
 use crate::display;
@@ -18,13 +18,7 @@ pub async fn list(
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let machines: Vec<MachineStatus> = resp.json().await.context("Failed to parse machine list")?;
 
@@ -86,13 +80,7 @@ pub async fn untag(
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    crate::client::check_response(resp).await?;
 
     println!("Tag '{}' removed from {}.", tag, machine_id);
     Ok(())
@@ -115,13 +103,7 @@ pub async fn register(
         .await
         .context("failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    crate::client::check_response(resp).await?;
 
     if tags.is_empty() {
         println!("Machine '{}' registered.", machine_id);

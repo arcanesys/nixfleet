@@ -298,11 +298,7 @@ pub async fn create(
         .await
         .context("failed to POST release")?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = crate::client::read_error_body(resp).await;
-        anyhow::bail!("failed to create release: {} {}", status, body);
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let release_resp: CreateReleaseResponse = resp.json().await?;
     println!(
@@ -320,11 +316,7 @@ pub async fn list(client: &Client, base_url: &str, limit: u32, json: bool) -> Re
         .await
         .context("failed to GET releases")?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = crate::client::read_error_body(resp).await;
-        anyhow::bail!("failed to list releases: {} {}", status, body);
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let releases: Vec<Release> = resp.json().await?;
     if releases.is_empty() {
@@ -369,11 +361,7 @@ pub async fn show(client: &Client, base_url: &str, release_id: &str, json: bool)
         .await
         .context("failed to GET release")?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = crate::client::read_error_body(resp).await;
-        anyhow::bail!("failed to get release: {} {}", status, body);
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let release: Release = resp.json().await?;
 
@@ -460,11 +448,7 @@ pub async fn diff(
         .await
         .context("failed to GET release diff")?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = crate::client::read_error_body(resp).await;
-        anyhow::bail!("failed to diff releases: {} {}", status, body);
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let diff: ReleaseDiff = resp.json().await?;
 

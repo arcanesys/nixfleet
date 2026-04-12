@@ -12,13 +12,7 @@ pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool) -> Result<(
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        anyhow::bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let machines: Vec<MachineStatus> = resp.json().await.context("Failed to parse machine list")?;
 

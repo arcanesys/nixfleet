@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use anyhow::bail;
 use std::fs;
 
 /// Read the body of a failed HTTP response as a String, falling back to
@@ -9,6 +10,20 @@ pub async fn read_error_body(resp: reqwest::Response) -> String {
     resp.text()
         .await
         .unwrap_or_else(|e| format!("<failed to read response body: {e}>"))
+}
+
+/// Check that an HTTP response indicates success, bailing with
+/// the status code and response body on failure. Eliminates the
+/// repeated `if !resp.status().is_success() { bail!(...) }` pattern
+/// across every CLI command.
+pub async fn check_response(resp: reqwest::Response) -> Result<reqwest::Response> {
+    if resp.status().is_success() {
+        Ok(resp)
+    } else {
+        let status = resp.status();
+        let body = read_error_body(resp).await;
+        bail!("Control plane returned {}: {}", status, body)
+    }
 }
 
 /// TLS configuration for the HTTP client.

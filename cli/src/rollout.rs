@@ -31,13 +31,7 @@ pub async fn list(
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let rollouts: Vec<RolloutDetail> = resp.json().await.context("Failed to parse rollout list")?;
 
@@ -93,13 +87,7 @@ pub async fn status(
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    let resp = crate::client::check_response(resp).await?;
 
     let rollout: RolloutDetail = resp
         .json()
@@ -125,13 +113,7 @@ pub async fn resume(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    crate::client::check_response(resp).await?;
 
     println!("Rollout {} resumed.", id);
     Ok(())
@@ -147,13 +129,7 @@ pub async fn cancel(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         .await
         .context("Failed to reach control plane")?;
 
-    if !resp.status().is_success() {
-        bail!(
-            "Control plane returned {}: {}",
-            resp.status(),
-            crate::client::read_error_body(resp).await
-        );
-    }
+    crate::client::check_response(resp).await?;
 
     println!("Rollout {} cancelled.", id);
     Ok(())

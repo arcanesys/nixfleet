@@ -64,13 +64,13 @@ enum Commands {
         dry_run: bool,
 
         /// SSH fallback mode: copy closures and switch via SSH instead of control plane
-        #[arg(long)]
+        #[arg(long, help_heading = "SSH Mode")]
         ssh: bool,
 
         /// SSH target override (e.g. root@192.168.1.10). When set with --ssh,
         /// uses this address instead of resolving the hostname.
         /// Only valid with a single host (--hosts must match exactly one).
-        #[arg(long)]
+        #[arg(long, help_heading = "SSH Mode")]
         target: Option<String>,
 
         /// Flake reference (default: current directory)
@@ -78,53 +78,53 @@ enum Commands {
         flake: String,
 
         /// Target tag for rollout deploy (repeatable)
-        #[arg(long = "tag", value_name = "TAG")]
+        #[arg(long = "tag", value_name = "TAG", help_heading = "Rollout")]
         tags: Vec<String>,
 
         /// Rollout strategy: canary, staged, or all-at-once
-        #[arg(long, default_value = "all-at-once")]
+        #[arg(long, default_value = "all-at-once", help_heading = "Rollout")]
         strategy: String,
 
         /// Batch sizes (comma-separated, e.g. "1,25%,100%")
-        #[arg(long, value_delimiter = ',')]
+        #[arg(long, value_delimiter = ',', help_heading = "Rollout")]
         batch_size: Option<Vec<String>>,
 
         /// Allow up to N unhealthy machines per batch (the (N+1)th fails the batch).
         /// 0 means zero tolerance — any single failure pauses the rollout.
         /// Accepts an absolute count (e.g. "3") or a percentage (e.g. "30%").
-        #[arg(long, default_value = "0")]
+        #[arg(long, default_value = "0", help_heading = "Rollout")]
         failure_threshold: String,
 
         /// Action on failure: pause or revert
-        #[arg(long, default_value = "pause")]
+        #[arg(long, default_value = "pause", help_heading = "Rollout")]
         on_failure: String,
 
         /// Health check timeout in seconds
-        #[arg(long, default_value = "300")]
+        #[arg(long, default_value = "300", help_heading = "Rollout")]
         health_timeout: u64,
 
         /// Wait and stream rollout progress
-        #[arg(long)]
+        #[arg(long, help_heading = "Rollout")]
         wait: bool,
 
         /// Release ID to deploy
-        #[arg(long)]
+        #[arg(long, help_heading = "Rollout")]
         release: Option<String>,
 
         /// Implicitly create a release and push to a Nix binary cache (s3://, ssh://, or HTTP URL)
-        #[arg(long, conflicts_with = "release")]
+        #[arg(long, conflicts_with = "release", help_heading = "Build & Push")]
         push_to: Option<String>,
 
         /// Run command on push target for each path ({} = store path)
-        #[arg(long)]
+        #[arg(long, help_heading = "Build & Push")]
         push_hook: Option<String>,
 
         /// Implicitly create a release and copy closures via SSH
-        #[arg(long, conflicts_with = "release", conflicts_with = "push_to")]
+        #[arg(long, conflicts_with = "release", conflicts_with = "push_to", help_heading = "Build & Push")]
         copy: bool,
 
         /// Binary cache URL for agents to fetch closures from (e.g. http://cache:5000)
-        #[arg(long)]
+        #[arg(long, help_heading = "Build & Push")]
         cache_url: Option<String>,
 
     },
@@ -142,8 +142,8 @@ enum Commands {
         #[arg(long)]
         generation: Option<String>,
 
-        /// SSH fallback mode
-        #[arg(long)]
+        /// SSH mode (always enabled, accepted for compatibility)
+        #[arg(long, hide = true)]
         ssh: bool,
 
         /// SSH target override (e.g. root@192.168.1.10)
@@ -202,6 +202,12 @@ enum Commands {
         /// Default push destination
         #[arg(long)]
         push_to: Option<String>,
+        /// Default deploy strategy (canary, staged, all-at-once)
+        #[arg(long)]
+        strategy: Option<String>,
+        /// Default deploy failure action (pause, revert)
+        #[arg(long)]
+        on_failure: Option<String>,
     },
 }
 
@@ -533,11 +539,11 @@ async fn main() -> Result<()> {
         Commands::Rollback {
             host,
             generation,
-            ssh,
+            ssh: _,
             target,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
-            rollback(&http_client, effective_cp_url, &host, generation, ssh, target.as_deref()).await
+            rollback(&http_client, effective_cp_url, &host, generation, target.as_deref()).await
         }
         Commands::Host { action } => match action {
             HostAction::Add {
@@ -664,6 +670,8 @@ async fn main() -> Result<()> {
             client_key,
             cache_url,
             push_to,
+            strategy,
+            on_failure,
         } => {
             let path = cwd.join(".nixfleet.toml");
             config::write_config_file(
@@ -674,6 +682,8 @@ async fn main() -> Result<()> {
                 client_key.as_deref(),
                 cache_url.as_deref(),
                 push_to.as_deref(),
+                strategy.as_deref(),
+                on_failure.as_deref(),
             )?;
             println!("Config written to {}", path.display());
             Ok(())
@@ -686,26 +696,8 @@ async fn rollback(
     _cp_url: &str,
     host: &str,
     generation: Option<String>,
-    ssh: bool,
     target: Option<&str>,
 ) -> Result<()> {
-    if !ssh {
-        bail!(
-            "nixfleet rollback requires --ssh mode.\n\
-             \n\
-             For a control-plane-driven rollback:\n\
-             \n\
-               - Deploy an older release:\n\
-                 nixfleet release create --flake <old-rev> --push-to <cache>\n\
-                 nixfleet deploy --release <id> --hosts {host}\n\
-             \n\
-               - Use --on-failure revert on rollouts, which reverts machines\n\
-                 to their previous generations stored per batch.\n\
-             \n\
-             Or use --ssh to rollback this machine directly over SSH."
-        );
-    }
-
     let default_dest = format!("root@{}", host);
     let ssh_dest = target.unwrap_or(&default_dest);
 
