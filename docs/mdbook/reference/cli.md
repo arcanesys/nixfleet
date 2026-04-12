@@ -12,6 +12,7 @@ Flat reference for all `nixfleet` CLI commands and flags.
 | `--client-key` | `NIXFLEET_CLIENT_KEY` | `""` | Client key for mTLS authentication |
 | `--ca-cert` | `NIXFLEET_CA_CERT` | `""` | CA certificate for TLS verification (uses system trust store if omitted) |
 | `--json` | — | `false` | Output structured JSON (on commands that produce tables/detail views) |
+| `--config` | — | — | Path to `.nixfleet.toml` (default: walk up from cwd) |
 | `-v`, `--verbose` | — | `0` | Increase verbosity (-v for info, -vv for debug). Default: warn. |
 
 Logging is controlled via `RUST_LOG` (overrides `-v`/`--verbose` when set).
@@ -23,7 +24,7 @@ The CLI reads connection settings from four layers, in priority order (highest w
 1. **CLI flags** (`--control-plane-url`, `--api-key`, …)
 2. **Environment variables** (`NIXFLEET_*` shown above)
 3. **`~/.config/nixfleet/credentials.toml`** — user-level API keys, keyed by CP URL (auto-saved by `nixfleet bootstrap`)
-4. **`.nixfleet.toml`** — repo-level config, discovered by walking up from cwd
+4. **`.nixfleet.toml`** — repo-level config, from `--config <path>` or discovered by walking up from cwd
 
 This means the same CLI commands run with no flags from any fleet repo, inheriting the repo's connection settings and the user's bootstrapped credentials. See [`.nixfleet.toml` format](#nixfleet-toml-format) below.
 
@@ -64,8 +65,8 @@ nixfleet deploy [FLAGS]
 | `--push-to <URL>` | string | -- | Build all hosts, push to a Nix binary cache URL, and register a release implicitly (e.g., `ssh://root@cache`, `s3://bucket`) |
 | `--push-hook <CMD>` | string | -- | Run a shell command after pushing each closure (escape hatch for Attic/Cachix). `{}` is replaced with the store path. Runs on the `--push-to` host when combined, otherwise locally |
 | `--copy` | bool | `false` | Build all hosts, push to each target via `nix-copy-closure` (no binary cache needed), and register a release implicitly |
-| `--hosts <PATTERN>` | string | `*` | Host glob pattern or comma-separated list. In SSH mode: hosts to deploy. In rollout mode: target machines directly (alternative to `--tag`) |
-| `--tag <TAG>` | string (repeatable) | -- | Target machines by tag (rollout mode) |
+| `--hosts <PATTERN>` | string (comma-separated or repeatable) | `*` | Host glob patterns. In SSH mode: hosts to deploy. In rollout mode: target machines directly (alternative to `--tags`) |
+| `--tags <TAG>` | string (comma-separated or repeatable) | -- | Target machines by tag (rollout mode) |
 | `--dry-run` | bool | `false` | Build closures and show plan, do not push or register |
 | `--ssh` | bool | `false` | SSH fallback mode: build locally, copy via SSH, run `switch-to-configuration` (no CP needed) |
 | `--target <SSH>` | string | -- | SSH target override (e.g., `root@192.168.1.10`). Only valid with `--ssh` and a single host. |
@@ -82,7 +83,7 @@ nixfleet deploy [FLAGS]
 
 - **SSH mode** (`--ssh`): Builds locally, copies closures via SSH, runs `switch-to-configuration`. No control plane required.
 - **Rollout mode** (requires a release): Creates a rollout on the control plane with the specified strategy. Specify an existing release with `--release <ID>`, or use `--push-to <url>` / `--copy` to build + push + register implicitly in one command.
-- **Targeting:** Use `--tag <TAG>` or `--hosts <pattern>` to select machines. Both are intersected with the release's host list (machines not in the release are skipped with a warning).
+- **Targeting:** Use `--tags <TAG>` or `--hosts <pattern>` to select machines. Both are intersected with the release's host list (machines not in the release are skipped with a warning).
 
 ---
 
@@ -330,7 +331,7 @@ nixfleet machines register <ID> [FLAGS]
 | Argument/Flag | Type | Description |
 |---------------|------|-------------|
 | `<ID>` | string | Machine ID |
-| `--tag <TAG>` | string (repeatable) | Initial tags |
+| `--tags <TAG>` | string (comma-separated or repeatable) | Initial tags |
 
 Agents auto-register on first health report, so manual registration is optional. Use this to pre-register machines before they come online.
 
@@ -346,7 +347,7 @@ nixfleet machines list [FLAGS]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--tag <TAG>` | string | -- | Filter by tag |
+| `--tags <TAG>` | string (comma-separated or repeatable) | -- | Filter by tags (machines matching any listed tag are shown) |
 
 ---
 

@@ -4,7 +4,12 @@
 //! directly via the lib target. No CP is involved.
 //!
 //! Precedence (high → low):
-//! CLI flag → `NIXFLEET_*` env → credentials file → `.nixfleet.toml`.
+//! CLI flag → `NIXFLEET_*` env → credentials file → `.nixfleet.toml`
+//! (via `--config <path>` or cwd walk).
+//!
+//! The `--config` flag only changes how `.nixfleet.toml` is discovered —
+//! it does not affect precedence. Integration test for `--config` is in
+//! `subcommand_coverage.rs::config_flag_loads_from_explicit_path`.
 
 use nixfleet::config::{self, ConfigFile, CredentialsFile, ResolvedConfig};
 use std::collections::HashMap;

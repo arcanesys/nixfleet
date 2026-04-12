@@ -134,7 +134,7 @@ async fn deploy_via_ssh(host: &str, store_path: &str, ssh_target: &str) -> Resul
 pub async fn run(
     _client: &reqwest::Client,
     _cp_url: &str,
-    pattern: &str,
+    patterns: &[String],
     flake: &str,
     dry_run: bool,
     _ssh: bool,
@@ -142,12 +142,12 @@ pub async fn run(
 ) -> Result<()> {
     println!("Discovering hosts from {}...", flake);
     let all_hosts = discover_hosts(flake).await?;
-    let targets = filter_hosts(&all_hosts, pattern);
+    let targets = filter_hosts(&all_hosts, patterns);
 
     if targets.is_empty() {
         bail!(
             "No hosts match pattern '{}'. Available: {}",
-            pattern,
+            patterns.join(","),
             all_hosts.join(", ")
         );
     }
@@ -157,7 +157,7 @@ pub async fn run(
         bail!(
             "--target can only be used with a single host, but {} hosts matched pattern '{}'",
             targets.len(),
-            pattern
+            patterns.join(",")
         );
     }
 
@@ -269,7 +269,7 @@ fn resolve_target(tags: &[String], hosts: &[String]) -> Result<RolloutTarget> {
     } else if !hosts.is_empty() {
         Ok(RolloutTarget::Hosts(hosts.to_vec()))
     } else {
-        bail!("Either --tag or --hosts must be specified for rollout deploy")
+        bail!("Either --tags or --hosts must be specified for rollout deploy")
     }
 }
 

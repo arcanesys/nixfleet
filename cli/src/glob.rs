@@ -52,15 +52,16 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
     }
 }
 
-/// Filter a list of hostnames by glob pattern, returning the matches
-/// in the original order. `"*"` returns everything.
-pub fn filter_hosts(hosts: &[String], pattern: &str) -> Vec<String> {
-    if pattern == "*" {
+/// Filter a list of hostnames by one or more glob patterns, returning
+/// matches in the original order. Each pattern in the slice is
+/// glob-matched independently. A single `"*"` returns everything.
+pub fn filter_hosts(hosts: &[String], patterns: &[String]) -> Vec<String> {
+    if patterns.iter().any(|p| p == "*") {
         return hosts.to_vec();
     }
     hosts
         .iter()
-        .filter(|h| glob_match(pattern, h))
+        .filter(|h| patterns.iter().any(|p| glob_match(p, h)))
         .cloned()
         .collect()
 }
@@ -104,7 +105,24 @@ mod tests {
     #[test]
     fn filter_hosts_preserves_order() {
         let hosts = vec!["db-01".into(), "web-01".into(), "web-02".into()];
-        let filtered = filter_hosts(&hosts, "web-*");
+        let filtered = filter_hosts(&hosts, &["web-*".into()]);
         assert_eq!(filtered, vec!["web-01".to_string(), "web-02".to_string()]);
+    }
+
+    #[test]
+    fn filter_hosts_multiple_patterns() {
+        let hosts = vec!["krach".into(), "ohm".into(), "lab".into()];
+        let filtered = filter_hosts(&hosts, &["krach".into(), "ohm".into()]);
+        assert_eq!(filtered, vec!["krach".to_string(), "ohm".to_string()]);
+    }
+
+    #[test]
+    fn filter_hosts_mixed_glob_and_exact() {
+        let hosts = vec!["web-01".into(), "web-02".into(), "db-01".into()];
+        let filtered = filter_hosts(&hosts, &["web-*".into(), "db-01".into()]);
+        assert_eq!(
+            filtered,
+            vec!["web-01".to_string(), "web-02".to_string(), "db-01".to_string()]
+        );
     }
 }

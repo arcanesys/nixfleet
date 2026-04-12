@@ -82,12 +82,12 @@ Commands: `init`, `bootstrap`, `status`, `deploy`, `rollback`, `release` (create
 ```bash
 nixfleet init --control-plane-url https://lab:8080 --ca-cert fleet-ca.pem
 nixfleet bootstrap                                                       # first admin API key
-nixfleet deploy --push-to ssh://root@cache --tag web --strategy canary --wait
+nixfleet deploy --push-to ssh://root@cache --tags web --strategy canary --wait
 nixfleet deploy --hosts web-02 --ssh                                     # direct SSH (no CP)
 nixfleet rollback --host web-02 --ssh                                    # SSH-only rollback
 ```
 
-Config priority (highest wins): CLI flags → env vars → `~/.config/nixfleet/credentials.toml` → `.nixfleet.toml`
+Config priority (highest wins): CLI flags → env vars → `~/.config/nixfleet/credentials.toml` → `.nixfleet.toml` (via `--config <path>` or cwd walk)
 
 Full CLI reference with all flags, config format, and examples: `docs/mdbook/reference/cli.md`
 

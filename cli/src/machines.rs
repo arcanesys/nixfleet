@@ -3,11 +3,11 @@ use nixfleet_types::MachineStatus;
 
 use crate::display;
 
-/// GET /api/v1/machines — list machines, optionally filtered by tag.
+/// GET /api/v1/machines — list machines, optionally filtered by tags.
 pub async fn list(
     client: &reqwest::Client,
     cp_url: &str,
-    tag_filter: Option<&str>,
+    tag_filters: &[String],
     json: bool,
 ) -> Result<()> {
     let url = format!("{}/api/v1/machines", cp_url);
@@ -22,13 +22,13 @@ pub async fn list(
 
     let machines: Vec<MachineStatus> = resp.json().await.context("Failed to parse machine list")?;
 
-    let filtered: Vec<&MachineStatus> = if let Some(tag) = tag_filter {
+    let filtered: Vec<&MachineStatus> = if tag_filters.is_empty() {
+        machines.iter().collect()
+    } else {
         machines
             .iter()
-            .filter(|m| m.tags.iter().any(|t| t == tag))
+            .filter(|m| tag_filters.iter().any(|f| m.tags.iter().any(|t| t == f)))
             .collect()
-    } else {
-        machines.iter().collect()
     };
 
     if filtered.is_empty() {

@@ -63,7 +63,7 @@ Agents automatically benefit from the fleet cache once the client module is enab
 To override the cache URL per-deploy from the CLI:
 
 ```sh
-nixfleet deploy --tag web --release REL-xxx --cache-url http://cache.fleet.example.com:5000
+nixfleet deploy --tags web --release REL-xxx --cache-url http://cache.fleet.example.com:5000
 ```
 
 ## Advanced: custom cache backends

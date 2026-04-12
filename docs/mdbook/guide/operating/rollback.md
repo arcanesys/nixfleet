@@ -38,7 +38,7 @@ For CP-driven rollback of a bad deploy discovered after health checks pass, depl
 git checkout <old-commit>
 nixfleet release create --push-to ssh://root@cache
 git checkout -
-nixfleet deploy --release <old-id> --tag prod --wait
+nixfleet deploy --release <old-id> --tags prod --wait
 ```
 
 ## 4. Manual via NixOS
