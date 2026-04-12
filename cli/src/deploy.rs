@@ -202,7 +202,7 @@ pub async fn run(
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }
-            match build_host(flake, host, window.as_mut()).await {
+            match build_host(flake, host, window.as_mut().and_then(|w| w.for_output())).await {
                 Ok(path) => {
                     tracing::info!(host, path = %display::truncate_store_path(&path, 60), "built");
                     results.insert(host.clone(), Ok(path));
@@ -254,7 +254,7 @@ pub async fn run(
                     Some(t) => t.to_string(),
                     None => format!("root@{}", host),
                 };
-                match deploy_via_ssh(host, store_path, &ssh_dest, window.as_mut()).await {
+                match deploy_via_ssh(host, store_path, &ssh_dest, window.as_mut().and_then(|w| w.for_output())).await {
                     Ok(()) => {
                         tracing::info!(host, "deployed");
                         success_count += 1;

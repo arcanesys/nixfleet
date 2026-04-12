@@ -283,7 +283,7 @@ pub async fn create(
             }
             let platform = detect_platform(flake, hostname)?;
             let tags = detect_tags(flake, hostname);
-            match build_host(flake, hostname, window.as_mut()) {
+            match build_host(flake, hostname, window.as_mut().and_then(|w| w.for_output())) {
                 Ok(store_path) => {
                     if platform.contains("darwin") {
                         tracing::info!(hostname, "Darwin host — built and cached but not deployable via agent");
@@ -325,7 +325,7 @@ pub async fn create(
 
             for entry in &entries {
                 if pushed.insert(entry.store_path.clone()) {
-                    if let Err(e) = nix_copy_to(push_url, &entry.store_path, window.as_mut()) {
+                    if let Err(e) = nix_copy_to(push_url, &entry.store_path, window.as_mut().and_then(|w| w.for_output())) {
                         if let Some(ref mut w) = window {
                             w.mark_error();
                         }
@@ -372,7 +372,7 @@ pub async fn create(
                     }
                     continue;
                 }
-                if let Err(e) = copy_to_host(&entry.hostname, &entry.store_path, window.as_mut()) {
+                if let Err(e) = copy_to_host(&entry.hostname, &entry.store_path, window.as_mut().and_then(|w| w.for_output())) {
                     tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
                     if let Some(ref mut w) = window {
                         w.mark_error();

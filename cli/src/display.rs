@@ -211,6 +211,17 @@ impl RollingWindow {
     pub fn mark_error(&mut self) {
         self.had_error = true;
     }
+
+    /// Returns `Some(&mut self)` when subprocess output should be displayed
+    /// in the rolling window (verbosity >= 1). At verbosity 0, returns `None`
+    /// so the window only shows the progress bar.
+    pub fn for_output(&mut self) -> Option<&mut Self> {
+        if verbosity() >= 1 {
+            Some(self)
+        } else {
+            None
+        }
+    }
 }
 
 impl Drop for RollingWindow {
