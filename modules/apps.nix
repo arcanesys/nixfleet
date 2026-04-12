@@ -90,7 +90,8 @@ in {
               PASS=$((PASS + 1))
             else
               echo -e "''${RED}FAIL''${NC}"
-              echo "$OUTPUT" | tail -10
+              # Strip nix evaluation warnings from error output
+              echo "$OUTPUT" | grep -v '^evaluation warning:' | grep -v '^[[:space:]]\{20,\}' | tail -10
               FAIL=$((FAIL + 1))
             fi
           }
@@ -109,11 +110,11 @@ in {
           # Arguments: a space-separated list of installable strings
           # (everything that would go after `nix build`).
           prebuild_parallel() {
-            # Show nix build progress on stderr so the user gets feedback
-            # during long builds (VM closures). stdout is silenced to keep
-            # the script output clean. Failures are tolerated here — the
-            # per-target `check` calls after this give granular PASS/FAIL.
-            nix build --no-link --keep-going "$@" 2>&1 || true
+            # Build all targets in one invocation so nix can parallelise.
+            # stderr is discarded to suppress evaluation warnings
+            # (impermanence UID/GID noise from test hosts). Failures are
+            # tolerated — the per-target `check` calls give PASS/FAIL.
+            nix build --no-link --keep-going "$@" >/dev/null 2>&1 || true
           }
 
           echo "=== Formatting ==="
@@ -126,7 +127,7 @@ in {
           # checks) and confirms they type-check / have no eval errors.
           # Cheaper than building anything and catches attrset drift
           # across crates + modules + the validate app itself.
-          check "nix flake check --no-build" nix flake check --no-build
+          check "nix flake check --no-build" nix flake check --no-build --quiet
 
           echo ""
           echo "=== Eval Tests (explicit eval-* derivations) ==="
@@ -141,7 +142,7 @@ in {
               done
               prebuild_parallel $EVAL_ATTRS
               for t in $EVAL_TESTS; do
-                check "$t" nix build ".#checks.${system}.$t" --no-link
+                check "$t" nix build ".#checks.${system}.$t" --no-link --quiet
               done
             ''
             else ''
@@ -160,7 +161,7 @@ in {
           done
           prebuild_parallel $HOST_ATTRS
           for host in $HOSTS; do
-            check "$host" nix build ".#nixosConfigurations.$host.config.system.build.toplevel" --no-link
+            check "$host" nix build ".#nixosConfigurations.$host.config.system.build.toplevel" --no-link --quiet
           done
 
           ${
@@ -186,7 +187,7 @@ in {
                 done
                 prebuild_parallel $VM_ATTRS
                 for t in $VM_TESTS; do
-                  check "$t" nix build ".#checks.${system}.$t" --no-link
+                  check "$t" nix build ".#checks.${system}.$t" --no-link --quiet
                 done
               fi
             ''
