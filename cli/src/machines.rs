@@ -1,8 +1,15 @@
 use anyhow::{bail, Context, Result};
 use nixfleet_types::MachineStatus;
 
+use crate::display;
+
 /// GET /api/v1/machines — list machines, optionally filtered by tag.
-pub async fn list(client: &reqwest::Client, cp_url: &str, tag_filter: Option<&str>) -> Result<()> {
+pub async fn list(
+    client: &reqwest::Client,
+    cp_url: &str,
+    tag_filter: Option<&str>,
+    json: bool,
+) -> Result<()> {
     let url = format!("{}/api/v1/machines", cp_url);
 
     let resp = client
@@ -31,26 +38,36 @@ pub async fn list(client: &reqwest::Client, cp_url: &str, tag_filter: Option<&st
     };
 
     if filtered.is_empty() {
-        println!("No machines found.");
+        if json {
+            println!("[]");
+        } else {
+            println!("No machines found.");
+        }
         return Ok(());
     }
 
-    println!("{:<20} {:<12} {:<12} TAGS", "ID", "LIFECYCLE", "STATE");
-    println!("{}", "-".repeat(70));
+    let rows: Vec<Vec<String>> = filtered
+        .iter()
+        .map(|m| {
+            let tags = if m.tags.is_empty() {
+                "(none)".to_string()
+            } else {
+                m.tags.join(", ")
+            };
+            vec![
+                m.machine_id.clone(),
+                display::color_status(&m.lifecycle.to_string()),
+                display::color_status(&m.system_state),
+                tags,
+            ]
+        })
+        .collect();
 
-    for machine in &filtered {
-        let tags = if machine.tags.is_empty() {
-            "(none)".to_string()
-        } else {
-            machine.tags.join(", ")
-        };
-        println!(
-            "{:<20} {:<12} {:<12} {}",
-            machine.machine_id, machine.lifecycle, machine.system_state, tags,
-        );
+    display::print_list(json, &["ID", "LIFECYCLE", "STATE", "TAGS"], &rows, &filtered);
+
+    if !json {
+        println!("\n{} machine(s)", filtered.len());
     }
-
-    println!("\n{} machine(s)", filtered.len());
     Ok(())
 }
 
