@@ -4,6 +4,7 @@ use nixfleet_types::rollout::{
 };
 use std::collections::HashMap;
 use std::process::Stdio;
+use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 use crate::glob::filter_hosts;
 
@@ -142,7 +143,9 @@ pub async fn run(
     let mut results: HashMap<String, Result<String>> = HashMap::new();
 
     // Build all targets
-    let build_bar = crate::display::ProgressContext::bar(targets.len() as u64, "Building closures");
+    let build_span = tracing::info_span!("Building closures");
+    build_span.pb_set_length(targets.len() as u64);
+    let _build_guard = build_span.enter();
 
     for host in &targets {
         match build_host(flake, host).await {
@@ -155,9 +158,9 @@ pub async fn run(
                 results.insert(host.clone(), Err(e));
             }
         }
-        build_bar.inc(1);
+        tracing::Span::current().pb_inc(1);
     }
-    build_bar.finish_and_clear();
+    drop(_build_guard);
 
     if dry_run {
         println!("\n--- Dry run summary ---");
@@ -176,7 +179,9 @@ pub async fn run(
     let mut success_count = 0;
     let mut fail_count = 0;
 
-    let deploy_bar = crate::display::ProgressContext::bar(targets.len() as u64, "Deploying via SSH");
+    let deploy_span = tracing::info_span!("Deploying via SSH");
+    deploy_span.pb_set_length(targets.len() as u64);
+    let _deploy_guard = deploy_span.enter();
 
     for host in &targets {
         if let Some(Ok(store_path)) = results.get(host) {
@@ -197,9 +202,9 @@ pub async fn run(
         } else {
             fail_count += 1;
         }
-        deploy_bar.inc(1);
+        tracing::Span::current().pb_inc(1);
     }
-    deploy_bar.finish_and_clear();
+    drop(_deploy_guard);
 
     println!(
         "\nDeploy complete: {} succeeded, {} failed",

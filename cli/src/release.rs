@@ -5,6 +5,7 @@ use nixfleet_types::release::{
 };
 use reqwest::Client;
 use std::process::Command;
+use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 use crate::display;
 use crate::glob::filter_hosts;
@@ -184,10 +185,11 @@ pub async fn create(
     tracing::info!(count = hosts.len(), "found hosts");
 
     // Build all hosts
-    let build_bar =
-        crate::display::ProgressContext::bar(hosts.len() as u64, "Building closures");
+    let build_span = tracing::info_span!("Building closures");
+    build_span.pb_set_length(hosts.len() as u64);
     let mut entries = Vec::new();
     for hostname in &hosts {
+        let _guard = build_span.enter();
         let platform = detect_platform(flake, hostname)?;
         let tags = detect_tags(flake, hostname);
         let store_path = build_host(flake, hostname)?;
@@ -202,9 +204,8 @@ pub async fn create(
             platform,
             tags,
         });
-        build_bar.inc(1);
+        build_span.pb_inc(1);
     }
-    build_bar.finish_and_clear();
 
     // Distribute
     if let Some(push_url) = push_to {
@@ -214,17 +215,15 @@ pub async fn create(
             .map(|e| &e.store_path)
             .collect::<std::collections::HashSet<_>>()
             .len();
-        let push_bar = crate::display::ProgressContext::bar(
-            unique_count as u64,
-            &format!("Pushing to {push_url}"),
-        );
+        let push_span = tracing::info_span!("pushing", dest = %push_url);
+        push_span.pb_set_length(unique_count as u64);
         for entry in &entries {
+            let _guard = push_span.enter();
             if pushed.insert(entry.store_path.clone()) {
                 nix_copy_to(push_url, &entry.store_path)?;
-                push_bar.inc(1);
+                push_span.pb_inc(1);
             }
         }
-        push_bar.finish_and_clear();
 
         // Run push hook on the remote host if specified
         if let Some(hook) = push_hook {
@@ -244,22 +243,20 @@ pub async fn create(
             run_push_hook(None, hook, &entry.store_path)?;
         }
     } else if copy {
-        let copy_bar = crate::display::ProgressContext::bar(
-            entries.len() as u64,
-            "Copying to hosts",
-        );
+        let copy_span = tracing::info_span!("Copying to hosts");
+        copy_span.pb_set_length(entries.len() as u64);
         for entry in &entries {
+            let _guard = copy_span.enter();
             if entry.platform.contains("darwin") {
                 tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
-                copy_bar.inc(1);
+                copy_span.pb_inc(1);
                 continue;
             }
             if let Err(e) = copy_to_host(&entry.hostname, &entry.store_path) {
                 tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
             }
-            copy_bar.inc(1);
+            copy_span.pb_inc(1);
         }
-        copy_bar.finish_and_clear();
     }
 
     // Print summary
