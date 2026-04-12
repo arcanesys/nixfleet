@@ -173,6 +173,8 @@ pub async fn wait_for_completion(
     let timeout = max_wait.unwrap_or(DEFAULT_WAIT_TIMEOUT);
     let started = Instant::now();
 
+    let spinner = crate::display::ProgressContext::spinner(&format!("Rollout {id}"));
+
     loop {
         let resp = client
             .get(&url)
@@ -181,6 +183,7 @@ pub async fn wait_for_completion(
             .context("Failed to reach control plane")?;
 
         if !resp.status().is_success() {
+            spinner.finish_and_clear();
             bail!(
                 "Control plane returned {}: {}",
                 resp.status(),
@@ -195,10 +198,38 @@ pub async fn wait_for_completion(
             .await
             .context("Failed to parse rollout detail")?;
 
-        print_progress(&rollout);
+        let total_machines: usize = rollout.batches.iter().map(|b| b.machine_ids.len()).sum();
+        let healthy_machines: usize = rollout
+            .batches
+            .iter()
+            .flat_map(|b| b.machine_health.values())
+            .filter(|h| matches!(h, nixfleet_types::rollout::MachineHealthStatus::Healthy))
+            .count();
+        let current_batch = rollout
+            .batches
+            .iter()
+            .position(|b| {
+                matches!(
+                    b.status,
+                    nixfleet_types::rollout::BatchStatus::Deploying
+                        | nixfleet_types::rollout::BatchStatus::WaitingHealth
+                )
+            })
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        spinner.set_message(format!(
+            "Rollout {} — batch {}/{} — {}/{} healthy — {}",
+            id, current_batch, rollout.batches.len(),
+            healthy_machines, total_machines, rollout.status,
+        ));
 
         if !rollout.status.is_active() {
-            println!("\nRollout {} finished with status: {}", id, rollout.status);
+            spinner.finish_and_clear();
+            println!(
+                "Rollout {} finished: {} ({} machines, {} batches)",
+                id, rollout.status, total_machines, rollout.batches.len()
+            );
             if rollout.status == RolloutStatus::Failed {
                 bail!("Rollout failed");
             }
@@ -206,6 +237,7 @@ pub async fn wait_for_completion(
         }
 
         if !timeout.is_zero() && started.elapsed() >= timeout {
+            spinner.finish_and_clear();
             bail!(
                 "Timed out after {}s waiting for rollout {} to finish (last status: {}). \
                  Re-run with --wait-timeout 0 to block indefinitely, or inspect with \
@@ -295,39 +327,6 @@ fn print_rollout_detail(rollout: &RolloutDetail) {
             );
         }
     }
-}
-
-fn print_progress(rollout: &RolloutDetail) {
-    let total_machines: usize = rollout.batches.iter().map(|b| b.machine_ids.len()).sum();
-    let healthy_machines: usize = rollout
-        .batches
-        .iter()
-        .flat_map(|b| b.machine_health.values())
-        .filter(|h| matches!(h, nixfleet_types::rollout::MachineHealthStatus::Healthy))
-        .count();
-
-    let current_batch = rollout
-        .batches
-        .iter()
-        .position(|b| {
-            matches!(
-                b.status,
-                nixfleet_types::rollout::BatchStatus::Deploying
-                    | nixfleet_types::rollout::BatchStatus::WaitingHealth
-            )
-        })
-        .map(|i| i + 1)
-        .unwrap_or(0);
-
-    println!(
-        "[{}] batch {}/{} | {}/{} machines healthy | status: {}",
-        rollout.id,
-        current_batch,
-        rollout.batches.len(),
-        healthy_machines,
-        total_machines,
-        rollout.status,
-    );
 }
 
 fn truncate(s: &str, max_len: usize) -> String {
