@@ -349,14 +349,36 @@ pub async fn create(
                 host = remote_host.as_deref().unwrap_or("localhost"),
                 "running push hook"
             );
+            let mut window = if display::use_progress() {
+                Some(display::RollingWindow::new("push-hook", entries.len() as u64))
+            } else {
+                None
+            };
             for entry in &entries {
-                run_push_hook(remote_host.as_deref(), hook, &entry.store_path, None)?;
+                if let Some(ref mut w) = window {
+                    w.set_line_prefix(&entry.hostname);
+                }
+                run_push_hook(remote_host.as_deref(), hook, &entry.store_path, window.as_mut().and_then(|w| w.for_output()))?;
+                if let Some(ref w) = window {
+                    w.inc();
+                }
             }
         }
     } else if let Some(hook) = push_hook {
         tracing::info!("running push hook locally");
+        let mut window = if display::use_progress() {
+            Some(display::RollingWindow::new("push-hook", entries.len() as u64))
+        } else {
+            None
+        };
         for entry in &entries {
-            run_push_hook(None, hook, &entry.store_path, None)?;
+            if let Some(ref mut w) = window {
+                w.set_line_prefix(&entry.hostname);
+            }
+            run_push_hook(None, hook, &entry.store_path, window.as_mut().and_then(|w| w.for_output()))?;
+            if let Some(ref w) = window {
+                w.inc();
+            }
         }
     } else if copy {
         {
