@@ -142,9 +142,12 @@ fn nix_copy_to(
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit())
-            .output()
-            .context("failed to run nix copy --to")?
+        let status = cmd
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .context("failed to run nix copy --to")?;
+        std::process::Output { status, stdout: vec![], stderr: vec![] }
     } else {
         display::run_cmd(&mut cmd, window).context("failed to run nix copy --to")?
     };
@@ -169,17 +172,19 @@ fn copy_to_host(
     let mut cmd = Command::new("nix-copy-closure");
     cmd.args(["--to", &format!("root@{}", hostname), store_path]);
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit())
-            .output()
-            .context("failed to run nix-copy-closure")?
+        let status = cmd
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .context("failed to run nix-copy-closure")?;
+        std::process::Output { status, stdout: vec![], stderr: vec![] }
     } else {
         display::run_cmd(&mut cmd, window).context("failed to run nix-copy-closure")?
     };
     if !output.status.success() {
         anyhow::bail!(
-            "nix-copy-closure failed for {}: {}",
-            hostname,
-            String::from_utf8_lossy(&output.stderr)
+            "nix-copy-closure failed for {}",
+            hostname
         );
     }
     Ok(())
