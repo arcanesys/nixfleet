@@ -72,7 +72,7 @@ fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
 
 /// Build a host's toplevel closure.
 fn build_host(flake: &str, hostname: &str) -> Result<String> {
-    println!("  building {}...", hostname);
+    tracing::info!(hostname, "building closure");
     let output = Command::new("nix")
         .args([
             "build",
@@ -97,7 +97,7 @@ fn build_host(flake: &str, hostname: &str) -> Result<String> {
 
 /// Copy a store path to a Nix binary cache (S3, SSH, HTTP, etc.).
 fn nix_copy_to(cache_url: &str, store_path: &str) -> Result<()> {
-    println!("  copying {} to {}...", store_path, cache_url);
+    tracing::info!(store_path, dest = cache_url, "copying closure");
     let status = Command::new("nix")
         .args(["copy", "--to", cache_url, store_path])
         .status()
@@ -110,7 +110,7 @@ fn nix_copy_to(cache_url: &str, store_path: &str) -> Result<()> {
 
 /// Copy a closure to a remote host via SSH.
 fn copy_to_host(hostname: &str, store_path: &str) -> Result<()> {
-    println!("  copying {} to {}...", store_path, hostname);
+    tracing::info!(store_path, dest = hostname, "copying closure");
     let status = Command::new("nix-copy-closure")
         .args(["--to", &format!("root@{}", hostname), store_path])
         .status()
@@ -138,7 +138,7 @@ fn flake_revision(flake: &str) -> Option<String> {
 /// Run a push hook command for a store path, optionally on a remote host via SSH.
 pub fn run_push_hook(push_to_host: Option<&str>, hook_cmd: &str, store_path: &str) -> Result<()> {
     let cmd = hook_cmd.replace("{}", store_path);
-    println!("  hook: {}", cmd);
+    tracing::info!(cmd = %cmd, "running push hook");
     let status = match push_to_host {
         Some(host) => Command::new("ssh")
             .args([host, &cmd])
@@ -175,16 +175,17 @@ pub async fn create(
     cache_url: Option<&str>,
     dry_run: bool,
 ) -> Result<Option<String>> {
-    println!("Discovering hosts...");
+    tracing::info!("discovering hosts");
     let all_hosts = discover_hosts(flake)?;
     let hosts = filter_hosts(&all_hosts, hosts_pattern);
     if hosts.is_empty() {
         anyhow::bail!("no hosts match pattern '{}'", hosts_pattern);
     }
-    println!("Found {} hosts: {}", hosts.len(), hosts.join(", "));
+    tracing::info!(count = hosts.len(), "found hosts");
 
     // Build all hosts
-    println!("\nBuilding closures...");
+    let build_bar =
+        crate::display::ProgressContext::bar(hosts.len() as u64, "Building closures");
     let mut entries = Vec::new();
     for hostname in &hosts {
         let platform = detect_platform(flake, hostname)?;
@@ -192,10 +193,7 @@ pub async fn create(
         let store_path = build_host(flake, hostname)?;
 
         if platform.contains("darwin") {
-            println!(
-                "  note: {} is Darwin — built and cached but not deployable via agent",
-                hostname
-            );
+            tracing::info!(hostname, "Darwin host — built and cached but not deployable via agent");
         }
 
         entries.push(ReleaseEntry {
@@ -204,24 +202,36 @@ pub async fn create(
             platform,
             tags,
         });
+        build_bar.inc(1);
     }
+    build_bar.finish_and_clear();
 
     // Distribute
     if let Some(push_url) = push_to {
-        println!("\nPushing closures to {}...", push_url);
         let mut pushed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let unique_count = entries
+            .iter()
+            .map(|e| &e.store_path)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        let push_bar = crate::display::ProgressContext::bar(
+            unique_count as u64,
+            &format!("Pushing to {push_url}"),
+        );
         for entry in &entries {
             if pushed.insert(entry.store_path.clone()) {
                 nix_copy_to(push_url, &entry.store_path)?;
+                push_bar.inc(1);
             }
         }
+        push_bar.finish_and_clear();
 
         // Run push hook on the remote host if specified
         if let Some(hook) = push_hook {
             let remote_host = extract_ssh_host(push_url);
-            println!(
-                "\nRunning push hook on {}...",
-                remote_host.as_deref().unwrap_or("localhost")
+            tracing::info!(
+                host = remote_host.as_deref().unwrap_or("localhost"),
+                "running push hook"
             );
             for entry in &entries {
                 run_push_hook(remote_host.as_deref(), hook, &entry.store_path)?;
@@ -229,21 +239,27 @@ pub async fn create(
         }
     } else if let Some(hook) = push_hook {
         // Hook without push-to: run locally
-        println!("\nRunning push hook locally...");
+        tracing::info!("running push hook locally");
         for entry in &entries {
             run_push_hook(None, hook, &entry.store_path)?;
         }
     } else if copy {
-        println!("\nCopying closures to hosts via SSH...");
+        let copy_bar = crate::display::ProgressContext::bar(
+            entries.len() as u64,
+            "Copying to hosts",
+        );
         for entry in &entries {
             if entry.platform.contains("darwin") {
-                println!("  skipping {} (Darwin)", entry.hostname);
+                tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
+                copy_bar.inc(1);
                 continue;
             }
             if let Err(e) = copy_to_host(&entry.hostname, &entry.store_path) {
-                eprintln!("  WARNING: failed to copy to {}: {}", entry.hostname, e);
+                tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
             }
+            copy_bar.inc(1);
         }
+        copy_bar.finish_and_clear();
     }
 
     // Print summary
