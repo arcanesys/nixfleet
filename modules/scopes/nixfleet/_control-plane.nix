@@ -55,6 +55,16 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = builtins.match ".*:[0-9]+" cfg.listen != null;
+        message = ''
+          services.nixfleet-control-plane.listen must be in HOST:PORT format
+          (e.g. "0.0.0.0:8080"), got: "${cfg.listen}"
+        '';
+      }
+    ];
+
     systemd.services.nixfleet-control-plane = {
       description = "NixFleet Control Plane Server";
       wantedBy = ["multi-user.target"];
