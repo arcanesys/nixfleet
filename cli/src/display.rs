@@ -122,18 +122,11 @@ pub struct RollingWindow {
 
 impl RollingWindow {
     /// Create a new rolling window with a progress bar.
+    /// Lines are added on demand — the window starts empty and grows up to 10.
     pub fn new(phase_name: &str, total: u64) -> Self {
         let multi = MultiProgress::new();
 
-        let line_style = ProgressStyle::with_template("  {msg}").unwrap();
-        let lines: Vec<ProgressBar> = (0..WINDOW_SIZE)
-            .map(|_| {
-                let pb = multi.add(ProgressBar::hidden());
-                pb.set_style(line_style.clone());
-                pb
-            })
-            .collect();
-
+        // No lines pre-created — they're inserted before the bar in log_line()
         let bar_style =
             ProgressStyle::with_template("{spinner} {prefix} {bar:30} {pos}/{len}")
                 .unwrap()
@@ -151,7 +144,7 @@ impl RollingWindow {
 
         Self {
             multi,
-            lines,
+            lines: Vec::new(),
             bar,
             ring: VecDeque::with_capacity(WINDOW_SIZE),
             had_error: false,
@@ -159,6 +152,7 @@ impl RollingWindow {
     }
 
     /// Push a line of subprocess output into the rolling window.
+    /// The window auto-expands from 0 to WINDOW_SIZE lines as output arrives.
     pub fn log_line(&mut self, text: &str) {
         let trimmed = text.trim_end();
         if trimmed.is_empty() {
@@ -170,13 +164,20 @@ impl RollingWindow {
         }
         self.ring.push_back(trimmed.to_string());
 
+        // Grow the line pool if we need more visible lines
+        let line_style = ProgressStyle::with_template("  {msg}").unwrap();
+        while self.lines.len() < self.ring.len() {
+            let pb = self.multi.insert_before(&self.bar, ProgressBar::new(0));
+            pb.set_style(line_style.clone());
+            self.lines.push(pb);
+        }
+
+        // Update visible lines
         for (i, pb) in self.lines.iter().enumerate() {
             if let Some(line) = self.ring.get(i) {
                 pb.set_message(line.clone());
-                pb.set_length(1);
             } else {
                 pb.set_message(String::new());
-                pb.set_length(0);
             }
         }
     }
