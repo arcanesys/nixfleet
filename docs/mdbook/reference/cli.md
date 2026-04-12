@@ -379,7 +379,7 @@ Committed to the fleet repo root. Discovered by walking up from the CLI's curren
 
 ```toml
 [control-plane]
-url = "https://lab:8080"
+url = "https://cp.example.com:8080"
 ca-cert = "modules/_config/fleet-ca.pem"    # relative to config file location
 
 [tls]
@@ -387,12 +387,12 @@ client-cert = "/run/agenix/agent-${HOSTNAME}-cert"
 client-key = "/run/agenix/agent-${HOSTNAME}-key"
 
 [cache]
-url = "http://lab:5000"         # default --cache-url for rollouts
-push-to = "ssh://root@lab"      # default --push-to for release create
+url = "http://cache.example.com:5000"          # default --cache-url for rollouts
+push-to = "ssh://root@cache.example.com"       # default --push-to for release create
 
-[cache.hook]                         # used when --hook is passed
-url = "http://cache:8081/mycache"    # overrides cache.url for the release
-push-cmd = "attic push mycache {}"   # {} is replaced with the store path
+[cache.hook]                                    # used when --hook is passed
+url = "http://cache.example.com:8081/mycache"   # overrides cache.url for the release
+push-cmd = "attic push mycache {}"              # {} is replaced with the store path
 
 [deploy]
 strategy = "staged"             # default rollout strategy
@@ -410,10 +410,10 @@ on-failure = "pause"
 User-level, mode 600, not checked into any repo. Written automatically by `nixfleet bootstrap` and keyed by CP URL to support multiple clusters.
 
 ```toml
-["https://lab:8080"]
+["https://cp.example.com:8080"]
 api-key = "nfk-73c713cc..."
 
-["https://staging.cp.example.com:8080"]
+["https://cp-staging.example.com:8080"]
 api-key = "nfk-abc..."
 ```
 

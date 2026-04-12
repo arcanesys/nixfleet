@@ -214,7 +214,7 @@ enum Commands {
         /// Default push destination (nix copy --to)
         #[arg(long)]
         push_to: Option<String>,
-        /// Cache URL when using --hook mode (e.g. http://lab:8081/fleet)
+        /// Cache URL when using --hook mode (e.g. http://cache:8081/mycache)
         #[arg(long)]
         hook_url: Option<String>,
         /// Push command for --hook mode ({} is replaced with store path)
