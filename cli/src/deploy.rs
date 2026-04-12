@@ -4,38 +4,35 @@ use nixfleet_types::rollout::{
 };
 use std::collections::HashMap;
 use std::process::Stdio;
-use tracing_indicatif::span_ext::IndicatifSpanExt;
 
+use crate::display;
 use crate::glob::filter_hosts;
-
-/// Stderr mode: inherit for -vv passthrough, pipe otherwise.
-fn stderr_mode() -> Stdio {
-    if crate::display::passthrough_output() {
-        Stdio::inherit()
-    } else {
-        Stdio::piped()
-    }
-}
 
 /// Discover NixOS host names from the flake by evaluating nixosConfigurations attribute names.
 async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
-    let mut args = vec![
-        "eval".to_string(),
-        format!("{}#nixosConfigurations", flake),
-        "--apply".to_string(),
-        "builtins.attrNames".to_string(),
-        "--json".to_string(),
-    ];
-    if !crate::display::passthrough_output() {
-        args.push("--quiet".to_string());
+    let mut cmd = tokio::process::Command::new("nix");
+    cmd.args([
+        "eval",
+        &format!("{}#nixosConfigurations", flake),
+        "--apply",
+        "builtins.attrNames",
+        "--json",
+    ]);
+    if !display::passthrough_output() {
+        cmd.arg("--quiet");
     }
-    let output = tokio::process::Command::new("nix")
-        .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(stderr_mode())
-        .output()
-        .await
-        .context("Failed to run nix eval for host discovery")?;
+
+    let output = if display::passthrough_output() {
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .output()
+            .await
+            .context("Failed to run nix eval for host discovery")?
+    } else {
+        display::run_cmd_async(&mut cmd, None)
+            .await
+            .context("Failed to run nix eval for host discovery")?
+    };
 
     if !output.status.success() {
         bail!(
@@ -50,28 +47,38 @@ async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
 }
 
 /// Build the system closure for a host and return the store path.
-async fn build_host(flake: &str, host: &str) -> Result<String> {
-    tracing::info!(host, "Building closure");
+async fn build_host(
+    flake: &str,
+    host: &str,
+    window: Option<&mut display::RollingWindow>,
+) -> Result<String> {
+    tracing::info!(host, "building closure");
 
-    let mut args = vec![
-        "build".to_string(),
-        format!(
+    let mut cmd = tokio::process::Command::new("nix");
+    cmd.args([
+        "build",
+        &format!(
             "{}#nixosConfigurations.{}.config.system.build.toplevel",
             flake, host
         ),
-        "--print-out-paths".to_string(),
-        "--no-link".to_string(),
-    ];
-    if !crate::display::passthrough_output() {
-        args.push("--quiet".to_string());
+        "--print-out-paths",
+        "--no-link",
+    ]);
+    if !display::passthrough_output() {
+        cmd.arg("--quiet");
     }
-    let output = tokio::process::Command::new("nix")
-        .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(stderr_mode())
-        .output()
-        .await
-        .context(format!("Failed to build closure for {}", host))?;
+
+    let output = if display::passthrough_output() {
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .output()
+            .await
+            .context(format!("Failed to build closure for {}", host))?
+    } else {
+        display::run_cmd_async(&mut cmd, window)
+            .await
+            .context(format!("Failed to build closure for {}", host))?
+    };
 
     if !output.status.success() {
         bail!(
@@ -90,38 +97,59 @@ async fn build_host(flake: &str, host: &str) -> Result<String> {
 }
 
 /// Deploy via SSH fallback: nix-copy-closure + switch-to-configuration.
-/// `ssh_target` overrides the hostname for SSH connections (e.g. "root@192.168.1.10").
-async fn deploy_via_ssh(host: &str, store_path: &str, ssh_target: &str) -> Result<()> {
-    tracing::info!(host, ssh_target, store_path, "Copying closure via SSH");
+#[allow(clippy::needless_option_as_deref)]
+async fn deploy_via_ssh(
+    host: &str,
+    store_path: &str,
+    ssh_target: &str,
+    mut window: Option<&mut display::RollingWindow>,
+) -> Result<()> {
+    tracing::info!(host, ssh_target, store_path, "copying closure via SSH");
 
-    let copy_output = tokio::process::Command::new("nix-copy-closure")
-        .args(["--to", ssh_target, store_path])
-        .stdout(stderr_mode())
-        .stderr(stderr_mode())
-        .output()
-        .await
-        .context(format!("nix-copy-closure failed for {}", host))?;
+    let mut copy_cmd = tokio::process::Command::new("nix-copy-closure");
+    copy_cmd.args(["--to", ssh_target, store_path]);
+
+    let copy_output = if display::passthrough_output() {
+        copy_cmd
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .output()
+            .await
+            .context(format!("nix-copy-closure failed for {}", host))?
+    } else {
+        display::run_cmd_async(&mut copy_cmd, window.as_deref_mut())
+            .await
+            .context(format!("nix-copy-closure failed for {}", host))?
+    };
 
     if !copy_output.status.success() {
         let stderr = String::from_utf8_lossy(&copy_output.stderr);
         bail!("nix-copy-closure failed for {}: {}", host, stderr);
     }
 
-    tracing::info!(host, "Switching configuration");
+    tracing::info!(host, "switching configuration");
 
-    let switch_output = tokio::process::Command::new("ssh")
-        .args([
-            "-o",
-            "BatchMode=yes",
-            ssh_target,
-            &format!("{}/bin/switch-to-configuration", store_path),
-            "switch",
-        ])
-        .stdout(stderr_mode())
-        .stderr(stderr_mode())
-        .output()
-        .await
-        .context(format!("SSH switch failed for {}", host))?;
+    let mut switch_cmd = tokio::process::Command::new("ssh");
+    switch_cmd.args([
+        "-o",
+        "BatchMode=yes",
+        ssh_target,
+        &format!("{}/bin/switch-to-configuration", store_path),
+        "switch",
+    ]);
+
+    let switch_output = if display::passthrough_output() {
+        switch_cmd
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .output()
+            .await
+            .context(format!("SSH switch failed for {}", host))?
+    } else {
+        display::run_cmd_async(&mut switch_cmd, window.as_deref_mut())
+            .await
+            .context(format!("SSH switch failed for {}", host))?
+    };
 
     if !switch_output.status.success() {
         let stderr = String::from_utf8_lossy(&switch_output.stderr);
@@ -152,7 +180,6 @@ pub async fn run(
         );
     }
 
-    // --target requires exactly one host
     if target_override.is_some() && targets.len() > 1 {
         bail!(
             "--target can only be used with a single host, but {} hosts matched pattern '{}'",
@@ -165,22 +192,29 @@ pub async fn run(
 
     // Build all targets
     {
-        let span = tracing::info_span!("building");
-        crate::display::setup_progress(&span, targets.len() as u64);
-        let _guard = crate::display::maybe_enter(&span);
+        let mut window = if !display::passthrough_output() {
+            Some(display::RollingWindow::new("building", targets.len() as u64))
+        } else {
+            None
+        };
 
         for host in &targets {
-            match build_host(flake, host).await {
+            match build_host(flake, host, window.as_mut()).await {
                 Ok(path) => {
-                    tracing::info!(host, path = %crate::display::truncate_store_path(&path, 60), "built");
+                    tracing::info!(host, path = %display::truncate_store_path(&path, 60), "built");
                     results.insert(host.clone(), Ok(path));
                 }
                 Err(e) => {
                     tracing::warn!(host, error = %e, "build failed");
+                    if let Some(ref mut w) = window {
+                        w.mark_error();
+                    }
                     results.insert(host.clone(), Err(e));
                 }
             }
-            span.pb_inc(1);
+            if let Some(ref w) = window {
+                w.inc();
+            }
         }
     }
 
@@ -202,9 +236,11 @@ pub async fn run(
     let mut fail_count = 0;
 
     {
-        let span = tracing::info_span!("deploying");
-        crate::display::setup_progress(&span, targets.len() as u64);
-        let _guard = crate::display::maybe_enter(&span);
+        let mut window = if !display::passthrough_output() {
+            Some(display::RollingWindow::new("deploying", targets.len() as u64))
+        } else {
+            None
+        };
 
         for host in &targets {
             if let Some(Ok(store_path)) = results.get(host) {
@@ -212,20 +248,25 @@ pub async fn run(
                     Some(t) => t.to_string(),
                     None => format!("root@{}", host),
                 };
-                match deploy_via_ssh(host, store_path, &ssh_dest).await {
+                match deploy_via_ssh(host, store_path, &ssh_dest, window.as_mut()).await {
                     Ok(()) => {
                         tracing::info!(host, "deployed");
                         success_count += 1;
                     }
                     Err(e) => {
                         tracing::warn!(host, error = %e, "deploy failed");
+                        if let Some(ref mut w) = window {
+                            w.mark_error();
+                        }
                         fail_count += 1;
                     }
                 }
             } else {
                 fail_count += 1;
             }
-            span.pb_inc(1);
+            if let Some(ref w) = window {
+                w.inc();
+            }
         }
     }
 
@@ -273,7 +314,7 @@ fn resolve_target(tags: &[String], hosts: &[String]) -> Result<RolloutTarget> {
     }
 }
 
-/// Deploy via the rollout API instead of direct SSH or per-host control plane push.
+/// Deploy via the rollout API.
 #[allow(clippy::too_many_arguments)]
 pub async fn deploy_rollout(
     client: &reqwest::Client,
@@ -347,7 +388,6 @@ pub async fn deploy_rollout(
 
     Ok(())
 }
-
 
 // Glob-matching tests live in `cli/src/glob.rs`; the deploy module
 // just consumes `filter_hosts` from there now.

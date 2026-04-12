@@ -16,8 +16,8 @@ fn r3_push_hook_runs_locally_and_receives_store_path() {
     let trace_str = trace.to_str().unwrap();
     let hook = format!("echo {{}} >> {trace_str}");
 
-    run_push_hook(None, &hook, "/nix/store/aaa-web-01").unwrap();
-    run_push_hook(None, &hook, "/nix/store/bbb-web-02").unwrap();
+    run_push_hook(None, &hook, "/nix/store/aaa-web-01", None).unwrap();
+    run_push_hook(None, &hook, "/nix/store/bbb-web-02", None).unwrap();
 
     let contents = fs::read_to_string(&trace).unwrap();
     assert!(
@@ -39,7 +39,7 @@ fn r3_push_hook_runs_locally_and_receives_store_path() {
 #[test]
 fn r3_push_hook_failing_command_surfaces_error() {
     // Hook exits non-zero → run_push_hook must return Err.
-    let err = run_push_hook(None, "false", "/nix/store/ignored").unwrap_err();
+    let err = run_push_hook(None, "false", "/nix/store/ignored", None).unwrap_err();
     let msg = format!("{err:#}");
     assert!(
         msg.contains("push hook failed"),

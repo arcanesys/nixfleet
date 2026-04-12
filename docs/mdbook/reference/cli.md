@@ -13,7 +13,7 @@ Flat reference for all `nixfleet` CLI commands and flags.
 | `--ca-cert` | `NIXFLEET_CA_CERT` | `""` | CA certificate for TLS verification (uses system trust store if omitted) |
 | `--json` | — | `false` | Output structured JSON (on commands that produce tables/detail views) |
 | `--config` | — | — | Path to `.nixfleet.toml` (default: walk up from cwd) |
-| `-v`, `--verbose` | — | `0` | Increase verbosity (-v for info, -vv for debug). Default: warn. |
+| `-v`, `--verbose` | — | `0` | Verbosity: `-v` shows INFO milestones + subprocess rolling window + progress bar; `-vv` shows raw passthrough (debug) |
 
 Logging is controlled via `RUST_LOG` (overrides `-v`/`--verbose` when set).
 

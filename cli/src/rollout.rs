@@ -1,8 +1,6 @@
 use anyhow::{bail, Context, Result};
 use nixfleet_types::rollout::{RolloutDetail, RolloutStatus};
 use std::time::{Duration, Instant};
-use tracing_indicatif::span_ext::IndicatifSpanExt;
-
 use crate::display;
 
 /// Default upper bound on how long `deploy --wait` / `rollout status --wait`
@@ -150,9 +148,6 @@ pub async fn wait_for_completion(
     let timeout = max_wait.unwrap_or(DEFAULT_WAIT_TIMEOUT);
     let started = Instant::now();
 
-    let wait_span = tracing::info_span!("rollout_wait", rollout_id = %id);
-    let _wait_guard = crate::display::maybe_enter(&wait_span);
-
     loop {
         let resp = client
             .get(&url)
@@ -161,7 +156,7 @@ pub async fn wait_for_completion(
             .context("Failed to reach control plane")?;
 
         if !resp.status().is_success() {
-            drop(_wait_guard);
+
             bail!(
                 "Control plane returned {}: {}",
                 resp.status(),
@@ -196,14 +191,17 @@ pub async fn wait_for_completion(
             .map(|i| i + 1)
             .unwrap_or(0);
 
-        wait_span.pb_set_message(&format!(
-            "batch {}/{} — {}/{} healthy — {}",
-            current_batch, rollout.batches.len(),
-            healthy_machines, total_machines, rollout.status,
-        ));
+        tracing::info!(
+            batch = current_batch,
+            total_batches = rollout.batches.len(),
+            healthy = healthy_machines,
+            total = total_machines,
+            status = %rollout.status,
+            "rollout progress"
+        );
 
         if !rollout.status.is_active() {
-            drop(_wait_guard);
+
             println!(
                 "Rollout {} finished: {} ({} machines, {} batches)",
                 id, rollout.status, total_machines, rollout.batches.len()
@@ -215,7 +213,7 @@ pub async fn wait_for_completion(
         }
 
         if !timeout.is_zero() && started.elapsed() >= timeout {
-            drop(_wait_guard);
+
             bail!(
                 "Timed out after {}s waiting for rollout {} to finish (last status: {}). \
                  Re-run with --wait-timeout 0 to block indefinitely, or inspect with \

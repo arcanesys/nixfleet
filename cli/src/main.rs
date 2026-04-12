@@ -349,14 +349,11 @@ async fn main() -> Result<()> {
         1 => "nixfleet=info",
         _ => "nixfleet=debug",
     };
-    let indicatif_layer = tracing_indicatif::IndicatifLayer::new()
-        .with_max_progress_bars(12, None);
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
-                .with_writer(indicatif_layer.get_stderr_writer()),
+                .with_writer(display::SharedWriter::new()),
         )
-        .with(indicatif_layer)
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| default_level.into()),

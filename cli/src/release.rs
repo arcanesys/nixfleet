@@ -5,36 +5,29 @@ use nixfleet_types::release::{
 };
 use reqwest::Client;
 use std::process::Command;
-use tracing_indicatif::span_ext::IndicatifSpanExt;
-
 use crate::display;
 use crate::glob::filter_hosts;
 
-fn stderr_mode_sync() -> std::process::Stdio {
-    if crate::display::passthrough_output() {
-        std::process::Stdio::inherit()
-    } else {
-        std::process::Stdio::piped()
-    }
-}
-
 /// Discover all nixosConfigurations host names from a flake.
 fn discover_hosts(flake: &str) -> Result<Vec<String>> {
-    let mut args = vec![
-        "eval".to_string(),
-        format!("{}#nixosConfigurations", flake),
-        "--apply".to_string(),
-        "builtins.attrNames".to_string(),
-        "--json".to_string(),
-    ];
-    if !crate::display::passthrough_output() {
-        args.push("--quiet".to_string());
+    let mut cmd = Command::new("nix");
+    cmd.args([
+        "eval",
+        &format!("{}#nixosConfigurations", flake),
+        "--apply",
+        "builtins.attrNames",
+        "--json",
+    ]);
+    if !display::passthrough_output() {
+        cmd.arg("--quiet");
     }
-    let output = Command::new("nix")
-        .args(&args)
-        .stderr(stderr_mode_sync())
-        .output()
-        .context("failed to run nix eval")?;
+    let output = if display::passthrough_output() {
+        cmd.stderr(std::process::Stdio::inherit())
+            .output()
+            .context("failed to run nix eval")?
+    } else {
+        display::run_cmd(&mut cmd, None).context("failed to run nix eval")?
+    };
     if !output.status.success() {
         anyhow::bail!(
             "nix eval failed: {}",
@@ -48,19 +41,22 @@ fn discover_hosts(flake: &str) -> Result<Vec<String>> {
 
 /// Detect platform for a host.
 fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
-    let mut args = vec![
-        "eval".to_string(),
-        format!("{}#nixosConfigurations.{}.pkgs.system", flake, hostname),
-        "--raw".to_string(),
-    ];
-    if !crate::display::passthrough_output() {
-        args.push("--quiet".to_string());
+    let mut cmd = Command::new("nix");
+    cmd.args([
+        "eval",
+        &format!("{}#nixosConfigurations.{}.pkgs.system", flake, hostname),
+        "--raw",
+    ]);
+    if !display::passthrough_output() {
+        cmd.arg("--quiet");
     }
-    let output = Command::new("nix")
-        .args(&args)
-        .stderr(stderr_mode_sync())
-        .output()
-        .context("failed to detect platform")?;
+    let output = if display::passthrough_output() {
+        cmd.stderr(std::process::Stdio::inherit())
+            .output()
+            .context("failed to detect platform")?
+    } else {
+        display::run_cmd(&mut cmd, None).context("failed to detect platform")?
+    };
     if !output.status.success() {
         anyhow::bail!(
             "failed to detect platform for {}: {}",
@@ -73,21 +69,23 @@ fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
 
 /// Detect tags for a host (best-effort).
 fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
-    let mut args = vec![
-        "eval".to_string(),
-        format!(
+    let mut cmd = Command::new("nix");
+    cmd.args([
+        "eval",
+        &format!(
             "{}#nixosConfigurations.{}.config.services.nixfleet-agent.tags",
             flake, hostname
         ),
-        "--json".to_string(),
-    ];
-    if !crate::display::passthrough_output() {
-        args.push("--quiet".to_string());
+        "--json",
+    ]);
+    if !display::passthrough_output() {
+        cmd.arg("--quiet");
     }
-    let output = Command::new("nix")
-        .args(&args)
-        .stderr(stderr_mode_sync())
-        .output();
+    let output = if display::passthrough_output() {
+        cmd.stderr(std::process::Stdio::inherit()).output()
+    } else {
+        display::run_cmd(&mut cmd, None)
+    };
     match output {
         Ok(o) if o.status.success() => serde_json::from_slice(&o.stdout).unwrap_or_default(),
         _ => vec![],
@@ -95,25 +93,32 @@ fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
 }
 
 /// Build a host's toplevel closure.
-fn build_host(flake: &str, hostname: &str) -> Result<String> {
+fn build_host(
+    flake: &str,
+    hostname: &str,
+    window: Option<&mut display::RollingWindow>,
+) -> Result<String> {
     tracing::info!(hostname, "building closure");
-    let mut args = vec![
-        "build".to_string(),
-        format!(
+    let mut cmd = Command::new("nix");
+    cmd.args([
+        "build",
+        &format!(
             "{}#nixosConfigurations.{}.config.system.build.toplevel",
             flake, hostname
         ),
-        "--print-out-paths".to_string(),
-        "--no-link".to_string(),
-    ];
-    if !crate::display::passthrough_output() {
-        args.push("--quiet".to_string());
+        "--print-out-paths",
+        "--no-link",
+    ]);
+    if !display::passthrough_output() {
+        cmd.arg("--quiet");
     }
-    let output = Command::new("nix")
-        .args(&args)
-        .stderr(stderr_mode_sync())
-        .output()
-        .context("failed to run nix build")?;
+    let output = if display::passthrough_output() {
+        cmd.stderr(std::process::Stdio::inherit())
+            .output()
+            .context("failed to run nix build")?
+    } else {
+        display::run_cmd(&mut cmd, window).context("failed to run nix build")?
+    };
     if !output.status.success() {
         anyhow::bail!(
             "nix build failed for {}: {}",
@@ -125,22 +130,24 @@ fn build_host(flake: &str, hostname: &str) -> Result<String> {
 }
 
 /// Copy a store path to a Nix binary cache (S3, SSH, HTTP, etc.).
-fn nix_copy_to(cache_url: &str, store_path: &str) -> Result<()> {
+fn nix_copy_to(
+    cache_url: &str,
+    store_path: &str,
+    window: Option<&mut display::RollingWindow>,
+) -> Result<()> {
     tracing::info!(store_path, dest = cache_url, "copying closure");
-    let mut args = vec![
-        "copy".to_string(),
-        "--to".to_string(),
-        cache_url.to_string(),
-        store_path.to_string(),
-    ];
-    if !crate::display::passthrough_output() {
-        args.push("--quiet".to_string());
+    let mut cmd = Command::new("nix");
+    cmd.args(["copy", "--to", cache_url, store_path]);
+    if !display::passthrough_output() {
+        cmd.arg("--quiet");
     }
-    let output = Command::new("nix")
-        .args(&args)
-        .stderr(stderr_mode_sync())
-        .output()
-        .context("failed to run nix copy --to")?;
+    let output = if display::passthrough_output() {
+        cmd.stderr(std::process::Stdio::inherit())
+            .output()
+            .context("failed to run nix copy --to")?
+    } else {
+        display::run_cmd(&mut cmd, window).context("failed to run nix copy --to")?
+    };
     if !output.status.success() {
         anyhow::bail!(
             "nix copy --to {} failed for {}: {}",
@@ -153,17 +160,21 @@ fn nix_copy_to(cache_url: &str, store_path: &str) -> Result<()> {
 }
 
 /// Copy a closure to a remote host via SSH.
-fn copy_to_host(hostname: &str, store_path: &str) -> Result<()> {
+fn copy_to_host(
+    hostname: &str,
+    store_path: &str,
+    window: Option<&mut display::RollingWindow>,
+) -> Result<()> {
     tracing::info!(store_path, dest = hostname, "copying closure");
-    let output = Command::new("nix-copy-closure")
-        .args([
-            "--to",
-            &format!("root@{}", hostname),
-            store_path,
-        ])
-        .stderr(stderr_mode_sync())
-        .output()
-        .context("failed to run nix-copy-closure")?;
+    let mut cmd = Command::new("nix-copy-closure");
+    cmd.args(["--to", &format!("root@{}", hostname), store_path]);
+    let output = if display::passthrough_output() {
+        cmd.stderr(std::process::Stdio::inherit())
+            .output()
+            .context("failed to run nix-copy-closure")?
+    } else {
+        display::run_cmd(&mut cmd, window).context("failed to run nix-copy-closure")?
+    };
     if !output.status.success() {
         anyhow::bail!(
             "nix-copy-closure failed for {}: {}",
@@ -176,10 +187,13 @@ fn copy_to_host(hostname: &str, store_path: &str) -> Result<()> {
 
 /// Resolve the flake's git revision.
 fn flake_revision(flake: &str) -> Option<String> {
-    let output = Command::new("nix")
-        .args(["flake", "metadata", flake, "--json"])
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("nix");
+    cmd.args(["flake", "metadata", flake, "--json"]);
+    let output = if display::passthrough_output() {
+        cmd.stderr(std::process::Stdio::inherit()).output().ok()?
+    } else {
+        display::run_cmd(&mut cmd, None).ok()?
+    };
     if !output.status.success() {
         return None;
     }
@@ -187,23 +201,41 @@ fn flake_revision(flake: &str) -> Option<String> {
     metadata.get("revision")?.as_str().map(|s| s.to_string())
 }
 
-/// `nixfleet release create`
 /// Run a push hook command for a store path, optionally on a remote host via SSH.
-pub fn run_push_hook(push_to_host: Option<&str>, hook_cmd: &str, store_path: &str) -> Result<()> {
-    let cmd = hook_cmd.replace("{}", store_path);
-    tracing::info!(cmd = %cmd, "running push hook");
-    let status = match push_to_host {
-        Some(host) => Command::new("ssh")
-            .args(["-o", "BatchMode=yes", host, &cmd])
-            .status()
-            .context("failed to run push hook via SSH")?,
-        None => Command::new("sh")
-            .args(["-c", &cmd])
-            .status()
-            .context("failed to run push hook")?,
+pub fn run_push_hook(
+    push_to_host: Option<&str>,
+    hook_cmd: &str,
+    store_path: &str,
+    window: Option<&mut display::RollingWindow>,
+) -> Result<()> {
+    let cmd_str = hook_cmd.replace("{}", store_path);
+    tracing::info!(cmd = %cmd_str, "running push hook");
+    let mut cmd = match push_to_host {
+        Some(host) => {
+            let mut c = Command::new("ssh");
+            c.args(["-o", "BatchMode=yes", host, &cmd_str]);
+            c
+        }
+        None => {
+            let mut c = Command::new("sh");
+            c.args(["-c", &cmd_str]);
+            c
+        }
     };
-    if !status.success() {
-        anyhow::bail!("push hook failed: {}", cmd);
+    if display::passthrough_output() {
+        let status = cmd
+            .stderr(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .status()
+            .context("failed to run push hook")?;
+        if !status.success() {
+            anyhow::bail!("push hook failed: {}", cmd_str);
+        }
+        return Ok(());
+    }
+    let output = display::run_cmd(&mut cmd, window).context("failed to run push hook")?;
+    if !output.status.success() {
+        anyhow::bail!("push hook failed: {}", cmd_str);
     }
     Ok(())
 }
@@ -239,25 +271,37 @@ pub async fn create(
     // Build all hosts
     let mut entries = Vec::new();
     {
-        let span = tracing::info_span!("building");
-        crate::display::setup_progress(&span, hosts.len() as u64);
+        let mut window = if !display::passthrough_output() {
+            Some(display::RollingWindow::new("building", hosts.len() as u64))
+        } else {
+            None
+        };
+
         for hostname in &hosts {
-            let _guard = crate::display::maybe_enter(&span);
             let platform = detect_platform(flake, hostname)?;
             let tags = detect_tags(flake, hostname);
-            let store_path = build_host(flake, hostname)?;
-
-            if platform.contains("darwin") {
-                tracing::info!(hostname, "Darwin host — built and cached but not deployable via agent");
+            match build_host(flake, hostname, window.as_mut()) {
+                Ok(store_path) => {
+                    if platform.contains("darwin") {
+                        tracing::info!(hostname, "Darwin host — built and cached but not deployable via agent");
+                    }
+                    entries.push(ReleaseEntry {
+                        hostname: hostname.clone(),
+                        store_path,
+                        platform,
+                        tags,
+                    });
+                }
+                Err(e) => {
+                    if let Some(ref mut w) = window {
+                        w.mark_error();
+                    }
+                    return Err(e);
+                }
             }
-
-            entries.push(ReleaseEntry {
-                hostname: hostname.clone(),
-                store_path,
-                platform,
-                tags,
-            });
-            span.pb_inc(1);
+            if let Some(ref w) = window {
+                w.inc();
+            }
         }
     }
 
@@ -270,18 +314,27 @@ pub async fn create(
             .collect::<std::collections::HashSet<_>>()
             .len();
         {
-            let span = tracing::info_span!("pushing", dest = %push_url);
-            crate::display::setup_progress(&span, unique_count as u64);
+            let mut window = if !display::passthrough_output() {
+                Some(display::RollingWindow::new("pushing", unique_count as u64))
+            } else {
+                None
+            };
+
             for entry in &entries {
-                let _guard = crate::display::maybe_enter(&span);
                 if pushed.insert(entry.store_path.clone()) {
-                    nix_copy_to(push_url, &entry.store_path)?;
-                    span.pb_inc(1);
+                    if let Err(e) = nix_copy_to(push_url, &entry.store_path, window.as_mut()) {
+                        if let Some(ref mut w) = window {
+                            w.mark_error();
+                        }
+                        return Err(e);
+                    }
+                    if let Some(ref w) = window {
+                        w.inc();
+                    }
                 }
             }
         }
 
-        // Run push hook on the remote host if specified
         if let Some(hook) = push_hook {
             let remote_host = extract_ssh_host(push_url);
             tracing::info!(
@@ -289,30 +342,39 @@ pub async fn create(
                 "running push hook"
             );
             for entry in &entries {
-                run_push_hook(remote_host.as_deref(), hook, &entry.store_path)?;
+                run_push_hook(remote_host.as_deref(), hook, &entry.store_path, None)?;
             }
         }
     } else if let Some(hook) = push_hook {
-        // Hook without push-to: run locally
         tracing::info!("running push hook locally");
         for entry in &entries {
-            run_push_hook(None, hook, &entry.store_path)?;
+            run_push_hook(None, hook, &entry.store_path, None)?;
         }
     } else if copy {
         {
-            let span = tracing::info_span!("copying");
-            crate::display::setup_progress(&span, entries.len() as u64);
+            let mut window = if !display::passthrough_output() {
+                Some(display::RollingWindow::new("copying", entries.len() as u64))
+            } else {
+                None
+            };
+
             for entry in &entries {
-                let _guard = crate::display::maybe_enter(&span);
                 if entry.platform.contains("darwin") {
                     tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
-                    span.pb_inc(1);
+                    if let Some(ref w) = window {
+                        w.inc();
+                    }
                     continue;
                 }
-                if let Err(e) = copy_to_host(&entry.hostname, &entry.store_path) {
+                if let Err(e) = copy_to_host(&entry.hostname, &entry.store_path, window.as_mut()) {
                     tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
+                    if let Some(ref mut w) = window {
+                        w.mark_error();
+                    }
                 }
-                span.pb_inc(1);
+                if let Some(ref w) = window {
+                    w.inc();
+                }
             }
         }
     }
