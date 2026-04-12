@@ -6,6 +6,7 @@ use std::process::Stdio;
 mod client;
 mod config;
 mod deploy;
+mod display;
 mod glob;
 mod host;
 mod machines;
