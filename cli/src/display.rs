@@ -8,6 +8,26 @@
 use comfy_table::{ContentArrangement, Table};
 use console::style;
 use serde::Serialize;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+/// Global verbosity level set by main.rs from the `-v` flag count.
+/// 0 = warn (default), 1 = info (-v), 2+ = debug (-vv).
+///
+/// At level 2+, subprocess output (nix build, ssh, nix-copy-closure)
+/// is inherited instead of piped, giving full passthrough of build
+/// progress, agenix decryption, and systemd switch output.
+static VERBOSITY: AtomicU8 = AtomicU8::new(0);
+
+/// Set the global verbosity level. Called once from main.rs.
+pub fn set_verbosity(level: u8) {
+    VERBOSITY.store(level, Ordering::Relaxed);
+}
+
+/// Returns true when verbosity is >= 2 (-vv). Subprocess commands
+/// should inherit stdout/stderr instead of piping.
+pub fn passthrough_output() -> bool {
+    VERBOSITY.load(Ordering::Relaxed) >= 2
+}
 
 // ---------------------------------------------------------------
 // Tables
@@ -142,6 +162,22 @@ pub fn print_detail(pairs: &[(&str, String)]) {
 // ---------------------------------------------------------------
 // Progress bars (tracing-indicatif span-based)
 // ---------------------------------------------------------------
+
+/// Set up a tracing span as a progress bar. In passthrough mode (-vv),
+/// does nothing. Call `maybe_enter_span` to conditionally enter.
+pub fn setup_progress(span: &tracing::Span, len: u64) {
+    if !passthrough_output() {
+        use tracing_indicatif::span_ext::IndicatifSpanExt;
+        span.pb_set_length(len);
+        span.pb_set_style(&progress_style());
+    }
+}
+
+/// Conditionally enter a span. Returns None in passthrough mode
+/// so no spinner/bar is created by tracing-indicatif.
+pub fn maybe_enter<'a>(span: &'a tracing::Span) -> Option<tracing::span::Entered<'a>> {
+    if passthrough_output() { None } else { Some(span.enter()) }
+}
 
 /// Style for counted progress bars managed by tracing-indicatif.
 ///

@@ -337,6 +337,7 @@ enum MachineAction {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    display::set_verbosity(cli.verbose);
 
     let default_level = match cli.verbose {
         0 => "nixfleet=warn",
@@ -731,20 +732,23 @@ async fn rollback(
     println!("Rolling back {} to {}", host, store_path);
 
     // SSH rollback: switch to the specified profile on the target
+    let stderr = if display::passthrough_output() { Stdio::inherit() } else { Stdio::piped() };
     let switch_output = tokio::process::Command::new("ssh")
         .args([
+            "-o", "BatchMode=yes",
             ssh_dest,
             &format!("{}/bin/switch-to-configuration", store_path),
             "switch",
         ])
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+        .stderr(stderr)
+        .output()
         .await
         .context("SSH switch-to-configuration failed")?;
 
-    if !switch_output.success() {
-        bail!("Rollback failed on {}", host);
+    if !switch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&switch_output.stderr);
+        bail!("Rollback failed on {}: {}", host, stderr);
     }
     println!("Rollback complete on {}", host);
 

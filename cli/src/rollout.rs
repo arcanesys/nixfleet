@@ -151,7 +151,7 @@ pub async fn wait_for_completion(
     let started = Instant::now();
 
     let wait_span = tracing::info_span!("rollout_wait", rollout_id = %id);
-    let _wait_guard = wait_span.enter();
+    let _wait_guard = crate::display::maybe_enter(&wait_span);
 
     loop {
         let resp = client

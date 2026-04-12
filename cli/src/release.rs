@@ -10,17 +10,29 @@ use tracing_indicatif::span_ext::IndicatifSpanExt;
 use crate::display;
 use crate::glob::filter_hosts;
 
+fn stderr_mode_sync() -> std::process::Stdio {
+    if crate::display::passthrough_output() {
+        std::process::Stdio::inherit()
+    } else {
+        std::process::Stdio::piped()
+    }
+}
+
 /// Discover all nixosConfigurations host names from a flake.
 fn discover_hosts(flake: &str) -> Result<Vec<String>> {
+    let mut args = vec![
+        "eval".to_string(),
+        format!("{}#nixosConfigurations", flake),
+        "--apply".to_string(),
+        "builtins.attrNames".to_string(),
+        "--json".to_string(),
+    ];
+    if !crate::display::passthrough_output() {
+        args.push("--quiet".to_string());
+    }
     let output = Command::new("nix")
-        .args([
-            "eval",
-            &format!("{}#nixosConfigurations", flake),
-            "--apply",
-            "builtins.attrNames",
-            "--json",
-            "--quiet",
-        ])
+        .args(&args)
+        .stderr(stderr_mode_sync())
         .output()
         .context("failed to run nix eval")?;
     if !output.status.success() {
@@ -36,13 +48,17 @@ fn discover_hosts(flake: &str) -> Result<Vec<String>> {
 
 /// Detect platform for a host.
 fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
+    let mut args = vec![
+        "eval".to_string(),
+        format!("{}#nixosConfigurations.{}.pkgs.system", flake, hostname),
+        "--raw".to_string(),
+    ];
+    if !crate::display::passthrough_output() {
+        args.push("--quiet".to_string());
+    }
     let output = Command::new("nix")
-        .args([
-            "eval",
-            &format!("{}#nixosConfigurations.{}.pkgs.system", flake, hostname),
-            "--raw",
-            "--quiet",
-        ])
+        .args(&args)
+        .stderr(stderr_mode_sync())
         .output()
         .context("failed to detect platform")?;
     if !output.status.success() {
@@ -57,16 +73,20 @@ fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
 
 /// Detect tags for a host (best-effort).
 fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
+    let mut args = vec![
+        "eval".to_string(),
+        format!(
+            "{}#nixosConfigurations.{}.config.services.nixfleet-agent.tags",
+            flake, hostname
+        ),
+        "--json".to_string(),
+    ];
+    if !crate::display::passthrough_output() {
+        args.push("--quiet".to_string());
+    }
     let output = Command::new("nix")
-        .args([
-            "eval",
-            &format!(
-                "{}#nixosConfigurations.{}.config.services.nixfleet-agent.tags",
-                flake, hostname
-            ),
-            "--json",
-            "--quiet",
-        ])
+        .args(&args)
+        .stderr(stderr_mode_sync())
         .output();
     match output {
         Ok(o) if o.status.success() => serde_json::from_slice(&o.stdout).unwrap_or_default(),
@@ -77,17 +97,21 @@ fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
 /// Build a host's toplevel closure.
 fn build_host(flake: &str, hostname: &str) -> Result<String> {
     tracing::info!(hostname, "building closure");
+    let mut args = vec![
+        "build".to_string(),
+        format!(
+            "{}#nixosConfigurations.{}.config.system.build.toplevel",
+            flake, hostname
+        ),
+        "--print-out-paths".to_string(),
+        "--no-link".to_string(),
+    ];
+    if !crate::display::passthrough_output() {
+        args.push("--quiet".to_string());
+    }
     let output = Command::new("nix")
-        .args([
-            "build",
-            &format!(
-                "{}#nixosConfigurations.{}.config.system.build.toplevel",
-                flake, hostname
-            ),
-            "--print-out-paths",
-            "--no-link",
-            "--quiet",
-        ])
+        .args(&args)
+        .stderr(stderr_mode_sync())
         .output()
         .context("failed to run nix build")?;
     if !output.status.success() {
@@ -103,8 +127,18 @@ fn build_host(flake: &str, hostname: &str) -> Result<String> {
 /// Copy a store path to a Nix binary cache (S3, SSH, HTTP, etc.).
 fn nix_copy_to(cache_url: &str, store_path: &str) -> Result<()> {
     tracing::info!(store_path, dest = cache_url, "copying closure");
+    let mut args = vec![
+        "copy".to_string(),
+        "--to".to_string(),
+        cache_url.to_string(),
+        store_path.to_string(),
+    ];
+    if !crate::display::passthrough_output() {
+        args.push("--quiet".to_string());
+    }
     let output = Command::new("nix")
-        .args(["copy", "--to", cache_url, store_path, "--quiet"])
+        .args(&args)
+        .stderr(stderr_mode_sync())
         .output()
         .context("failed to run nix copy --to")?;
     if !output.status.success() {
@@ -122,7 +156,12 @@ fn nix_copy_to(cache_url: &str, store_path: &str) -> Result<()> {
 fn copy_to_host(hostname: &str, store_path: &str) -> Result<()> {
     tracing::info!(store_path, dest = hostname, "copying closure");
     let output = Command::new("nix-copy-closure")
-        .args(["--to", &format!("root@{}", hostname), store_path])
+        .args([
+            "--to",
+            &format!("root@{}", hostname),
+            store_path,
+        ])
+        .stderr(stderr_mode_sync())
         .output()
         .context("failed to run nix-copy-closure")?;
     if !output.status.success() {
@@ -155,7 +194,7 @@ pub fn run_push_hook(push_to_host: Option<&str>, hook_cmd: &str, store_path: &st
     tracing::info!(cmd = %cmd, "running push hook");
     let status = match push_to_host {
         Some(host) => Command::new("ssh")
-            .args([host, &cmd])
+            .args(["-o", "BatchMode=yes", host, &cmd])
             .status()
             .context("failed to run push hook via SSH")?,
         None => Command::new("sh")
@@ -201,10 +240,9 @@ pub async fn create(
     let mut entries = Vec::new();
     {
         let span = tracing::info_span!("building");
-        span.pb_set_length(hosts.len() as u64);
-        span.pb_set_style(&crate::display::progress_style());
+        crate::display::setup_progress(&span, hosts.len() as u64);
         for hostname in &hosts {
-            let _guard = span.enter();
+            let _guard = crate::display::maybe_enter(&span);
             let platform = detect_platform(flake, hostname)?;
             let tags = detect_tags(flake, hostname);
             let store_path = build_host(flake, hostname)?;
@@ -233,10 +271,9 @@ pub async fn create(
             .len();
         {
             let span = tracing::info_span!("pushing", dest = %push_url);
-            span.pb_set_length(unique_count as u64);
-        span.pb_set_style(&crate::display::progress_style());
+            crate::display::setup_progress(&span, unique_count as u64);
             for entry in &entries {
-                let _guard = span.enter();
+                let _guard = crate::display::maybe_enter(&span);
                 if pushed.insert(entry.store_path.clone()) {
                     nix_copy_to(push_url, &entry.store_path)?;
                     span.pb_inc(1);
@@ -264,10 +301,9 @@ pub async fn create(
     } else if copy {
         {
             let span = tracing::info_span!("copying");
-            span.pb_set_length(entries.len() as u64);
-        span.pb_set_style(&crate::display::progress_style());
+            crate::display::setup_progress(&span, entries.len() as u64);
             for entry in &entries {
-                let _guard = span.enter();
+                let _guard = crate::display::maybe_enter(&span);
                 if entry.platform.contains("darwin") {
                     tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
                     span.pb_inc(1);

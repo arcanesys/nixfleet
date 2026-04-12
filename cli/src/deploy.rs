@@ -8,19 +8,31 @@ use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 use crate::glob::filter_hosts;
 
+/// Stderr mode: inherit for -vv passthrough, pipe otherwise.
+fn stderr_mode() -> Stdio {
+    if crate::display::passthrough_output() {
+        Stdio::inherit()
+    } else {
+        Stdio::piped()
+    }
+}
+
 /// Discover NixOS host names from the flake by evaluating nixosConfigurations attribute names.
 async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
+    let mut args = vec![
+        "eval".to_string(),
+        format!("{}#nixosConfigurations", flake),
+        "--apply".to_string(),
+        "builtins.attrNames".to_string(),
+        "--json".to_string(),
+    ];
+    if !crate::display::passthrough_output() {
+        args.push("--quiet".to_string());
+    }
     let output = tokio::process::Command::new("nix")
-        .args([
-            "eval",
-            &format!("{}#nixosConfigurations", flake),
-            "--apply",
-            "builtins.attrNames",
-            "--json",
-            "--quiet",
-        ])
+        .args(&args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(stderr_mode())
         .output()
         .await
         .context("Failed to run nix eval for host discovery")?;
@@ -41,19 +53,22 @@ async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
 async fn build_host(flake: &str, host: &str) -> Result<String> {
     tracing::info!(host, "Building closure");
 
+    let mut args = vec![
+        "build".to_string(),
+        format!(
+            "{}#nixosConfigurations.{}.config.system.build.toplevel",
+            flake, host
+        ),
+        "--print-out-paths".to_string(),
+        "--no-link".to_string(),
+    ];
+    if !crate::display::passthrough_output() {
+        args.push("--quiet".to_string());
+    }
     let output = tokio::process::Command::new("nix")
-        .args([
-            "build",
-            &format!(
-                "{}#nixosConfigurations.{}.config.system.build.toplevel",
-                flake, host
-            ),
-            "--print-out-paths",
-            "--no-link",
-            "--quiet",
-        ])
+        .args(&args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(stderr_mode())
         .output()
         .await
         .context(format!("Failed to build closure for {}", host))?;
@@ -81,8 +96,8 @@ async fn deploy_via_ssh(host: &str, store_path: &str, ssh_target: &str) -> Resul
 
     let copy_output = tokio::process::Command::new("nix-copy-closure")
         .args(["--to", ssh_target, store_path])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(stderr_mode())
+        .stderr(stderr_mode())
         .output()
         .await
         .context(format!("nix-copy-closure failed for {}", host))?;
@@ -96,12 +111,14 @@ async fn deploy_via_ssh(host: &str, store_path: &str, ssh_target: &str) -> Resul
 
     let switch_output = tokio::process::Command::new("ssh")
         .args([
+            "-o",
+            "BatchMode=yes",
             ssh_target,
             &format!("{}/bin/switch-to-configuration", store_path),
             "switch",
         ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(stderr_mode())
+        .stderr(stderr_mode())
         .output()
         .await
         .context(format!("SSH switch failed for {}", host))?;
@@ -149,9 +166,8 @@ pub async fn run(
     // Build all targets
     {
         let span = tracing::info_span!("building");
-        span.pb_set_length(targets.len() as u64);
-        span.pb_set_style(&crate::display::progress_style());
-        let _guard = span.enter();
+        crate::display::setup_progress(&span, targets.len() as u64);
+        let _guard = crate::display::maybe_enter(&span);
 
         for host in &targets {
             match build_host(flake, host).await {
@@ -187,9 +203,8 @@ pub async fn run(
 
     {
         let span = tracing::info_span!("deploying");
-        span.pb_set_length(targets.len() as u64);
-        span.pb_set_style(&crate::display::progress_style());
-        let _guard = span.enter();
+        crate::display::setup_progress(&span, targets.len() as u64);
+        let _guard = crate::display::maybe_enter(&span);
 
         for host in &targets {
             if let Some(Ok(store_path)) = results.get(host) {
