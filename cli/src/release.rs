@@ -18,7 +18,7 @@ fn discover_hosts(flake: &str) -> Result<Vec<String>> {
         "builtins.attrNames",
         "--json",
     ]);
-    if !display::passthrough_output() {
+    if display::quiet_subprocess() {
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
@@ -47,7 +47,7 @@ fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
         &format!("{}#nixosConfigurations.{}.pkgs.system", flake, hostname),
         "--raw",
     ]);
-    if !display::passthrough_output() {
+    if display::quiet_subprocess() {
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
@@ -78,7 +78,7 @@ fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
         ),
         "--json",
     ]);
-    if !display::passthrough_output() {
+    if display::quiet_subprocess() {
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
@@ -109,7 +109,7 @@ fn build_host(
         "--print-out-paths",
         "--no-link",
     ]);
-    if !display::passthrough_output() {
+    if display::quiet_subprocess() {
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
@@ -138,7 +138,7 @@ fn nix_copy_to(
     tracing::info!(store_path, dest = cache_url, "copying closure");
     let mut cmd = Command::new("nix");
     cmd.args(["copy", "--to", cache_url, store_path]);
-    if !display::passthrough_output() {
+    if display::quiet_subprocess() {
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {

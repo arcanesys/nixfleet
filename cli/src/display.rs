@@ -35,6 +35,12 @@ pub fn passthrough_output() -> bool {
     verbosity() >= 2
 }
 
+/// Returns true when subprocess output should be fully suppressed
+/// (verbosity 0, no flag). At `-v` and `-vv`, subprocess output is shown.
+pub fn quiet_subprocess() -> bool {
+    verbosity() == 0
+}
+
 /// Returns true when a progress bar / rolling window should be shown.
 /// Requires a TTY on stderr (no progress in CI/pipes) and not in
 /// passthrough mode (-vv).
@@ -172,6 +178,15 @@ impl RollingWindow {
     /// Push a line of subprocess output into the rolling window.
     /// The window auto-expands from 0 to WINDOW_SIZE lines as output arrives.
     pub fn log_line(&mut self, text: &str) {
+        self.log_line_inner(text, false);
+    }
+
+    /// Replace the last line in the rolling window (for `\r`-delimited progress).
+    pub fn log_line_replace(&mut self, text: &str) {
+        self.log_line_inner(text, true);
+    }
+
+    fn log_line_inner(&mut self, text: &str, replace: bool) {
         let trimmed = text.trim_end();
         if trimmed.is_empty() {
             return;
@@ -179,10 +194,15 @@ impl RollingWindow {
 
         let prefixed = format!("{}{}", self.line_prefix, trimmed);
 
-        if self.ring.len() >= WINDOW_SIZE {
-            self.ring.pop_front();
+        if replace && !self.ring.is_empty() {
+            // Overwrite the last entry (in-place progress update)
+            *self.ring.back_mut().unwrap() = prefixed;
+        } else {
+            if self.ring.len() >= WINDOW_SIZE {
+                self.ring.pop_front();
+            }
+            self.ring.push_back(prefixed);
         }
-        self.ring.push_back(prefixed);
 
         // Grow the line pool if we need more visible lines
         let line_style = ProgressStyle::with_template("  {msg}").unwrap();
@@ -268,6 +288,7 @@ pub fn run_cmd(cmd: &mut Command, mut window: Option<&mut RollingWindow>) -> std
     if let Some(mut stderr) = stderr_handle {
         let mut buf = [0u8; 4096];
         let mut line_buf = String::new();
+        let mut last_was_cr = false;
         loop {
             let n = stderr.read(&mut buf)?;
             if n == 0 {
@@ -276,19 +297,31 @@ pub fn run_cmd(cmd: &mut Command, mut window: Option<&mut RollingWindow>) -> std
             stderr_buf.extend_from_slice(&buf[..n]);
             let chunk = String::from_utf8_lossy(&buf[..n]);
             for ch in chunk.chars() {
-                if ch == '\n' || ch == '\r' {
+                if ch == '\r' {
+                    if !line_buf.is_empty() {
+                        if let Some(ref mut w) = window {
+                            if last_was_cr {
+                                w.log_line_replace(&line_buf);
+                            } else {
+                                w.log_line(&line_buf);
+                            }
+                        }
+                        line_buf.clear();
+                    }
+                    last_was_cr = true;
+                } else if ch == '\n' {
                     if !line_buf.is_empty() {
                         if let Some(ref mut w) = window {
                             w.log_line(&line_buf);
                         }
                         line_buf.clear();
                     }
+                    last_was_cr = false;
                 } else {
                     line_buf.push(ch);
                 }
             }
         }
-        // Flush remaining partial line
         if !line_buf.is_empty() {
             if let Some(ref mut w) = window {
                 w.log_line(&line_buf);
@@ -323,6 +356,7 @@ pub async fn run_cmd_async(
         use tokio::io::AsyncReadExt;
         let mut buf = [0u8; 4096];
         let mut line_buf = String::new();
+        let mut last_was_cr = false;
         loop {
             let n = stderr.read(&mut buf).await?;
             if n == 0 {
@@ -331,13 +365,26 @@ pub async fn run_cmd_async(
             stderr_buf.extend_from_slice(&buf[..n]);
             let chunk = String::from_utf8_lossy(&buf[..n]);
             for ch in chunk.chars() {
-                if ch == '\n' || ch == '\r' {
+                if ch == '\r' {
+                    if !line_buf.is_empty() {
+                        if let Some(ref mut w) = window {
+                            if last_was_cr {
+                                w.log_line_replace(&line_buf);
+                            } else {
+                                w.log_line(&line_buf);
+                            }
+                        }
+                        line_buf.clear();
+                    }
+                    last_was_cr = true;
+                } else if ch == '\n' {
                     if !line_buf.is_empty() {
                         if let Some(ref mut w) = window {
                             w.log_line(&line_buf);
                         }
                         line_buf.clear();
                     }
+                    last_was_cr = false;
                 } else {
                     line_buf.push(ch);
                 }

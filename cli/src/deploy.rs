@@ -18,7 +18,7 @@ async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
         "builtins.attrNames",
         "--json",
     ]);
-    if !display::passthrough_output() {
+    if display::quiet_subprocess() {
         cmd.arg("--quiet");
     }
 
@@ -64,7 +64,7 @@ async fn build_host(
         "--print-out-paths",
         "--no-link",
     ]);
-    if !display::passthrough_output() {
+    if display::quiet_subprocess() {
         cmd.arg("--quiet");
     }
 
