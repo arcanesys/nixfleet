@@ -91,6 +91,10 @@
               nixfleet.backup = {
                 enable = true;
                 schedule = "*-*-* *:*:00";
+                # Satisfy required-field assertions (the test overrides
+                # ExecStart so restic never actually runs).
+                restic.repository = "/tmp/dummy-repo";
+                restic.passwordFile = "${pkgs.writeText "dummy-pw" "x"}";
               };
               # Provide a dummy ExecStart so the service can run
               systemd.services.nixfleet-backup.serviceConfig.ExecStart = "${pkgs.coreutils}/bin/true";
