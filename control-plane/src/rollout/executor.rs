@@ -1,5 +1,6 @@
 use crate::db::Db;
 use crate::state::FleetState;
+use anyhow::Context;
 use nixfleet_types::metrics as m;
 use nixfleet_types::DesiredGeneration;
 use std::sync::Arc;
@@ -10,12 +11,32 @@ use tokio::task::JoinHandle;
 ///
 /// - `"3"` → 3 (absolute)
 /// - `"30%"` → ceil(batch_size * 0.30)
-pub fn parse_threshold(spec: &str, batch_size: usize) -> usize {
+///
+/// Returns an error on malformed input (e.g. "foo%"). Previously the
+/// parser silently coerced invalid spec strings to safe defaults, which
+/// masked operator misconfiguration.
+pub fn parse_threshold(spec: &str, batch_size: usize) -> anyhow::Result<usize> {
     if let Some(pct_str) = spec.strip_suffix('%') {
-        let pct: f64 = pct_str.parse().unwrap_or(100.0);
-        (batch_size as f64 * pct / 100.0).ceil() as usize
+        let pct: f64 = pct_str
+            .parse()
+            .with_context(|| format!("invalid percentage in failure threshold: {spec:?}"))?;
+        if !(0.0..=100.0).contains(&pct) {
+            anyhow::bail!("failure threshold percentage out of range [0, 100]: {spec:?}");
+        }
+        Ok((batch_size as f64 * pct / 100.0).ceil() as usize)
     } else {
-        spec.parse::<usize>().unwrap_or(1)
+        spec.parse::<usize>()
+            .with_context(|| format!("invalid absolute failure threshold: {spec:?}"))
+    }
+}
+
+/// Log an error from an audit/event insertion without aborting the
+/// caller. Rollout events and audit events are diagnostic and should
+/// never silently disappear, but an insert failure also should not
+/// crash an in-flight rollout. We surface the error to operators.
+fn log_event_err(kind: &str, result: anyhow::Result<()>) {
+    if let Err(e) = result {
+        tracing::warn!(event = kind, error = %e, "failed to record rollout event");
     }
 }
 
@@ -62,11 +83,14 @@ async fn process_rollout(
         let all_succeeded = batches.iter().all(|b| b.status == "succeeded");
         if all_succeeded && !batches.is_empty() {
             db.update_rollout_status(&rollout.id, "completed")?;
-            let _ = db.insert_rollout_event(
-                &rollout.id,
+            log_event_err(
                 "status_change",
-                "{\"from\":\"running\",\"to\":\"completed\"}",
-                "executor",
+                db.insert_rollout_event(
+                    &rollout.id,
+                    "status_change",
+                    "{\"from\":\"running\",\"to\":\"completed\"}",
+                    "executor",
+                ),
             );
             db.insert_audit_event(
                 "executor",
@@ -142,20 +166,24 @@ async fn deploy_batch(
         }
     }
 
-    let prev_json = serde_json::to_string(&previous_gens).unwrap_or_else(|_| "{}".to_string());
+    let prev_json = serde_json::to_string(&previous_gens)
+        .context("failed to serialize previous_generations map")?;
     db.update_batch_previous_generations(&batch.id, &prev_json)?;
 
     db.update_batch_status(&batch.id, "deploying")?;
 
-    let _ = db.insert_rollout_event(
-        &rollout.id,
+    log_event_err(
         "batch_started",
-        &format!(
-            "{{\"batch_index\":{},\"machines\":{}}}",
-            batch.batch_index,
-            machine_ids.len()
+        db.insert_rollout_event(
+            &rollout.id,
+            "batch_started",
+            &format!(
+                "{{\"batch_index\":{},\"machines\":{}}}",
+                batch.batch_index,
+                machine_ids.len()
+            ),
+            "executor",
         ),
-        "executor",
     );
 
     db.insert_audit_event(
@@ -265,19 +293,25 @@ async fn evaluate_batch(
         }
     }
 
-    // If any machines haven't reported yet, check health timeout
+    // If any machines haven't reported yet, check health timeout.
+    //
+    // A corrupted started_at timestamp must not silently become "no
+    // timeout" — that would make the batch wait forever. Surface the
+    // parse error so the executor can pause the rollout explicitly.
     if pending_count > 0 {
-        let timed_out = if let Ok(batch_start) =
+        let batch_start =
             chrono::NaiveDateTime::parse_from_str(started_at, "%Y-%m-%d %H:%M:%S")
-        {
-            let batch_start_utc = chrono::TimeZone::from_utc_datetime(&chrono::Utc, &batch_start);
-            let elapsed = chrono::Utc::now()
-                .signed_duration_since(batch_start_utc)
-                .num_seconds();
-            elapsed >= rollout.health_timeout
-        } else {
-            false
-        };
+                .with_context(|| {
+                    format!(
+                        "invalid batch started_at timestamp {started_at:?} for batch {}",
+                        batch.id
+                    )
+                })?;
+        let batch_start_utc = chrono::TimeZone::from_utc_datetime(&chrono::Utc, &batch_start);
+        let elapsed = chrono::Utc::now()
+            .signed_duration_since(batch_start_utc)
+            .num_seconds();
+        let timed_out = elapsed >= rollout.health_timeout;
 
         if timed_out {
             // Treat pending machines as unhealthy
@@ -311,19 +345,23 @@ async fn evaluate_batch(
     // per batch; the (N+1)th unhealthy machine fails the batch". Therefore the
     // success condition is `unhealthy_count <= threshold`. threshold = 0 reads
     // as zero tolerance (any single failure pauses the batch).
-    let threshold = parse_threshold(&rollout.failure_threshold, machine_ids.len());
+    let threshold = parse_threshold(&rollout.failure_threshold, machine_ids.len())
+        .with_context(|| format!("rollout {} has invalid failure_threshold", rollout.id))?;
 
     if unhealthy_count <= threshold {
         // Batch succeeded
         db.update_batch_status(&batch.id, "succeeded")?;
-        let _ = db.insert_rollout_event(
-            &rollout.id,
+        log_event_err(
             "batch_completed",
-            &format!(
-                "{{\"batch_index\":{},\"healthy\":{healthy_count},\"unhealthy\":{unhealthy_count}}}",
-                batch.batch_index
+            db.insert_rollout_event(
+                &rollout.id,
+                "batch_completed",
+                &format!(
+                    "{{\"batch_index\":{},\"healthy\":{healthy_count},\"unhealthy\":{unhealthy_count}}}",
+                    batch.batch_index
+                ),
+                "executor",
             ),
-            "executor",
         );
         db.insert_audit_event(
             "executor",
@@ -345,14 +383,17 @@ async fn evaluate_batch(
     } else {
         // Batch failed
         db.update_batch_status(&batch.id, "failed")?;
-        let _ = db.insert_rollout_event(
-            &rollout.id,
+        log_event_err(
             "batch_failed",
-            &format!(
-                "{{\"batch_index\":{},\"unhealthy\":{unhealthy_count},\"threshold\":{threshold}}}",
-                batch.batch_index
+            db.insert_rollout_event(
+                &rollout.id,
+                "batch_failed",
+                &format!(
+                    "{{\"batch_index\":{},\"unhealthy\":{unhealthy_count},\"threshold\":{threshold}}}",
+                    batch.batch_index
+                ),
+                "executor",
             ),
-            "executor",
         );
         db.insert_audit_event(
             "executor",
@@ -367,11 +408,14 @@ async fn evaluate_batch(
         match rollout.on_failure.as_str() {
             "pause" => {
                 db.update_rollout_status(&rollout.id, "paused")?;
-                let _ = db.insert_rollout_event(
-                    &rollout.id,
+                log_event_err(
                     "status_change",
-                    "{\"from\":\"running\",\"to\":\"paused\",\"reason\":\"batch failure\"}",
-                    "executor",
+                    db.insert_rollout_event(
+                        &rollout.id,
+                        "status_change",
+                        "{\"from\":\"running\",\"to\":\"paused\",\"reason\":\"batch failure\"}",
+                        "executor",
+                    ),
                 );
                 db.insert_audit_event(
                     "executor",
@@ -390,11 +434,14 @@ async fn evaluate_batch(
             "revert" => {
                 revert_completed_batches(state, db, rollout, all_batches).await?;
                 db.update_rollout_status(&rollout.id, "failed")?;
-                let _ = db.insert_rollout_event(
-                    &rollout.id,
+                log_event_err(
                     "status_change",
-                    "{\"from\":\"running\",\"to\":\"failed\",\"reason\":\"batch failure + revert\"}",
-                    "executor",
+                    db.insert_rollout_event(
+                        &rollout.id,
+                        "status_change",
+                        "{\"from\":\"running\",\"to\":\"failed\",\"reason\":\"batch failure + revert\"}",
+                        "executor",
+                    ),
                 );
                 db.insert_audit_event(
                     "executor",
@@ -450,9 +497,19 @@ async fn revert_completed_batches(
             continue;
         }
 
+        // A corrupt previous_generations or machine_ids column would
+        // silently skip the revert — dangerous, because the operator
+        // would see "reverted" with no actual rollback. Surface the
+        // parse error so the caller can abort the revert cleanly.
         let previous_gens: std::collections::HashMap<String, String> =
-            serde_json::from_str(&batch.previous_generations).unwrap_or_default();
-        let machine_ids: Vec<String> = serde_json::from_str(&batch.machine_ids).unwrap_or_default();
+            serde_json::from_str(&batch.previous_generations).with_context(|| {
+                format!(
+                    "failed to parse previous_generations for batch {}",
+                    batch.id
+                )
+            })?;
+        let machine_ids: Vec<String> = serde_json::from_str(&batch.machine_ids)
+            .with_context(|| format!("failed to parse machine_ids for batch {}", batch.id))?;
 
         for machine_id in &machine_ids {
             if let Some(prev_path) = previous_gens.get(machine_id) {
@@ -491,20 +548,33 @@ mod tests {
 
     #[test]
     fn test_parse_threshold_absolute() {
-        assert_eq!(parse_threshold("1", 10), 1);
-        assert_eq!(parse_threshold("5", 10), 5);
+        assert_eq!(parse_threshold("1", 10).unwrap(), 1);
+        assert_eq!(parse_threshold("5", 10).unwrap(), 5);
     }
 
     #[test]
     fn test_parse_threshold_percentage() {
-        assert_eq!(parse_threshold("30%", 10), 3);
-        assert_eq!(parse_threshold("10%", 20), 2);
-        assert_eq!(parse_threshold("50%", 3), 2);
+        assert_eq!(parse_threshold("30%", 10).unwrap(), 3);
+        assert_eq!(parse_threshold("10%", 20).unwrap(), 2);
+        assert_eq!(parse_threshold("50%", 3).unwrap(), 2);
     }
 
     #[test]
     fn test_parse_threshold_100_percent() {
-        assert_eq!(parse_threshold("100%", 10), 10);
+        assert_eq!(parse_threshold("100%", 10).unwrap(), 10);
+    }
+
+    #[test]
+    fn test_parse_threshold_rejects_garbage() {
+        assert!(parse_threshold("foo", 10).is_err());
+        assert!(parse_threshold("foo%", 10).is_err());
+        assert!(parse_threshold("-1", 10).is_err());
+    }
+
+    #[test]
+    fn test_parse_threshold_rejects_out_of_range_percentage() {
+        assert!(parse_threshold("150%", 10).is_err());
+        assert!(parse_threshold("-5%", 10).is_err());
     }
 }
 

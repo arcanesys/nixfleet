@@ -19,11 +19,21 @@ use crate::state::FleetState;
 
 /// Install the Prometheus recorder globally and return a handle to it.
 ///
-/// Call once at startup, before building the Axum router.
+/// Call once at startup, before building the Axum router. Subsequent
+/// calls are no-ops that return a fresh (unwired) handle — installing
+/// twice would panic inside `metrics_exporter_prometheus`, but we
+/// tolerate it so in-process tests and supervisors can launch the
+/// server more than once in the same process.
 pub fn init() -> PrometheusHandle {
-    PrometheusBuilder::new()
-        .install_recorder()
-        .expect("failed to install Prometheus recorder")
+    use std::sync::OnceLock;
+    static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+    HANDLE
+        .get_or_init(|| {
+            PrometheusBuilder::new()
+                .install_recorder()
+                .expect("failed to install Prometheus recorder")
+        })
+        .clone()
 }
 
 /// GET /metrics

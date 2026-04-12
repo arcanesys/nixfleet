@@ -44,9 +44,13 @@ async fn main() -> anyhow::Result<()> {
     // call in `tls::build_server_config` panics with
     // "Could not automatically determine the process-level
     // CryptoProvider from Rustls crate features".
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .expect("install default rustls CryptoProvider");
+    // `install_default` returns `Err` if a provider is already set
+    // (e.g. if something else in the process already installed one,
+    // or during certain test / supervisor scenarios). Installing the
+    // provider is idempotent for our purposes — the important thing
+    // is that *some* aws_lc_rs provider is registered before we build
+    // a `ServerConfig`, so we swallow the "already installed" error.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     tracing_subscriber::fmt()
         .with_env_filter(

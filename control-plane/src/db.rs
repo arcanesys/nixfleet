@@ -225,6 +225,11 @@ impl Db {
     }
 
     /// Query audit events with optional filters, ordered by timestamp DESC.
+    ///
+    /// Uses named parameters so adding a new filter dimension is a
+    /// one-line change rather than coordinating placeholder indices
+    /// across push_str call sites. `IS NULL OR actor = :actor` folds
+    /// optional filters into a single static query.
     pub fn query_audit_events(
         &self,
         actor: Option<&str>,
@@ -233,45 +238,35 @@ impl Db {
         limit: usize,
     ) -> Result<Vec<AuditEvent>> {
         let conn = self.conn.lock().unwrap();
-        let mut sql = String::from(
-            "SELECT id, timestamp, actor, action, target, detail FROM audit_events WHERE 1=1",
-        );
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-        if let Some(a) = actor {
-            sql.push_str(&format!(" AND actor = ?{}", params.len() + 1));
-            params.push(Box::new(a.to_string()));
-        }
-        if let Some(a) = action {
-            sql.push_str(&format!(" AND action = ?{}", params.len() + 1));
-            params.push(Box::new(a.to_string()));
-        }
-        if let Some(t) = target {
-            sql.push_str(&format!(" AND target = ?{}", params.len() + 1));
-            params.push(Box::new(t.to_string()));
-        }
-
-        sql.push_str(&format!(
-            " ORDER BY timestamp DESC LIMIT ?{}",
-            params.len() + 1
-        ));
-        params.push(Box::new(limit as i64));
-
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
-
-        let mut stmt = conn.prepare(&sql)?;
+        const SQL: &str = "\
+            SELECT id, timestamp, actor, action, target, detail \
+            FROM audit_events \
+            WHERE (:actor IS NULL OR actor = :actor) \
+              AND (:action IS NULL OR action = :action) \
+              AND (:target IS NULL OR target = :target) \
+            ORDER BY timestamp DESC \
+            LIMIT :limit";
+        let mut stmt = conn.prepare(SQL)?;
+        let limit_i64 = limit as i64;
         let rows = stmt
-            .query_map(param_refs.as_slice(), |row| {
-                Ok(AuditEvent {
-                    id: row.get(0)?,
-                    timestamp: row.get(1)?,
-                    actor: row.get(2)?,
-                    action: row.get(3)?,
-                    target: row.get(4)?,
-                    detail: row.get(5)?,
-                })
-            })?
+            .query_map(
+                rusqlite::named_params! {
+                    ":actor": actor,
+                    ":action": action,
+                    ":target": target,
+                    ":limit": limit_i64,
+                },
+                |row| {
+                    Ok(AuditEvent {
+                        id: row.get(0)?,
+                        timestamp: row.get(1)?,
+                        actor: row.get(2)?,
+                        action: row.get(3)?,
+                        target: row.get(4)?,
+                        detail: row.get(5)?,
+                    })
+                },
+            )?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
     }

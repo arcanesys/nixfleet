@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use crate::auth::Actor;
 use crate::db::{RolloutBatchRow, RolloutRow};
 use crate::rollout::batch;
-use crate::AppState;
+use crate::{log_insert_err, AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct ListRolloutsQuery {
@@ -105,16 +105,32 @@ pub async fn create_rollout(
     // Generate rollout ID
     let rollout_id = format!("r-{}", uuid::Uuid::new_v4());
 
-    // Persist rollout
+    // Persist rollout. Serialization of Vec<String>/&[usize] cannot
+    // realistically fail, but a malformed row written silently as "" or
+    // "[]" would later break rollout resume/revert — surface as 500.
+    let serialize_err = |field: &'static str| {
+        move |e: serde_json::Error| {
+            tracing::error!(error = %e, field, "failed to serialize rollout field");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to serialize {field}"),
+            )
+        }
+    };
     let target_tags = match &req.target {
-        RolloutTarget::Tags(tags) => Some(serde_json::to_string(tags).unwrap_or_default()),
+        RolloutTarget::Tags(tags) => {
+            Some(serde_json::to_string(tags).map_err(serialize_err("target_tags"))?)
+        }
         RolloutTarget::Hosts(_) => None,
     };
     let target_hosts = match &req.target {
         RolloutTarget::Tags(_) => None,
-        RolloutTarget::Hosts(hosts) => Some(serde_json::to_string(hosts).unwrap_or_default()),
+        RolloutTarget::Hosts(hosts) => {
+            Some(serde_json::to_string(hosts).map_err(serialize_err("target_hosts"))?)
+        }
     };
-    let batch_sizes_json = serde_json::to_string(&effective_sizes).unwrap_or_default();
+    let batch_sizes_json =
+        serde_json::to_string(&effective_sizes).map_err(serialize_err("batch_sizes"))?;
     let health_timeout = req.health_timeout.unwrap_or(300) as i64;
 
     let actor_id = actor.identifier();
@@ -144,7 +160,8 @@ pub async fn create_rollout(
     let mut batch_summaries = Vec::new();
     for (i, batch_machines) in batches.iter().enumerate() {
         let batch_id = format!("{}-b{}", rollout_id, i);
-        let machine_ids_json = serde_json::to_string(batch_machines).unwrap_or_default();
+        let machine_ids_json =
+            serde_json::to_string(batch_machines).map_err(serialize_err("batch_machine_ids"))?;
         db.create_rollout_batch(&batch_id, &rollout_id, i as i64, &machine_ids_json)
             .map_err(|e| {
                 tracing::error!(error = %e, "Failed to create rollout batch");
@@ -172,28 +189,34 @@ pub async fn create_rollout(
         })?;
 
     // Emit rollout events
-    let _ = db.insert_rollout_event(
-        &rollout_id,
+    log_insert_err(
         "status_change",
-        &format!(
-            "{{\"from\":\"created\",\"to\":\"running\",\"strategy\":\"{}\"}}",
-            req.strategy
+        db.insert_rollout_event(
+            &rollout_id,
+            "status_change",
+            &format!(
+                "{{\"from\":\"created\",\"to\":\"running\",\"strategy\":\"{}\"}}",
+                req.strategy
+            ),
+            &actor_id,
         ),
-        &actor_id,
     );
 
     // Audit log
     let total_machines = machine_ids.len();
-    let _ = db.insert_audit_event(
-        &actor_id,
-        "rollout.created",
-        &rollout_id,
-        Some(&format!(
-            "strategy={} machines={} batches={}",
-            req.strategy,
-            total_machines,
-            batches.len()
-        )),
+    log_insert_err(
+        "audit_event",
+        db.insert_audit_event(
+            &actor_id,
+            "rollout.created",
+            &rollout_id,
+            Some(&format!(
+                "strategy={} machines={} batches={}",
+                req.strategy,
+                total_machines,
+                batches.len()
+            )),
+        ),
     );
 
     tracing::info!(
@@ -358,13 +381,19 @@ pub async fn resume_rollout(
         )
     })?;
 
-    let _ = db.insert_rollout_event(
-        &id,
+    log_insert_err(
         "status_change",
-        "{\"from\":\"paused\",\"to\":\"running\"}",
-        &actor.identifier(),
+        db.insert_rollout_event(
+            &id,
+            "status_change",
+            "{\"from\":\"paused\",\"to\":\"running\"}",
+            &actor.identifier(),
+        ),
     );
-    let _ = db.insert_audit_event(&actor.identifier(), "rollout.resumed", &id, None);
+    log_insert_err(
+        "audit_event",
+        db.insert_audit_event(&actor.identifier(), "rollout.resumed", &id, None),
+    );
 
     tracing::info!(rollout_id = %id, "Rollout resumed");
     Ok(StatusCode::OK)
@@ -416,13 +445,19 @@ pub async fn cancel_rollout(
         )
     })?;
 
-    let _ = db.insert_rollout_event(
-        &id,
+    log_insert_err(
         "status_change",
-        &format!("{{\"from\":\"{}\",\"to\":\"cancelled\"}}", rollout.status),
-        &actor.identifier(),
+        db.insert_rollout_event(
+            &id,
+            "status_change",
+            &format!("{{\"from\":\"{}\",\"to\":\"cancelled\"}}", rollout.status),
+            &actor.identifier(),
+        ),
     );
-    let _ = db.insert_audit_event(&actor.identifier(), "rollout.cancelled", &id, None);
+    log_insert_err(
+        "audit_event",
+        db.insert_audit_event(&actor.identifier(), "rollout.cancelled", &id, None),
+    );
 
     tracing::info!(rollout_id = %id, "Rollout cancelled");
     Ok(StatusCode::OK)
@@ -454,7 +489,15 @@ fn row_to_detail_with_events(
     let batches = batch_rows
         .iter()
         .map(|b| {
-            let machine_ids: Vec<String> = serde_json::from_str(&b.machine_ids).unwrap_or_default();
+            let machine_ids: Vec<String> = serde_json::from_str(&b.machine_ids)
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        batch_id = %b.id,
+                        error = %e,
+                        "failed to parse batch machine_ids JSON; returning empty list"
+                    );
+                })
+                .unwrap_or_default();
 
             let batch_status: BatchStatus =
                 serde_json::from_str(&format!("\"{}\"", b.status)).unwrap_or(BatchStatus::Pending);
