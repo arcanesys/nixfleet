@@ -117,25 +117,29 @@ in {
             nix build --no-link --keep-going "$@" >/dev/null 2>&1 || true
           }
 
+          # Order: fastest/most-likely-to-fail first.
+          # 1. Format    (~2s)  — style issues
+          # 2. Flake     (~5s)  — eval errors across all outputs
+          # 3. Eval      (~5s)  — module logic
+          # 4. Rust test (~15s) — code bugs (fast with nextest + merged binaries)
+          # 5. Rust lint  (~5s) — warnings/style
+          # 6. Hosts    (~30s+) — NixOS config errors
+          # 7. Packages  (~1m)  — sandbox-specific failures
+          # 8. VM tests (min+)  — full integration, slowest
+
           echo "=== Formatting ==="
           check "nix fmt" nix fmt -- --fail-on-change
 
           echo ""
-          echo "=== Flake Check (every flake output, eval-only) ==="
-          # `nix flake check --no-build` evaluates every output in the
-          # flake (apps, packages, devShells, nixosConfigurations,
-          # checks) and confirms they type-check / have no eval errors.
-          # Cheaper than building anything and catches attrset drift
-          # across crates + modules + the validate app itself.
+          echo "=== Flake Check (eval-only) ==="
           check "nix flake check --no-build" nix flake check --no-build --quiet
 
           echo ""
-          echo "=== Eval Tests (explicit eval-* derivations) ==="
+          echo "=== Eval Tests ==="
           ${
             if isLinux
             then ''
               EVAL_TESTS="eval-hostspec-defaults eval-ssh-hardening eval-username-override eval-locale-timezone eval-ssh-authorized eval-password-files"
-              # Pre-build all eval checks in parallel, then report per-test.
               EVAL_ATTRS=""
               for t in $EVAL_TESTS; do
                 EVAL_ATTRS="$EVAL_ATTRS .#checks.${system}.$t"
@@ -151,10 +155,21 @@ in {
             ''
           }
 
+          if [ "$RUST" = "1" ]; then
+            echo ""
+            echo "=== Rust Tests ==="
+            check "cargo nextest run" \
+              nix develop --command cargo nextest run --workspace
+
+            echo ""
+            echo "=== Rust Lint ==="
+            check "cargo clippy --workspace -D warnings" \
+              nix develop --command cargo clippy --workspace --all-targets -- -D warnings
+          fi
+
           echo ""
-          echo "=== NixOS Test Hosts (build) ==="
+          echo "=== NixOS Host Builds ==="
           HOSTS=$(nix eval .#nixosConfigurations --apply 'x: builtins.concatStringsSep " " (builtins.attrNames x)' --raw 2>/dev/null)
-          # Pre-build every host toplevel in parallel, then report per host.
           HOST_ATTRS=""
           for host in $HOSTS; do
             HOST_ATTRS="$HOST_ATTRS .#nixosConfigurations.$host.config.system.build.toplevel"
@@ -167,20 +182,26 @@ in {
           ${
             if isLinux
             then ''
+              if [ "$RUST" = "1" ]; then
+                echo ""
+                echo "=== Rust Package Builds (nix sandbox) ==="
+                prebuild_parallel \
+                  .#packages.${system}.nixfleet-workspace \
+                  .#packages.${system}.nixfleet-agent \
+                  .#packages.${system}.nixfleet-control-plane \
+                  .#packages.${system}.nixfleet-cli
+                for pkg in nixfleet-agent nixfleet-control-plane nixfleet-cli; do
+                  check "package: $pkg" \
+                    nix build ".#packages.${system}.$pkg" --no-link
+                done
+              fi
+
               if [ "$VM" = "1" ]; then
                 echo ""
                 echo "=== VM Integration Tests ==="
-                # Discover all vm-* checks dynamically so new scenario
-                # subtests are picked up automatically without touching
-                # this script.
                 VM_TESTS=$(nix eval ".#checks.${system}" \
                     --apply 'cs: builtins.concatStringsSep " " (builtins.filter (n: builtins.match "vm-.*" n != null) (builtins.attrNames cs))' \
                     --raw 2>/dev/null)
-                # Pre-build every vm-* check in parallel. Scenarios that
-                # share node shapes (shared TLS certs, identical mkCpNode
-                # args) dedupe at the derivation layer, so pre-building
-                # them together also lets nix hit those shared closures
-                # only once.
                 VM_ATTRS=""
                 for t in $VM_TESTS; do
                   VM_ATTRS="$VM_ATTRS .#checks.${system}.$t"
@@ -193,50 +214,6 @@ in {
             ''
             else ""
           }
-
-          if [ "$RUST" = "1" ]; then
-            echo ""
-            echo "=== Rust Tests (dev shell) ==="
-            # cargo-nextest runs test binaries in parallel (vs cargo
-            # test's sequential execution). Combined with the merged
-            # integration test binaries (~4 instead of ~20), this
-            # dramatically cuts wall time.
-            check "cargo nextest run" \
-              nix develop --command cargo nextest run --workspace
-
-            echo ""
-            echo "=== Rust Lint (dev shell) ==="
-            # clippy with -D warnings catches dead code, unused
-            # dependencies, and style regressions that cargo test does
-            # not. Run against the workspace with all targets so tests
-            # and examples are linted too.
-            check "cargo clippy --workspace -D warnings" \
-              nix develop --command cargo clippy --workspace --all-targets -- -D warnings
-
-            ${
-            if isLinux
-            then ''
-              echo ""
-              echo "=== Rust Package Builds (nix sandbox) ==="
-              # Every `.#packages.<system>.nixfleet-*` attr points at
-              # the SAME `cargo-workspace.nix` derivation, so one
-              # `nix build` invocation on any of them builds the full
-              # workspace once and the remaining two are cache hits.
-              # We still report per-package so a workspace-level
-              # regression doesn't disappear from the summary.
-              prebuild_parallel \
-                .#packages.${system}.nixfleet-workspace \
-                .#packages.${system}.nixfleet-agent \
-                .#packages.${system}.nixfleet-control-plane \
-                .#packages.${system}.nixfleet-cli
-              for pkg in nixfleet-agent nixfleet-control-plane nixfleet-cli; do
-                check "package: $pkg" \
-                  nix build ".#packages.${system}.$pkg" --no-link
-              done
-            ''
-            else ""
-          }
-          fi
 
           echo ""
           echo "==================================="
