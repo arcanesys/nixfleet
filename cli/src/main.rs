@@ -119,9 +119,17 @@ enum Commands {
         #[arg(long, conflicts_with = "release", help_heading = "Build & Push")]
         push_to: Option<String>,
 
-        /// Use hook mode: push via configured push-cmd instead of nix copy
-        #[arg(long, help_heading = "Build & Push")]
+        /// Use hook mode: push via push-cmd instead of nix copy
+        #[arg(long, help_heading = "Hook Mode")]
         hook: bool,
+
+        /// Override hook push command ({} = store path)
+        #[arg(long, requires = "hook", help_heading = "Hook Mode")]
+        hook_push_cmd: Option<String>,
+
+        /// Override hook cache URL for agents to pull from
+        #[arg(long, requires = "hook", help_heading = "Hook Mode")]
+        hook_url: Option<String>,
 
         /// Implicitly create a release and copy closures via SSH
         #[arg(long, conflicts_with = "release", conflicts_with = "push_to", help_heading = "Build & Push")]
@@ -288,9 +296,15 @@ enum ReleaseAction {
         /// Push closures to a Nix binary cache (s3://, ssh://, or HTTP URL)
         #[arg(long)]
         push_to: Option<String>,
-        /// Use hook mode: push via configured push-cmd instead of nix copy
+        /// Use hook mode: push via push-cmd instead of nix copy
         #[arg(long)]
         hook: bool,
+        /// Override hook push command ({} = store path)
+        #[arg(long, requires = "hook")]
+        hook_push_cmd: Option<String>,
+        /// Override hook cache URL for agents to pull from
+        #[arg(long, requires = "hook")]
+        hook_url: Option<String>,
         /// Copy closures to each host via nix-copy-closure
         #[arg(long, conflicts_with = "push_to")]
         copy: bool,
@@ -460,6 +474,8 @@ async fn main() -> Result<()> {
             release,
             push_to,
             hook,
+            hook_push_cmd,
+            hook_url,
             copy,
             cache_url,
         } => {
@@ -467,10 +483,13 @@ async fn main() -> Result<()> {
 
             // --hook mode: use hook config for push-cmd and cache-url
             let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
-                let push_cmd = resolved.hook_push_cmd.as_deref().ok_or_else(|| {
-                    anyhow::anyhow!("--hook requires [cache.hook] push-cmd in .nixfleet.toml")
-                })?;
+                let push_cmd = hook_push_cmd.as_deref()
+                    .or(resolved.hook_push_cmd.as_deref())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("--hook requires --hook-push-cmd or [cache.hook] push-cmd in .nixfleet.toml")
+                    })?;
                 let hook_cache = cache_url.as_deref()
+                    .or(hook_url.as_deref())
                     .or(resolved.hook_url.as_deref())
                     .or(resolved.cache_url.as_deref());
                 (push_to.as_deref(), Some(push_cmd), hook_cache)
@@ -603,15 +622,20 @@ async fn main() -> Result<()> {
                     hosts,
                     push_to,
                     hook,
+                    hook_push_cmd,
+                    hook_url,
                     copy,
                     cache_url,
                     dry_run,
                 } => {
                     let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
-                        let push_cmd = resolved.hook_push_cmd.as_deref().ok_or_else(|| {
-                            anyhow::anyhow!("--hook requires [cache.hook] push-cmd in .nixfleet.toml")
-                        })?;
+                        let push_cmd = hook_push_cmd.as_deref()
+                            .or(resolved.hook_push_cmd.as_deref())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("--hook requires --hook-push-cmd or [cache.hook] push-cmd in .nixfleet.toml")
+                            })?;
                         let hook_cache = cache_url.as_deref()
+                            .or(hook_url.as_deref())
                             .or(resolved.hook_url.as_deref())
                             .or(resolved.cache_url.as_deref());
                         (push_to.as_deref().map(str::to_string), Some(push_cmd), hook_cache.map(str::to_string))

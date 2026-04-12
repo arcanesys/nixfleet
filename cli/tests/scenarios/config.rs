@@ -298,3 +298,43 @@ fn i3_hostname_fallback_uses_gethostname_when_env_unset() {
         std::env::set_var("HOSTNAME", v);
     }
 }
+
+/// [cache.hook] section is parsed and resolved into hook_url + hook_push_cmd.
+#[test]
+fn cache_hook_config_is_parsed() {
+    let _guard = env_lock();
+    clear_nixfleet_env();
+
+    let cfg = parse_config(
+        r#"
+[control-plane]
+url = "https://lab:8080"
+
+[cache]
+url = "http://lab:5000"
+push-to = "ssh://root@lab"
+
+[cache.hook]
+url = "http://lab:8081/fleet"
+push-cmd = "attic push fleet {}"
+"#,
+    );
+
+    let resolved = config::resolve(
+        Some(&cfg),
+        Some(Path::new(".")),
+        &empty_credentials(),
+        config::CliOverrides {
+            cp_url: "http://localhost:8080",
+            ..config::CliOverrides::default()
+        },
+    );
+
+    assert_eq!(resolved.cache_url.as_deref(), Some("http://lab:5000"));
+    assert_eq!(resolved.push_to.as_deref(), Some("ssh://root@lab"));
+    assert_eq!(resolved.hook_url.as_deref(), Some("http://lab:8081/fleet"));
+    assert_eq!(
+        resolved.hook_push_cmd.as_deref(),
+        Some("attic push fleet {}")
+    );
+}

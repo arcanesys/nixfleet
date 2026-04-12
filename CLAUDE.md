@@ -83,6 +83,7 @@ Commands: `init`, `bootstrap`, `status`, `deploy`, `rollback`, `release` (create
 nixfleet init --control-plane-url https://lab:8080 --ca-cert fleet-ca.pem
 nixfleet bootstrap                                                       # first admin API key
 nixfleet deploy --push-to ssh://root@cache --tags web --strategy canary --wait
+nixfleet deploy --hook --tags web --strategy canary --wait               # push via [cache.hook]
 nixfleet deploy --hosts web-02 --ssh                                     # direct SSH (no CP)
 nixfleet rollback --host web-02 --ssh                                    # SSH-only rollback
 ```

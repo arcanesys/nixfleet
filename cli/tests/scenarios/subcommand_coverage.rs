@@ -741,3 +741,44 @@ async fn machines_register_repeatable_tags() {
     assert!(tags.iter().any(|t| t == "web"), "expected web tag");
     assert!(tags.iter().any(|t| t == "prod"), "expected prod tag");
 }
+
+// =====================================================================
+// init with --hook-url and --hook-push-cmd writes [cache.hook] section
+// =====================================================================
+
+#[test]
+fn init_writes_cache_hook_config() {
+    let dir = tempfile::tempdir().unwrap();
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .current_dir(dir.path())
+        .args([
+            "init",
+            "--control-plane-url",
+            "https://lab:8080",
+            "--cache-url",
+            "http://lab:5000",
+            "--push-to",
+            "ssh://root@lab",
+            "--hook-url",
+            "http://lab:8081/fleet",
+            "--hook-push-cmd",
+            "attic push fleet {}",
+        ])
+        .assert()
+        .success();
+
+    let body = std::fs::read_to_string(dir.path().join(".nixfleet.toml")).unwrap();
+    assert!(
+        body.contains("[cache.hook]"),
+        "expected [cache.hook] section: {body}"
+    );
+    assert!(
+        body.contains("http://lab:8081/fleet"),
+        "expected hook url: {body}"
+    );
+    assert!(
+        body.contains("attic push fleet {}"),
+        "expected push-cmd: {body}"
+    );
+}
