@@ -85,7 +85,7 @@ nixfleet deploy [FLAGS]
 
 - **SSH mode** (`--ssh`): Builds locally, copies closures via SSH, runs `switch-to-configuration`. No control plane required.
 - **Rollout mode** (requires a release): Creates a rollout on the control plane with the specified strategy. Specify an existing release with `--release <ID>`, or use `--push-to <url>` / `--hook` / `--copy` to build + push + register implicitly in one command.
-- **Hook mode** (`--hook`): Uses `[cache.hook] push-cmd` from `.nixfleet.toml` to push closures (e.g., `attic push fleet {}`). Overrides `--push-to` and uses `[cache.hook] url` as the cache URL for agents. Flags `--hook-push-cmd` and `--hook-url` override the config values.
+- **Hook mode** (`--hook`): Uses `[cache.hook] push-cmd` from `.nixfleet.toml` to push closures (e.g., `attic push mycache {}`). Overrides `--push-to` and uses `[cache.hook] url` as the cache URL for agents. Flags `--hook-push-cmd` and `--hook-url` override the config values.
 - **Targeting:** Use `--tags <TAG>` or `--hosts <pattern>` to select machines. Both are intersected with the release's host list (machines not in the release are skipped with a warning).
 
 ---
@@ -106,8 +106,8 @@ nixfleet init [FLAGS]
 | `--client-key <PATH>` | string | -- | Client key path (supports `${HOSTNAME}` expansion) |
 | `--cache-url <URL>` | string | -- | Default binary cache URL for agents |
 | `--push-to <URL>` | string | -- | Default push destination for `release create` |
-| `--hook-url <URL>` | string | -- | Hook mode cache URL (e.g., `http://lab:8081/fleet` for Attic) |
-| `--hook-push-cmd <CMD>` | string | -- | Hook mode push command (`{}` = store path, e.g., `attic push fleet {}`) |
+| `--hook-url <URL>` | string | -- | Hook mode cache URL (e.g., `http://cache:8081/mycache` for Attic) |
+| `--hook-push-cmd <CMD>` | string | -- | Hook mode push command (`{}` = store path, e.g., `attic push mycache {}`) |
 
 After `init`, run `nixfleet bootstrap` to create and auto-save the first admin API key.
 
@@ -390,9 +390,9 @@ client-key = "/run/agenix/agent-${HOSTNAME}-key"
 url = "http://lab:5000"         # default --cache-url for rollouts
 push-to = "ssh://root@lab"      # default --push-to for release create
 
-[cache.hook]                    # used when --hook is passed
-url = "http://lab:8081/fleet"   # overrides cache.url for the release
-push-cmd = "attic push fleet {}" # {} is replaced with the store path
+[cache.hook]                         # used when --hook is passed
+url = "http://cache:8081/mycache"    # overrides cache.url for the release
+push-cmd = "attic push mycache {}"   # {} is replaced with the store path
 
 [deploy]
 strategy = "staged"             # default rollout strategy
