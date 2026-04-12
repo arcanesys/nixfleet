@@ -271,7 +271,7 @@ pub async fn create(
     // Build all hosts
     let mut entries = Vec::new();
     {
-        let mut window = if !display::passthrough_output() {
+        let mut window = if display::use_progress() {
             Some(display::RollingWindow::new("building", hosts.len() as u64))
         } else {
             None

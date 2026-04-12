@@ -35,6 +35,13 @@ pub fn passthrough_output() -> bool {
     verbosity() >= 2
 }
 
+/// Returns true when a progress bar / rolling window should be shown.
+/// Requires a TTY on stderr (no progress in CI/pipes) and not in
+/// passthrough mode (-vv).
+pub fn use_progress() -> bool {
+    !passthrough_output() && console::Term::stderr().is_term()
+}
+
 
 
 // ---------------------------------------------------------------

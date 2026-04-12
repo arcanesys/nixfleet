@@ -192,7 +192,7 @@ pub async fn run(
 
     // Build all targets
     {
-        let mut window = if !display::passthrough_output() {
+        let mut window = if display::use_progress() {
             Some(display::RollingWindow::new("building", targets.len() as u64))
         } else {
             None
@@ -236,7 +236,7 @@ pub async fn run(
     let mut fail_count = 0;
 
     {
-        let mut window = if !display::passthrough_output() {
+        let mut window = if display::use_progress() {
             Some(display::RollingWindow::new("deploying", targets.len() as u64))
         } else {
             None
