@@ -710,8 +710,6 @@ async fn rollback(
             let output = tokio::process::Command::new("ssh")
                 .args([
                     ssh_dest,
-                    "sh",
-                    "-c",
                     "ls -dv /nix/var/nix/profiles/system-*-link | tail -2 | head -1 | xargs readlink -f",
                 ])
                 .stdout(Stdio::piped())
