@@ -110,12 +110,13 @@ async fn deploy_via_ssh(
     copy_cmd.args(["--to", ssh_target, store_path]);
 
     let copy_output = if display::passthrough_output() {
-        copy_cmd
+        let status = copy_cmd
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
-            .output()
+            .status()
             .await
-            .context(format!("nix-copy-closure failed for {}", host))?
+            .context(format!("nix-copy-closure failed for {}", host))?;
+        std::process::Output { status, stdout: vec![], stderr: vec![] }
     } else {
         display::run_cmd_async(&mut copy_cmd, window.as_deref_mut())
             .await
@@ -139,12 +140,13 @@ async fn deploy_via_ssh(
     ]);
 
     let switch_output = if display::passthrough_output() {
-        switch_cmd
+        let status = switch_cmd
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
-            .output()
+            .status()
             .await
-            .context(format!("SSH switch failed for {}", host))?
+            .context(format!("SSH switch failed for {}", host))?;
+        std::process::Output { status, stdout: vec![], stderr: vec![] }
     } else {
         display::run_cmd_async(&mut switch_cmd, window.as_deref_mut())
             .await
