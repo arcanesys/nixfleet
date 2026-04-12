@@ -2,8 +2,7 @@
 //!
 //! Spec Section 4. Strategy behaviour under real executor ticks.
 
-#[path = "harness.rs"]
-mod harness;
+use super::harness;
 
 use nixfleet_types::rollout::{OnFailure, RolloutStatus, RolloutStrategy};
 

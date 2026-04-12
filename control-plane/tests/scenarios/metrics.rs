@@ -31,8 +31,7 @@
 //! Assertions use `>= N` (never `== N`) so any cross-test pollution
 //! from the shared `Cp` cannot cause false failures.
 
-#[path = "harness.rs"]
-mod harness;
+use super::harness;
 
 use nixfleet_types::metrics as m;
 use nixfleet_types::rollout::{OnFailure, RolloutStatus, RolloutStrategy};

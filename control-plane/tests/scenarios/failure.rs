@@ -7,8 +7,7 @@
 //! Running → Cancelled) live in deploy_scenarios.rs and
 //! route_coverage.rs.
 
-#[path = "harness.rs"]
-mod harness;
+use super::harness;
 
 use nixfleet_types::rollout::{OnFailure, RolloutStatus, RolloutStrategy};
 

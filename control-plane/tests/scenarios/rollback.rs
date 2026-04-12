@@ -1,7 +1,6 @@
 //! Rollback via redeploying an old release as a forward rollout.
 
-#[path = "harness.rs"]
-mod harness;
+use super::harness;
 
 use nixfleet_types::rollout::{OnFailure, RolloutStatus, RolloutStrategy};
 

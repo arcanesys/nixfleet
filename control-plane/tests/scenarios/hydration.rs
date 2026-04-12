@@ -16,8 +16,7 @@
 //!   3. The rollout id observed on cp2 matches the id created on cp1,
 //!      proving cp2 did not start from a fresh in-memory cache.
 
-#[path = "harness.rs"]
-mod harness;
+use super::harness;
 
 use nixfleet_control_plane::state;
 use nixfleet_types::rollout::{OnFailure, RolloutStatus, RolloutStrategy};

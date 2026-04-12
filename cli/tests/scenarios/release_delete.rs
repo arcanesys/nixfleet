@@ -1,7 +1,7 @@
 //! D3 — `nixfleet release delete` CLI dispatch.
 //!
 //! The CP-side R5/R6 (delete on referenced → 409, delete on orphan → 204)
-//! are already covered by `control-plane/tests/release_scenarios.rs`. This
+//! are already covered by `control-plane/tests/scenarios/release.rs`. This
 //! test pins the CLI dispatch shape: exit code + output text per status
 //! returned by the CP. We mock the CP with wiremock so the test asserts
 //! ONLY the CLI behaviour, not the CP behaviour.

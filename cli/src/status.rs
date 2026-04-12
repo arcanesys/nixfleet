@@ -33,11 +33,11 @@ pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool) -> Result<(
                 "error" => "ERROR",
                 _ => "?",
             };
-            let current = display::truncate_store_path(&m.current_generation, 50);
+            let current = display::truncate_store_path(&m.current_generation, 36);
             let desired = m
                 .desired_generation
                 .as_deref()
-                .map(|d| display::truncate_store_path(d, 50))
+                .map(|d| display::truncate_store_path(d, 36))
                 .unwrap_or_else(|| "(none)".to_string());
             let last_seen = m
                 .last_report

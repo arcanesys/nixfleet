@@ -266,6 +266,7 @@ struct WritableDeploy {
 /// backslashes, or other special characters are escaped correctly.
 /// Previously this was hand-rolled via `format!("url = \"{}\"\n", ...)`
 /// which silently produced broken TOML on unusual input.
+#[allow(clippy::too_many_arguments)]
 pub fn write_config_file(
     path: &Path,
     cp_url: &str,

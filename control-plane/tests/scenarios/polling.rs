@@ -3,8 +3,7 @@
 //! Spec Section 10. The agent-side half (does the agent shorten its poll when
 //! it sees `poll_hint`?) is covered by the VM/wiremock tests.
 
-#[path = "harness.rs"]
-mod harness;
+use super::harness;
 
 use nixfleet_types::DesiredGeneration;
 

@@ -1,8 +1,7 @@
 //! Release lifecycle scenarios: diff, referenced-delete 409,
 //! orphan-delete 204 + cascade.
 
-#[path = "harness.rs"]
-mod harness;
+use super::harness;
 
 use nixfleet_types::release::ReleaseDiff;
 

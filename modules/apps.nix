@@ -25,6 +25,7 @@ in {
         clippy
         rustfmt
         rust-analyzer
+        cargo-nextest
       ];
       shellHook = ''
         export EDITOR=vim
@@ -40,6 +41,9 @@ in {
       {
         "validate" = mkScript "validate" "Single entry point for the whole test suite (format + eval + hosts + VM + Rust + clippy)" ''
           set -uo pipefail
+
+          # Propagate Ctrl+C to all child processes (nix build, cargo, etc.)
+          trap 'kill 0; exit 130' INT TERM
 
           GREEN='\033[1;32m'
           RED='\033[1;31m'
@@ -105,7 +109,11 @@ in {
           # Arguments: a space-separated list of installable strings
           # (everything that would go after `nix build`).
           prebuild_parallel() {
-            nix build --no-link --keep-going "$@" >/dev/null 2>&1 || true
+            # Show nix build progress on stderr so the user gets feedback
+            # during long builds (VM closures). stdout is silenced to keep
+            # the script output clean. Failures are tolerated here — the
+            # per-target `check` calls after this give granular PASS/FAIL.
+            nix build --no-link --keep-going "$@" 2>&1 || true
           }
 
           echo "=== Formatting ==="
@@ -188,12 +196,12 @@ in {
           if [ "$RUST" = "1" ]; then
             echo ""
             echo "=== Rust Tests (dev shell) ==="
-            # `cargo test --workspace` runs every crate's unit tests
-            # and every integration test under control-plane/tests and
-            # cli/tests. Runs inside the dev shell so rustc/cargo are
-            # on PATH even when invoked from outside `nix develop`.
-            check "cargo test --workspace" \
-              nix develop --command cargo test --workspace --quiet
+            # cargo-nextest runs test binaries in parallel (vs cargo
+            # test's sequential execution). Combined with the merged
+            # integration test binaries (~4 instead of ~20), this
+            # dramatically cuts wall time.
+            check "cargo nextest run" \
+              nix develop --command cargo nextest run --workspace
 
             echo ""
             echo "=== Rust Lint (dev shell) ==="

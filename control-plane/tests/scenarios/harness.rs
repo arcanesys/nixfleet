@@ -1,15 +1,10 @@
 //! Shared test harness for CP scenario tests.
 //!
-//! Each CP scenario test file (`release_scenarios.rs`, `deploy_scenarios.rs`,
-//! etc.) uses `#[path = "harness.rs"] mod harness;` at the top to pull this
-//! in as a sibling module. That is the standard pattern for shared test
-//! helpers in Rust: integration tests live in `tests/*.rs` and each file is
-//! a separate crate, so a shared module has to be included by path.
-//!
-//! The harness spins up a real `build_app` router on a random port backed
-//! by a fresh temp SQLite DB. Helpers exist to seed API keys, create
-//! releases, create rollouts, and submit fake agent reports. No mocks of
-//! the subject under test.
+//! Declared as a sibling module in `scenarios.rs` and imported by each
+//! scenario file via `use super::harness`. The harness spins up a real
+//! `build_app` router on a random port backed by a fresh temp SQLite DB.
+//! Helpers exist to seed API keys, create releases, create rollouts, and
+//! submit fake agent reports. No mocks of the subject under test.
 
 #![allow(dead_code)] // each test file uses a subset; allow unused helpers
 
@@ -94,12 +89,23 @@ pub async fn spawn_cp_at(path: Option<&str>) -> Cp {
 
     let fleet = Arc::new(RwLock::new(state::FleetState::new()));
 
-    let recorder = PrometheusBuilder::new().build_recorder();
-    let handle = Arc::new(recorder.handle());
-    static METRICS_INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    METRICS_INSTALLED.get_or_init(|| {
-        metrics::set_global_recorder(recorder).ok();
-    });
+    // The Prometheus recorder is process-global: only the first
+    // install wins. Store the handle in a OnceLock so every
+    // subsequent spawn_cp reuses the *installed* recorder's handle
+    // (not a freshly-built dead one). Without this, metrics tests
+    // fail in the merged single-binary because a different test's
+    // spawn_cp wins the global install and later calls get handles
+    // to recorders that were never installed.
+    static METRICS_HANDLE: std::sync::OnceLock<Arc<metrics_exporter_prometheus::PrometheusHandle>> =
+        std::sync::OnceLock::new();
+    let handle = METRICS_HANDLE
+        .get_or_init(|| {
+            let recorder = PrometheusBuilder::new().build_recorder();
+            let h = Arc::new(recorder.handle());
+            metrics::set_global_recorder(recorder).ok();
+            h
+        })
+        .clone();
 
     let app = build_app(fleet.clone(), database.clone(), handle);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
