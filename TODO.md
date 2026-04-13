@@ -45,3 +45,28 @@ Future work that cannot be closed inside this repository.
   in `cli/tests/scenarios/harness.rs`. `cli_lock()` serializes all
   tests that spawn the real binary via `assert_cmd`; `env_lock()`
   serializes tests that mutate `NIXFLEET_*` / `HOSTNAME` env vars.
+
+- [ ] **Agent: survive self-switch without restart rate-limiting.**
+  When the agent applies a generation that changes its own systemd
+  service, `switch-to-configuration` stops and restarts the agent.
+  If the agent previously hit the activation lock (concurrent
+  `nh os switch` / `nixos-rebuild`), the failed attempts count toward
+  systemd's `StartLimitBurst` and the post-switch restart gets
+  rate-limited — leaving the agent dead for minutes. Observed:
+  agent killed at 14:31:38, not restarted until manual intervention
+  13 minutes later despite `Restart=always` + `RestartSec=30`.
+  Potential fixes: increase `StartLimitIntervalSec`/`StartLimitBurst`
+  in the service module, add `StartLimitAction=none`, or use a
+  watchdog timer that detects the agent is down and force-starts it.
+  Also consider: the agent should detect the activation lock and
+  back off instead of failing (reducing restart count toward the limit).
+
+- [ ] **Agent liveness in `nixfleet status`.** The `LAST SEEN` column
+  shows the timestamp of the last agent report, but there's no visual
+  indicator when a machine hasn't reported in a suspiciously long time.
+  A machine could be dead for hours and the operator would only notice
+  by reading timestamps. Add a staleness threshold (e.g. 2× poll
+  interval) — machines that haven't reported within the threshold
+  should show a warning state (e.g. `stale` or `unreachable`) in the
+  STATUS column. Consider also adding `--watch` to `nixfleet status`
+  for live polling.
