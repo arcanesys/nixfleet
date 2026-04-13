@@ -303,6 +303,7 @@ pub async fn create(
 
     let result = create_inner(
         client, base_url, flake, &hosts, push_to, push_hook, copy, cache_url, dry_run, eval_only,
+        &mut oplog,
     )
     .await;
 
@@ -327,6 +328,7 @@ async fn create_inner(
     cache_url: Option<&str>,
     dry_run: bool,
     eval_only: bool,
+    oplog: &mut crate::oplog::OpLog,
 ) -> Result<Option<String>> {
     // Build all hosts
     let mut entries = Vec::new();
@@ -341,7 +343,9 @@ async fn create_inner(
             if let Some(ref mut w) = window {
                 w.set_line_prefix(hostname);
             }
-            let platform = detect_platform(flake, hostname)?;
+            let platform = detect_platform(flake, hostname);
+            oplog.log_cmd(&format!("nix eval platform {}", hostname), Some(hostname), &platform.as_ref().map(|_| ()));
+            let platform = platform?;
             let tags = detect_tags(flake, hostname);
             let build_result = if eval_only {
                 eval_host(flake, hostname)
@@ -352,6 +356,11 @@ async fn create_inner(
                     window.as_mut().and_then(|w| w.for_output()),
                 )
             };
+            oplog.log_cmd(
+                &format!("{} {}", if eval_only { "nix eval" } else { "nix build" }, hostname),
+                Some(hostname),
+                &build_result.as_ref().map(|_| ()),
+            );
             match build_result {
                 Ok(store_path) => {
                     if platform.contains("darwin") {
@@ -398,11 +407,13 @@ async fn create_inner(
 
                 for entry in &entries {
                     if pushed.insert(entry.store_path.clone()) {
-                        if let Err(e) = nix_copy_to(
+                        let push_result = nix_copy_to(
                             push_url,
                             &entry.store_path,
                             window.as_mut().and_then(|w| w.for_output()),
-                        ) {
+                        );
+                        oplog.log_cmd(&format!("nix copy --to {} {}", push_url, entry.hostname), Some(&entry.hostname), &push_result);
+                        if let Err(e) = push_result {
                             if let Some(ref mut w) = window {
                                 w.mark_error();
                             }
@@ -433,12 +444,14 @@ async fn create_inner(
                     if let Some(ref mut w) = window {
                         w.set_line_prefix(&entry.hostname);
                     }
-                    run_push_hook(
+                    let hook_result = run_push_hook(
                         remote_host.as_deref(),
                         hook,
                         &entry.store_path,
                         window.as_mut().and_then(|w| w.for_output()),
-                    )?;
+                    );
+                    oplog.log_cmd(&format!("push-hook {}", entry.hostname), Some(&entry.hostname), &hook_result);
+                    hook_result?;
                     if let Some(ref w) = window {
                         w.inc();
                     }
@@ -458,12 +471,14 @@ async fn create_inner(
                 if let Some(ref mut w) = window {
                     w.set_line_prefix(&entry.hostname);
                 }
-                run_push_hook(
+                let hook_result = run_push_hook(
                     None,
                     hook,
                     &entry.store_path,
                     window.as_mut().and_then(|w| w.for_output()),
-                )?;
+                );
+                oplog.log_cmd(&format!("push-hook {}", entry.hostname), Some(&entry.hostname), &hook_result);
+                hook_result?;
                 if let Some(ref w) = window {
                     w.inc();
                 }
@@ -487,11 +502,13 @@ async fn create_inner(
                         }
                         continue;
                     }
-                    if let Err(e) = copy_to_host(
+                    let copy_result = copy_to_host(
                         &entry.hostname,
                         &entry.store_path,
                         window.as_mut().and_then(|w| w.for_output()),
-                    ) {
+                    );
+                    oplog.log_cmd(&format!("nix-copy-closure {}", entry.hostname), Some(&entry.hostname), &copy_result);
+                    if let Err(e) = copy_result {
                         tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
                         if let Some(ref mut w) = window {
                             w.mark_error();

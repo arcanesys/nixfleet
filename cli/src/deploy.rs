@@ -201,7 +201,7 @@ pub async fn run(
     let mut oplog = crate::oplog::OpLog::new("deploy")?;
     oplog.log_start("deploy", flake, &targets);
 
-    let result = run_inner(flake, &targets, dry_run, target_override).await;
+    let result = run_inner(flake, &targets, dry_run, target_override, &mut oplog).await;
 
     match &result {
         Ok(()) => oplog.finish(true, None),
@@ -217,6 +217,7 @@ async fn run_inner(
     targets: &[String],
     dry_run: bool,
     target_override: Option<&str>,
+    oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
     let mut results: HashMap<String, Result<String>> = HashMap::new();
 
@@ -235,7 +236,9 @@ async fn run_inner(
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }
-            match build_host(flake, host, window.as_mut().and_then(|w| w.for_output())).await {
+            let build_result = build_host(flake, host, window.as_mut().and_then(|w| w.for_output())).await;
+            oplog.log_cmd(&format!("nix build {}", host), Some(host), &build_result.as_ref().map(|_| ()));
+            match build_result {
                 Ok(path) => {
                     tracing::info!(host, path = %display::truncate_store_path(&path, 60), "built");
                     results.insert(host.clone(), Ok(path));
@@ -290,14 +293,15 @@ async fn run_inner(
                     Some(t) => t.to_string(),
                     None => format!("root@{}", host),
                 };
-                match deploy_via_ssh(
+                let deploy_result = deploy_via_ssh(
                     host,
                     store_path,
                     &ssh_dest,
                     window.as_mut().and_then(|w| w.for_output()),
                 )
-                .await
-                {
+                .await;
+                oplog.log_cmd(&format!("ssh deploy {}", host), Some(host), &deploy_result);
+                match deploy_result {
                     Ok(()) => {
                         tracing::info!(host, "deployed");
                         success_count += 1;

@@ -13,7 +13,6 @@ use std::time::Instant;
 
 #[derive(Serialize)]
 #[serde(tag = "event")]
-#[allow(dead_code)] // Subprocess variant used in tests; per-command logging deferred
 enum LogEvent<'a> {
     #[serde(rename = "op_start")]
     OpStart {
@@ -91,7 +90,7 @@ impl OpLog {
         self.write_event(&event);
     }
 
-    #[allow(dead_code)] // per-command logging deferred; tested in unit tests
+    #[allow(dead_code)] // used in tests; callers may use log_cmd convenience wrapper instead
     pub fn log_subprocess(
         &mut self,
         cmd: &[String],
@@ -122,7 +121,35 @@ impl OpLog {
             error,
         };
         self.write_event(&event);
-        eprintln!("Log: {}", self.path.display());
+        if success {
+            eprintln!("Log: {}", self.path.display());
+        } else {
+            eprintln!("Full log: {}", self.path.display());
+        }
+    }
+
+    /// Return the log file path (for use in error messages).
+    #[allow(dead_code)] // public API for callers that surface the log path
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// Log a completed command with its result.
+    pub fn log_cmd<E: std::fmt::Display>(&mut self, cmd_desc: &str, host: Option<&str>, result: &std::result::Result<(), E>) {
+        let (exit_code, stderr) = match result {
+            Ok(()) => (0, None),
+            Err(e) => (1, Some(format!("{e:#}"))),
+        };
+        let event = LogEvent::Subprocess {
+            ts: now_iso(),
+            cmd: &[cmd_desc.to_string()],
+            exit_code,
+            duration_ms: 0,
+            stdout: None,
+            stderr: stderr.as_deref(),
+            host,
+        };
+        self.write_event(&event);
     }
 
     fn write_event(&mut self, event: &LogEvent<'_>) {
