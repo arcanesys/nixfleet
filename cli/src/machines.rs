@@ -65,25 +65,53 @@ pub async fn list(
     Ok(())
 }
 
-/// DELETE /api/v1/machines/{id}/tags/{tag} — remove a tag from a machine.
-pub async fn untag(
+/// PATCH /api/v1/machines/{id}/lifecycle — change machine lifecycle state.
+pub async fn set_lifecycle(
     client: &reqwest::Client,
     cp_url: &str,
     machine_id: &str,
-    tag: &str,
+    state: &str,
 ) -> Result<()> {
-    let url = format!("{}/api/v1/machines/{}/tags/{}", cp_url, machine_id, tag);
+    let url = format!("{}/api/v1/machines/{}/lifecycle", cp_url, machine_id);
+    let body = serde_json::json!({ "lifecycle": state });
+
+    let resp = client
+        .patch(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("failed to reach control plane")?;
+
+    crate::client::check_response(resp).await?;
+
+    println!("Machine '{}' lifecycle set to {}.", machine_id, state);
+    Ok(())
+}
+
+/// DELETE /api/v1/machines/{id}/desired-generation — clear stale desired generation.
+pub async fn clear_desired(
+    client: &reqwest::Client,
+    cp_url: &str,
+    machine_id: &str,
+) -> Result<()> {
+    let url = format!("{}/api/v1/machines/{}/desired-generation", cp_url, machine_id);
 
     let resp = client
         .delete(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
-    crate::client::check_response(resp).await?;
-
-    println!("Tag '{}' removed from {}.", tag, machine_id);
-    Ok(())
+    let status = resp.status();
+    if status.as_u16() == 204 || status.is_success() {
+        println!("Desired generation cleared for '{}'.", machine_id);
+        return Ok(());
+    }
+    if status.as_u16() == 404 {
+        anyhow::bail!("Machine '{}' not found", machine_id);
+    }
+    let body = crate::client::read_error_body(resp).await;
+    anyhow::bail!("failed to clear desired generation: {} {}", status, body);
 }
 
 /// POST /api/v1/machines/{id}/register — register a machine with the control plane.

@@ -134,6 +134,32 @@ pub async fn cancel(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
     Ok(())
 }
 
+/// DELETE /api/v1/rollouts/{id} — delete a terminal rollout.
+pub async fn delete(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<()> {
+    let url = format!("{}/api/v1/rollouts/{}", cp_url, id);
+
+    let resp = client
+        .delete(&url)
+        .send()
+        .await
+        .context("failed to DELETE rollout")?;
+
+    let status = resp.status();
+    if status.as_u16() == 204 || status.is_success() {
+        println!("Rollout {} deleted.", id);
+        return Ok(());
+    }
+    if status.as_u16() == 409 {
+        let body = crate::client::read_error_body(resp).await;
+        anyhow::bail!("Rollout {} cannot be deleted: {}", id, body);
+    }
+    if status.as_u16() == 404 {
+        anyhow::bail!("Rollout {} not found", id);
+    }
+    let body = crate::client::read_error_body(resp).await;
+    anyhow::bail!("failed to delete rollout: {} {}", status, body);
+}
+
 /// Poll a rollout until it reaches a terminal state, printing progress every interval.
 ///
 /// Falls back to [`DEFAULT_WAIT_TIMEOUT`] if `max_wait` is `None`.
