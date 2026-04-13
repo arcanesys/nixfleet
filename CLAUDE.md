@@ -88,6 +88,11 @@ nixfleet deploy --hosts web-02 --ssh                                     # direc
 nixfleet rollback --host web-02 --ssh                                    # SSH-only rollback
 ```
 
+> **Note:** `--ssh` deploys directly via `nix-copy-closure` and `switch-to-configuration`,
+> bypassing the control plane entirely. Lifecycle state is not checked — a machine in
+> `maintenance` will still receive the deploy. Use `--ssh` as an emergency escape hatch
+> when the CP is unavailable, not as a routine deployment method.
+
 Config priority (highest wins): CLI flags → env vars → `~/.config/nixfleet/credentials.toml` → `.nixfleet.toml` (via `--config <path>` or cwd walk)
 
 Full CLI reference with all flags, config format, and examples: `docs/mdbook/reference/cli.md`

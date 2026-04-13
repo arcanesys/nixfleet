@@ -34,7 +34,7 @@ pub async fn add_host(
 async fn fetch_hardware_config(hostname: &str, target: &str) -> Result<()> {
     println!("  Fetching hardware config from {}...", target);
     let dir = format!("modules/_hardware/{}", hostname);
-    std::fs::create_dir_all(&dir).context(format!("Failed to create directory {}", dir))?;
+    std::fs::create_dir_all(&dir).context(format!("failed to create directory {}", dir))?;
 
     let output = tokio::process::Command::new("ssh")
         .args([
@@ -50,27 +50,27 @@ async fn fetch_hardware_config(hostname: &str, target: &str) -> Result<()> {
         .stderr(Stdio::piped())
         .output()
         .await
-        .context("Failed to SSH to target")?;
+        .context("failed to SSH to target")?;
 
     if !output.status.success() {
         bail!(
-            "Failed to generate hardware config: {}",
+            "failed to generate hardware config: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
 
     let hw_path = format!("{}/hardware-configuration.nix", dir);
-    std::fs::write(&hw_path, &output.stdout).context(format!("Failed to write {}", hw_path))?;
+    std::fs::write(&hw_path, &output.stdout).context(format!("failed to write {}", hw_path))?;
     println!("  Saved: {}", hw_path);
     Ok(())
 }
 
 fn generate_disk_config(hostname: &str) -> Result<()> {
     let dir = format!("modules/_hardware/{}", hostname);
-    std::fs::create_dir_all(&dir).context(format!("Failed to create directory {}", dir))?;
+    std::fs::create_dir_all(&dir).context(format!("failed to create directory {}", dir))?;
     let path = format!("{}/disk-config.nix", dir);
 
-    std::fs::write(&path, DISK_TEMPLATE).context(format!("Failed to write {}", path))?;
+    std::fs::write(&path, DISK_TEMPLATE).context(format!("failed to write {}", path))?;
     println!("  Generated: {}", path);
     Ok(())
 }

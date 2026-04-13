@@ -28,11 +28,11 @@ pub async fn list(
         .get(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     let resp = crate::client::check_response(resp).await?;
 
-    let rollouts: Vec<RolloutDetail> = resp.json().await.context("Failed to parse rollout list")?;
+    let rollouts: Vec<RolloutDetail> = resp.json().await.context("failed to parse rollout list")?;
 
     if rollouts.is_empty() {
         if json {
@@ -79,14 +79,14 @@ pub async fn status(client: &reqwest::Client, cp_url: &str, id: &str, json: bool
         .get(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     let resp = crate::client::check_response(resp).await?;
 
     let rollout: RolloutDetail = resp
         .json()
         .await
-        .context("Failed to parse rollout detail")?;
+        .context("failed to parse rollout detail")?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&rollout)?);
@@ -105,7 +105,7 @@ pub async fn resume(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         .post(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     crate::client::check_response(resp).await?;
 
@@ -121,7 +121,7 @@ pub async fn cancel(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         .post(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     crate::client::check_response(resp).await?;
 
@@ -174,7 +174,7 @@ pub async fn wait_for_completion(
             .get(&url)
             .send()
             .await
-            .context("Failed to reach control plane")?;
+            .context("failed to reach control plane")?;
 
         if !resp.status().is_success() {
             bail!(
@@ -189,7 +189,7 @@ pub async fn wait_for_completion(
         let rollout: RolloutDetail = resp
             .json()
             .await
-            .context("Failed to parse rollout detail")?;
+            .context("failed to parse rollout detail")?;
 
         let total_machines: usize = rollout.batches.iter().map(|b| b.machine_ids.len()).sum();
         let healthy_machines: usize = rollout

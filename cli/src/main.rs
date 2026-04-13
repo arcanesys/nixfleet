@@ -820,11 +820,11 @@ async fn rollback(
                 .stderr(Stdio::piped())
                 .output()
                 .await
-                .context("Failed to query previous generation via SSH")?;
+                .context("failed to query previous generation via SSH")?;
 
             if !output.status.success() {
                 bail!(
-                    "Failed to get previous generation: {}",
+                    "failed to get previous generation: {}",
                     String::from_utf8_lossy(&output.stderr)
                 );
             }

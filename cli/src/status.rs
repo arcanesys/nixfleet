@@ -10,11 +10,11 @@ pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool) -> Result<(
         .get(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     let resp = crate::client::check_response(resp).await?;
 
-    let machines: Vec<MachineStatus> = resp.json().await.context("Failed to parse machine list")?;
+    let machines: Vec<MachineStatus> = resp.json().await.context("failed to parse machine list")?;
 
     if machines.is_empty() {
         if json {

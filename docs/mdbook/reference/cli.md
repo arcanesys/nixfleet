@@ -84,6 +84,11 @@ nixfleet deploy [FLAGS]
 **Modes:**
 
 - **SSH mode** (`--ssh`): Builds locally, copies closures via SSH, runs `switch-to-configuration`. No control plane required.
+
+> **Note:** `--ssh` deploys directly via `nix-copy-closure` and `switch-to-configuration`,
+> bypassing the control plane entirely. Lifecycle state is not checked — a machine in
+> `maintenance` will still receive the deploy. Use `--ssh` as an emergency escape hatch
+> when the CP is unavailable, not as a routine deployment method.
 - **Rollout mode** (requires a release): Creates a rollout on the control plane with the specified strategy. Specify an existing release with `--release <ID>`, or use `--push-to <url>` / `--hook` / `--copy` to build + push + register implicitly in one command.
 - **Hook mode** (`--hook`): Uses `[cache.hook] push-cmd` from `.nixfleet.toml` to push closures (e.g., `attic push mycache {}`). Overrides `--push-to` and uses `[cache.hook] url` as the cache URL for agents. Flags `--hook-push-cmd` and `--hook-url` override the config values.
 - **Targeting:** Use `--tags <TAG>` or `--hosts <pattern>` to select machines. Both are intersected with the release's host list (machines not in the release are skipped with a warning).

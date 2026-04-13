@@ -33,11 +33,11 @@ async fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<
             .stderr(Stdio::inherit())
             .output()
             .await
-            .context("Failed to run nix eval for host discovery")?
+            .context("failed to run nix eval for host discovery")?
     } else {
         display::run_cmd_async(&mut cmd, None)
             .await
-            .context("Failed to run nix eval for host discovery")?
+            .context("failed to run nix eval for host discovery")?
     };
     oplog.log_output("nix eval discover hosts", None, &output, t.elapsed());
 
@@ -49,7 +49,7 @@ async fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<
     }
 
     let hosts: Vec<String> =
-        serde_json::from_slice(&output.stdout).context("Failed to parse host list")?;
+        serde_json::from_slice(&output.stdout).context("failed to parse host list")?;
     Ok(hosts)
 }
 
@@ -87,11 +87,11 @@ async fn build_host(
             .stderr(Stdio::inherit())
             .output()
             .await
-            .context(format!("Failed to build closure for {}", host))?
+            .context(format!("failed to build closure for {}", host))?
     } else {
         display::run_cmd_async(&mut cmd, window)
             .await
-            .context(format!("Failed to build closure for {}", host))?
+            .context(format!("failed to build closure for {}", host))?
     };
     oplog.log_output(
         &format!("nix build {}", host),
@@ -207,8 +207,8 @@ async fn deploy_via_ssh(
 }
 
 pub async fn run(
-    _client: &reqwest::Client,
-    _cp_url: &str,
+    client: &reqwest::Client,
+    cp_url: &str,
     patterns: &[String],
     flake: &str,
     dry_run: bool,
@@ -241,7 +241,7 @@ pub async fn run(
 
     oplog.log_start("deploy", flake, &targets);
 
-    let result = run_inner(flake, &targets, dry_run, target_override, &mut oplog).await;
+    let result = run_inner(client, cp_url, flake, &targets, dry_run, target_override, &mut oplog).await;
 
     match &result {
         Ok(()) => oplog.finish(true, None),
@@ -253,6 +253,8 @@ pub async fn run(
 
 /// Inner implementation for `run`, split out so oplog can wrap the result.
 async fn run_inner(
+    client: &reqwest::Client,
+    cp_url: &str,
     flake: &str,
     targets: &[String],
     dry_run: bool,
@@ -349,6 +351,11 @@ async fn run_inner(
                 {
                     Ok(()) => {
                         tracing::info!(host, "deployed");
+                        // Clear any stale desired generation so the agent
+                        // doesn't try to re-apply an old rollout target.
+                        if let Err(e) = clear_desired_on_cp(client, cp_url, host).await {
+                            tracing::debug!(host, error = %e, "could not clear desired generation on CP (CP may be unavailable)");
+                        }
                         success_count += 1;
                     }
                     Err(e) => {
@@ -376,6 +383,32 @@ async fn run_inner(
         bail!("{} host(s) failed to deploy", fail_count);
     }
     Ok(())
+}
+
+/// Best-effort: clear a machine's desired generation on the CP after an SSH deploy.
+/// This prevents the agent from fighting the SSH deploy by re-applying a stale
+/// rollout target. Failures are logged at debug level — the SSH deploy already
+/// succeeded, so CP unavailability is not fatal.
+async fn clear_desired_on_cp(
+    client: &reqwest::Client,
+    cp_url: &str,
+    machine_id: &str,
+) -> Result<()> {
+    let url = format!(
+        "{}/api/v1/machines/{}/desired-generation",
+        cp_url, machine_id
+    );
+    let resp = client
+        .delete(&url)
+        .send()
+        .await
+        .context("failed to reach control plane")?;
+    let status = resp.status();
+    if status.is_success() || status.as_u16() == 404 {
+        Ok(())
+    } else {
+        anyhow::bail!("CP returned {}", status)
+    }
 }
 
 // ==========================================================================
@@ -447,13 +480,13 @@ pub async fn deploy_rollout(
         .json(&body)
         .send()
         .await
-        .context("Failed to create rollout")?;
+        .context("failed to create rollout")?;
 
     let resp = crate::client::check_response(resp).await?;
     let created: CreateRolloutResponse = resp
         .json()
         .await
-        .context("Failed to parse rollout response")?;
+        .context("failed to parse rollout response")?;
 
     println!(
         "Rollout {} created ({} batches)",
