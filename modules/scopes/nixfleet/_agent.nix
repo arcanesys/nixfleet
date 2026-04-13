@@ -27,7 +27,7 @@ in {
 
     pollInterval = lib.mkOption {
       type = lib.types.int;
-      default = 300;
+      default = 60;
       description = "Poll interval in seconds (steady-state).";
     };
 
