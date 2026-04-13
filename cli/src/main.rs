@@ -119,9 +119,17 @@ enum Commands {
         #[arg(long, conflicts_with = "release", help_heading = "Build & Push")]
         push_to: Option<String>,
 
-        /// Run command on push target for each path ({} = store path)
-        #[arg(long, help_heading = "Build & Push")]
-        push_hook: Option<String>,
+        /// Use hook mode: push via push-cmd instead of nix copy
+        #[arg(long, help_heading = "Hook Mode")]
+        hook: bool,
+
+        /// Override hook push command ({} = store path)
+        #[arg(long, requires = "hook", help_heading = "Hook Mode")]
+        hook_push_cmd: Option<String>,
+
+        /// Override hook cache URL for agents to pull from
+        #[arg(long, requires = "hook", help_heading = "Hook Mode")]
+        hook_url: Option<String>,
 
         /// Implicitly create a release and copy closures via SSH
         #[arg(long, conflicts_with = "release", conflicts_with = "push_to", help_heading = "Build & Push")]
@@ -203,9 +211,15 @@ enum Commands {
         /// Default cache URL
         #[arg(long)]
         cache_url: Option<String>,
-        /// Default push destination
+        /// Default push destination (nix copy --to)
         #[arg(long)]
         push_to: Option<String>,
+        /// Cache URL when using --hook mode (e.g. http://cache:8081/mycache)
+        #[arg(long)]
+        hook_url: Option<String>,
+        /// Push command for --hook mode ({} is replaced with store path)
+        #[arg(long)]
+        hook_push_cmd: Option<String>,
         /// Default deploy strategy (canary, staged, all-at-once)
         #[arg(long)]
         strategy: Option<String>,
@@ -282,9 +296,15 @@ enum ReleaseAction {
         /// Push closures to a Nix binary cache (s3://, ssh://, or HTTP URL)
         #[arg(long)]
         push_to: Option<String>,
-        /// Run command on push target for each path ({} = store path)
+        /// Use hook mode: push via push-cmd instead of nix copy
         #[arg(long)]
-        push_hook: Option<String>,
+        hook: bool,
+        /// Override hook push command ({} = store path)
+        #[arg(long, requires = "hook")]
+        hook_push_cmd: Option<String>,
+        /// Override hook cache URL for agents to pull from
+        #[arg(long, requires = "hook")]
+        hook_url: Option<String>,
         /// Copy closures to each host via nix-copy-closure
         #[arg(long, conflicts_with = "push_to")]
         copy: bool,
@@ -349,14 +369,11 @@ async fn main() -> Result<()> {
         1 => "nixfleet=info",
         _ => "nixfleet=debug",
     };
-    let indicatif_layer = tracing_indicatif::IndicatifLayer::new()
-        .with_max_progress_bars(12, None);
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
-                .with_writer(indicatif_layer.get_stderr_writer()),
+                .with_writer(display::SharedWriter::new()),
         )
-        .with(indicatif_layer)
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| default_level.into()),
@@ -456,20 +473,30 @@ async fn main() -> Result<()> {
             wait,
             release,
             push_to,
-            push_hook,
+            hook,
+            hook_push_cmd,
+            hook_url,
             copy,
             cache_url,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
 
-            // Apply config defaults for deploy
-            let effective_cache_url = cache_url
-                .as_deref()
-                .or(resolved.cache_url.as_deref());
-            let effective_push_to = if push_to.is_some() {
-                push_to.as_deref()
+            // --hook mode: use hook config for push-cmd and cache-url
+            let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
+                let push_cmd = hook_push_cmd.as_deref()
+                    .or(resolved.hook_push_cmd.as_deref())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("--hook requires --hook-push-cmd or [cache.hook] push-cmd in .nixfleet.toml")
+                    })?;
+                let hook_cache = cache_url.as_deref()
+                    .or(hook_url.as_deref())
+                    .or(resolved.hook_url.as_deref())
+                    .or(resolved.cache_url.as_deref());
+                (push_to.as_deref(), Some(push_cmd), hook_cache)
             } else {
-                resolved.push_to.as_deref()
+                let pt = push_to.as_deref().or(resolved.push_to.as_deref());
+                let cu = cache_url.as_deref().or(resolved.cache_url.as_deref());
+                (pt, None, cu)
             };
             let effective_strategy = if strategy == "all-at-once" {
                 // "all-at-once" is the clap default — check if config has a different default
@@ -493,14 +520,14 @@ async fn main() -> Result<()> {
                 // Resolve release ID: explicit, or implicit via --push-to/--copy
                 let release_id = if let Some(id) = release {
                     id
-                } else if effective_push_to.is_some() || copy || push_hook.is_some() {
+                } else if effective_push_to.is_some() || copy || effective_push_hook.is_some() {
                     let id = crate::release::create(
                         &http_client,
                         effective_cp_url,
                         &flake,
                         &hosts,
                         effective_push_to,
-                        push_hook.as_deref(),
+                        effective_push_hook,
                         copy,
                         effective_cache_url,
                         dry_run,
@@ -511,7 +538,7 @@ async fn main() -> Result<()> {
                         None => return Ok(()), // dry-run, nothing to deploy
                     }
                 } else {
-                    bail!("--release, --push-to, or --copy is required for non-SSH deploys");
+                    bail!("--release, --push-to, --hook, or --copy is required for non-SSH deploys");
                 };
 
                 // --tags takes precedence; otherwise pass explicit host names
@@ -594,22 +621,36 @@ async fn main() -> Result<()> {
                     flake,
                     hosts,
                     push_to,
-                    push_hook,
+                    hook,
+                    hook_push_cmd,
+                    hook_url,
                     copy,
                     cache_url,
                     dry_run,
                 } => {
-                    // CLI flags override config file values
-                    let effective_push_to = push_to.or_else(|| resolved.push_to.clone());
-                    let effective_cache_url =
-                        cache_url.or_else(|| resolved.cache_url.clone());
+                    let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
+                        let push_cmd = hook_push_cmd.as_deref()
+                            .or(resolved.hook_push_cmd.as_deref())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("--hook requires --hook-push-cmd or [cache.hook] push-cmd in .nixfleet.toml")
+                            })?;
+                        let hook_cache = cache_url.as_deref()
+                            .or(hook_url.as_deref())
+                            .or(resolved.hook_url.as_deref())
+                            .or(resolved.cache_url.as_deref());
+                        (push_to.as_deref().map(str::to_string), Some(push_cmd), hook_cache.map(str::to_string))
+                    } else {
+                        let pt = push_to.or_else(|| resolved.push_to.clone());
+                        let cu = cache_url.or_else(|| resolved.cache_url.clone());
+                        (pt, None, cu)
+                    };
                     release::create(
                         &http_client,
                         effective_cp_url,
                         &flake,
                         &hosts,
                         effective_push_to.as_deref(),
-                        push_hook.as_deref(),
+                        effective_push_hook,
                         copy,
                         effective_cache_url.as_deref(),
                         dry_run,
@@ -676,6 +717,8 @@ async fn main() -> Result<()> {
             client_key,
             cache_url,
             push_to,
+            hook_url,
+            hook_push_cmd,
             strategy,
             on_failure,
         } => {
@@ -688,6 +731,8 @@ async fn main() -> Result<()> {
                 client_key.as_deref(),
                 cache_url.as_deref(),
                 push_to.as_deref(),
+                hook_url.as_deref(),
+                hook_push_cmd.as_deref(),
                 strategy.as_deref(),
                 on_failure.as_deref(),
             )?;

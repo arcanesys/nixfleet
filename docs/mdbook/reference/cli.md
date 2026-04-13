@@ -13,7 +13,7 @@ Flat reference for all `nixfleet` CLI commands and flags.
 | `--ca-cert` | `NIXFLEET_CA_CERT` | `""` | CA certificate for TLS verification (uses system trust store if omitted) |
 | `--json` | — | `false` | Output structured JSON (on commands that produce tables/detail views) |
 | `--config` | — | — | Path to `.nixfleet.toml` (default: walk up from cwd) |
-| `-v`, `--verbose` | — | `0` | Increase verbosity (-v for info, -vv for debug). Default: warn. |
+| `-v`, `--verbose` | — | `0` | Verbosity: `-v` shows INFO milestones + subprocess rolling window + progress bar; `-vv` shows raw passthrough (debug) |
 
 Logging is controlled via `RUST_LOG` (overrides `-v`/`--verbose` when set).
 
@@ -63,7 +63,9 @@ nixfleet deploy [FLAGS]
 |------|------|---------|-------------|
 | `--release <ID>` | string | -- | Deploy an existing release (required for rollout mode unless using `--push-to` / `--copy`) |
 | `--push-to <URL>` | string | -- | Build all hosts, push to a Nix binary cache URL, and register a release implicitly (e.g., `ssh://root@cache`, `s3://bucket`) |
-| `--push-hook <CMD>` | string | -- | Run a shell command after pushing each closure (escape hatch for Attic/Cachix). `{}` is replaced with the store path. Runs on the `--push-to` host when combined, otherwise locally |
+| `--hook` | bool | `false` | Use hook mode: push via `[cache.hook] push-cmd` instead of `nix copy`. Requires `[cache.hook]` in `.nixfleet.toml` or `--hook-push-cmd` |
+| `--hook-push-cmd <CMD>` | string | -- | Override hook push command (`{}` = store path). Requires `--hook` |
+| `--hook-url <URL>` | string | -- | Override hook cache URL for agents to pull from. Requires `--hook` |
 | `--copy` | bool | `false` | Build all hosts, push to each target via `nix-copy-closure` (no binary cache needed), and register a release implicitly |
 | `--hosts <PATTERN>` | string (comma-separated or repeatable) | `*` | Host glob patterns. In SSH mode: hosts to deploy. In rollout mode: target machines directly (alternative to `--tags`) |
 | `--tags <TAG>` | string (comma-separated or repeatable) | -- | Target machines by tag (rollout mode) |
@@ -82,7 +84,8 @@ nixfleet deploy [FLAGS]
 **Modes:**
 
 - **SSH mode** (`--ssh`): Builds locally, copies closures via SSH, runs `switch-to-configuration`. No control plane required.
-- **Rollout mode** (requires a release): Creates a rollout on the control plane with the specified strategy. Specify an existing release with `--release <ID>`, or use `--push-to <url>` / `--copy` to build + push + register implicitly in one command.
+- **Rollout mode** (requires a release): Creates a rollout on the control plane with the specified strategy. Specify an existing release with `--release <ID>`, or use `--push-to <url>` / `--hook` / `--copy` to build + push + register implicitly in one command.
+- **Hook mode** (`--hook`): Uses `[cache.hook] push-cmd` from `.nixfleet.toml` to push closures (e.g., `attic push mycache {}`). Overrides `--push-to` and uses `[cache.hook] url` as the cache URL for agents. Flags `--hook-push-cmd` and `--hook-url` override the config values.
 - **Targeting:** Use `--tags <TAG>` or `--hosts <pattern>` to select machines. Both are intersected with the release's host list (machines not in the release are skipped with a warning).
 
 ---
@@ -103,6 +106,8 @@ nixfleet init [FLAGS]
 | `--client-key <PATH>` | string | -- | Client key path (supports `${HOSTNAME}` expansion) |
 | `--cache-url <URL>` | string | -- | Default binary cache URL for agents |
 | `--push-to <URL>` | string | -- | Default push destination for `release create` |
+| `--hook-url <URL>` | string | -- | Hook mode cache URL (e.g., `http://cache:8081/mycache` for Attic) |
+| `--hook-push-cmd <CMD>` | string | -- | Hook mode push command (`{}` = store path, e.g., `attic push mycache {}`) |
 
 After `init`, run `nixfleet bootstrap` to create and auto-save the first admin API key.
 
@@ -121,7 +126,9 @@ nixfleet release create [FLAGS]
 | `--flake <REF>` | string | `.` | Flake reference |
 | `--hosts <PATTERN>` | string | `*` | Host glob pattern or comma-separated list |
 | `--push-to <URL>` | string | -- | Push closures to this Nix cache URL via `nix copy --to` (e.g., `ssh://root@cache`, `s3://bucket`) |
-| `--push-hook <CMD>` | string | -- | Run this command after pushing each closure. `{}` is replaced with the store path. When combined with `--push-to`, runs on the remote host via SSH |
+| `--hook` | bool | `false` | Use hook mode: push via `[cache.hook] push-cmd` instead of `nix copy` |
+| `--hook-push-cmd <CMD>` | string | -- | Override hook push command (`{}` = store path). Requires `--hook` |
+| `--hook-url <URL>` | string | -- | Override hook cache URL. Requires `--hook` |
 | `--copy` | bool | `false` | Push closures directly to each target host via `nix-copy-closure` (no binary cache) |
 | `--cache-url <URL>` | string | -- | Override the cache URL recorded in the release (defaults to `--push-to` URL, or config file) |
 | `--dry-run` | bool | `false` | Build and show the manifest without registering |
@@ -372,7 +379,7 @@ Committed to the fleet repo root. Discovered by walking up from the CLI's curren
 
 ```toml
 [control-plane]
-url = "https://lab:8080"
+url = "https://cp.example.com:8080"
 ca-cert = "modules/_config/fleet-ca.pem"    # relative to config file location
 
 [tls]
@@ -380,8 +387,12 @@ client-cert = "/run/agenix/agent-${HOSTNAME}-cert"
 client-key = "/run/agenix/agent-${HOSTNAME}-key"
 
 [cache]
-url = "http://lab:5000"         # default --cache-url for rollouts
-push-to = "ssh://root@lab"      # default --push-to for release create
+url = "http://cache.example.com:5000"          # default --cache-url for rollouts
+push-to = "ssh://root@cache.example.com"       # default --push-to for release create
+
+[cache.hook]                                    # used when --hook is passed
+url = "http://cache.example.com:8081/mycache"   # overrides cache.url for the release
+push-cmd = "attic push mycache {}"              # {} is replaced with the store path
 
 [deploy]
 strategy = "staged"             # default rollout strategy
@@ -399,10 +410,10 @@ on-failure = "pause"
 User-level, mode 600, not checked into any repo. Written automatically by `nixfleet bootstrap` and keyed by CP URL to support multiple clusters.
 
 ```toml
-["https://lab:8080"]
+["https://cp.example.com:8080"]
 api-key = "nfk-73c713cc..."
 
-["https://staging.cp.example.com:8080"]
+["https://cp-staging.example.com:8080"]
 api-key = "nfk-abc..."
 ```
 

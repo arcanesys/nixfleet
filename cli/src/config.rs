@@ -36,6 +36,15 @@ pub struct TlsConfig {
 pub struct CacheConfig {
     pub url: Option<String>,
     pub push_to: Option<String>,
+    #[serde(default)]
+    pub hook: Option<CacheHookConfig>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct CacheHookConfig {
+    pub url: Option<String>,
+    pub push_cmd: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -70,6 +79,8 @@ pub struct ResolvedConfig {
     pub client_key: Option<String>,
     pub cache_url: Option<String>,
     pub push_to: Option<String>,
+    pub hook_url: Option<String>,
+    pub hook_push_cmd: Option<String>,
     pub strategy: Option<String>,
     pub health_timeout: Option<u64>,
     pub failure_threshold: Option<String>,
@@ -249,6 +260,17 @@ struct WritableCache {
     url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     push_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hook: Option<WritableCacheHook>,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct WritableCacheHook {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    push_cmd: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -275,6 +297,8 @@ pub fn write_config_file(
     client_key: Option<&str>,
     cache_url: Option<&str>,
     push_to: Option<&str>,
+    hook_url: Option<&str>,
+    hook_push_cmd: Option<&str>,
     strategy: Option<&str>,
     on_failure: Option<&str>,
 ) -> Result<()> {
@@ -291,10 +315,18 @@ pub fn write_config_file(
         } else {
             None
         },
-        cache: if cache_url.is_some() || push_to.is_some() {
+        cache: if cache_url.is_some() || push_to.is_some() || hook_url.is_some() || hook_push_cmd.is_some() {
             Some(WritableCache {
                 url: cache_url.map(str::to_string),
                 push_to: push_to.map(str::to_string),
+                hook: if hook_url.is_some() || hook_push_cmd.is_some() {
+                    Some(WritableCacheHook {
+                        url: hook_url.map(str::to_string),
+                        push_cmd: hook_push_cmd.map(str::to_string),
+                    })
+                } else {
+                    None
+                },
             })
         } else {
             None
@@ -368,6 +400,10 @@ pub fn resolve(
         if let Some(ref cache) = cfg.cache {
             resolved.cache_url = cache.url.clone();
             resolved.push_to = cache.push_to.clone();
+            if let Some(ref hook) = cache.hook {
+                resolved.hook_url = hook.url.clone();
+                resolved.hook_push_cmd = hook.push_cmd.clone();
+            }
         }
         if let Some(ref deploy) = cfg.deploy {
             resolved.strategy = deploy.strategy.clone();
@@ -490,7 +526,7 @@ mod tests {
     fn test_parse_config_file() {
         let toml_str = r#"
 [control-plane]
-url = "https://lab:8080"
+url = "https://cp-01:8080"
 ca-cert = "modules/_config/fleet-ca.pem"
 
 [tls]
@@ -498,8 +534,8 @@ client-cert = "/run/agenix/agent-${HOSTNAME}-cert"
 client-key = "/run/agenix/agent-${HOSTNAME}-key"
 
 [cache]
-url = "http://lab:5000"
-push-to = "ssh://root@lab"
+url = "http://cache-01:5000"
+push-to = "ssh://root@cache-01"
 
 [deploy]
 strategy = "staged"
@@ -507,13 +543,13 @@ health-timeout = 300
 "#;
         let config: ConfigFile = toml::from_str(toml_str).unwrap();
         let cp = config.control_plane.unwrap();
-        assert_eq!(cp.url, Some("https://lab:8080".to_string()));
+        assert_eq!(cp.url, Some("https://cp-01:8080".to_string()));
         assert_eq!(cp.ca_cert, Some("modules/_config/fleet-ca.pem".to_string()));
         let tls = config.tls.unwrap();
         assert_eq!(tls.client_cert, Some("/run/agenix/agent-${HOSTNAME}-cert".to_string()));
         let cache = config.cache.unwrap();
-        assert_eq!(cache.url, Some("http://lab:5000".to_string()));
-        assert_eq!(cache.push_to, Some("ssh://root@lab".to_string()));
+        assert_eq!(cache.url, Some("http://cache-01:5000".to_string()));
+        assert_eq!(cache.push_to, Some("ssh://root@cache-01".to_string()));
         let deploy = config.deploy.unwrap();
         assert_eq!(deploy.strategy, Some("staged".to_string()));
         assert_eq!(deploy.health_timeout, Some(300));
@@ -522,7 +558,7 @@ health-timeout = 300
     #[test]
     fn test_parse_credentials_file() {
         let toml_str = r#"
-["https://lab:8080"]
+["https://cp-01:8080"]
 api-key = "nfk-abc123"
 
 ["https://prod:8080"]
@@ -530,7 +566,7 @@ api-key = "nfk-def456"
 "#;
         let creds: CredentialsFile = toml::from_str(toml_str).unwrap();
         assert_eq!(
-            creds.entries.get("https://lab:8080").unwrap().api_key,
+            creds.entries.get("https://cp-01:8080").unwrap().api_key,
             Some("nfk-abc123".to_string())
         );
         assert_eq!(
@@ -543,7 +579,7 @@ api-key = "nfk-def456"
     fn test_resolve_cli_overrides_config() {
         let toml_str = r#"
 [control-plane]
-url = "https://lab:8080"
+url = "https://cp-01:8080"
 "#;
         let config: ConfigFile = toml::from_str(toml_str).unwrap();
         let creds = CredentialsFile::default();
@@ -563,7 +599,7 @@ url = "https://lab:8080"
     fn test_resolve_default_cli_values_dont_override() {
         let toml_str = r#"
 [control-plane]
-url = "https://lab:8080"
+url = "https://cp-01:8080"
 "#;
         let config: ConfigFile = toml::from_str(toml_str).unwrap();
         let creds = CredentialsFile::default();
@@ -576,7 +612,7 @@ url = "https://lab:8080"
                 ..CliOverrides::default()
             },
         );
-        assert_eq!(resolved.control_plane_url, Some("https://lab:8080".to_string()));
+        assert_eq!(resolved.control_plane_url, Some("https://cp-01:8080".to_string()));
     }
 
     #[cfg(unix)]

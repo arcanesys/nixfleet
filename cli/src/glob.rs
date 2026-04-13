@@ -111,9 +111,9 @@ mod tests {
 
     #[test]
     fn filter_hosts_multiple_patterns() {
-        let hosts = vec!["krach".into(), "ohm".into(), "lab".into()];
-        let filtered = filter_hosts(&hosts, &["krach".into(), "ohm".into()]);
-        assert_eq!(filtered, vec!["krach".to_string(), "ohm".to_string()]);
+        let hosts = vec!["node-01".into(), "node-02".into(), "node-03".into()];
+        let filtered = filter_hosts(&hosts, &["node-01".into(), "node-02".into()]);
+        assert_eq!(filtered, vec!["node-01".to_string(), "node-02".to_string()]);
     }
 
     #[test]

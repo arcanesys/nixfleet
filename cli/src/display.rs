@@ -7,15 +7,16 @@
 
 use comfy_table::{ContentArrangement, Table};
 use console::style;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Serialize;
+use std::collections::VecDeque;
+use std::io::{Read as IoRead, Write as IoWrite};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 
 /// Global verbosity level set by main.rs from the `-v` flag count.
 /// 0 = warn (default), 1 = info (-v), 2+ = debug (-vv).
-///
-/// At level 2+, subprocess output (nix build, ssh, nix-copy-closure)
-/// is inherited instead of piped, giving full passthrough of build
-/// progress, agenix decryption, and systemd switch output.
 static VERBOSITY: AtomicU8 = AtomicU8::new(0);
 
 /// Set the global verbosity level. Called once from main.rs.
@@ -23,10 +24,392 @@ pub fn set_verbosity(level: u8) {
     VERBOSITY.store(level, Ordering::Relaxed);
 }
 
+/// Current verbosity level.
+pub fn verbosity() -> u8 {
+    VERBOSITY.load(Ordering::Relaxed)
+}
+
 /// Returns true when verbosity is >= 2 (-vv). Subprocess commands
 /// should inherit stdout/stderr instead of piping.
 pub fn passthrough_output() -> bool {
-    VERBOSITY.load(Ordering::Relaxed) >= 2
+    verbosity() >= 2
+}
+
+/// Returns true when subprocess output should be fully suppressed
+/// (verbosity 0, no flag). At `-v` and `-vv`, subprocess output is shown.
+pub fn quiet_subprocess() -> bool {
+    verbosity() == 0
+}
+
+/// Returns true when a progress bar / rolling window should be shown.
+/// Requires a TTY on stderr (no progress in CI/pipes) and not in
+/// passthrough mode (-vv).
+pub fn use_progress() -> bool {
+    !passthrough_output() && console::Term::stderr().is_term()
+}
+
+
+
+// ---------------------------------------------------------------
+// Shared tracing writer
+// ---------------------------------------------------------------
+
+/// Global slot for the active MultiProgress. When set, tracing output
+/// routes through `MultiProgress::println()` so it appears above the
+/// managed progress region.
+static SHARED_MULTI: LazyLock<Arc<Mutex<Option<MultiProgress>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(None)));
+
+/// A writer that routes through MultiProgress::println() when a
+/// RollingWindow is active, or falls back to stderr.
+#[derive(Clone)]
+pub struct SharedWriter {
+    multi: Arc<Mutex<Option<MultiProgress>>>,
+}
+
+impl Default for SharedWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SharedWriter {
+    pub fn new() -> Self {
+        Self {
+            multi: SHARED_MULTI.clone(),
+        }
+    }
+}
+
+impl IoWrite for SharedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let guard = self.multi.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(ref mp) = *guard {
+            let s = String::from_utf8_lossy(buf);
+            let trimmed = s.trim_end_matches('\n');
+            if !trimmed.is_empty() {
+                mp.println(trimmed).ok();
+            }
+        } else {
+            std::io::stderr().write_all(buf)?;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::stderr().flush()
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedWriter {
+    type Writer = SharedWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+// ---------------------------------------------------------------
+// Rolling window
+// ---------------------------------------------------------------
+
+const WINDOW_SIZE: usize = 10;
+
+/// A 10-line rolling window of subprocess output with a progress bar
+/// at the bottom, managed via indicatif's MultiProgress.
+///
+/// INFO lines from tracing route through MultiProgress::println() and
+/// appear above the managed region (sticky). Subprocess stderr is fed
+/// line-by-line into `log_line()` and displayed in the rolling window.
+///
+/// On drop: clears everything if no error. If `mark_error()` was called,
+/// leaves the rolling lines visible (last 10 lines of output).
+pub struct RollingWindow {
+    #[allow(dead_code)] // held for Drop side-effects
+    multi: MultiProgress,
+    lines: Vec<ProgressBar>,
+    bar: ProgressBar,
+    ring: VecDeque<String>,
+    had_error: bool,
+    line_prefix: String,
+}
+
+impl RollingWindow {
+    /// Create a new rolling window with a progress bar.
+    /// Lines are added on demand — the window starts empty and grows up to 10.
+    pub fn new(phase_name: &str, total: u64) -> Self {
+        let multi = MultiProgress::new();
+
+        // No lines pre-created — they're inserted before the bar in log_line()
+        let bar_style =
+            ProgressStyle::with_template("{spinner} {prefix} {bar:30} {pos}/{len}")
+                .unwrap()
+                .progress_chars("█▓░");
+        let bar = multi.add(ProgressBar::new(total));
+        bar.set_style(bar_style);
+        bar.set_prefix(phase_name.to_string());
+        bar.enable_steady_tick(std::time::Duration::from_millis(120));
+
+        // Install into the shared writer slot
+        {
+            let mut guard = SHARED_MULTI.lock().unwrap_or_else(|p| p.into_inner());
+            *guard = Some(multi.clone());
+        }
+
+        Self {
+            multi,
+            lines: Vec::new(),
+            bar,
+            ring: VecDeque::with_capacity(WINDOW_SIZE),
+            had_error: false,
+            line_prefix: String::new(),
+        }
+    }
+
+    /// Set a prefix that will be prepended to every line (e.g. "[web-01] ").
+    pub fn set_line_prefix(&mut self, prefix: &str) {
+        self.line_prefix = if prefix.is_empty() {
+            String::new()
+        } else {
+            format!("[{}] ", prefix)
+        };
+    }
+
+    /// Push a line of subprocess output into the rolling window.
+    /// The window auto-expands from 0 to WINDOW_SIZE lines as output arrives.
+    pub fn log_line(&mut self, text: &str) {
+        self.log_line_inner(text, false);
+    }
+
+    /// Replace the last line in the rolling window (for `\r`-delimited progress).
+    pub fn log_line_replace(&mut self, text: &str) {
+        self.log_line_inner(text, true);
+    }
+
+    fn log_line_inner(&mut self, text: &str, replace: bool) {
+        let trimmed = text.trim_end();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let prefixed = format!("{}{}", self.line_prefix, trimmed);
+
+        if replace && !self.ring.is_empty() {
+            // Overwrite the last entry (in-place progress update)
+            *self.ring.back_mut().unwrap() = prefixed;
+        } else {
+            if self.ring.len() >= WINDOW_SIZE {
+                self.ring.pop_front();
+            }
+            self.ring.push_back(prefixed);
+        }
+
+        // Grow the line pool if we need more visible lines
+        let line_style = ProgressStyle::with_template("  {msg}").unwrap();
+        while self.lines.len() < self.ring.len() {
+            let pb = self.multi.insert_before(&self.bar, ProgressBar::new(0));
+            pb.set_style(line_style.clone());
+            self.lines.push(pb);
+        }
+
+        // Update visible lines
+        for (i, pb) in self.lines.iter().enumerate() {
+            if let Some(line) = self.ring.get(i) {
+                pb.set_message(line.clone());
+            } else {
+                pb.set_message(String::new());
+            }
+        }
+    }
+
+    /// Advance the progress bar by one.
+    pub fn inc(&self) {
+        self.bar.inc(1);
+    }
+
+    /// Mark that an error occurred. On drop, rolling lines will be preserved.
+    pub fn mark_error(&mut self) {
+        self.had_error = true;
+    }
+
+    /// Returns `Some(&mut self)` when subprocess output should be displayed
+    /// in the rolling window (verbosity >= 1). At verbosity 0, returns `None`
+    /// so the window only shows the progress bar.
+    pub fn for_output(&mut self) -> Option<&mut Self> {
+        if verbosity() >= 1 {
+            Some(self)
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for RollingWindow {
+    fn drop(&mut self) {
+        // Remove from shared writer first
+        {
+            let mut guard = SHARED_MULTI.lock().unwrap_or_else(|p| p.into_inner());
+            *guard = None;
+        }
+
+        if self.had_error {
+            self.bar.finish_and_clear();
+            for pb in &self.lines {
+                pb.finish_and_clear();
+            }
+            // Print buffered lines as permanent output
+            for line in &self.ring {
+                eprintln!("  {}", line);
+            }
+        } else {
+            self.bar.finish_and_clear();
+            for pb in &self.lines {
+                pb.finish_and_clear();
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------
+// Subprocess runner
+// ---------------------------------------------------------------
+
+/// Run a command, piping stderr into the rolling window line-by-line.
+///
+/// - `window = Some(w)`: pipes stderr, feeds each line into `w.log_line()`.
+/// - `window = None`: pipes stderr and discards it (quiet mode).
+/// - For `-vv` passthrough mode, callers should use `Stdio::inherit()`
+///   directly instead of this helper.
+pub fn run_cmd(cmd: &mut Command, mut window: Option<&mut RollingWindow>) -> std::io::Result<Output> {
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+
+    let stderr_handle = child.stderr.take();
+    let mut stderr_buf = Vec::new();
+    if let Some(mut stderr) = stderr_handle {
+        let mut buf = [0u8; 4096];
+        let mut line_buf = String::new();
+        let mut last_was_cr = false;
+        loop {
+            let n = stderr.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            stderr_buf.extend_from_slice(&buf[..n]);
+            let chunk = String::from_utf8_lossy(&buf[..n]);
+            for ch in chunk.chars() {
+                if ch == '\r' {
+                    if !line_buf.is_empty() {
+                        if let Some(ref mut w) = window {
+                            if last_was_cr {
+                                w.log_line_replace(&line_buf);
+                            } else {
+                                w.log_line(&line_buf);
+                            }
+                        }
+                        line_buf.clear();
+                    }
+                    last_was_cr = true;
+                } else if ch == '\n' {
+                    if !line_buf.is_empty() {
+                        if let Some(ref mut w) = window {
+                            w.log_line(&line_buf);
+                        }
+                        line_buf.clear();
+                    }
+                    last_was_cr = false;
+                } else {
+                    line_buf.push(ch);
+                }
+            }
+        }
+        if !line_buf.is_empty() {
+            if let Some(ref mut w) = window {
+                w.log_line(&line_buf);
+            }
+        }
+    }
+
+    let mut stdout_buf = Vec::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        stdout.read_to_end(&mut stdout_buf)?;
+    }
+
+    let status = child.wait()?;
+
+    Ok(Output {
+        status,
+        stdout: stdout_buf,
+        stderr: stderr_buf,
+    })
+}
+
+/// Async version of `run_cmd` for deploy.rs (uses tokio::process::Command).
+pub async fn run_cmd_async(
+    cmd: &mut tokio::process::Command,
+    mut window: Option<&mut RollingWindow>,
+) -> std::io::Result<Output> {
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+
+    let stderr_handle = child.stderr.take();
+    let mut stderr_buf = Vec::new();
+    if let Some(mut stderr) = stderr_handle {
+        use tokio::io::AsyncReadExt;
+        let mut buf = [0u8; 4096];
+        let mut line_buf = String::new();
+        let mut last_was_cr = false;
+        loop {
+            let n = stderr.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            stderr_buf.extend_from_slice(&buf[..n]);
+            let chunk = String::from_utf8_lossy(&buf[..n]);
+            for ch in chunk.chars() {
+                if ch == '\r' {
+                    if !line_buf.is_empty() {
+                        if let Some(ref mut w) = window {
+                            if last_was_cr {
+                                w.log_line_replace(&line_buf);
+                            } else {
+                                w.log_line(&line_buf);
+                            }
+                        }
+                        line_buf.clear();
+                    }
+                    last_was_cr = true;
+                } else if ch == '\n' {
+                    if !line_buf.is_empty() {
+                        if let Some(ref mut w) = window {
+                            w.log_line(&line_buf);
+                        }
+                        line_buf.clear();
+                    }
+                    last_was_cr = false;
+                } else {
+                    line_buf.push(ch);
+                }
+            }
+        }
+        if !line_buf.is_empty() {
+            if let Some(ref mut w) = window {
+                w.log_line(&line_buf);
+            }
+        }
+    }
+
+    let mut stdout_buf = Vec::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        use tokio::io::AsyncReadExt;
+        stdout.read_to_end(&mut stdout_buf).await?;
+    }
+
+    let status = child.wait().await?;
+
+    Ok(std::process::Output {
+        status,
+        stdout: stdout_buf,
+        stderr: stderr_buf,
+    })
 }
 
 // ---------------------------------------------------------------
@@ -34,9 +417,6 @@ pub fn passthrough_output() -> bool {
 // ---------------------------------------------------------------
 
 /// Render a table with auto-sized columns to stdout.
-///
-/// Uses comfy-table: no outer borders, header underline, columns
-/// sized to content and constrained to terminal width.
 pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     if rows.is_empty() {
         return;
@@ -54,15 +434,8 @@ pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     println!("{table}");
 }
 
-/// Print structured data as JSON or as a table, depending on the
-/// `json` flag. When `json` is true, `data` is serialized with
-/// `serde_json::to_string_pretty`. Otherwise `print_table` is called.
-pub fn print_list<T: Serialize>(
-    json: bool,
-    headers: &[&str],
-    rows: &[Vec<String>],
-    data: &T,
-) {
+/// Print structured data as JSON or as a table.
+pub fn print_list<T: Serialize>(json: bool, headers: &[&str], rows: &[Vec<String>], data: &T) {
     if json {
         match serde_json::to_string_pretty(data) {
             Ok(s) => println!("{s}"),
@@ -78,17 +451,11 @@ pub fn print_list<T: Serialize>(
 // ---------------------------------------------------------------
 
 /// Truncate a Nix store path for display.
-///
-/// Preserves the hash prefix and derivation name:
-/// `/nix/store/abc1234…-nixos-system-web-01` instead of cutting
-/// at an arbitrary byte offset. Falls back to simple prefix
-/// truncation for non-store-path strings.
 pub fn truncate_store_path(path: &str, max_len: usize) -> String {
     if path.len() <= max_len || path.is_empty() {
         return path.to_string();
     }
 
-    // /nix/store/<32-char-hash>-<name>
     if let Some(rest) = path.strip_prefix("/nix/store/") {
         if let Some(dash_pos) = rest.find('-') {
             let hash = &rest[..dash_pos.min(7)];
@@ -97,7 +464,6 @@ pub fn truncate_store_path(path: &str, max_len: usize) -> String {
             if short.len() <= max_len {
                 return short;
             }
-            // Name still too long — truncate the name part
             let budget = max_len.saturating_sub("/nix/store/…-…".len() + hash.len());
             if budget > 3 {
                 return format!(
@@ -108,8 +474,6 @@ pub fn truncate_store_path(path: &str, max_len: usize) -> String {
         }
     }
 
-    // Fallback: simple prefix truncation.
-    // '…' is 3 bytes in UTF-8, so reserve that many bytes from the budget.
     let ellipsis = '…';
     let ellipsis_len = ellipsis.len_utf8();
     let end = max_len.saturating_sub(ellipsis_len);
@@ -121,18 +485,10 @@ pub fn truncate_store_path(path: &str, max_len: usize) -> String {
 // ---------------------------------------------------------------
 
 /// Color a status string for terminal display.
-///
-/// - Green: ok, completed, healthy, succeeded, active
-/// - Red: ERROR, failed, unhealthy
-/// - Yellow: paused, pending, waiting_health, deploying, maintenance
-///
-/// Returns the original string unmodified when stdout is not a TTY.
 pub fn color_status(s: &str) -> String {
     let lower = s.to_lowercase();
     let styled = match lower.as_str() {
-        "ok" | "completed" | "healthy" | "succeeded" | "active" => {
-            style(s).green()
-        }
+        "ok" | "completed" | "healthy" | "succeeded" | "active" => style(s).green(),
         "error" | "failed" | "unhealthy" => style(s).red(),
         "paused" | "pending" | "waiting_health" | "deploying" | "maintenance"
         | "provisioning" => style(s).yellow(),
@@ -146,56 +502,21 @@ pub fn color_status(s: &str) -> String {
 // ---------------------------------------------------------------
 
 /// Print a key-value detail view with aligned labels.
-///
-/// ```text
-/// Rollout:         r-abc123
-/// Status:          completed
-/// Strategy:        canary
-/// ```
 pub fn print_detail(pairs: &[(&str, String)]) {
     let max_key = pairs.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
     for (key, value) in pairs {
-        println!("{:<width$}  {}", format!("{}:", key), value, width = max_key + 1);
+        println!(
+            "{:<width$}  {}",
+            format!("{}:", key),
+            value,
+            width = max_key + 1
+        );
     }
 }
 
 // ---------------------------------------------------------------
-// Progress bars (tracing-indicatif span-based)
+// Tests
 // ---------------------------------------------------------------
-
-/// Set up a tracing span as a progress bar. In passthrough mode (-vv),
-/// does nothing. Call `maybe_enter_span` to conditionally enter.
-pub fn setup_progress(span: &tracing::Span, len: u64) {
-    if !passthrough_output() {
-        use tracing_indicatif::span_ext::IndicatifSpanExt;
-        span.pb_set_length(len);
-        span.pb_set_style(&progress_style());
-    }
-}
-
-/// Conditionally enter a span. Returns None in passthrough mode
-/// so no spinner/bar is created by tracing-indicatif.
-pub fn maybe_enter<'a>(span: &'a tracing::Span) -> Option<tracing::span::Entered<'a>> {
-    if passthrough_output() { None } else { Some(span.enter()) }
-}
-
-/// Style for counted progress bars managed by tracing-indicatif.
-///
-/// Apply after `span.pb_set_length(n)` to get a visual bar instead
-/// of the default spinner:
-///
-/// ```ignore
-/// let span = tracing::info_span!("building");
-/// span.pb_set_length(5);
-/// span.pb_set_style(&display::progress_style());
-/// ```
-pub fn progress_style() -> tracing_indicatif::style::ProgressStyle {
-    tracing_indicatif::style::ProgressStyle::with_template(
-        "{span_child_prefix}{spinner} {span_name} {bar:30} {pos}/{len}",
-    )
-    .unwrap()
-    .progress_chars("█▓░")
-}
 
 #[cfg(test)]
 mod tests {
@@ -214,7 +535,10 @@ mod tests {
         let long =
             "/nix/store/abc123def456ghi789jkl012mno345pqr678-nixos-system-web-01-25.05";
         let result = truncate_store_path(long, 50);
-        assert!(result.contains("abc123d"), "should keep hash prefix: {result}");
+        assert!(
+            result.contains("abc123d"),
+            "should keep hash prefix: {result}"
+        );
         assert!(
             result.contains("nixos-system"),
             "should keep name: {result}"
@@ -241,10 +565,35 @@ mod tests {
 
     #[test]
     fn color_status_returns_string() {
-        // Just verify it doesn't panic and returns non-empty
         assert!(!color_status("ok").is_empty());
         assert!(!color_status("failed").is_empty());
         assert!(!color_status("paused").is_empty());
         assert!(!color_status("unknown_value").is_empty());
+    }
+
+    #[test]
+    fn rolling_window_ring_buffer() {
+        let mut ring: VecDeque<String> = VecDeque::with_capacity(WINDOW_SIZE);
+        for i in 0..15 {
+            if ring.len() >= WINDOW_SIZE {
+                ring.pop_front();
+            }
+            ring.push_back(format!("line {}", i));
+        }
+        assert_eq!(ring.len(), WINDOW_SIZE);
+        assert_eq!(ring.front().unwrap(), "line 5");
+        assert_eq!(ring.back().unwrap(), "line 14");
+    }
+
+    #[test]
+    fn run_cmd_captures_stderr() {
+        let output = run_cmd(
+            Command::new("sh").args(["-c", "echo hello >&2; echo stdout"]),
+            None,
+        )
+        .unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("stdout"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("hello"));
     }
 }

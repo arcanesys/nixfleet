@@ -43,7 +43,7 @@ fn init_writes_config_file_in_cwd() {
         .args([
             "init",
             "--control-plane-url",
-            "https://lab.example.com:8080",
+            "https://cp.example.com:8080",
             "--ca-cert",
             "/run/secrets/fleet-ca.pem",
         ])
@@ -54,7 +54,7 @@ fn init_writes_config_file_in_cwd() {
     let config_path = dir.path().join(".nixfleet.toml");
     assert!(config_path.exists(), "init must write .nixfleet.toml in cwd");
     let body = std::fs::read_to_string(&config_path).unwrap();
-    assert!(body.contains("https://lab.example.com:8080"));
+    assert!(body.contains("https://cp.example.com:8080"));
     assert!(body.contains("/run/secrets/fleet-ca.pem"));
 }
 
@@ -740,4 +740,45 @@ async fn machines_register_repeatable_tags() {
         .expect("body must have tags array");
     assert!(tags.iter().any(|t| t == "web"), "expected web tag");
     assert!(tags.iter().any(|t| t == "prod"), "expected prod tag");
+}
+
+// =====================================================================
+// init with --hook-url and --hook-push-cmd writes [cache.hook] section
+// =====================================================================
+
+#[test]
+fn init_writes_cache_hook_config() {
+    let dir = tempfile::tempdir().unwrap();
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .current_dir(dir.path())
+        .args([
+            "init",
+            "--control-plane-url",
+            "https://cp-01:8080",
+            "--cache-url",
+            "http://cache-01:5000",
+            "--push-to",
+            "ssh://root@cache-01",
+            "--hook-url",
+            "http://cache-01:8081/mycache",
+            "--hook-push-cmd",
+            "attic push mycache {}",
+        ])
+        .assert()
+        .success();
+
+    let body = std::fs::read_to_string(dir.path().join(".nixfleet.toml")).unwrap();
+    assert!(
+        body.contains("[cache.hook]"),
+        "expected [cache.hook] section: {body}"
+    );
+    assert!(
+        body.contains("http://cache-01:8081/mycache"),
+        "expected hook url: {body}"
+    );
+    assert!(
+        body.contains("attic push mycache {}"),
+        "expected push-cmd: {body}"
+    );
 }

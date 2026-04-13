@@ -28,14 +28,14 @@ fn rb1_rollback_without_ssh_flag_attempts_operation() {
 #[test]
 fn rb2_rollback_with_target_flag_accepted() {
     // --target flag should be accepted by the parser (no "unrecognized" error).
-    // The command will fail (can't reach host) but the flag itself is valid.
-    // Timeout prevents the test from hanging on unreachable SSH.
+    // The command may succeed or fail depending on network reachability —
+    // we only care that the flag is parsed without "unrecognized" errors.
+    // Timeout prevents hanging on unreachable SSH.
     let mut cmd = Command::cargo_bin("nixfleet").expect("nixfleet binary");
-    cmd.args(["rollback", "--host", "web-01", "--target", "root@192.168.1.10"])
+    cmd.args(["rollback", "--host", "web-01", "--target", "root@198.51.100.1"])
         .timeout(Duration::from_secs(10));
 
     cmd.assert()
-        .failure()
         // Flag parsing succeeded — no "unrecognized" error
         .stderr(predicate::str::contains("unrecognized").not())
         // Should not say --ssh is required (implicit now)
