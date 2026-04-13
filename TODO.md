@@ -46,6 +46,14 @@ Future work that cannot be closed inside this repository.
   tests that spawn the real binary via `assert_cmd`; `env_lock()`
   serializes tests that mutate `NIXFLEET_*` / `HOSTNAME` env vars.
 
+- [ ] **CLI: consolidate sync/async subprocess functions.** `release.rs`
+  and `deploy.rs` have near-identical `discover_hosts` and `build_host`
+  functions — one sync (`std::process::Command` + `display::run_cmd`),
+  one async (`tokio::process::Command` + `display::run_cmd_async`).
+  Both are called from async contexts. Convert `release.rs` functions
+  to async and have `deploy.rs` import them. Requires making
+  `run_push_hook` async (public API, used by tests).
+
 - [ ] **Agent: survive self-switch without restart rate-limiting.**
   When the agent applies a generation that changes its own systemd
   service, `switch-to-configuration` stops and restarts the agent.
