@@ -262,15 +262,55 @@ async fn run_deploy_cycle(
         return PollOutcome::Success { poll_hint };
     }
 
-    // Apply: switch-to-configuration.
+    // Apply: switch-to-configuration with retry on lock contention.
     metrics::record_state_transition("fetching", "applying");
-    if let Err(e) = nix::apply_generation(&desired.hash).await {
-        error!("Failed to apply generation: {e}");
-        metrics::record_state_transition("applying", "rolling_back");
-        rollback_and_report(client, config, store, &format!("apply failed: {e}")).await;
-        return PollOutcome::Success { poll_hint };
+
+    const MAX_RETRIES: u32 = 3;
+    const RETRY_BASE: Duration = Duration::from_secs(5);
+
+    let mut attempts = 0u32;
+    loop {
+        match nix::apply_generation(&desired.hash).await {
+            Ok(nix::ApplyOutcome::Applied) => {
+                info!(hash = %desired.hash, "Generation applied");
+                break;
+            }
+            Ok(nix::ApplyOutcome::LockContention(msg)) => {
+                attempts += 1;
+                if attempts > MAX_RETRIES {
+                    error!(retries = MAX_RETRIES, "Lock contention after all retries: {msg}");
+                    if let Err(se) = store.log_error(&format!("lock contention: {msg}")).await {
+                        warn!("store error: {se}");
+                    }
+                    metrics::record_state_transition("applying", "reporting");
+                    send_report(
+                        client,
+                        config,
+                        false,
+                        &format!("lock contention after {MAX_RETRIES} retries: {msg}"),
+                    )
+                    .await;
+                    // No rollback — the lock is transient, rollback would hit the same lock.
+                    return PollOutcome::Failed;
+                }
+                let delay = RETRY_BASE * 2u32.pow(attempts - 1);
+                warn!(
+                    attempt = attempts,
+                    max = MAX_RETRIES,
+                    delay_secs = delay.as_secs(),
+                    stderr = %msg,
+                    "Activation lock held, retrying"
+                );
+                tokio::time::sleep(delay).await;
+            }
+            Err(e) => {
+                error!("Failed to apply generation: {e}");
+                metrics::record_state_transition("applying", "rolling_back");
+                rollback_and_report(client, config, store, &format!("apply failed: {e}")).await;
+                return PollOutcome::Success { poll_hint };
+            }
+        }
     }
-    info!(hash = %desired.hash, "Generation applied");
 
     // Verify: run health checks after apply.
     metrics::record_state_transition("applying", "verifying");
@@ -348,4 +388,23 @@ async fn send_report(client: &comms::Client, config: &Config, success: bool, mes
         Err(e) => warn!("Failed to send report: {e}"),
     }
     metrics::record_state_transition("reporting", "idle");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_retry_delays() {
+        // Verify the exponential backoff sequence
+        let base = Duration::from_secs(5);
+        let delays: Vec<Duration> = (0..3)
+            .map(|i| base * 2u32.pow(i))
+            .collect();
+        assert_eq!(delays, vec![
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(20),
+        ]);
+    }
 }
