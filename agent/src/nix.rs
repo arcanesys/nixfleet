@@ -96,27 +96,6 @@ pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<
     Ok(())
 }
 
-/// Outcome of `apply_generation` — distinguishes success from retryable
-/// lock contention. Real errors (timeout, spawn failure) remain in the
-/// `Err` channel of `anyhow::Result<ApplyOutcome>`.
-#[derive(Debug)]
-pub enum ApplyOutcome {
-    /// Generation applied successfully.
-    Applied,
-    /// Another process holds the activation lock — caller should retry.
-    LockContention(String),
-}
-
-/// Check stderr for signals that another process holds the activation lock.
-/// Version-agnostic: matches common substrings across NixOS versions.
-fn is_lock_contention(stderr: &str) -> bool {
-    let lower = stderr.to_lowercase();
-    lower.contains("could not acquire lock")
-        || lower.contains("activation lock")
-        || lower.contains("already running")
-        || lower.contains("resource busy")
-}
-
 /// Parse the output of `systemctl show nixfleet-switch.service -p ActiveState,Result`.
 ///
 /// Returns `Some(true)` if the unit completed successfully,
@@ -203,30 +182,6 @@ pub async fn poll_generation(
         }
         tokio::time::sleep(interval).await;
     }
-}
-
-/// Apply a generation by running its `switch-to-configuration switch`.
-///
-/// Returns `Ok(Applied)` on success, `Ok(LockContention(stderr))` when
-/// another process holds the activation lock (caller should retry), or
-/// `Err` for fatal failures (timeout, spawn error, config error).
-pub async fn apply_generation(store_path: &str) -> Result<ApplyOutcome> {
-    validate_store_path(store_path)?;
-    let switch_bin = format!("{store_path}/bin/switch-to-configuration");
-    info!(switch_bin, "Applying generation");
-
-    let mut cmd = Command::new(&switch_bin);
-    cmd.arg("switch");
-    let output = run_with_timeout(cmd, "switch-to-configuration").await?;
-
-    if !output.status.success() {
-        let stderr = truncated_stderr(&output.stderr);
-        if is_lock_contention(&stderr) {
-            return Ok(ApplyOutcome::LockContention(stderr));
-        }
-        anyhow::bail!("switch-to-configuration failed: {stderr}");
-    }
-    Ok(ApplyOutcome::Applied)
 }
 
 /// Roll back to the previous system generation.
@@ -342,16 +297,6 @@ mod tests {
     }
 
     #[test]
-    fn test_switch_bin_path_construction() {
-        let store_path = "/nix/store/abc123-nixos-system";
-        let switch_bin = format!("{store_path}/bin/switch-to-configuration");
-        assert_eq!(
-            switch_bin,
-            "/nix/store/abc123-nixos-system/bin/switch-to-configuration"
-        );
-    }
-
-    #[test]
     fn test_generation_profile_path_construction() {
         let gen_num: u64 = 42;
         let prev_path = format!("/nix/var/nix/profiles/system-{gen_num}-link");
@@ -398,36 +343,6 @@ mod tests {
         let args = ["path-info", store_path];
         assert_eq!(args[0], "path-info");
         assert_eq!(args[1], store_path);
-    }
-
-    #[test]
-    fn test_is_lock_contention_matches_common_patterns() {
-        // Real NixOS output observed in production
-        assert!(is_lock_contention("Could not acquire lock\n"));
-        assert!(is_lock_contention(
-            "error: could not acquire activation lock on '/nix/var/nix/profiles/system'"
-        ));
-        assert!(is_lock_contention(
-            "warning: not able to lock: already running"
-        ));
-        assert!(is_lock_contention("Device or resource busy"));
-        assert!(is_lock_contention(
-            "another instance of switch-to-configuration is already running"
-        ));
-    }
-
-    #[test]
-    fn test_is_lock_contention_rejects_unrelated_errors() {
-        assert!(!is_lock_contention(
-            "error: path '/nix/store/abc' is not valid"
-        ));
-        assert!(!is_lock_contention(
-            "error: building of '/nix/store/abc.drv' failed"
-        ));
-        assert!(!is_lock_contention(
-            "error: could not lock path '/nix/store/abc.lock'"
-        ));
-        assert!(!is_lock_contention(""));
     }
 
     #[tokio::test]
