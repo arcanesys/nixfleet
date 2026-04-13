@@ -151,6 +151,10 @@ pub struct Report {
     pub tags: Vec<String>,
     #[serde(default)]
     pub health: Option<health::HealthReport>,
+    #[serde(default)]
+    pub agent_version: String,
+    #[serde(default)]
+    pub uptime_seconds: u64,
 }
 
 /// Machine status for inventory reporting.
