@@ -389,39 +389,6 @@ pub async fn update_lifecycle(
     Ok(StatusCode::OK)
 }
 
-/// DELETE /api/v1/machines/{id}/tags/{tag}
-///
-/// Remove a single tag from a machine.
-pub async fn remove_tag(
-    State((state, db)): State<AppState>,
-    Extension(actor): Extension<Actor>,
-    Path((id, tag)): Path<(String, String)>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    if !actor.has_role(&["admin"]) {
-        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
-    }
-
-    db.remove_machine_tag(&id, &tag).map_err(|e| {
-        tracing::error!(error = %e, machine_id = %id, tag = %tag, "Failed to remove tag");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to remove tag".to_string(),
-        )
-    })?;
-
-    let mut fleet = state.write().await;
-    let machine = fleet.get_or_create(&id);
-    machine.tags.retain(|t| t != &tag);
-
-    log_insert_err(
-        "audit_event",
-        db.insert_audit_event(&actor.identifier(), "remove_tag", &id, Some(&tag)),
-    );
-
-    tracing::info!(machine_id = %id, tag = %tag, "Tag removed");
-    Ok(StatusCode::OK)
-}
-
 /// POST /api/v1/keys/bootstrap
 ///
 /// Create the first admin API key. Only works when no keys exist (first-time setup).
