@@ -3,6 +3,10 @@
 //! Writes one JSONL file per operation to `~/.local/state/nixfleet/logs/`.
 //! Each line is a self-contained JSON object. Events: `op_start`,
 //! `subprocess`, `op_end`.
+//!
+//! Integration pattern: subprocess functions accept `&mut OpLog` and call
+//! `oplog.log_output()` after each `display::run_cmd()` / `run_cmd_async()`.
+//! The OpLog captures the full `Output` (stdout, stderr, exit code, timing).
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -24,7 +28,7 @@ enum LogEvent<'a> {
     #[serde(rename = "subprocess")]
     Subprocess {
         ts: String,
-        cmd: &'a [String],
+        cmd: &'a str,
         exit_code: i32,
         duration_ms: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -80,6 +84,7 @@ impl OpLog {
         })
     }
 
+    /// Log the start of an operation.
     pub fn log_start(&mut self, operation: &str, flake: &str, hosts: &[String]) {
         let event = LogEvent::OpStart {
             ts: now_iso(),
@@ -90,97 +95,10 @@ impl OpLog {
         self.write_event(&event);
     }
 
-    #[allow(dead_code)] // used in tests; callers may use log_cmd convenience wrapper instead
-    pub fn log_subprocess(
-        &mut self,
-        cmd: &[String],
-        exit_code: i32,
-        duration_ms: u64,
-        stdout: Option<&str>,
-        stderr: Option<&str>,
-        host: Option<&str>,
-    ) {
-        let event = LogEvent::Subprocess {
-            ts: now_iso(),
-            cmd,
-            exit_code,
-            duration_ms,
-            stdout,
-            stderr,
-            host,
-        };
-        self.write_event(&event);
-    }
-
-    pub fn finish(&mut self, success: bool, error: Option<&str>) {
-        let duration_ms = self.start.elapsed().as_millis() as u64;
-        let event = LogEvent::OpEnd {
-            ts: now_iso(),
-            success,
-            duration_ms,
-            error,
-        };
-        self.write_event(&event);
-        if success {
-            eprintln!("Log: {}", self.path.display());
-        } else {
-            eprintln!("Full log: {}", self.path.display());
-        }
-    }
-
-    /// Return the log file path (for use in error messages).
-    #[allow(dead_code)] // public API for callers that surface the log path
-    pub fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-
-    /// Log a command result (success/failure only, no captured output).
+    /// Log a subprocess from its raw `Output`, capturing stdout, stderr, exit code, and timing.
     ///
-    /// Useful for async callers that don't have a raw `Output` to hand over.
-    pub fn log_cmd<T, E: std::fmt::Display>(
-        &mut self,
-        cmd_desc: &str,
-        host: Option<&str>,
-        result: &Result<T, E>,
-        duration: std::time::Duration,
-    ) {
-        let (exit_code, stderr) = match result {
-            Ok(_) => (0, None),
-            Err(e) => (1, Some(format!("{e}"))),
-        };
-        let event = LogEvent::Subprocess {
-            ts: now_iso(),
-            cmd: &[cmd_desc.to_string()],
-            exit_code,
-            duration_ms: duration.as_millis() as u64,
-            stdout: None,
-            stderr: stderr.as_deref(),
-            host,
-        };
-        self.write_event(&event);
-    }
-
-    /// Log a successful command with its output value (e.g. a store path).
-    pub fn log_cmd_ok(
-        &mut self,
-        cmd_desc: &str,
-        host: Option<&str>,
-        output_value: &str,
-        duration: std::time::Duration,
-    ) {
-        let event = LogEvent::Subprocess {
-            ts: now_iso(),
-            cmd: &[cmd_desc.to_string()],
-            exit_code: 0,
-            duration_ms: duration.as_millis() as u64,
-            stdout: Some(output_value),
-            stderr: None,
-            host,
-        };
-        self.write_event(&event);
-    }
-
-    /// Log a subprocess from its raw `Output`, capturing stdout, stderr, and exit code.
+    /// This is the primary logging method. Subprocess functions call this after
+    /// `display::run_cmd()` / `run_cmd_async()` with the full `Output`.
     pub fn log_output(
         &mut self,
         cmd_desc: &str,
@@ -202,7 +120,7 @@ impl OpLog {
         };
         let event = LogEvent::Subprocess {
             ts: now_iso(),
-            cmd: &[cmd_desc.to_string()],
+            cmd: cmd_desc,
             exit_code: output.status.code().unwrap_or(-1),
             duration_ms: duration.as_millis() as u64,
             stdout: stdout.as_deref(),
@@ -212,25 +130,21 @@ impl OpLog {
         self.write_event(&event);
     }
 
-    /// Log a failed operation that didn't produce an `Output` (e.g. spawn failure).
-    #[allow(dead_code)] // public API for callers that catch spawn errors
-    pub fn log_error(
-        &mut self,
-        cmd_desc: &str,
-        host: Option<&str>,
-        error: &str,
-        duration: std::time::Duration,
-    ) {
-        let event = LogEvent::Subprocess {
+    /// Log the end of the operation. Prints the log path to stderr.
+    pub fn finish(&mut self, success: bool, error: Option<&str>) {
+        let duration_ms = self.start.elapsed().as_millis() as u64;
+        let event = LogEvent::OpEnd {
             ts: now_iso(),
-            cmd: &[cmd_desc.to_string()],
-            exit_code: 1,
-            duration_ms: duration.as_millis() as u64,
-            stdout: None,
-            stderr: Some(error),
-            host,
+            success,
+            duration_ms,
+            error,
         };
         self.write_event(&event);
+        if success {
+            eprintln!("Log: {}", self.path.display());
+        } else {
+            eprintln!("Full log: {}", self.path.display());
+        }
     }
 
     fn write_event(&mut self, event: &LogEvent<'_>) {
@@ -247,7 +161,6 @@ mod tests {
     #[test]
     fn oplog_writes_valid_jsonl() {
         let dir = tempfile::tempdir().unwrap();
-        // Override the log dir by creating the OpLog manually
         let path = dir.path().join("test_op.jsonl");
         let file = File::create(&path).unwrap();
         let mut log = OpLog {
@@ -257,14 +170,20 @@ mod tests {
         };
 
         log.log_start("release_create", ".", &["web-01".to_string()]);
-        log.log_subprocess(
-            &["nix".to_string(), "eval".to_string()],
-            0,
-            100,
-            Some("/nix/store/abc"),
-            None,
+
+        // Simulate a subprocess with a real Output
+        let output = std::process::Output {
+            status: std::process::Command::new("true").status().unwrap().into(),
+            stdout: b"/nix/store/abc-system\n".to_vec(),
+            stderr: b"warning: Git tree is dirty\n".to_vec(),
+        };
+        log.log_output(
+            "nix build web-01",
             Some("web-01"),
+            &output,
+            std::time::Duration::from_millis(100),
         );
+
         log.finish(true, None);
 
         let content = fs::read_to_string(&path).unwrap();
@@ -281,8 +200,17 @@ mod tests {
             assert!(parsed.get("ts").is_some(), "line {} missing ts", i);
             assert!(parsed.get("event").is_some(), "line {} missing event", i);
         }
+        // Verify event ordering
         assert!(lines[0].contains("\"event\":\"op_start\""));
         assert!(lines[1].contains("\"event\":\"subprocess\""));
         assert!(lines[2].contains("\"event\":\"op_end\""));
+
+        // Verify subprocess captured stdout and stderr
+        let sub: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(sub["stdout"], "/nix/store/abc-system");
+        assert_eq!(sub["stderr"], "warning: Git tree is dirty");
+        assert_eq!(sub["exit_code"], 0);
+        assert_eq!(sub["duration_ms"], 100);
+        assert_eq!(sub["host"], "web-01");
     }
 }

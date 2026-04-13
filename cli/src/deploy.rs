@@ -9,7 +9,8 @@ use crate::display;
 use crate::glob::filter_hosts;
 
 /// Discover NixOS host names from the flake by evaluating nixosConfigurations attribute names.
-async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
+async fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<Vec<String>> {
+    let t = std::time::Instant::now();
     let mut cmd = tokio::process::Command::new("nix");
     cmd.args([
         "eval",
@@ -33,6 +34,7 @@ async fn discover_hosts(flake: &str) -> Result<Vec<String>> {
             .await
             .context("Failed to run nix eval for host discovery")?
     };
+    oplog.log_output("nix eval discover hosts", None, &output, t.elapsed());
 
     if !output.status.success() {
         bail!(
@@ -51,7 +53,9 @@ async fn build_host(
     flake: &str,
     host: &str,
     window: Option<&mut display::RollingWindow>,
+    oplog: &mut crate::oplog::OpLog,
 ) -> Result<String> {
+    let t = std::time::Instant::now();
     tracing::info!(host, "building closure");
 
     let mut cmd = tokio::process::Command::new("nix");
@@ -79,6 +83,12 @@ async fn build_host(
             .await
             .context(format!("Failed to build closure for {}", host))?
     };
+    oplog.log_output(
+        &format!("nix build {}", host),
+        Some(host),
+        &output,
+        t.elapsed(),
+    );
 
     if !output.status.success() {
         bail!(
@@ -103,7 +113,10 @@ async fn deploy_via_ssh(
     store_path: &str,
     ssh_target: &str,
     mut window: Option<&mut display::RollingWindow>,
+    oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
+    // nix-copy-closure
+    let t = std::time::Instant::now();
     tracing::info!(host, ssh_target, store_path, "copying closure via SSH");
 
     let mut copy_cmd = tokio::process::Command::new("nix-copy-closure");
@@ -126,12 +139,20 @@ async fn deploy_via_ssh(
             .await
             .context(format!("nix-copy-closure failed for {}", host))?
     };
+    oplog.log_output(
+        &format!("nix-copy-closure {}", host),
+        Some(host),
+        &copy_output,
+        t.elapsed(),
+    );
 
     if !copy_output.status.success() {
         let stderr = String::from_utf8_lossy(&copy_output.stderr);
         bail!("nix-copy-closure failed for {}: {}", host, stderr);
     }
 
+    // switch-to-configuration
+    let t = std::time::Instant::now();
     tracing::info!(host, "switching configuration");
 
     let mut switch_cmd = tokio::process::Command::new("ssh");
@@ -160,6 +181,12 @@ async fn deploy_via_ssh(
             .await
             .context(format!("SSH switch failed for {}", host))?
     };
+    oplog.log_output(
+        &format!("ssh switch-to-configuration {}", host),
+        Some(host),
+        &switch_output,
+        t.elapsed(),
+    );
 
     if !switch_output.status.success() {
         let stderr = String::from_utf8_lossy(&switch_output.stderr);
@@ -181,18 +208,11 @@ pub async fn run(
     let mut oplog = crate::oplog::OpLog::new("deploy")?;
 
     println!("Discovering hosts from {}...", flake);
-    let t = std::time::Instant::now();
-    let all_hosts = discover_hosts(flake).await;
-    oplog.log_cmd(
-        "nix eval discover hosts",
-        None,
-        &all_hosts.as_ref().map(|_| ()),
-        t.elapsed(),
-    );
-    let all_hosts = all_hosts?;
+    let all_hosts = discover_hosts(flake, &mut oplog).await?;
     let targets = filter_hosts(&all_hosts, patterns);
 
     if targets.is_empty() {
+        oplog.finish(false, Some("no hosts match pattern"));
         bail!(
             "No hosts match pattern '{}'. Available: {}",
             patterns.join(","),
@@ -201,6 +221,7 @@ pub async fn run(
     }
 
     if target_override.is_some() && targets.len() > 1 {
+        oplog.finish(false, Some("--target with multiple hosts"));
         bail!(
             "--target can only be used with a single host, but {} hosts matched pattern '{}'",
             targets.len(),
@@ -245,24 +266,14 @@ async fn run_inner(
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }
-            let t = std::time::Instant::now();
-            let build_result =
-                build_host(flake, host, window.as_mut().and_then(|w| w.for_output())).await;
-            match &build_result {
-                Ok(path) => oplog.log_cmd_ok(
-                    &format!("nix build {}", host),
-                    Some(host),
-                    path,
-                    t.elapsed(),
-                ),
-                Err(_) => oplog.log_cmd(
-                    &format!("nix build {}", host),
-                    Some(host),
-                    &build_result.as_ref().map(|_| ()),
-                    t.elapsed(),
-                ),
-            }
-            match build_result {
+            match build_host(
+                flake,
+                host,
+                window.as_mut().and_then(|w| w.for_output()),
+                oplog,
+            )
+            .await
+            {
                 Ok(path) => {
                     tracing::info!(host, path = %display::truncate_store_path(&path, 60), "built");
                     results.insert(host.clone(), Ok(path));
@@ -317,21 +328,15 @@ async fn run_inner(
                     Some(t) => t.to_string(),
                     None => format!("root@{}", host),
                 };
-                let t = std::time::Instant::now();
-                let deploy_result = deploy_via_ssh(
+                match deploy_via_ssh(
                     host,
                     store_path,
                     &ssh_dest,
                     window.as_mut().and_then(|w| w.for_output()),
+                    oplog,
                 )
-                .await;
-                oplog.log_cmd(
-                    &format!("ssh deploy {}", host),
-                    Some(host),
-                    &deploy_result,
-                    t.elapsed(),
-                );
-                match deploy_result {
+                .await
+                {
                     Ok(()) => {
                         tracing::info!(host, "deployed");
                         success_count += 1;
@@ -357,33 +362,33 @@ async fn run_inner(
         "\nDeploy complete: {} succeeded, {} failed",
         success_count, fail_count
     );
-
     if fail_count > 0 {
-        bail!("{} host(s) failed", fail_count);
+        bail!("{} host(s) failed to deploy", fail_count);
     }
-
     Ok(())
 }
 
-/// Parse a strategy string into a RolloutStrategy enum.
+// ==========================================================================
+// Rollout deployment (non-SSH path, goes through control plane)
+// ==========================================================================
+
 pub fn parse_strategy(strategy: &str) -> Result<RolloutStrategy> {
     match strategy {
         "canary" => Ok(RolloutStrategy::Canary),
         "staged" => Ok(RolloutStrategy::Staged),
         "all-at-once" | "all_at_once" => Ok(RolloutStrategy::AllAtOnce),
-        other => bail!(
-            "Unknown strategy: {}. Use canary, staged, or all-at-once.",
-            other
+        _ => bail!(
+            "Unknown strategy '{}'. Use canary, staged, or all-at-once.",
+            strategy
         ),
     }
 }
 
-/// Parse an on-failure string into an OnFailure enum.
 pub fn parse_on_failure(on_failure: &str) -> Result<OnFailure> {
     match on_failure {
         "pause" => Ok(OnFailure::Pause),
         "revert" => Ok(OnFailure::Revert),
-        other => bail!("Unknown on-failure: {}. Use pause or revert.", other),
+        _ => bail!("Unknown on-failure '{}'. Use pause or revert.", on_failure),
     }
 }
 
@@ -393,11 +398,10 @@ fn resolve_target(tags: &[String], hosts: &[String]) -> Result<RolloutTarget> {
     } else if !hosts.is_empty() {
         Ok(RolloutTarget::Hosts(hosts.to_vec()))
     } else {
-        bail!("Either --tags or --hosts must be specified for rollout deploy")
+        bail!("Either --tags or --hosts must be provided for rollout deploy");
     }
 }
 
-/// Deploy via the rollout API.
 #[allow(clippy::too_many_arguments)]
 pub async fn deploy_rollout(
     client: &reqwest::Client,
@@ -413,64 +417,43 @@ pub async fn deploy_rollout(
     wait: bool,
     cache_url: Option<&str>,
 ) -> Result<()> {
-    let parsed_strategy = parse_strategy(strategy)?;
-    let parsed_on_failure = parse_on_failure(on_failure)?;
     let target = resolve_target(tags, hosts)?;
+    let strategy = parse_strategy(strategy)?;
+    let on_failure = parse_on_failure(on_failure)?;
 
-    let request = CreateRolloutRequest {
+    let body = CreateRolloutRequest {
         release_id: release_id.to_string(),
         cache_url: cache_url.map(|s| s.to_string()),
-        strategy: parsed_strategy,
+        strategy,
         batch_sizes,
         failure_threshold: failure_threshold.to_string(),
-        on_failure: parsed_on_failure,
+        on_failure,
         health_timeout: Some(health_timeout),
         target,
     };
 
-    let url = format!("{}/api/v1/rollouts", cp_url);
     let resp = client
-        .post(&url)
-        .json(&request)
+        .post(format!("{}/api/v1/rollouts", cp_url))
+        .json(&body)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("Failed to create rollout")?;
 
     let resp = crate::client::check_response(resp).await?;
-
     let created: CreateRolloutResponse = resp
         .json()
         .await
         .context("Failed to parse rollout response")?;
 
     println!(
-        "Rollout created: {} ({} machines in {} batches)",
+        "Rollout {} created ({} batches)",
         created.rollout_id,
-        created.total_machines,
-        created.batches.len(),
+        created.batches.len()
     );
 
-    for batch in &created.batches {
-        println!(
-            "  Batch {}: {} machine(s) — {}",
-            batch.batch_index,
-            batch.machine_ids.len(),
-            batch.machine_ids.join(", "),
-        );
-    }
-
     if wait {
-        println!("\nWaiting for rollout to complete...");
         crate::rollout::wait_for_completion(client, cp_url, &created.rollout_id, None).await?;
-    } else {
-        println!(
-            "\nRollout {} started. Use `nixfleet rollout status {}` to track progress.",
-            created.rollout_id, created.rollout_id,
-        );
     }
 
     Ok(())
 }
-
-// Glob-matching tests live in `cli/src/glob.rs`; the deploy module
-// just consumes `filter_hosts` from there now.

@@ -176,7 +176,6 @@ fn eval_host(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Re
 fn nix_copy_to(
     cache_url: &str,
     store_path: &str,
-    hostname: &str,
     window: Option<&mut display::RollingWindow>,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
@@ -202,8 +201,8 @@ fn nix_copy_to(
         display::run_cmd(&mut cmd, window).context("failed to run nix copy --to")?
     };
     oplog.log_output(
-        &format!("nix copy --to {} {}", cache_url, hostname),
-        Some(hostname),
+        &format!("nix copy --to {}", cache_url),
+        None,
         &output,
         t.elapsed(),
     );
@@ -276,11 +275,8 @@ pub fn run_push_hook(
     push_to_host: Option<&str>,
     hook_cmd: &str,
     store_path: &str,
-    hostname: Option<&str>,
     window: Option<&mut display::RollingWindow>,
-    oplog: Option<&mut crate::oplog::OpLog>,
 ) -> Result<()> {
-    let t = std::time::Instant::now();
     let cmd_str = hook_cmd.replace("{}", store_path);
     tracing::info!(cmd = %cmd_str, "running push hook");
     let mut cmd = match push_to_host {
@@ -301,33 +297,12 @@ pub fn run_push_hook(
             .stdout(std::process::Stdio::inherit())
             .status()
             .context("failed to run push hook")?;
-        if let Some(oplog) = oplog {
-            let output = std::process::Output {
-                status,
-                stdout: vec![],
-                stderr: vec![],
-            };
-            oplog.log_output(
-                &format!("push-hook {}", hostname.unwrap_or("local")),
-                hostname,
-                &output,
-                t.elapsed(),
-            );
-        }
         if !status.success() {
             anyhow::bail!("push hook failed: {}", cmd_str);
         }
         return Ok(());
     }
     let output = display::run_cmd(&mut cmd, window).context("failed to run push hook")?;
-    if let Some(oplog) = oplog {
-        oplog.log_output(
-            &format!("push-hook {}", hostname.unwrap_or("local")),
-            hostname,
-            &output,
-            t.elapsed(),
-        );
-    }
     if !output.status.success() {
         anyhow::bail!("push hook failed: {}", cmd_str);
     }
@@ -470,7 +445,6 @@ async fn create_inner(
                         if let Err(e) = nix_copy_to(
                             push_url,
                             &entry.store_path,
-                            &entry.hostname,
                             window.as_mut().and_then(|w| w.for_output()),
                             oplog,
                         ) {
@@ -508,9 +482,7 @@ async fn create_inner(
                         remote_host.as_deref(),
                         hook,
                         &entry.store_path,
-                        Some(&entry.hostname),
                         window.as_mut().and_then(|w| w.for_output()),
-                        Some(oplog),
                     )?;
                     if let Some(ref w) = window {
                         w.inc();
@@ -535,9 +507,7 @@ async fn create_inner(
                     None,
                     hook,
                     &entry.store_path,
-                    Some(&entry.hostname),
                     window.as_mut().and_then(|w| w.for_output()),
-                    Some(oplog),
                 )?;
                 if let Some(ref w) = window {
                     w.inc();
