@@ -117,6 +117,32 @@ fn is_lock_contention(stderr: &str) -> bool {
         || lower.contains("resource busy")
 }
 
+/// Poll a symlink path until it resolves to the expected store path.
+///
+/// Returns `Ok(true)` when the symlink target matches `expected`,
+/// `Ok(false)` when `timeout` expires without a match. The `path`
+/// parameter allows tests to use a temp directory instead of
+/// `/run/current-system`.
+pub async fn poll_generation(
+    expected: &str,
+    path: &std::path::Path,
+    timeout: Duration,
+    interval: Duration,
+) -> Result<bool> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(target) = tokio::fs::read_link(path).await {
+            if target.to_string_lossy() == expected {
+                return Ok(true);
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
+
 /// Apply a generation by running its `switch-to-configuration switch`.
 ///
 /// Returns `Ok(Applied)` on success, `Ok(LockContention(stderr))` when
@@ -332,5 +358,66 @@ mod tests {
             "error: could not lock path '/nix/store/abc.lock'"
         ));
         assert!(!is_lock_contention(""));
+    }
+
+    #[tokio::test]
+    async fn test_poll_generation_matches_immediately() {
+        tokio::time::pause();
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("current-system");
+        std::os::unix::fs::symlink("/nix/store/abc-target", &link).unwrap();
+
+        let matched = poll_generation(
+            "/nix/store/abc-target",
+            &link,
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+        assert!(matched);
+    }
+
+    #[tokio::test]
+    async fn test_poll_generation_times_out() {
+        tokio::time::pause();
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("current-system");
+        std::os::unix::fs::symlink("/nix/store/abc-wrong", &link).unwrap();
+
+        let matched = poll_generation(
+            "/nix/store/abc-target",
+            &link,
+            Duration::from_secs(5),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+        assert!(!matched);
+    }
+
+    #[tokio::test]
+    async fn test_poll_generation_detects_change() {
+        tokio::time::pause();
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("current-system");
+        std::os::unix::fs::symlink("/nix/store/abc-old", &link).unwrap();
+
+        let link_clone = link.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let _ = std::fs::remove_file(&link_clone);
+            std::os::unix::fs::symlink("/nix/store/abc-target", &link_clone).unwrap();
+        });
+
+        let matched = poll_generation(
+            "/nix/store/abc-target",
+            &link,
+            Duration::from_secs(10),
+            Duration::from_millis(500),
+        )
+        .await
+        .unwrap();
+        assert!(matched);
     }
 }
