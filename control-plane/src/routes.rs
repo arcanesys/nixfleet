@@ -96,6 +96,7 @@ pub async fn post_report(
     let is_new = !fleet.machines.contains_key(&id);
     let machine = fleet.get_or_create(&id);
     machine.last_seen = Some(report.timestamp);
+    machine.last_received = Some(chrono::Utc::now());
     machine.last_report = Some(report);
     machine.agent_version = machine
         .last_report
@@ -207,6 +208,9 @@ pub async fn list_machines(
             last_report: m.last_report.as_ref().map(|r| r.timestamp),
             lifecycle: m.lifecycle.clone(),
             tags: m.tags.clone(),
+            seconds_since_last_report: m.last_received.map(|t| {
+                (chrono::Utc::now() - t).num_seconds().max(0) as u64
+            }),
         })
         .filter(|m| {
             if query.tag.is_empty() {
