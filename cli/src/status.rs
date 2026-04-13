@@ -3,7 +3,12 @@ use nixfleet_types::MachineStatus;
 
 use crate::display;
 
-pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool, stale_threshold: u64) -> Result<()> {
+pub async fn run(
+    client: &reqwest::Client,
+    cp_url: &str,
+    json: bool,
+    stale_threshold: u64,
+) -> Result<()> {
     let url = format!("{}/api/v1/machines", cp_url);
 
     let resp = client
@@ -118,22 +123,34 @@ mod tests {
 
         // Fresh machine — no stale annotation
         let m = make_machine("ok", Some(300));
-        let is_stale = m.seconds_since_last_report.map(|s| s > threshold).unwrap_or(false);
+        let is_stale = m
+            .seconds_since_last_report
+            .map(|s| s > threshold)
+            .unwrap_or(false);
         assert!(!is_stale);
 
         // Stale machine
         let m = make_machine("ok", Some(900));
-        let is_stale = m.seconds_since_last_report.map(|s| s > threshold).unwrap_or(false);
+        let is_stale = m
+            .seconds_since_last_report
+            .map(|s| s > threshold)
+            .unwrap_or(false);
         assert!(is_stale);
 
         // Never reported — not stale (already shows "?" / "never")
         let m = make_machine("unknown", None);
-        let is_stale = m.seconds_since_last_report.map(|s| s > threshold).unwrap_or(false);
+        let is_stale = m
+            .seconds_since_last_report
+            .map(|s| s > threshold)
+            .unwrap_or(false);
         assert!(!is_stale);
 
         // Error + stale
         let m = make_machine("error", Some(1200));
-        let is_stale = m.seconds_since_last_report.map(|s| s > threshold).unwrap_or(false);
+        let is_stale = m
+            .seconds_since_last_report
+            .map(|s| s > threshold)
+            .unwrap_or(false);
         assert!(is_stale);
     }
 }

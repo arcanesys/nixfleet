@@ -208,9 +208,9 @@ pub async fn list_machines(
             last_report: m.last_report.as_ref().map(|r| r.timestamp),
             lifecycle: m.lifecycle.clone(),
             tags: m.tags.clone(),
-            seconds_since_last_report: m.last_received.map(|t| {
-                (chrono::Utc::now() - t).num_seconds().max(0) as u64
-            }),
+            seconds_since_last_report: m
+                .last_received
+                .map(|t| (chrono::Utc::now() - t).num_seconds().max(0) as u64),
         })
         .filter(|m| {
             if query.tag.is_empty() {

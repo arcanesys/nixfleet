@@ -278,7 +278,10 @@ async fn run_deploy_cycle(
             Ok(nix::ApplyOutcome::LockContention(msg)) => {
                 attempts += 1;
                 if attempts > MAX_RETRIES {
-                    error!(retries = MAX_RETRIES, "Lock contention after all retries: {msg}");
+                    error!(
+                        retries = MAX_RETRIES,
+                        "Lock contention after all retries: {msg}"
+                    );
                     if let Err(se) = store.log_error(&format!("lock contention: {msg}")).await {
                         warn!("store error: {se}");
                     }
@@ -398,13 +401,14 @@ mod tests {
     fn test_retry_delays() {
         // Verify the exponential backoff sequence
         let base = Duration::from_secs(5);
-        let delays: Vec<Duration> = (0..3)
-            .map(|i| base * 2u32.pow(i))
-            .collect();
-        assert_eq!(delays, vec![
-            Duration::from_secs(5),
-            Duration::from_secs(10),
-            Duration::from_secs(20),
-        ]);
+        let delays: Vec<Duration> = (0..3).map(|i| base * 2u32.pow(i)).collect();
+        assert_eq!(
+            delays,
+            vec![
+                Duration::from_secs(5),
+                Duration::from_secs(10),
+                Duration::from_secs(20),
+            ]
+        );
     }
 }

@@ -305,17 +305,29 @@ mod tests {
 
     #[test]
     fn test_is_lock_contention_matches_common_patterns() {
-        assert!(is_lock_contention("error: could not acquire activation lock on '/nix/var/nix/profiles/system'"));
-        assert!(is_lock_contention("warning: not able to lock: already running"));
+        assert!(is_lock_contention(
+            "error: could not acquire activation lock on '/nix/var/nix/profiles/system'"
+        ));
+        assert!(is_lock_contention(
+            "warning: not able to lock: already running"
+        ));
         assert!(is_lock_contention("Device or resource busy"));
-        assert!(is_lock_contention("another instance of switch-to-configuration is already running"));
+        assert!(is_lock_contention(
+            "another instance of switch-to-configuration is already running"
+        ));
     }
 
     #[test]
     fn test_is_lock_contention_rejects_unrelated_errors() {
-        assert!(!is_lock_contention("error: path '/nix/store/abc' is not valid"));
-        assert!(!is_lock_contention("error: building of '/nix/store/abc.drv' failed"));
-        assert!(!is_lock_contention("error: could not lock path '/nix/store/abc.lock'"));
+        assert!(!is_lock_contention(
+            "error: path '/nix/store/abc' is not valid"
+        ));
+        assert!(!is_lock_contention(
+            "error: building of '/nix/store/abc.drv' failed"
+        ));
+        assert!(!is_lock_contention(
+            "error: could not lock path '/nix/store/abc.lock'"
+        ));
         assert!(!is_lock_contention(""));
     }
 }
