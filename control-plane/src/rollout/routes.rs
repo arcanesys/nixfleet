@@ -291,6 +291,9 @@ pub async fn get_rollout(
     Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
 ) -> Result<Json<RolloutDetail>, (StatusCode, String)> {
+    if id.len() > crate::MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "rollout ID too long".to_string()));
+    }
     if !actor.has_role(&["readonly", "deploy", "admin"]) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -332,6 +335,9 @@ pub async fn resume_rollout(
     Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > crate::MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "rollout ID too long".to_string()));
+    }
     if !actor.has_role(&["deploy", "admin"]) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -413,6 +419,9 @@ pub async fn cancel_rollout(
     Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > crate::MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "rollout ID too long".to_string()));
+    }
     if !actor.has_role(&["deploy", "admin"]) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -467,6 +476,65 @@ pub async fn cancel_rollout(
 
     tracing::info!(rollout_id = %id, "Rollout cancelled");
     Ok(StatusCode::OK)
+}
+
+/// DELETE /api/v1/rollouts/{id}
+///
+/// Delete a terminal rollout (completed, cancelled, or failed).
+pub async fn delete_rollout(
+    State((_state, db)): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > crate::MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "rollout ID too long".to_string()));
+    }
+    if !actor.has_role(&["admin"]) {
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
+    }
+
+    // Check rollout exists and is terminal
+    let rollout = db
+        .get_rollout(&id)
+        .map_err(|e| {
+            tracing::error!(error = %e, rollout_id = %id, "Failed to get rollout");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error".to_string(),
+            )
+        })?
+        .ok_or((StatusCode::NOT_FOUND, format!("rollout {id} not found")))?;
+
+    let status = RolloutStatus::from_str_lc(&rollout.status).ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("invalid rollout status: {}", rollout.status),
+    ))?;
+
+    if status.is_active() {
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "rollout {id} cannot be deleted: status is {} (must be completed, cancelled, or failed)",
+                rollout.status
+            ),
+        ));
+    }
+
+    db.delete_rollout(&id).map_err(|e| {
+        tracing::error!(error = %e, rollout_id = %id, "Failed to delete rollout");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        )
+    })?;
+
+    log_insert_err(
+        "audit_event",
+        db.insert_audit_event(&actor.identifier(), "rollout.deleted", &id, None),
+    );
+
+    tracing::info!(rollout_id = %id, "Rollout deleted");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Convert database rows into a RolloutDetail response type.
