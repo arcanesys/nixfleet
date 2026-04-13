@@ -129,6 +129,25 @@ fn build_host(
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
+/// Evaluate a host's store path without building.
+fn eval_host(flake: &str, hostname: &str) -> Result<String> {
+    let attr = format!(
+        "{}#nixosConfigurations.{}.config.system.build.toplevel.outPath",
+        flake, hostname
+    );
+    let mut cmd = std::process::Command::new("nix");
+    cmd.args(["eval", &attr, "--raw"]);
+    let output = display::run_cmd(&mut cmd, None)?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "nix eval failed for {}: {}",
+            hostname,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// Copy a store path to a Nix binary cache (S3, SSH, HTTP, etc.).
 fn nix_copy_to(
     cache_url: &str,
@@ -264,6 +283,7 @@ pub async fn create(
     copy: bool,
     cache_url: Option<&str>,
     dry_run: bool,
+    eval_only: bool,
 ) -> Result<Option<String>> {
     tracing::info!("discovering hosts");
     let all_hosts = discover_hosts(flake)?;
@@ -288,7 +308,12 @@ pub async fn create(
             }
             let platform = detect_platform(flake, hostname)?;
             let tags = detect_tags(flake, hostname);
-            match build_host(flake, hostname, window.as_mut().and_then(|w| w.for_output())) {
+            let build_result = if eval_only {
+                eval_host(flake, hostname)
+            } else {
+                build_host(flake, hostname, window.as_mut().and_then(|w| w.for_output()))
+            };
+            match build_result {
                 Ok(store_path) => {
                     if platform.contains("darwin") {
                         tracing::info!(hostname, "Darwin host — built and cached but not deployable via agent");
@@ -314,7 +339,7 @@ pub async fn create(
     }
 
     // Distribute
-    if let Some(push_url) = push_to {
+    if !eval_only { if let Some(push_url) = push_to {
         let mut pushed: std::collections::HashSet<String> = std::collections::HashSet::new();
         let unique_count = entries
             .iter()
@@ -410,7 +435,7 @@ pub async fn create(
                 }
             }
         }
-    }
+    } } // close if !eval_only
 
     // Print summary
     let manifest_rows: Vec<Vec<String>> = entries
@@ -459,9 +484,13 @@ pub async fn create(
 }
 
 /// `nixfleet release list`
-pub async fn list(client: &Client, base_url: &str, limit: u32, json: bool) -> Result<()> {
+pub async fn list(client: &Client, base_url: &str, limit: u32, host: Option<&str>, json: bool) -> Result<()> {
+    let mut url = format!("{}/api/v1/releases?limit={}", base_url, limit);
+    if let Some(h) = host {
+        url.push_str(&format!("&host={}", h));
+    }
     let resp = client
-        .get(format!("{}/api/v1/releases?limit={}", base_url, limit))
+        .get(url)
         .send()
         .await
         .context("failed to GET releases")?;
