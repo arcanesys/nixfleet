@@ -1522,6 +1522,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "chrono",
  "clap",
  "comfy-table",
  "console 0.15.11",
