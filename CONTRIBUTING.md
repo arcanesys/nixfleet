@@ -9,7 +9,7 @@ Thank you for your interest in contributing to NixFleet!
 
 **Getting started:**
 ```sh
-git clone https://github.com/your-org/nixfleet.git
+git clone https://github.com/arcanesys/nixfleet.git
 cd nixfleet
 nix develop  # enters the dev shell with Rust toolchain, cargo, rustfmt, clippy
 ```
@@ -39,12 +39,12 @@ See [Testing Overview](docs/mdbook/testing/overview.md) for tier details and how
 
 Use [conventional commits](https://www.conventionalcommits.org/):
 
-- `feat:` — new feature
-- `fix:` — bug fix
-- `docs:` — documentation only
-- `chore:` — maintenance, dependencies, CI
-- `test:` — test additions or fixes
-- `refactor:` — code restructuring without behavior change
+- `feat:` -- new feature
+- `fix:` -- bug fix
+- `docs:` -- documentation only
+- `chore:` -- maintenance, dependencies, CI
+- `test:` -- test additions or fixes
+- `refactor:` -- code restructuring without behavior change
 
 Keep the subject line under 72 characters. Use the body to explain "why," not "what."
 
@@ -54,7 +54,7 @@ Keep the subject line under 72 characters. Use the body to explain "why," not "w
 2. Make your changes with tests
 3. Ensure all checks pass: `nix run .#validate -- --all`
 4. Open a PR with a clear description of the change and its motivation
-5. One feature per PR — keep changes focused
+5. One feature per PR -- keep changes focused
 
 ## Architecture Decisions
 
