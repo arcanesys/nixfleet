@@ -49,7 +49,7 @@ Future work that cannot be closed inside this repository.
 - [x] **CLI: consolidate sync/async subprocess functions.** `release.rs`
   converted to async, `deploy.rs` imports from `crate::release::`.
 
-- [ ] **Agent: survive self-switch without restart rate-limiting.**
+- [x] **Agent: survive self-switch without restart rate-limiting.**
   When the agent applies a generation that changes its own systemd
   service, `switch-to-configuration` stops and restarts the agent.
   If the agent previously hit the activation lock (concurrent
@@ -64,7 +64,7 @@ Future work that cannot be closed inside this repository.
   Also consider: the agent should detect the activation lock and
   back off instead of failing (reducing restart count toward the limit).
 
-- [ ] **Agent liveness in `nixfleet status`.** The `LAST SEEN` column
+- [x] **Agent liveness in `nixfleet status`.** The `LAST SEEN` column
   shows the timestamp of the last agent report, but there's no visual
   indicator when a machine hasn't reported in a suspiciously long time.
   A machine could be dead for hours and the operator would only notice
