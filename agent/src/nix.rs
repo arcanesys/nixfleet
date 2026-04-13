@@ -271,15 +271,23 @@ pub async fn rollback() -> Result<()> {
     let prev_path = format!("/nix/var/nix/profiles/system-{gen_num}-link");
     info!(prev_path, "Switching to previous generation");
 
-    // Resolve profile symlink to store path (apply_generation expects a store path)
+    // Resolve profile symlink to store path
     let store_path = tokio::fs::read_link(&prev_path)
         .await
         .context("failed to resolve profile symlink to store path")?;
-    match apply_generation(&store_path.to_string_lossy()).await? {
-        ApplyOutcome::Applied => Ok(()),
-        ApplyOutcome::LockContention(msg) => {
-            anyhow::bail!("rollback blocked by lock contention: {msg}")
-        }
+    let store_path_str = store_path.to_string_lossy();
+
+    // Fire the rollback switch in a detached transient service
+    fire_switch(&store_path_str).await?;
+
+    // Poll until the system switches to the previous generation
+    let path = std::path::Path::new("/run/current-system");
+    let timeout = Duration::from_secs(300);
+    let interval = Duration::from_secs(2);
+    if poll_generation(&store_path_str, path, timeout, interval).await? {
+        Ok(())
+    } else {
+        anyhow::bail!("rollback timed out: /run/current-system did not match {store_path_str}")
     }
 }
 
