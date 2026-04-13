@@ -3,7 +3,7 @@
 
 use super::harness;
 
-use nixfleet_types::release::ReleaseDiff;
+use nixfleet_types::release::{Release, ReleaseDiff};
 
 /// R4 — release diff A→B → correct added/removed/changed entries.
 #[tokio::test]
@@ -150,5 +150,59 @@ async fn r6_delete_orphan_release_cascades_entries() {
     assert!(
         after_entries.is_empty(),
         "release_entries must cascade-delete (FK ON DELETE CASCADE + PRAGMA foreign_keys=ON)"
+    );
+}
+
+/// R7 — GET /releases?host=web-01 filters to only releases containing
+/// that hostname.
+#[tokio::test]
+async fn r7_list_releases_filtered_by_host() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "web-01", &["web"]).await;
+    harness::register_machine(&cp, "db-01", &["db"]).await;
+
+    // Create two releases: one for web-01, one for db-01.
+    let _rel_web = harness::create_release(&cp, &[("web-01", "/nix/store/r7-web-01")]).await;
+    let _rel_db = harness::create_release(&cp, &[("db-01", "/nix/store/r7-db-01")]).await;
+
+    // Filter by host=web-01 → only 1 release.
+    let filtered: Vec<Release> = cp
+        .admin
+        .get(format!("{}/api/v1/releases?host=web-01", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        filtered.len(),
+        1,
+        "?host=web-01 must return exactly 1 release; got {}",
+        filtered.len()
+    );
+    assert!(
+        filtered[0]
+            .entries
+            .iter()
+            .any(|e| e.hostname == "web-01"),
+        "filtered release must contain web-01 entry"
+    );
+
+    // Without filter → both releases.
+    let all: Vec<Release> = cp
+        .admin
+        .get(format!("{}/api/v1/releases", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        all.len(),
+        2,
+        "unfiltered must return 2 releases; got {}",
+        all.len()
     );
 }

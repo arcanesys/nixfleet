@@ -327,6 +327,8 @@ fn valid_report(machine_id: &str) -> Report {
         timestamp: chrono::Utc::now(),
         tags: vec![],
         health: None,
+        agent_version: String::new(),
+        uptime_seconds: 0,
     }
 }
 
@@ -616,6 +618,96 @@ async fn rollouts_cancel_readonly_returns_403() {
     harness::assert_status(
         client_with_key(TEST_READONLY_KEY)
             .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id)),
+        403,
+    )
+    .await;
+}
+
+// =====================================================================
+// Rollouts — DELETE /api/v1/rollouts/{id}
+// =====================================================================
+
+#[tokio::test]
+async fn rollouts_delete_terminal_returns_204() {
+    let (cp, _, id) = harness::spawn_cp_with_rollout("/nix/store/x").await;
+
+    // Cancel first to make it terminal.
+    cp.admin
+        .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id))
+        .send()
+        .await
+        .unwrap();
+    harness::wait_rollout_status(
+        &cp,
+        &id,
+        RolloutStatus::Cancelled,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+
+    // DELETE the terminal rollout.
+    harness::assert_status(
+        cp.admin
+            .delete(format!("{}/api/v1/rollouts/{}", cp.base, id)),
+        204,
+    )
+    .await;
+
+    // GET must now return 404.
+    harness::assert_status(
+        cp.admin
+            .get(format!("{}/api/v1/rollouts/{}", cp.base, id)),
+        404,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn rollouts_delete_active_returns_409() {
+    let (cp, _, id) = harness::spawn_cp_with_rollout("/nix/store/x").await;
+
+    // Rollout is running — DELETE must 409.
+    harness::assert_status(
+        cp.admin
+            .delete(format!("{}/api/v1/rollouts/{}", cp.base, id)),
+        409,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn rollouts_delete_missing_returns_404() {
+    let cp = harness::spawn_cp().await;
+    harness::assert_status(
+        cp.admin
+            .delete(format!("{}/api/v1/rollouts/r-nonexistent", cp.base)),
+        404,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn rollouts_delete_readonly_returns_403() {
+    let (cp, _, id) = harness::spawn_cp_with_rollout("/nix/store/x").await;
+
+    // Cancel to make it terminal.
+    cp.admin
+        .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id))
+        .send()
+        .await
+        .unwrap();
+    harness::wait_rollout_status(
+        &cp,
+        &id,
+        RolloutStatus::Cancelled,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+
+    // Readonly key must be rejected.
+    harness::assert_status(
+        client_with_key(TEST_READONLY_KEY)
+            .delete(format!("{}/api/v1/rollouts/{}", cp.base, id)),
         403,
     )
     .await;

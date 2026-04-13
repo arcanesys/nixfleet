@@ -209,6 +209,8 @@ async fn m4_failed_report_transitions_state_to_error() {
         timestamp: chrono::Utc::now(),
         tags: vec![],
         health: None,
+        agent_version: String::new(),
+        uptime_seconds: 0,
     };
     cp.admin
         .post(format!("{}/api/v1/machines/m4-host/report", cp.base))
@@ -381,4 +383,125 @@ async fn m7_active_maintenance_round_trip() {
         .await
         .unwrap();
     assert_eq!(to_active.status(), 200, "maintenance → active must 200");
+}
+
+/// M8 — DELETE /api/v1/machines/{id}/desired-generation clears from both
+/// the in-memory fleet state and the DB, and the change is visible in
+/// GET /machines.
+#[tokio::test]
+async fn m8_clear_desired_removes_generation() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "web-01", &["web"]).await;
+
+    // Set a desired generation (DB + in-memory).
+    set_desired_gen(&cp, "web-01", "/nix/store/m8-desired").await;
+
+    // Sanity: GET /machines shows the desired generation.
+    let before: Vec<MachineStatus> = cp
+        .admin
+        .get(format!("{}/api/v1/machines", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let m_before = before
+        .iter()
+        .find(|m| m.machine_id == "web-01")
+        .expect("web-01 in inventory");
+    assert_eq!(
+        m_before.desired_generation.as_deref(),
+        Some("/nix/store/m8-desired"),
+        "desired generation must be visible before clear"
+    );
+
+    // DELETE the desired generation.
+    let resp = cp
+        .admin
+        .delete(format!(
+            "{}/api/v1/machines/web-01/desired-generation",
+            cp.base
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204, "clear desired must return 204");
+
+    // GET /machines must no longer show the desired generation.
+    let after: Vec<MachineStatus> = cp
+        .admin
+        .get(format!("{}/api/v1/machines", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let m_after = after
+        .iter()
+        .find(|m| m.machine_id == "web-01")
+        .expect("web-01 in inventory after clear");
+    assert_eq!(
+        m_after.desired_generation, None,
+        "desired generation must be None after DELETE"
+    );
+
+    // DB must also be cleared.
+    let db_gen = cp.db.get_desired_generation("web-01").unwrap();
+    assert!(
+        db_gen.is_none(),
+        "DB desired_generation must be None after DELETE"
+    );
+}
+
+/// M9 — agent report with `agent_version` and `uptime_seconds` populates
+/// those fields in the MachineStatus returned by GET /machines.
+#[tokio::test]
+async fn m9_report_populates_agent_version_and_uptime() {
+    let cp = harness::spawn_cp().await;
+
+    // Submit a report with agent_version and uptime_seconds populated.
+    let report = Report {
+        machine_id: "m9-host".to_string(),
+        current_generation: "/nix/store/m9-gen".to_string(),
+        success: true,
+        message: "ok".to_string(),
+        timestamp: chrono::Utc::now(),
+        tags: vec![],
+        health: None,
+        agent_version: "0.1.0".to_string(),
+        uptime_seconds: 86400,
+    };
+    cp.admin
+        .post(format!("{}/api/v1/machines/m9-host/report", cp.base))
+        .json(&report)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+
+    // GET /machines must surface those fields.
+    let machines: Vec<MachineStatus> = cp
+        .admin
+        .get(format!("{}/api/v1/machines", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let m = machines
+        .iter()
+        .find(|m| m.machine_id == "m9-host")
+        .expect("m9-host in inventory");
+    assert_eq!(
+        m.agent_version, "0.1.0",
+        "agent_version must be populated from report"
+    );
+    assert_eq!(
+        m.uptime_seconds, 86400,
+        "uptime_seconds must be populated from report"
+    );
 }
