@@ -451,13 +451,16 @@ pub fn truncate_store_path(path: &str, max_len: usize) -> String {
 /// Color a status string for terminal display.
 pub fn color_status(s: &str) -> String {
     let lower = s.to_lowercase();
-    let styled = match lower.as_str() {
-        "ok" | "completed" | "healthy" | "succeeded" | "active" => style(s).green(),
-        "error" | "failed" | "unhealthy" => style(s).red(),
-        "paused" | "pending" | "waiting_health" | "deploying" | "maintenance" | "provisioning" => {
-            style(s).yellow()
+    let styled = if lower.contains("(stale)") {
+        style(s).yellow()
+    } else {
+        match lower.as_str() {
+            "ok" | "completed" | "healthy" | "succeeded" | "active" => style(s).green(),
+            "error" | "failed" | "unhealthy" => style(s).red(),
+            "paused" | "pending" | "waiting_health" | "deploying" | "maintenance"
+            | "provisioning" => style(s).yellow(),
+            _ => style(s).force_styling(false),
         }
-        _ => style(s).force_styling(false),
     };
     styled.to_string()
 }
