@@ -96,10 +96,32 @@ pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<
     Ok(())
 }
 
+/// Outcome of `apply_generation` — distinguishes success from retryable
+/// lock contention. Real errors (timeout, spawn failure) remain in the
+/// `Err` channel of `anyhow::Result<ApplyOutcome>`.
+#[derive(Debug)]
+pub enum ApplyOutcome {
+    /// Generation applied successfully.
+    Applied,
+    /// Another process holds the activation lock — caller should retry.
+    LockContention(String),
+}
+
+/// Check stderr for signals that another process holds the activation lock.
+/// Version-agnostic: matches common substrings across NixOS versions.
+fn is_lock_contention(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("activation lock")
+        || lower.contains("already running")
+        || lower.contains("resource busy")
+}
+
 /// Apply a generation by running its `switch-to-configuration switch`.
 ///
-/// Runs: `<store_path>/bin/switch-to-configuration switch`
-pub async fn apply_generation(store_path: &str) -> Result<()> {
+/// Returns `Ok(Applied)` on success, `Ok(LockContention(stderr))` when
+/// another process holds the activation lock (caller should retry), or
+/// `Err` for fatal failures (timeout, spawn error, config error).
+pub async fn apply_generation(store_path: &str) -> Result<ApplyOutcome> {
     validate_store_path(store_path)?;
     let switch_bin = format!("{store_path}/bin/switch-to-configuration");
     info!(switch_bin, "Applying generation");
@@ -110,9 +132,12 @@ pub async fn apply_generation(store_path: &str) -> Result<()> {
 
     if !output.status.success() {
         let stderr = truncated_stderr(&output.stderr);
+        if is_lock_contention(&stderr) {
+            return Ok(ApplyOutcome::LockContention(stderr));
+        }
         anyhow::bail!("switch-to-configuration failed: {stderr}");
     }
-    Ok(())
+    Ok(ApplyOutcome::Applied)
 }
 
 /// Roll back to the previous system generation.
@@ -161,8 +186,12 @@ pub async fn rollback() -> Result<()> {
     let store_path = tokio::fs::read_link(&prev_path)
         .await
         .context("failed to resolve profile symlink to store path")?;
-    apply_generation(&store_path.to_string_lossy()).await?;
-    Ok(())
+    match apply_generation(&store_path.to_string_lossy()).await? {
+        ApplyOutcome::Applied => Ok(()),
+        ApplyOutcome::LockContention(msg) => {
+            anyhow::bail!("rollback blocked by lock contention: {msg}")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -272,5 +301,21 @@ mod tests {
         let args = ["path-info", store_path];
         assert_eq!(args[0], "path-info");
         assert_eq!(args[1], store_path);
+    }
+
+    #[test]
+    fn test_is_lock_contention_matches_common_patterns() {
+        assert!(is_lock_contention("error: could not acquire activation lock on '/nix/var/nix/profiles/system'"));
+        assert!(is_lock_contention("warning: not able to lock: already running"));
+        assert!(is_lock_contention("Device or resource busy"));
+        assert!(is_lock_contention("another instance of switch-to-configuration is already running"));
+    }
+
+    #[test]
+    fn test_is_lock_contention_rejects_unrelated_errors() {
+        assert!(!is_lock_contention("error: path '/nix/store/abc' is not valid"));
+        assert!(!is_lock_contention("error: building of '/nix/store/abc.drv' failed"));
+        assert!(!is_lock_contention("error: could not lock path '/nix/store/abc.lock'"));
+        assert!(!is_lock_contention(""));
     }
 }
