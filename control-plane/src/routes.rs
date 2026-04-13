@@ -97,6 +97,8 @@ pub async fn post_report(
     let machine = fleet.get_or_create(&id);
     machine.last_seen = Some(report.timestamp);
     machine.last_report = Some(report);
+    machine.agent_version = machine.last_report.as_ref().map(|r| r.agent_version.clone()).unwrap_or_default();
+    machine.uptime_seconds = machine.last_report.as_ref().map(|r| r.uptime_seconds).unwrap_or(0);
 
     // Auto-register: persist to DB on first report from unknown machine
     if is_new {
@@ -181,7 +183,7 @@ pub async fn list_machines(
                 .map(|r| r.current_generation.clone())
                 .unwrap_or_default(),
             desired_generation: m.desired_generation.as_ref().map(|d| d.hash.clone()),
-            agent_version: String::new(),
+            agent_version: m.agent_version.clone(),
             system_state: m
                 .last_report
                 .as_ref()
@@ -193,7 +195,7 @@ pub async fn list_machines(
                     }
                 })
                 .unwrap_or_else(|| "unknown".to_string()),
-            uptime_seconds: 0,
+            uptime_seconds: m.uptime_seconds,
             last_report: m.last_report.as_ref().map(|r| r.timestamp),
             lifecycle: m.lifecycle.clone(),
             tags: m.tags.clone(),
@@ -460,4 +462,45 @@ pub struct BootstrapKeyResponse {
     pub key: String,
     pub name: String,
     pub role: String,
+}
+
+/// DELETE /api/v1/machines/{id}/desired-generation
+pub async fn clear_desired_generation(
+    State((state, db)): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "machine ID too long".to_string()));
+    }
+    if !actor.has_role(&["admin"]) {
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
+    }
+
+    // Check machine exists in DB
+    let machines = db.list_machines().map_err(|e| {
+        tracing::error!(error = %e, "Failed to list machines");
+        (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
+    })?;
+    if !machines.iter().any(|m| m.machine_id == id) {
+        return Err((StatusCode::NOT_FOUND, format!("machine {id} not found")));
+    }
+
+    db.clear_desired_generation(&id).map_err(|e| {
+        tracing::error!(error = %e, machine_id = %id, "Failed to clear desired generation");
+        (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
+    })?;
+
+    // Update in-memory state
+    let mut fleet = state.write().await;
+    let machine = fleet.get_or_create(&id);
+    machine.desired_generation = None;
+    crate::log_insert_err(
+        "audit_event",
+        db.insert_audit_event(&actor.identifier(), "clear_desired", &id, None),
+    );
+    drop(fleet);
+
+    tracing::info!(machine_id = %id, "Desired generation cleared");
+    Ok(StatusCode::NO_CONTENT)
 }
