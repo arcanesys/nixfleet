@@ -461,8 +461,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_with_retry_propagates_fatal_error() {
-        let result =
-            apply_with_retry(|| async { Err(anyhow::anyhow!("spawn failed")) }).await;
+        let result = apply_with_retry(|| async { Err(anyhow::anyhow!("spawn failed")) }).await;
         assert!(result.is_err());
     }
 
