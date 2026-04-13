@@ -124,7 +124,12 @@ fn parse_switch_status(output: &str) -> Option<bool> {
 /// it failed, or `None` if still running or not found.
 pub async fn check_switch_exit_status() -> Result<Option<bool>> {
     let mut cmd = Command::new("systemctl");
-    cmd.args(["show", "nixfleet-switch.service", "-p", "ActiveState,Result"]);
+    cmd.args([
+        "show",
+        "nixfleet-switch.service",
+        "-p",
+        "ActiveState,Result",
+    ]);
     let output = run_with_timeout(cmd, "systemctl show nixfleet-switch").await?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);

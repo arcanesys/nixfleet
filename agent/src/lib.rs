@@ -217,13 +217,8 @@ async fn fire_poll_switch(store_path: &str) -> anyhow::Result<bool> {
                     "Switch unit failed, retrying"
                 );
                 nix::fire_switch(store_path).await?;
-                if nix::poll_generation(
-                    store_path,
-                    path,
-                    SWITCH_POLL_TIMEOUT,
-                    SWITCH_POLL_INTERVAL,
-                )
-                .await?
+                if nix::poll_generation(store_path, path, SWITCH_POLL_TIMEOUT, SWITCH_POLL_INTERVAL)
+                    .await?
                 {
                     return Ok(true);
                 }

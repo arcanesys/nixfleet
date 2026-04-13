@@ -55,7 +55,7 @@ Future work that cannot be closed inside this repository.
   backoff (5s, 10s, 20s). `StartLimitIntervalSec=0` prevents systemd
   from rate-limiting restarts.
 
-- [ ] **Agent: survive self-switch (fire-and-forget apply).**
+- [x] **Agent: survive self-switch (fire-and-forget apply).**
   When the agent applies a generation that changes its own systemd
   service, `switch-to-configuration` kills the agent mid-activation.
   The child process is in the agent's cgroup and dies with it — the
