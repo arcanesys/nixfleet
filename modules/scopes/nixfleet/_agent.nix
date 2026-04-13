@@ -183,6 +183,7 @@ in {
       wantedBy = ["multi-user.target"];
       after = ["network-online.target" "nix-daemon.service"];
       wants = ["network-online.target"];
+      startLimitIntervalSec = 0;
 
       # Agent shells out to nix (copy, path-info) and switch-to-configuration
       path = [config.nix.package pkgs.systemd];
@@ -244,7 +245,6 @@ in {
         );
         Restart = "always";
         RestartSec = 30;
-        StartLimitIntervalSec = 0;
         StateDirectory = "nixfleet";
 
         # The agent is a privileged system manager: it runs

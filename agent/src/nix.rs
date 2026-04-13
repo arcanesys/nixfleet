@@ -111,7 +111,8 @@ pub enum ApplyOutcome {
 /// Version-agnostic: matches common substrings across NixOS versions.
 fn is_lock_contention(stderr: &str) -> bool {
     let lower = stderr.to_lowercase();
-    lower.contains("activation lock")
+    lower.contains("could not acquire lock")
+        || lower.contains("activation lock")
         || lower.contains("already running")
         || lower.contains("resource busy")
 }
@@ -305,6 +306,8 @@ mod tests {
 
     #[test]
     fn test_is_lock_contention_matches_common_patterns() {
+        // Real NixOS output observed in production
+        assert!(is_lock_contention("Could not acquire lock\n"));
         assert!(is_lock_contention(
             "error: could not acquire activation lock on '/nix/var/nix/profiles/system'"
         ));
