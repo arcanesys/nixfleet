@@ -190,6 +190,26 @@ pub async fn run(
         );
     }
 
+    let mut oplog = crate::oplog::OpLog::new("deploy")?;
+    oplog.log_start("deploy", flake, &targets);
+
+    let result = run_inner(flake, &targets, dry_run, target_override).await;
+
+    match &result {
+        Ok(()) => oplog.finish(true, None),
+        Err(e) => oplog.finish(false, Some(&format!("{e:#}"))),
+    }
+
+    result
+}
+
+/// Inner implementation for `run`, split out so oplog can wrap the result.
+async fn run_inner(
+    flake: &str,
+    targets: &[String],
+    dry_run: bool,
+    target_override: Option<&str>,
+) -> Result<()> {
     let mut results: HashMap<String, Result<String>> = HashMap::new();
 
     // Build all targets
@@ -200,7 +220,7 @@ pub async fn run(
             None
         };
 
-        for host in &targets {
+        for host in targets {
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }
@@ -225,7 +245,7 @@ pub async fn run(
 
     if dry_run {
         println!("\n--- Dry run summary ---");
-        for host in &targets {
+        for host in targets {
             match results.get(host) {
                 Some(Ok(path)) => println!("  {} -> {}", host, path),
                 Some(Err(e)) => println!("  {} -> BUILD FAILED: {}", host, e),
@@ -247,7 +267,7 @@ pub async fn run(
             None
         };
 
-        for host in &targets {
+        for host in targets {
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }

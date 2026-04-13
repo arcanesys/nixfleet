@@ -293,6 +293,36 @@ pub async fn create(
     }
     tracing::info!(count = hosts.len(), "found hosts");
 
+    let mut oplog = crate::oplog::OpLog::new("release-create")?;
+    oplog.log_start("release_create", flake, &hosts);
+
+    let result = create_inner(
+        client, base_url, flake, &hosts, push_to, push_hook, copy, cache_url, dry_run, eval_only,
+    )
+    .await;
+
+    match &result {
+        Ok(_) => oplog.finish(true, None),
+        Err(e) => oplog.finish(false, Some(&format!("{e:#}"))),
+    }
+
+    result
+}
+
+/// Inner implementation for `create`, split out so oplog can wrap the result.
+#[allow(clippy::too_many_arguments)]
+async fn create_inner(
+    client: &Client,
+    base_url: &str,
+    flake: &str,
+    hosts: &[String],
+    push_to: Option<&str>,
+    push_hook: Option<&str>,
+    copy: bool,
+    cache_url: Option<&str>,
+    dry_run: bool,
+    eval_only: bool,
+) -> Result<Option<String>> {
     // Build all hosts
     let mut entries = Vec::new();
     {
@@ -302,7 +332,7 @@ pub async fn create(
             None
         };
 
-        for hostname in &hosts {
+        for hostname in hosts {
             if let Some(ref mut w) = window {
                 w.set_line_prefix(hostname);
             }
