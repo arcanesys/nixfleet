@@ -447,7 +447,7 @@ push-cmd = "attic push mycache {}"              # {} is replaced with the store 
 [deploy]
 strategy = "staged"             # default rollout strategy
 health-timeout = 300            # default health timeout in seconds
-failure-threshold = "1"
+failure-threshold = "0"
 on-failure = "pause"
 ```
 

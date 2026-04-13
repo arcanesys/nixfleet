@@ -45,15 +45,7 @@ services.nixfleet-agent = {
 };
 ```
 
-### Via CLI
-
-Remove tags at runtime without rebuilding:
-
-```sh
-nixfleet machines untag web-01 eu-west
-```
-
-CLI-managed tags are stored in the control plane database. NixOS-configured tags (from `services.nixfleet-agent.tags`) are reported by the agent on every poll and merged with CLI-managed tags.
+Tags are stored in the control plane database. NixOS-configured tags (from `services.nixfleet-agent.tags`) are reported by the agent on every poll and synced to the control plane.
 
 ## Machine lifecycle
 

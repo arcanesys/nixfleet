@@ -485,16 +485,12 @@ pub async fn clear_desired_generation(
         return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
 
-    // Check machine exists in DB
-    let machines = db.list_machines().map_err(|e| {
-        tracing::error!(error = %e, "Failed to list machines");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal error".to_string(),
-        )
-    })?;
-    if !machines.iter().any(|m| m.machine_id == id) {
-        return Err((StatusCode::NOT_FOUND, format!("machine {id} not found")));
+    // Check machine exists via in-memory fleet state (O(1) lookup)
+    {
+        let fleet = state.read().await;
+        if !fleet.machines.contains_key(&id) {
+            return Err((StatusCode::NOT_FOUND, format!("machine {id} not found")));
+        }
     }
 
     db.clear_desired_generation(&id).map_err(|e| {
@@ -507,7 +503,9 @@ pub async fn clear_desired_generation(
 
     // Update in-memory state
     let mut fleet = state.write().await;
-    let machine = fleet.get_or_create(&id);
+    let machine = fleet.machines.get_mut(&id).ok_or_else(|| {
+        (StatusCode::INTERNAL_SERVER_ERROR, "machine state inconsistency".to_string())
+    })?;
     machine.desired_generation = None;
     crate::log_insert_err(
         "audit_event",

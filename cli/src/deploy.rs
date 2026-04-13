@@ -9,6 +9,11 @@ use crate::display;
 use crate::glob::filter_hosts;
 
 /// Discover NixOS host names from the flake by evaluating nixosConfigurations attribute names.
+///
+/// NOTE: This is the async variant of `release::discover_hosts`. Both exist
+/// because `release.rs` uses sync `display::run_cmd` (for `RollingWindow` compat)
+/// while `deploy.rs` uses async `display::run_cmd_async`. Consolidation would
+/// require making `RollingWindow` async-aware.
 async fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<Vec<String>> {
     let t = std::time::Instant::now();
     let mut cmd = tokio::process::Command::new("nix");
@@ -49,6 +54,11 @@ async fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<
 }
 
 /// Build the system closure for a host and return the store path.
+///
+/// NOTE: This is the async variant of `release::build_host`. Both exist
+/// because `release.rs` uses sync `display::run_cmd` (for `RollingWindow` compat)
+/// while `deploy.rs` uses async `display::run_cmd_async`. Consolidation would
+/// require making `RollingWindow` async-aware.
 async fn build_host(
     flake: &str,
     host: &str,

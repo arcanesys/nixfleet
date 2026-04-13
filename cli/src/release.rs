@@ -77,7 +77,8 @@ fn detect_platform(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog)
 }
 
 /// Detect tags for a host (best-effort).
-fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
+fn detect_tags(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Vec<String> {
+    let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
         "eval",
@@ -96,8 +97,15 @@ fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
         display::run_cmd(&mut cmd, None)
     };
     match output {
-        Ok(o) if o.status.success() => serde_json::from_slice(&o.stdout).unwrap_or_default(),
-        _ => vec![],
+        Ok(ref o) => {
+            oplog.log_output(&format!("nix eval tags {}", hostname), Some(hostname), o, t.elapsed());
+            if o.status.success() {
+                serde_json::from_slice(&o.stdout).unwrap_or_default()
+            } else {
+                vec![]
+            }
+        }
+        Err(_) => vec![],
     }
 }
 
@@ -385,7 +393,7 @@ async fn create_inner(
                 w.set_line_prefix(hostname);
             }
             let platform = detect_platform(flake, hostname, oplog)?;
-            let tags = detect_tags(flake, hostname);
+            let tags = detect_tags(flake, hostname, oplog);
             let build_result = if eval_only {
                 eval_host(flake, hostname, oplog)
             } else {

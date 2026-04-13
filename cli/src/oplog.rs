@@ -148,8 +148,13 @@ impl OpLog {
     }
 
     fn write_event(&mut self, event: &LogEvent<'_>) {
-        if let Ok(json) = serde_json::to_string(event) {
-            let _ = writeln!(self.file, "{}", json);
+        match serde_json::to_string(event) {
+            Ok(json) => {
+                if let Err(e) = writeln!(self.file, "{}", json) {
+                    tracing::debug!(error = %e, "oplog write failed");
+                }
+            }
+            Err(e) => tracing::debug!(error = %e, "oplog serialization failed"),
         }
     }
 }

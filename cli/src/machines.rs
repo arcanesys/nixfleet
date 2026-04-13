@@ -16,11 +16,11 @@ pub async fn list(
         .get(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     let resp = crate::client::check_response(resp).await?;
 
-    let machines: Vec<MachineStatus> = resp.json().await.context("Failed to parse machine list")?;
+    let machines: Vec<MachineStatus> = resp.json().await.context("failed to parse machine list")?;
 
     let filtered: Vec<&MachineStatus> = if tag_filters.is_empty() {
         machines.iter().collect()
