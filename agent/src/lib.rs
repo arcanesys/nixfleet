@@ -25,6 +25,16 @@ pub use config::Config;
 use health::HealthRunner;
 use store::{AsyncStore, Store};
 
+/// Read host uptime from /proc/uptime (Linux). Returns 0 on failure.
+fn read_uptime_seconds() -> u64 {
+    std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|s| s.split_whitespace().next().map(String::from))
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|f| f as u64)
+        .unwrap_or(0)
+}
+
 /// Outcome of a poll cycle — tells the main loop how to schedule the next tick.
 #[derive(Debug)]
 pub enum PollOutcome {
@@ -164,6 +174,8 @@ async fn run_health_report(
         timestamp: chrono::Utc::now(),
         tags: config.tags.clone(),
         health: Some(health_report),
+        agent_version: env!("CARGO_PKG_VERSION").to_string(),
+        uptime_seconds: read_uptime_seconds(),
     };
     match client.post_report(&report).await {
         Ok(()) => info!("Health report sent"),
@@ -332,6 +344,8 @@ async fn send_report(client: &comms::Client, config: &Config, success: bool, mes
         timestamp: chrono::Utc::now(),
         tags: config.tags.clone(),
         health: None,
+        agent_version: env!("CARGO_PKG_VERSION").to_string(),
+        uptime_seconds: read_uptime_seconds(),
     };
     match client.post_report(&report).await {
         Ok(()) => info!("Report sent"),
