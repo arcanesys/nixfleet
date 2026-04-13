@@ -155,7 +155,7 @@ pub async fn delete(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
     anyhow::bail!("failed to delete rollout: {} {}", status, body);
 }
 
-/// Poll a rollout until it reaches a terminal state, printing progress every interval.
+/// Poll a rollout until it reaches a terminal state, showing inline progress.
 ///
 /// Falls back to [`DEFAULT_WAIT_TIMEOUT`] if `max_wait` is `None`.
 /// Using `Some(Duration::ZERO)` disables the timeout (wait forever).
@@ -168,6 +168,8 @@ pub async fn wait_for_completion(
     let url = format!("{}/api/v1/rollouts/{}", cp_url, id);
     let timeout = max_wait.unwrap_or(DEFAULT_WAIT_TIMEOUT);
     let started = Instant::now();
+    let is_tty = console::Term::stderr().is_term();
+    let mut printed_progress = false;
 
     loop {
         let resp = client
@@ -211,16 +213,19 @@ pub async fn wait_for_completion(
             .map(|i| i + 1)
             .unwrap_or(0);
 
-        tracing::info!(
-            batch = current_batch,
-            total_batches = rollout.batches.len(),
-            healthy = healthy_machines,
-            total = total_machines,
-            status = %rollout.status,
-            "rollout progress"
-        );
-
         if !rollout.status.is_active() {
+            // Erase the last progress line before the final message
+            if is_tty && printed_progress {
+                eprint!("\x1b[A\x1b[2K");
+            }
+            tracing::info!(
+                batch = current_batch,
+                total_batches = rollout.batches.len(),
+                healthy = healthy_machines,
+                total = total_machines,
+                status = %rollout.status,
+                "rollout progress"
+            );
             println!(
                 "Rollout {} finished: {} ({} machines, {} batches)",
                 id,
@@ -234,7 +239,25 @@ pub async fn wait_for_completion(
             return Ok(());
         }
 
+        // On TTY: erase previous progress line before tracing prints the new one.
+        // tracing handles all formatting (timestamp, level, target, colors).
+        if is_tty && printed_progress {
+            eprint!("\x1b[A\x1b[2K");
+        }
+        tracing::info!(
+            batch = current_batch,
+            total_batches = rollout.batches.len(),
+            healthy = healthy_machines,
+            total = total_machines,
+            status = %rollout.status,
+            "rollout progress"
+        );
+        printed_progress = true;
+
         if !timeout.is_zero() && started.elapsed() >= timeout {
+            if is_tty {
+                eprintln!();
+            }
             bail!(
                 "Timed out after {}s waiting for rollout {} to finish (last status: {}). \
                  Re-run with --wait-timeout 0 to block indefinitely, or inspect with \
