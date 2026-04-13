@@ -14,7 +14,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn release_delete_orphan_returns_zero_with_confirmation() {
-    let _guard = cli_lock();
+    let _guard = cli_lock().await;
     let server = MockServer::start().await;
 
     Mock::given(method("DELETE"))
@@ -41,7 +41,7 @@ async fn release_delete_orphan_returns_zero_with_confirmation() {
 
 #[tokio::test]
 async fn release_delete_referenced_exits_with_error_message() {
-    let _guard = cli_lock();
+    let _guard = cli_lock().await;
     let server = MockServer::start().await;
 
     Mock::given(method("DELETE"))
@@ -70,7 +70,7 @@ async fn release_delete_referenced_exits_with_error_message() {
 
 #[tokio::test]
 async fn release_delete_unknown_id_exits_with_not_found_message() {
-    let _guard = cli_lock();
+    let _guard = cli_lock().await;
     let server = MockServer::start().await;
 
     Mock::given(method("DELETE"))
@@ -95,9 +95,9 @@ async fn release_delete_unknown_id_exits_with_not_found_message() {
         .stderr(predicate::str::contains("not found"));
 }
 
-#[test]
-fn release_delete_subcommand_is_registered() {
-    let _guard = cli_lock();
+#[tokio::test]
+async fn release_delete_subcommand_is_registered() {
+    let _guard = cli_lock().await;
     // Negative: a stale clap definition that omits the Delete variant
     // would surface as "unrecognized subcommand 'delete'". This test
     // confirms the subcommand is dispatchable at the parser level
