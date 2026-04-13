@@ -4,6 +4,8 @@
 
 #[path = "scenarios/config.rs"]
 mod config;
+#[path = "scenarios/harness.rs"]
+mod harness;
 #[path = "scenarios/release_delete.rs"]
 mod release_delete;
 #[path = "scenarios/release_hook.rs"]

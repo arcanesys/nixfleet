@@ -1,5 +1,5 @@
-use anyhow::{Context, Result};
 use anyhow::bail;
+use anyhow::{Context, Result};
 use std::fs;
 
 /// Read the body of a failed HTTP response as a String, falling back to

@@ -10,8 +10,8 @@ use console::style;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Serialize;
 use std::collections::VecDeque;
-use std::io::{Read as IoRead, Write as IoWrite};
-use std::process::{Command, Output, Stdio};
+use std::io::Write as IoWrite;
+use std::process::{Output, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -47,8 +47,6 @@ pub fn quiet_subprocess() -> bool {
 pub fn use_progress() -> bool {
     !passthrough_output() && console::Term::stderr().is_term()
 }
-
-
 
 // ---------------------------------------------------------------
 // Shared tracing writer
@@ -141,10 +139,9 @@ impl RollingWindow {
         let multi = MultiProgress::new();
 
         // No lines pre-created — they're inserted before the bar in log_line()
-        let bar_style =
-            ProgressStyle::with_template("{spinner} {prefix} {bar:30} {pos}/{len}")
-                .unwrap()
-                .progress_chars("█▓░");
+        let bar_style = ProgressStyle::with_template("{spinner} {prefix} {bar:30} {pos}/{len}")
+            .unwrap()
+            .progress_chars("█▓░");
         let bar = multi.add(ProgressBar::new(total));
         bar.set_style(bar_style);
         bar.set_prefix(phase_name.to_string());
@@ -274,76 +271,7 @@ impl Drop for RollingWindow {
 // Subprocess runner
 // ---------------------------------------------------------------
 
-/// Run a command, piping stderr into the rolling window line-by-line.
-///
-/// - `window = Some(w)`: pipes stderr, feeds each line into `w.log_line()`.
-/// - `window = None`: pipes stderr and discards it (quiet mode).
-/// - For `-vv` passthrough mode, callers should use `Stdio::inherit()`
-///   directly instead of this helper.
-pub fn run_cmd(cmd: &mut Command, mut window: Option<&mut RollingWindow>) -> std::io::Result<Output> {
-    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
-
-    let stderr_handle = child.stderr.take();
-    let mut stderr_buf = Vec::new();
-    if let Some(mut stderr) = stderr_handle {
-        let mut buf = [0u8; 4096];
-        let mut line_buf = String::new();
-        let mut last_was_cr = false;
-        loop {
-            let n = stderr.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            stderr_buf.extend_from_slice(&buf[..n]);
-            let chunk = String::from_utf8_lossy(&buf[..n]);
-            for ch in chunk.chars() {
-                if ch == '\r' {
-                    if !line_buf.is_empty() {
-                        if let Some(ref mut w) = window {
-                            if last_was_cr {
-                                w.log_line_replace(&line_buf);
-                            } else {
-                                w.log_line(&line_buf);
-                            }
-                        }
-                        line_buf.clear();
-                    }
-                    last_was_cr = true;
-                } else if ch == '\n' {
-                    if !line_buf.is_empty() {
-                        if let Some(ref mut w) = window {
-                            w.log_line(&line_buf);
-                        }
-                        line_buf.clear();
-                    }
-                    last_was_cr = false;
-                } else {
-                    line_buf.push(ch);
-                }
-            }
-        }
-        if !line_buf.is_empty() {
-            if let Some(ref mut w) = window {
-                w.log_line(&line_buf);
-            }
-        }
-    }
-
-    let mut stdout_buf = Vec::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        stdout.read_to_end(&mut stdout_buf)?;
-    }
-
-    let status = child.wait()?;
-
-    Ok(Output {
-        status,
-        stdout: stdout_buf,
-        stderr: stderr_buf,
-    })
-}
-
-/// Async version of `run_cmd` for deploy.rs (uses tokio::process::Command).
+/// Run a command asynchronously, piping stderr into the rolling window line-by-line.
 pub async fn run_cmd_async(
     cmd: &mut tokio::process::Command,
     mut window: Option<&mut RollingWindow>,
@@ -394,6 +322,45 @@ pub async fn run_cmd_async(
             if let Some(ref mut w) = window {
                 w.log_line(&line_buf);
             }
+        }
+    }
+
+    let mut stdout_buf = Vec::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        use tokio::io::AsyncReadExt;
+        stdout.read_to_end(&mut stdout_buf).await?;
+    }
+
+    let status = child.wait().await?;
+
+    Ok(std::process::Output {
+        status,
+        stdout: stdout_buf,
+        stderr: stderr_buf,
+    })
+}
+
+/// Like `run_cmd_async` but tees stderr to the terminal in real time.
+/// Used at `-vv` verbosity where the user wants live output AND oplog capture.
+pub async fn run_cmd_async_passthrough(
+    cmd: &mut tokio::process::Command,
+) -> std::io::Result<Output> {
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+
+    let mut stderr_buf = Vec::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let mut buf = [0u8; 4096];
+        let mut term_stderr = tokio::io::stderr();
+        loop {
+            let n = stderr.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            stderr_buf.extend_from_slice(&buf[..n]);
+            let _ = term_stderr.write_all(&buf[..n]).await;
         }
     }
 
@@ -466,10 +433,7 @@ pub fn truncate_store_path(path: &str, max_len: usize) -> String {
             }
             let budget = max_len.saturating_sub("/nix/store/…-…".len() + hash.len());
             if budget > 3 {
-                return format!(
-                    "/nix/store/{hash}…-{}…",
-                    &name[..budget.min(name.len())]
-                );
+                return format!("/nix/store/{hash}…-{}…", &name[..budget.min(name.len())]);
             }
         }
     }
@@ -490,8 +454,9 @@ pub fn color_status(s: &str) -> String {
     let styled = match lower.as_str() {
         "ok" | "completed" | "healthy" | "succeeded" | "active" => style(s).green(),
         "error" | "failed" | "unhealthy" => style(s).red(),
-        "paused" | "pending" | "waiting_health" | "deploying" | "maintenance"
-        | "provisioning" => style(s).yellow(),
+        "paused" | "pending" | "waiting_health" | "deploying" | "maintenance" | "provisioning" => {
+            style(s).yellow()
+        }
         _ => style(s).force_styling(false),
     };
     styled.to_string()
@@ -524,16 +489,12 @@ mod tests {
 
     #[test]
     fn truncate_short_path_unchanged() {
-        assert_eq!(
-            truncate_store_path("/nix/store/abc", 50),
-            "/nix/store/abc"
-        );
+        assert_eq!(truncate_store_path("/nix/store/abc", 50), "/nix/store/abc");
     }
 
     #[test]
     fn truncate_preserves_hash_and_name() {
-        let long =
-            "/nix/store/abc123def456ghi789jkl012mno345pqr678-nixos-system-web-01-25.05";
+        let long = "/nix/store/abc123def456ghi789jkl012mno345pqr678-nixos-system-web-01-25.05";
         let result = truncate_store_path(long, 50);
         assert!(
             result.contains("abc123d"),
@@ -585,12 +546,13 @@ mod tests {
         assert_eq!(ring.back().unwrap(), "line 14");
     }
 
-    #[test]
-    fn run_cmd_captures_stderr() {
-        let output = run_cmd(
-            Command::new("sh").args(["-c", "echo hello >&2; echo stdout"]),
+    #[tokio::test]
+    async fn run_cmd_async_captures_stderr() {
+        let output = run_cmd_async(
+            tokio::process::Command::new("sh").args(["-c", "echo hello >&2; echo stdout"]),
             None,
         )
+        .await
         .unwrap();
         assert!(output.status.success());
         assert!(String::from_utf8_lossy(&output.stdout).contains("stdout"));

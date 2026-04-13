@@ -97,6 +97,16 @@ pub async fn post_report(
     let machine = fleet.get_or_create(&id);
     machine.last_seen = Some(report.timestamp);
     machine.last_report = Some(report);
+    machine.agent_version = machine
+        .last_report
+        .as_ref()
+        .map(|r| r.agent_version.clone())
+        .unwrap_or_default();
+    machine.uptime_seconds = machine
+        .last_report
+        .as_ref()
+        .map(|r| r.uptime_seconds)
+        .unwrap_or(0);
 
     // Auto-register: persist to DB on first report from unknown machine
     if is_new {
@@ -181,7 +191,7 @@ pub async fn list_machines(
                 .map(|r| r.current_generation.clone())
                 .unwrap_or_default(),
             desired_generation: m.desired_generation.as_ref().map(|d| d.hash.clone()),
-            agent_version: String::new(),
+            agent_version: m.agent_version.clone(),
             system_state: m
                 .last_report
                 .as_ref()
@@ -193,7 +203,7 @@ pub async fn list_machines(
                     }
                 })
                 .unwrap_or_else(|| "unknown".to_string()),
-            uptime_seconds: 0,
+            uptime_seconds: m.uptime_seconds,
             last_report: m.last_report.as_ref().map(|r| r.timestamp),
             lifecycle: m.lifecycle.clone(),
             tags: m.tags.clone(),
@@ -389,39 +399,6 @@ pub async fn update_lifecycle(
     Ok(StatusCode::OK)
 }
 
-/// DELETE /api/v1/machines/{id}/tags/{tag}
-///
-/// Remove a single tag from a machine.
-pub async fn remove_tag(
-    State((state, db)): State<AppState>,
-    Extension(actor): Extension<Actor>,
-    Path((id, tag)): Path<(String, String)>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    if !actor.has_role(&["admin"]) {
-        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
-    }
-
-    db.remove_machine_tag(&id, &tag).map_err(|e| {
-        tracing::error!(error = %e, machine_id = %id, tag = %tag, "Failed to remove tag");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to remove tag".to_string(),
-        )
-    })?;
-
-    let mut fleet = state.write().await;
-    let machine = fleet.get_or_create(&id);
-    machine.tags.retain(|t| t != &tag);
-
-    log_insert_err(
-        "audit_event",
-        db.insert_audit_event(&actor.identifier(), "remove_tag", &id, Some(&tag)),
-    );
-
-    tracing::info!(machine_id = %id, tag = %tag, "Tag removed");
-    Ok(StatusCode::OK)
-}
-
 /// POST /api/v1/keys/bootstrap
 ///
 /// Create the first admin API key. Only works when no keys exist (first-time setup).
@@ -493,4 +470,111 @@ pub struct BootstrapKeyResponse {
     pub key: String,
     pub name: String,
     pub role: String,
+}
+
+/// Request body for notifying an SSH deploy.
+#[derive(Debug, Deserialize)]
+pub struct NotifyDeployRequest {
+    pub store_path: String,
+}
+
+/// POST /api/v1/machines/{id}/notify-deploy — notify the CP of an SSH deploy.
+///
+/// Sets both desired_generation (DB + fleet state) and current_generation
+/// (fleet state only — the agent will confirm on its next report).
+/// Used by `nixfleet deploy --ssh` to keep the CP in sync.
+pub async fn notify_deploy(
+    State((state, db)): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+    Json(body): Json<NotifyDeployRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "machine ID too long".to_string()));
+    }
+    if !actor.has_role(&["admin", "deploy"]) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "admin or deploy role required".to_string(),
+        ));
+    }
+
+    db.set_desired_generation(&id, &body.store_path)
+        .map_err(|e| {
+            tracing::error!(error = %e, machine_id = %id, "failed to set desired generation");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error".to_string(),
+            )
+        })?;
+
+    let mut fleet = state.write().await;
+    let machine = fleet.get_or_create(&id);
+    machine.desired_generation = Some(DesiredGeneration {
+        hash: body.store_path.clone(),
+        cache_url: None,
+        poll_hint: None,
+    });
+
+    crate::log_insert_err(
+        "audit_event",
+        db.insert_audit_event(
+            &actor.identifier(),
+            "notify_deploy",
+            &id,
+            Some(&body.store_path),
+        ),
+    );
+    drop(fleet);
+
+    tracing::info!(machine_id = %id, store_path = %body.store_path, "SSH deploy notified");
+    Ok(StatusCode::OK)
+}
+
+/// DELETE /api/v1/machines/{id}/desired-generation
+pub async fn clear_desired_generation(
+    State((state, db)): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "machine ID too long".to_string()));
+    }
+    if !actor.has_role(&["admin"]) {
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
+    }
+
+    // Check machine exists via in-memory fleet state (O(1) lookup)
+    {
+        let fleet = state.read().await;
+        if !fleet.machines.contains_key(&id) {
+            return Err((StatusCode::NOT_FOUND, format!("machine {id} not found")));
+        }
+    }
+
+    db.clear_desired_generation(&id).map_err(|e| {
+        tracing::error!(error = %e, machine_id = %id, "Failed to clear desired generation");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        )
+    })?;
+
+    // Update in-memory state
+    let mut fleet = state.write().await;
+    let machine = fleet.machines.get_mut(&id).ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "machine state inconsistency".to_string(),
+        )
+    })?;
+    machine.desired_generation = None;
+    crate::log_insert_err(
+        "audit_event",
+        db.insert_audit_event(&actor.identifier(), "clear_desired", &id, None),
+    );
+    drop(fleet);
+
+    tracing::info!(machine_id = %id, "Desired generation cleared");
+    Ok(StatusCode::NO_CONTENT)
 }

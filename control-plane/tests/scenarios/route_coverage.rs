@@ -10,7 +10,9 @@
 //!     GET    /api/v1/machines
 //!     POST   /api/v1/machines/{id}/register
 //!     PATCH  /api/v1/machines/{id}/lifecycle
-//!     DELETE /api/v1/machines/{id}/tags/{tag}
+//!     DELETE /api/v1/machines/{id}/desired-generation
+//!     POST   /api/v1/machines/{id}/notify-deploy
+//!     DELETE /api/v1/rollouts/{id}
 //!     GET    /api/v1/machines/{id}/desired-generation
 //!     POST   /api/v1/machines/{id}/report
 //!
@@ -209,78 +211,6 @@ async fn machines_lifecycle_anonymous_returns_401() {
 }
 
 // =====================================================================
-// Machines — DELETE /api/v1/machines/{id}/tags/{tag}
-// =====================================================================
-
-#[tokio::test]
-async fn machines_remove_tag_succeeds_and_drops_from_list() {
-    let cp = harness::spawn_cp().await;
-
-    // Use the HTTP register endpoint so the in-memory fleet state is
-    // populated with the tags. The harness::register_machine helper
-    // only writes to the DB and creates an empty fleet entry, so the
-    // list_machines handler (which reads from fleet state) would see
-    // an empty tags vec.
-    cp.admin
-        .post(format!("{}/api/v1/machines/web-01/register", cp.base))
-        .json(&json!({"tags": ["web", "us-west"]}))
-        .send()
-        .await
-        .unwrap();
-
-    let resp = cp
-        .admin
-        .delete(format!("{}/api/v1/machines/web-01/tags/web", cp.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-
-    // Side effect: machine no longer has the "web" tag.
-    let list: serde_json::Value = cp
-        .admin
-        .get(format!("{}/api/v1/machines", cp.base))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let m = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["machine_id"] == "web-01")
-        .expect("web-01 must still be listed");
-    let tags = m["tags"].as_array().unwrap();
-    assert!(!tags.iter().any(|t| t == "web"));
-    assert!(tags.iter().any(|t| t == "us-west"));
-}
-
-#[tokio::test]
-async fn machines_remove_tag_anonymous_returns_401() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-    harness::assert_status(
-        client_anonymous().delete(format!("{}/api/v1/machines/web-01/tags/web", cp.base)),
-        401,
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn machines_remove_tag_readonly_returns_403() {
-    let cp = harness::spawn_cp().await;
-    harness::register_machine(&cp, "web-01", &["web"]).await;
-    harness::assert_status(
-        client_with_key(TEST_READONLY_KEY)
-            .delete(format!("{}/api/v1/machines/web-01/tags/web", cp.base)),
-        403,
-    )
-    .await;
-}
-
-// =====================================================================
 // Machines — GET /api/v1/machines/{id}/desired-generation
 // =====================================================================
 
@@ -327,6 +257,8 @@ fn valid_report(machine_id: &str) -> Report {
         timestamp: chrono::Utc::now(),
         tags: vec![],
         health: None,
+        agent_version: String::new(),
+        uptime_seconds: 0,
     }
 }
 
@@ -622,6 +554,94 @@ async fn rollouts_cancel_readonly_returns_403() {
 }
 
 // =====================================================================
+// Rollouts — DELETE /api/v1/rollouts/{id}
+// =====================================================================
+
+#[tokio::test]
+async fn rollouts_delete_terminal_returns_204() {
+    let (cp, _, id) = harness::spawn_cp_with_rollout("/nix/store/x").await;
+
+    // Cancel first to make it terminal.
+    cp.admin
+        .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id))
+        .send()
+        .await
+        .unwrap();
+    harness::wait_rollout_status(
+        &cp,
+        &id,
+        RolloutStatus::Cancelled,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+
+    // DELETE the terminal rollout.
+    harness::assert_status(
+        cp.admin
+            .delete(format!("{}/api/v1/rollouts/{}", cp.base, id)),
+        204,
+    )
+    .await;
+
+    // GET must now return 404.
+    harness::assert_status(
+        cp.admin.get(format!("{}/api/v1/rollouts/{}", cp.base, id)),
+        404,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn rollouts_delete_active_returns_409() {
+    let (cp, _, id) = harness::spawn_cp_with_rollout("/nix/store/x").await;
+
+    // Rollout is running — DELETE must 409.
+    harness::assert_status(
+        cp.admin
+            .delete(format!("{}/api/v1/rollouts/{}", cp.base, id)),
+        409,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn rollouts_delete_missing_returns_404() {
+    let cp = harness::spawn_cp().await;
+    harness::assert_status(
+        cp.admin
+            .delete(format!("{}/api/v1/rollouts/r-nonexistent", cp.base)),
+        404,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn rollouts_delete_readonly_returns_403() {
+    let (cp, _, id) = harness::spawn_cp_with_rollout("/nix/store/x").await;
+
+    // Cancel to make it terminal.
+    cp.admin
+        .post(format!("{}/api/v1/rollouts/{}/cancel", cp.base, id))
+        .send()
+        .await
+        .unwrap();
+    harness::wait_rollout_status(
+        &cp,
+        &id,
+        RolloutStatus::Cancelled,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+
+    // Readonly key must be rejected.
+    harness::assert_status(
+        client_with_key(TEST_READONLY_KEY).delete(format!("{}/api/v1/rollouts/{}", cp.base, id)),
+        403,
+    )
+    .await;
+}
+
+// =====================================================================
 // Releases — GET /api/v1/releases
 // =====================================================================
 
@@ -808,8 +828,7 @@ async fn releases_delete_deploy_role_returns_403() {
     let cp = harness::spawn_cp().await;
     let id = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
     harness::assert_status(
-        client_with_key(TEST_DEPLOY_KEY)
-            .delete(format!("{}/api/v1/releases/{}", cp.base, id)),
+        client_with_key(TEST_DEPLOY_KEY).delete(format!("{}/api/v1/releases/{}", cp.base, id)),
         403,
     )
     .await;
@@ -1012,9 +1031,5 @@ async fn metrics_route_returns_200_without_auth() {
     // contract: /metrics is reachable without an Authorization header
     // and returns 200.
     let cp = harness::spawn_cp().await;
-    harness::assert_status(
-        client_anonymous().get(format!("{}/metrics", cp.base)),
-        200,
-    )
-    .await;
+    harness::assert_status(client_anonymous().get(format!("{}/metrics", cp.base)), 200).await;
 }

@@ -127,7 +127,7 @@ the three pre-seeded role keys.
 | `release_hook_scenarios.rs` | `release create --push-hook "..."` expands `{}` to the store path and runs the hook under `sh -c`. |
 | `rollback_cli_scenarios.rs` | `nixfleet rollback --host <h> --generation <g>` constructs the right SSH invocation. |
 | `config_scenarios.rs` | CLI/credentials/file precedence + env-var precedence (`NIXFLEET_*` overrides credentials, loses to CLI flags) + `HOSTNAME` fallback path. |
-| `subcommand_coverage.rs` | Direct CLI test for every leaf subcommand (init, bootstrap, status, host add, machines list/untag/register, rollout list/status/cancel, release list/show/diff). |
+| `subcommand_coverage.rs` | Direct CLI test for every leaf subcommand (init, bootstrap, status, host add, machines list/register, rollout list/status/cancel, release list/show/diff). |
 | `release_delete_scenarios.rs` | `nixfleet release delete` CLI dispatch (204 → exit 0, 409 → exit 1, 404 → exit 1). |
 
 ## Tests deliberately NOT in Rust

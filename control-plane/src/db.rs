@@ -94,6 +94,18 @@ impl Db {
         Ok(rows)
     }
 
+    /// Remove the desired generation for a machine.
+    pub fn clear_desired_generation(&self, machine_id: &str) -> Result<bool> {
+        let conn = self.conn()?;
+        let rows = conn
+            .execute(
+                "DELETE FROM generations WHERE machine_id = ?1",
+                rusqlite::params![machine_id],
+            )
+            .context("failed to clear desired generation")?;
+        Ok(rows > 0)
+    }
+
     /// Store an agent report.
     pub fn insert_report(
         &self,
@@ -342,17 +354,6 @@ impl Db {
             .query_map(param_refs.as_slice(), |row| row.get(0))?
             .collect::<std::result::Result<Vec<String>, _>>()?;
         Ok(rows)
-    }
-
-    /// Remove a single tag from a machine.
-    pub fn remove_machine_tag(&self, machine_id: &str, tag: &str) -> Result<()> {
-        let conn = self.conn()?;
-        conn.execute(
-            "DELETE FROM machine_tags WHERE machine_id = ?1 AND tag = ?2",
-            rusqlite::params![machine_id, tag],
-        )
-        .context("failed to remove machine tag")?;
-        Ok(())
     }
 
     /// Get recent reports for a machine (most recent first).
@@ -721,6 +722,39 @@ impl Db {
         Ok(None)
     }
 
+    /// Delete a rollout and its associated batches and events.
+    /// Returns true if the rollout existed, false if not found.
+    /// The caller must verify the rollout is in a terminal state before calling.
+    pub fn delete_rollout(&self, id: &str) -> Result<bool> {
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().context("failed to start transaction")?;
+        let exists: bool = tx
+            .query_row(
+                "SELECT COUNT(*) FROM rollouts WHERE id = ?1",
+                rusqlite::params![id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+        if !exists {
+            return Ok(false);
+        }
+        tx.execute(
+            "DELETE FROM rollout_events WHERE rollout_id = ?1",
+            rusqlite::params![id],
+        )
+        .context("failed to delete rollout events")?;
+        tx.execute(
+            "DELETE FROM rollout_batches WHERE rollout_id = ?1",
+            rusqlite::params![id],
+        )
+        .context("failed to delete rollout batches")?;
+        tx.execute("DELETE FROM rollouts WHERE id = ?1", rusqlite::params![id])
+            .context("failed to delete rollout")?;
+        tx.commit().context("failed to commit rollout deletion")?;
+        Ok(true)
+    }
+
     // -----------------------------------------------------------------------
     // Releases
     // -----------------------------------------------------------------------
@@ -849,6 +883,33 @@ impl Db {
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// List releases that contain an entry for the given hostname.
+    pub fn list_releases_for_host(&self, hostname: &str, limit: i64) -> Result<Vec<ReleaseRow>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT r.id, r.flake_ref, r.flake_rev, r.cache_url, r.host_count, r.created_at, r.created_by
+             FROM releases r
+             INNER JOIN release_entries re ON re.release_id = r.id
+             WHERE re.hostname = ?1
+             ORDER BY r.created_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![hostname, limit], |row| {
+                Ok(ReleaseRow {
+                    id: row.get(0)?,
+                    flake_ref: row.get(1)?,
+                    flake_rev: row.get(2)?,
+                    cache_url: row.get(3)?,
+                    host_count: row.get(4)?,
+                    created_at: row.get(5)?,
+                    created_by: row.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
@@ -1234,17 +1295,6 @@ mod tests {
             .get_machines_by_tags(&["web".to_string(), "production".to_string()])
             .unwrap();
         assert_eq!(machines, vec!["web-01".to_string()]);
-    }
-
-    #[test]
-    fn test_remove_machine_tag() {
-        let (db, _dir) = make_db();
-        db.register_machine("web-01", "active").unwrap();
-        db.set_machine_tags("web-01", &["web".to_string(), "production".to_string()])
-            .unwrap();
-        db.remove_machine_tag("web-01", "web").unwrap();
-        let tags = db.get_machine_tags("web-01").unwrap();
-        assert_eq!(tags, vec!["production".to_string()]);
     }
 
     #[test]
@@ -1666,4 +1716,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_clear_desired_generation() {
+        let (db, _dir) = make_db();
+        db.set_desired_generation("web-01", "/nix/store/gen1")
+            .unwrap();
+        assert!(db.get_desired_generation("web-01").unwrap().is_some());
+        let cleared = db.clear_desired_generation("web-01").unwrap();
+        assert!(cleared);
+        assert!(db.get_desired_generation("web-01").unwrap().is_none());
+        let cleared_again = db.clear_desired_generation("web-01").unwrap();
+        assert!(!cleared_again);
+    }
+
+    #[test]
+    fn test_delete_rollout_nonexistent() {
+        let (db, _dir) = make_db();
+        let deleted = db.delete_rollout("r-nonexistent").unwrap();
+        assert!(!deleted);
+    }
 }

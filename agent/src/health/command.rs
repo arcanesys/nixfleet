@@ -34,9 +34,7 @@ impl Check for CommandChecker {
         // environment.binsh, pointing at bash by default).
         let result = tokio::time::timeout(
             Duration::from_secs(self.timeout_secs),
-            Command::new("/bin/sh")
-                .args(["-c", &self.command])
-                .output(),
+            Command::new("/bin/sh").args(["-c", &self.command]).output(),
         )
         .await;
         let duration_ms = start.elapsed().as_millis() as u64;

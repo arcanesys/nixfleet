@@ -84,6 +84,11 @@ nixfleet deploy [FLAGS]
 **Modes:**
 
 - **SSH mode** (`--ssh`): Builds locally, copies closures via SSH, runs `switch-to-configuration`. No control plane required.
+
+> **Note:** `--ssh` deploys directly via `nix-copy-closure` and `switch-to-configuration`,
+> bypassing the control plane entirely. Lifecycle state is not checked — a machine in
+> `maintenance` will still receive the deploy. Use `--ssh` as an emergency escape hatch
+> when the CP is unavailable, not as a routine deployment method.
 - **Rollout mode** (requires a release): Creates a rollout on the control plane with the specified strategy. Specify an existing release with `--release <ID>`, or use `--push-to <url>` / `--hook` / `--copy` to build + push + register implicitly in one command.
 - **Hook mode** (`--hook`): Uses `[cache.hook] push-cmd` from `.nixfleet.toml` to push closures (e.g., `attic push mycache {}`). Overrides `--push-to` and uses `[cache.hook] url` as the cache URL for agents. Flags `--hook-push-cmd` and `--hook-url` override the config values.
 - **Targeting:** Use `--tags <TAG>` or `--hosts <pattern>` to select machines. Both are intersected with the release's host list (machines not in the release are skipped with a warning).
@@ -131,6 +136,7 @@ nixfleet release create [FLAGS]
 | `--hook-url <URL>` | string | -- | Override hook cache URL. Requires `--hook` |
 | `--copy` | bool | `false` | Push closures directly to each target host via `nix-copy-closure` (no binary cache) |
 | `--cache-url <URL>` | string | -- | Override the cache URL recorded in the release (defaults to `--push-to` URL, or config file) |
+| `--eval-only` | bool | `false` | Evaluate `config.system.build.toplevel.outPath` without building. Assumes closures are already in the cache (e.g., CI-built). Useful for cross-platform fleets where the operator cannot build non-native closures locally. |
 | `--dry-run` | bool | `false` | Build and show the manifest without registering |
 
 Output prints the release ID, host count, and per-host store paths. Use the ID with `nixfleet deploy --release <ID>`.
@@ -148,6 +154,7 @@ nixfleet release list [FLAGS]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--limit <N>` | u32 | `20` | Number of releases to show (newest first) |
+| `--host <HOSTNAME>` | string | -- | Filter releases to those containing entries for this hostname |
 
 ---
 
@@ -358,18 +365,90 @@ nixfleet machines list [FLAGS]
 
 ---
 
-## machines untag
+## machines set-lifecycle
 
-Remove a tag from a machine.
+Change a machine's lifecycle state.
 
 ```sh
-nixfleet machines untag <ID> <TAG>
+nixfleet machines set-lifecycle <ID> <STATE>
 ```
 
 | Argument | Type | Description |
 |----------|------|-------------|
 | `<ID>` | string | Machine ID |
-| `<TAG>` | string | Tag to remove |
+| `<STATE>` | string | Lifecycle state: `active`, `pending`, `provisioning`, `maintenance`, `decommissioned` |
+
+Only `active` machines participate in rollouts. Machines in `maintenance` or
+`decommissioned` state are excluded even when explicitly targeted by hostname.
+Use `maintenance` to temporarily remove a machine from fleet operations without
+deregistering it.
+
+---
+
+## machines clear-desired
+
+Clear a machine's stale desired generation. Use this when an agent is stuck polling for a generation that will never be fulfilled (e.g., after a cancelled rollout).
+
+```sh
+nixfleet machines clear-desired <ID>
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `<ID>` | string | Machine ID |
+
+Exit codes:
+- `0` — desired generation cleared (CP returned 204)
+- `1` — machine not found (CP returned 404), or another non-2xx status
+
+---
+
+## machines notify-deploy
+
+Notify the control plane of an out-of-band deploy (e.g. SSH). Sets the machine's desired generation to the deployed store path so `nixfleet status` shows the machine in sync once the agent confirms.
+
+Called automatically by `deploy --ssh` after a successful switch. Also available manually for other out-of-band deploy workflows.
+
+```sh
+nixfleet machines notify-deploy <ID> <STORE_PATH>
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `<ID>` | string | Machine ID |
+| `<STORE_PATH>` | string | Store path that was deployed |
+
+Requires `deploy` or `admin` role.
+
+---
+
+## rollout delete
+
+Delete a terminal rollout (completed, cancelled, or failed). The control plane rejects deletion of active rollouts with 409.
+
+```sh
+nixfleet rollout delete <ID>
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `<ID>` | string | Rollout ID |
+
+Exit codes:
+- `0` — rollout deleted (CP returned 204)
+- `1` — rollout is still active (CP returned 409), rollout not found (CP returned 404), or another non-2xx status
+
+---
+
+## Operation logs
+
+All CLI operations (deploy, release create, rollout commands) write persistent logs to:
+
+```
+~/.local/state/nixfleet/logs/
+```
+
+Each operation creates a JSONL file with timestamped entries covering subprocess invocations (command, stdout, stderr, exit code), tracing events, and host context. Logs are written regardless of verbosity level.
 
 ---
 
@@ -397,7 +476,7 @@ push-cmd = "attic push mycache {}"              # {} is replaced with the store 
 [deploy]
 strategy = "staged"             # default rollout strategy
 health-timeout = 300            # default health timeout in seconds
-failure-threshold = "1"
+failure-threshold = "0"
 on-failure = "pause"
 ```
 

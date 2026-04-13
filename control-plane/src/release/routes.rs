@@ -104,9 +104,13 @@ pub async fn list_releases(
         .unwrap_or(20)
         .clamp(1, MAX_PAGE_SIZE);
 
-    let rows = db
-        .list_releases(limit)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let rows = if let Some(hostname) = params.get("host") {
+        db.list_releases_for_host(hostname, limit)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    } else {
+        db.list_releases(limit)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    };
 
     let mut releases = Vec::with_capacity(rows.len());
     for row in rows {

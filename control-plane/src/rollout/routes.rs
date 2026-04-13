@@ -35,7 +35,10 @@ pub async fn create_rollout(
         ));
     }
 
-    // Resolve target machines
+    // Resolve target machines — only active machines participate in rollouts.
+    // Tags path: get_machines_by_tags already filters by lifecycle = 'active'.
+    // Hosts path: filter explicitly so that maintenance/decommissioned machines
+    // are excluded even when targeted by name.
     let mut machine_ids = match &req.target {
         RolloutTarget::Tags(tags) => db.get_machines_by_tags(tags).map_err(|e| {
             tracing::error!(error = %e, "Failed to resolve machines by tags");
@@ -44,7 +47,29 @@ pub async fn create_rollout(
                 "failed to resolve machines".to_string(),
             )
         })?,
-        RolloutTarget::Hosts(hosts) => hosts.clone(),
+        RolloutTarget::Hosts(hosts) => {
+            let mut active = Vec::new();
+            for host in hosts {
+                match db.get_machine_lifecycle(host) {
+                    Ok(Some(ref lc)) if lc == "active" => active.push(host.clone()),
+                    Ok(Some(lc)) => {
+                        tracing::warn!(machine_id = %host, lifecycle = %lc, "skipping non-active machine");
+                    }
+                    Ok(None) => {
+                        // Machine not registered — allow it (agent will auto-register on first report)
+                        active.push(host.clone());
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, machine_id = %host, "failed to check lifecycle");
+                        return Err((
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "failed to check machine lifecycle".to_string(),
+                        ));
+                    }
+                }
+            }
+            active
+        }
         _ => {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -56,7 +81,7 @@ pub async fn create_rollout(
     if machine_ids.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            "no machines match the target".to_string(),
+            "no active machines match the target".to_string(),
         ));
     }
 
@@ -291,6 +316,9 @@ pub async fn get_rollout(
     Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
 ) -> Result<Json<RolloutDetail>, (StatusCode, String)> {
+    if id.len() > crate::MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "rollout ID too long".to_string()));
+    }
     if !actor.has_role(&["readonly", "deploy", "admin"]) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -319,9 +347,7 @@ pub async fn get_rollout(
 
     let events = db.get_rollout_events(&rollout.id).unwrap_or_default();
 
-    Ok(Json(row_to_detail_with_events(
-        &rollout, &batches, &events,
-    )))
+    Ok(Json(row_to_detail_with_events(&rollout, &batches, &events)))
 }
 
 /// POST /api/v1/rollouts/{id}/resume
@@ -332,6 +358,9 @@ pub async fn resume_rollout(
     Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > crate::MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "rollout ID too long".to_string()));
+    }
     if !actor.has_role(&["deploy", "admin"]) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -413,6 +442,9 @@ pub async fn cancel_rollout(
     Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > crate::MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "rollout ID too long".to_string()));
+    }
     if !actor.has_role(&["deploy", "admin"]) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -467,6 +499,65 @@ pub async fn cancel_rollout(
 
     tracing::info!(rollout_id = %id, "Rollout cancelled");
     Ok(StatusCode::OK)
+}
+
+/// DELETE /api/v1/rollouts/{id}
+///
+/// Delete a terminal rollout (completed, cancelled, or failed).
+pub async fn delete_rollout(
+    State((_state, db)): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > crate::MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "rollout ID too long".to_string()));
+    }
+    if !actor.has_role(&["admin"]) {
+        return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
+    }
+
+    // Check rollout exists and is terminal
+    let rollout = db
+        .get_rollout(&id)
+        .map_err(|e| {
+            tracing::error!(error = %e, rollout_id = %id, "Failed to get rollout");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error".to_string(),
+            )
+        })?
+        .ok_or((StatusCode::NOT_FOUND, format!("rollout {id} not found")))?;
+
+    let status = RolloutStatus::from_str_lc(&rollout.status).ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("invalid rollout status: {}", rollout.status),
+    ))?;
+
+    if status.is_active() {
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "rollout {id} cannot be deleted: status is {} (must be completed, cancelled, or failed)",
+                rollout.status
+            ),
+        ));
+    }
+
+    db.delete_rollout(&id).map_err(|e| {
+        tracing::error!(error = %e, rollout_id = %id, "Failed to delete rollout");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        )
+    })?;
+
+    log_insert_err(
+        "audit_event",
+        db.insert_audit_event(&actor.identifier(), "rollout.deleted", &id, None),
+    );
+
+    tracing::info!(rollout_id = %id, "Rollout deleted");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Convert database rows into a RolloutDetail response type.

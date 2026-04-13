@@ -1,15 +1,19 @@
+use crate::display;
+use crate::glob::filter_hosts;
 use anyhow::{Context, Result};
 use console::style;
 use nixfleet_types::release::{
     CreateReleaseRequest, CreateReleaseResponse, Release, ReleaseDiff, ReleaseEntry,
 };
 use reqwest::Client;
-use std::process::Command;
-use crate::display;
-use crate::glob::filter_hosts;
+use tokio::process::Command;
 
 /// Discover all nixosConfigurations host names from a flake.
-fn discover_hosts(flake: &str) -> Result<Vec<String>> {
+pub(crate) async fn discover_hosts(
+    flake: &str,
+    oplog: &mut crate::oplog::OpLog,
+) -> Result<Vec<String>> {
+    let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
         "eval",
@@ -22,12 +26,15 @@ fn discover_hosts(flake: &str) -> Result<Vec<String>> {
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit())
-            .output()
+        display::run_cmd_async_passthrough(&mut cmd)
+            .await
             .context("failed to run nix eval")?
     } else {
-        display::run_cmd(&mut cmd, None).context("failed to run nix eval")?
+        display::run_cmd_async(&mut cmd, None)
+            .await
+            .context("failed to run nix eval")?
     };
+    oplog.log_output("nix eval discover hosts", None, &output, t.elapsed());
     if !output.status.success() {
         anyhow::bail!(
             "nix eval failed: {}",
@@ -40,7 +47,12 @@ fn discover_hosts(flake: &str) -> Result<Vec<String>> {
 }
 
 /// Detect platform for a host.
-fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
+async fn detect_platform(
+    flake: &str,
+    hostname: &str,
+    oplog: &mut crate::oplog::OpLog,
+) -> Result<String> {
+    let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
         "eval",
@@ -51,12 +63,20 @@ fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit())
-            .output()
+        display::run_cmd_async_passthrough(&mut cmd)
+            .await
             .context("failed to detect platform")?
     } else {
-        display::run_cmd(&mut cmd, None).context("failed to detect platform")?
+        display::run_cmd_async(&mut cmd, None)
+            .await
+            .context("failed to detect platform")?
     };
+    oplog.log_output(
+        &format!("nix eval platform {}", hostname),
+        Some(hostname),
+        &output,
+        t.elapsed(),
+    );
     if !output.status.success() {
         anyhow::bail!(
             "failed to detect platform for {}: {}",
@@ -68,7 +88,8 @@ fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
 }
 
 /// Detect tags for a host (best-effort).
-fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
+async fn detect_tags(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Vec<String> {
+    let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
         "eval",
@@ -82,22 +103,36 @@ fn detect_tags(flake: &str, hostname: &str) -> Vec<String> {
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit()).output()
+        display::run_cmd_async_passthrough(&mut cmd).await
     } else {
-        display::run_cmd(&mut cmd, None)
+        display::run_cmd_async(&mut cmd, None).await
     };
     match output {
-        Ok(o) if o.status.success() => serde_json::from_slice(&o.stdout).unwrap_or_default(),
-        _ => vec![],
+        Ok(ref o) => {
+            oplog.log_output(
+                &format!("nix eval tags {}", hostname),
+                Some(hostname),
+                o,
+                t.elapsed(),
+            );
+            if o.status.success() {
+                serde_json::from_slice(&o.stdout).unwrap_or_default()
+            } else {
+                vec![]
+            }
+        }
+        Err(_) => vec![],
     }
 }
 
 /// Build a host's toplevel closure.
-fn build_host(
+pub(crate) async fn build_host(
     flake: &str,
     hostname: &str,
     window: Option<&mut display::RollingWindow>,
+    oplog: &mut crate::oplog::OpLog,
 ) -> Result<String> {
+    let t = std::time::Instant::now();
     tracing::info!(hostname, "building closure");
     let mut cmd = Command::new("nix");
     cmd.args([
@@ -113,12 +148,20 @@ fn build_host(
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit())
-            .output()
+        display::run_cmd_async_passthrough(&mut cmd)
+            .await
             .context("failed to run nix build")?
     } else {
-        display::run_cmd(&mut cmd, window).context("failed to run nix build")?
+        display::run_cmd_async(&mut cmd, window)
+            .await
+            .context("failed to run nix build")?
     };
+    oplog.log_output(
+        &format!("nix build {}", hostname),
+        Some(hostname),
+        &output,
+        t.elapsed(),
+    );
     if !output.status.success() {
         anyhow::bail!(
             "nix build failed for {}: {}",
@@ -129,12 +172,40 @@ fn build_host(
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
+/// Evaluate a host's store path without building.
+async fn eval_host(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Result<String> {
+    let t = std::time::Instant::now();
+    let attr = format!(
+        "{}#nixosConfigurations.{}.config.system.build.toplevel.outPath",
+        flake, hostname
+    );
+    let mut cmd = Command::new("nix");
+    cmd.args(["eval", &attr, "--raw"]);
+    let output = display::run_cmd_async(&mut cmd, None).await?;
+    oplog.log_output(
+        &format!("nix eval {}", hostname),
+        Some(hostname),
+        &output,
+        t.elapsed(),
+    );
+    if !output.status.success() {
+        anyhow::bail!(
+            "nix eval failed for {}: {}",
+            hostname,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// Copy a store path to a Nix binary cache (S3, SSH, HTTP, etc.).
-fn nix_copy_to(
+async fn nix_copy_to(
     cache_url: &str,
     store_path: &str,
     window: Option<&mut display::RollingWindow>,
+    oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
+    let t = std::time::Instant::now();
     tracing::info!(store_path, dest = cache_url, "copying closure");
     let mut cmd = Command::new("nix");
     cmd.args(["copy", "--to", cache_url, store_path]);
@@ -142,15 +213,20 @@ fn nix_copy_to(
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        let status = cmd
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .status()
-            .context("failed to run nix copy --to")?;
-        std::process::Output { status, stdout: vec![], stderr: vec![] }
+        display::run_cmd_async_passthrough(&mut cmd)
+            .await
+            .context("failed to run nix copy --to")?
     } else {
-        display::run_cmd(&mut cmd, window).context("failed to run nix copy --to")?
+        display::run_cmd_async(&mut cmd, window)
+            .await
+            .context("failed to run nix copy --to")?
     };
+    oplog.log_output(
+        &format!("nix copy --to {}", cache_url),
+        None,
+        &output,
+        t.elapsed(),
+    );
     if !output.status.success() {
         anyhow::bail!(
             "nix copy --to {} failed for {}: {}",
@@ -163,41 +239,45 @@ fn nix_copy_to(
 }
 
 /// Copy a closure to a remote host via SSH.
-fn copy_to_host(
+async fn copy_to_host(
     hostname: &str,
     store_path: &str,
     window: Option<&mut display::RollingWindow>,
+    oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
+    let t = std::time::Instant::now();
     tracing::info!(store_path, dest = hostname, "copying closure");
     let mut cmd = Command::new("nix-copy-closure");
     cmd.args(["--to", &format!("root@{}", hostname), store_path]);
     let output = if display::passthrough_output() {
-        let status = cmd
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .status()
-            .context("failed to run nix-copy-closure")?;
-        std::process::Output { status, stdout: vec![], stderr: vec![] }
+        display::run_cmd_async_passthrough(&mut cmd)
+            .await
+            .context("failed to run nix-copy-closure")?
     } else {
-        display::run_cmd(&mut cmd, window).context("failed to run nix-copy-closure")?
+        display::run_cmd_async(&mut cmd, window)
+            .await
+            .context("failed to run nix-copy-closure")?
     };
+    oplog.log_output(
+        &format!("nix-copy-closure {}", hostname),
+        Some(hostname),
+        &output,
+        t.elapsed(),
+    );
     if !output.status.success() {
-        anyhow::bail!(
-            "nix-copy-closure failed for {}",
-            hostname
-        );
+        anyhow::bail!("nix-copy-closure failed for {}", hostname);
     }
     Ok(())
 }
 
 /// Resolve the flake's git revision.
-fn flake_revision(flake: &str) -> Option<String> {
+async fn flake_revision(flake: &str) -> Option<String> {
     let mut cmd = Command::new("nix");
     cmd.args(["flake", "metadata", flake, "--json"]);
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit()).output().ok()?
+        display::run_cmd_async_passthrough(&mut cmd).await.ok()?
     } else {
-        display::run_cmd(&mut cmd, None).ok()?
+        display::run_cmd_async(&mut cmd, None).await.ok()?
     };
     if !output.status.success() {
         return None;
@@ -207,7 +287,7 @@ fn flake_revision(flake: &str) -> Option<String> {
 }
 
 /// Run a push hook command for a store path, optionally on a remote host via SSH.
-pub fn run_push_hook(
+pub async fn run_push_hook(
     push_to_host: Option<&str>,
     hook_cmd: &str,
     store_path: &str,
@@ -227,18 +307,15 @@ pub fn run_push_hook(
             c
         }
     };
-    if display::passthrough_output() {
-        let status = cmd
-            .stderr(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::inherit())
-            .status()
-            .context("failed to run push hook")?;
-        if !status.success() {
-            anyhow::bail!("push hook failed: {}", cmd_str);
-        }
-        return Ok(());
-    }
-    let output = display::run_cmd(&mut cmd, window).context("failed to run push hook")?;
+    let output = if display::passthrough_output() {
+        display::run_cmd_async_passthrough(&mut cmd)
+            .await
+            .context("failed to run push hook")?
+    } else {
+        display::run_cmd_async(&mut cmd, window)
+            .await
+            .context("failed to run push hook")?
+    };
     if !output.status.success() {
         anyhow::bail!("push hook failed: {}", cmd_str);
     }
@@ -264,15 +341,51 @@ pub async fn create(
     copy: bool,
     cache_url: Option<&str>,
     dry_run: bool,
-) -> Result<Option<String>> {
+    eval_only: bool,
+) -> Result<(Option<String>, crate::oplog::OpLog)> {
+    let mut oplog = crate::oplog::OpLog::new("release-create")?;
+
     tracing::info!("discovering hosts");
-    let all_hosts = discover_hosts(flake)?;
+    let all_hosts = discover_hosts(flake, &mut oplog).await?;
     let hosts = filter_hosts(&all_hosts, host_patterns);
     if hosts.is_empty() {
+        oplog.finish(false, Some("no hosts match pattern"));
         anyhow::bail!("no hosts match pattern '{}'", host_patterns.join(","));
     }
     tracing::info!(count = hosts.len(), "found hosts");
 
+    oplog.log_start("release_create", flake, &hosts);
+
+    let result = create_inner(
+        client, base_url, flake, &hosts, push_to, push_hook, copy, cache_url, dry_run, eval_only,
+        &mut oplog,
+    )
+    .await;
+
+    match result {
+        Ok(id) => Ok((id, oplog)),
+        Err(e) => {
+            oplog.finish(false, Some(&format!("{e:#}")));
+            Err(e)
+        }
+    }
+}
+
+/// Inner implementation for `create`, split out so oplog can wrap the result.
+#[allow(clippy::too_many_arguments)]
+async fn create_inner(
+    client: &Client,
+    base_url: &str,
+    flake: &str,
+    hosts: &[String],
+    push_to: Option<&str>,
+    push_hook: Option<&str>,
+    copy: bool,
+    cache_url: Option<&str>,
+    dry_run: bool,
+    eval_only: bool,
+    oplog: &mut crate::oplog::OpLog,
+) -> Result<Option<String>> {
     // Build all hosts
     let mut entries = Vec::new();
     {
@@ -282,16 +395,30 @@ pub async fn create(
             None
         };
 
-        for hostname in &hosts {
+        for hostname in hosts {
             if let Some(ref mut w) = window {
                 w.set_line_prefix(hostname);
             }
-            let platform = detect_platform(flake, hostname)?;
-            let tags = detect_tags(flake, hostname);
-            match build_host(flake, hostname, window.as_mut().and_then(|w| w.for_output())) {
+            let platform = detect_platform(flake, hostname, oplog).await?;
+            let tags = detect_tags(flake, hostname, oplog).await;
+            let build_result = if eval_only {
+                eval_host(flake, hostname, oplog).await
+            } else {
+                build_host(
+                    flake,
+                    hostname,
+                    window.as_mut().and_then(|w| w.for_output()),
+                    oplog,
+                )
+                .await
+            };
+            match build_result {
                 Ok(store_path) => {
                     if platform.contains("darwin") {
-                        tracing::info!(hostname, "Darwin host — built and cached but not deployable via agent");
+                        tracing::info!(
+                            hostname,
+                            "Darwin host — built and cached but not deployable via agent"
+                        );
                     }
                     entries.push(ReleaseEntry {
                         hostname: hostname.clone(),
@@ -314,27 +441,129 @@ pub async fn create(
     }
 
     // Distribute
-    if let Some(push_url) = push_to {
-        let mut pushed: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let unique_count = entries
-            .iter()
-            .map(|e| &e.store_path)
-            .collect::<std::collections::HashSet<_>>()
-            .len();
-        {
+    if !eval_only {
+        if let Some(push_url) = push_to {
+            let mut pushed: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let unique_count = entries
+                .iter()
+                .map(|e| &e.store_path)
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            {
+                let mut window = if display::use_progress() {
+                    Some(display::RollingWindow::new("pushing", unique_count as u64))
+                } else {
+                    None
+                };
+
+                for entry in &entries {
+                    if pushed.insert(entry.store_path.clone()) {
+                        if let Err(e) = nix_copy_to(
+                            push_url,
+                            &entry.store_path,
+                            window.as_mut().and_then(|w| w.for_output()),
+                            oplog,
+                        )
+                        .await
+                        {
+                            if let Some(ref mut w) = window {
+                                w.mark_error();
+                            }
+                            return Err(e);
+                        }
+                        if let Some(ref w) = window {
+                            w.inc();
+                        }
+                    }
+                }
+            }
+
+            if let Some(hook) = push_hook {
+                let remote_host = extract_ssh_host(push_url);
+                tracing::info!(
+                    host = remote_host.as_deref().unwrap_or("localhost"),
+                    "running push hook"
+                );
+                let mut window = if display::use_progress() {
+                    Some(display::RollingWindow::new(
+                        "push-hook",
+                        entries.len() as u64,
+                    ))
+                } else {
+                    None
+                };
+                for entry in &entries {
+                    if let Some(ref mut w) = window {
+                        w.set_line_prefix(&entry.hostname);
+                    }
+                    run_push_hook(
+                        remote_host.as_deref(),
+                        hook,
+                        &entry.store_path,
+                        window.as_mut().and_then(|w| w.for_output()),
+                    )
+                    .await?;
+                    if let Some(ref w) = window {
+                        w.inc();
+                    }
+                }
+            }
+        } else if let Some(hook) = push_hook {
+            tracing::info!("running push hook locally");
             let mut window = if display::use_progress() {
-                Some(display::RollingWindow::new("pushing", unique_count as u64))
+                Some(display::RollingWindow::new(
+                    "push-hook",
+                    entries.len() as u64,
+                ))
             } else {
                 None
             };
-
             for entry in &entries {
-                if pushed.insert(entry.store_path.clone()) {
-                    if let Err(e) = nix_copy_to(push_url, &entry.store_path, window.as_mut().and_then(|w| w.for_output())) {
+                if let Some(ref mut w) = window {
+                    w.set_line_prefix(&entry.hostname);
+                }
+                run_push_hook(
+                    None,
+                    hook,
+                    &entry.store_path,
+                    window.as_mut().and_then(|w| w.for_output()),
+                )
+                .await?;
+                if let Some(ref w) = window {
+                    w.inc();
+                }
+            }
+        } else if copy {
+            {
+                let mut window = if display::use_progress() {
+                    Some(display::RollingWindow::new("copying", entries.len() as u64))
+                } else {
+                    None
+                };
+
+                for entry in &entries {
+                    if let Some(ref mut w) = window {
+                        w.set_line_prefix(&entry.hostname);
+                    }
+                    if entry.platform.contains("darwin") {
+                        tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
+                        if let Some(ref w) = window {
+                            w.inc();
+                        }
+                        continue;
+                    }
+                    let copy_result = copy_to_host(
+                        &entry.hostname,
+                        &entry.store_path,
+                        window.as_mut().and_then(|w| w.for_output()),
+                        oplog,
+                    )
+                    .await;
+                    if let Err(e) = copy_result {
+                        tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
                         if let Some(ref mut w) = window {
                             w.mark_error();
                         }
-                        return Err(e);
                     }
                     if let Some(ref w) = window {
                         w.inc();
@@ -342,75 +571,7 @@ pub async fn create(
                 }
             }
         }
-
-        if let Some(hook) = push_hook {
-            let remote_host = extract_ssh_host(push_url);
-            tracing::info!(
-                host = remote_host.as_deref().unwrap_or("localhost"),
-                "running push hook"
-            );
-            let mut window = if display::use_progress() {
-                Some(display::RollingWindow::new("push-hook", entries.len() as u64))
-            } else {
-                None
-            };
-            for entry in &entries {
-                if let Some(ref mut w) = window {
-                    w.set_line_prefix(&entry.hostname);
-                }
-                run_push_hook(remote_host.as_deref(), hook, &entry.store_path, window.as_mut().and_then(|w| w.for_output()))?;
-                if let Some(ref w) = window {
-                    w.inc();
-                }
-            }
-        }
-    } else if let Some(hook) = push_hook {
-        tracing::info!("running push hook locally");
-        let mut window = if display::use_progress() {
-            Some(display::RollingWindow::new("push-hook", entries.len() as u64))
-        } else {
-            None
-        };
-        for entry in &entries {
-            if let Some(ref mut w) = window {
-                w.set_line_prefix(&entry.hostname);
-            }
-            run_push_hook(None, hook, &entry.store_path, window.as_mut().and_then(|w| w.for_output()))?;
-            if let Some(ref w) = window {
-                w.inc();
-            }
-        }
-    } else if copy {
-        {
-            let mut window = if display::use_progress() {
-                Some(display::RollingWindow::new("copying", entries.len() as u64))
-            } else {
-                None
-            };
-
-            for entry in &entries {
-                if let Some(ref mut w) = window {
-                    w.set_line_prefix(&entry.hostname);
-                }
-                if entry.platform.contains("darwin") {
-                    tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
-                    if let Some(ref w) = window {
-                        w.inc();
-                    }
-                    continue;
-                }
-                if let Err(e) = copy_to_host(&entry.hostname, &entry.store_path, window.as_mut().and_then(|w| w.for_output())) {
-                    tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
-                    if let Some(ref mut w) = window {
-                        w.mark_error();
-                    }
-                }
-                if let Some(ref w) = window {
-                    w.inc();
-                }
-            }
-        }
-    }
+    } // close if !eval_only
 
     // Print summary
     let manifest_rows: Vec<Vec<String>> = entries
@@ -433,7 +594,7 @@ pub async fn create(
     }
 
     // Register with CP
-    let flake_rev = flake_revision(flake);
+    let flake_rev = flake_revision(flake).await;
     let req = CreateReleaseRequest {
         flake_ref: Some(flake.to_string()),
         flake_rev,
@@ -459,9 +620,19 @@ pub async fn create(
 }
 
 /// `nixfleet release list`
-pub async fn list(client: &Client, base_url: &str, limit: u32, json: bool) -> Result<()> {
+pub async fn list(
+    client: &Client,
+    base_url: &str,
+    limit: u32,
+    host: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let mut url = format!("{}/api/v1/releases?limit={}", base_url, limit);
+    if let Some(h) = host {
+        url.push_str(&format!("&host={}", h));
+    }
     let resp = client
-        .get(format!("{}/api/v1/releases?limit={}", base_url, limit))
+        .get(url)
         .send()
         .await
         .context("failed to GET releases")?;
@@ -524,27 +695,15 @@ pub async fn show(client: &Client, base_url: &str, release_id: &str, json: bool)
         ("Release", release.id.clone()),
         (
             "Flake ref",
-            release
-                .flake_ref
-                .as_deref()
-                .unwrap_or("-")
-                .to_string(),
+            release.flake_ref.as_deref().unwrap_or("-").to_string(),
         ),
         (
             "Flake rev",
-            release
-                .flake_rev
-                .as_deref()
-                .unwrap_or("-")
-                .to_string(),
+            release.flake_rev.as_deref().unwrap_or("-").to_string(),
         ),
         (
             "Cache URL",
-            release
-                .cache_url
-                .as_deref()
-                .unwrap_or("-")
-                .to_string(),
+            release.cache_url.as_deref().unwrap_or("-").to_string(),
         ),
         ("Hosts", release.host_count.to_string()),
         (
@@ -573,10 +732,7 @@ pub async fn show(client: &Client, base_url: &str, release_id: &str, json: bool)
         })
         .collect();
 
-    display::print_table(
-        &["HOST", "PLATFORM", "STORE PATH", "TAGS"],
-        &entry_rows,
-    );
+    display::print_table(&["HOST", "PLATFORM", "STORE PATH", "TAGS"], &entry_rows);
 
     Ok(())
 }

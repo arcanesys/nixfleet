@@ -16,11 +16,11 @@ pub async fn list(
         .get(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     let resp = crate::client::check_response(resp).await?;
 
-    let machines: Vec<MachineStatus> = resp.json().await.context("Failed to parse machine list")?;
+    let machines: Vec<MachineStatus> = resp.json().await.context("failed to parse machine list")?;
 
     let filtered: Vec<&MachineStatus> = if tag_filters.is_empty() {
         machines.iter().collect()
@@ -57,7 +57,12 @@ pub async fn list(
         })
         .collect();
 
-    display::print_list(json, &["ID", "LIFECYCLE", "STATE", "TAGS"], &rows, &filtered);
+    display::print_list(
+        json,
+        &["ID", "LIFECYCLE", "STATE", "TAGS"],
+        &rows,
+        &filtered,
+    );
 
     if !json {
         println!("\n{} machine(s)", filtered.len());
@@ -65,24 +70,74 @@ pub async fn list(
     Ok(())
 }
 
-/// DELETE /api/v1/machines/{id}/tags/{tag} — remove a tag from a machine.
-pub async fn untag(
+/// PATCH /api/v1/machines/{id}/lifecycle — change machine lifecycle state.
+pub async fn set_lifecycle(
     client: &reqwest::Client,
     cp_url: &str,
     machine_id: &str,
-    tag: &str,
+    state: &str,
 ) -> Result<()> {
-    let url = format!("{}/api/v1/machines/{}/tags/{}", cp_url, machine_id, tag);
+    let url = format!("{}/api/v1/machines/{}/lifecycle", cp_url, machine_id);
+    let body = serde_json::json!({ "lifecycle": state });
+
+    let resp = client
+        .patch(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("failed to reach control plane")?;
+
+    crate::client::check_response(resp).await?;
+
+    println!("Machine '{}' lifecycle set to {}.", machine_id, state);
+    Ok(())
+}
+
+/// DELETE /api/v1/machines/{id}/desired-generation — clear stale desired generation.
+pub async fn clear_desired(client: &reqwest::Client, cp_url: &str, machine_id: &str) -> Result<()> {
+    let url = format!(
+        "{}/api/v1/machines/{}/desired-generation",
+        cp_url, machine_id
+    );
 
     let resp = client
         .delete(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
+
+    let status = resp.status();
+    if status.as_u16() == 204 || status.is_success() {
+        println!("Desired generation cleared for '{}'.", machine_id);
+        return Ok(());
+    }
+    if status.as_u16() == 404 {
+        anyhow::bail!("Machine '{}' not found", machine_id);
+    }
+    let body = crate::client::read_error_body(resp).await;
+    anyhow::bail!("failed to clear desired generation: {} {}", status, body);
+}
+
+/// POST /api/v1/machines/{id}/notify-deploy — notify CP of an SSH deploy.
+pub async fn notify_deploy(
+    client: &reqwest::Client,
+    cp_url: &str,
+    machine_id: &str,
+    store_path: &str,
+) -> Result<()> {
+    let url = format!("{}/api/v1/machines/{}/notify-deploy", cp_url, machine_id);
+    let body = serde_json::json!({ "store_path": store_path });
+
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("failed to reach control plane")?;
 
     crate::client::check_response(resp).await?;
 
-    println!("Tag '{}' removed from {}.", tag, machine_id);
+    println!("CP notified: {} is now running {}", machine_id, store_path);
     Ok(())
 }
 

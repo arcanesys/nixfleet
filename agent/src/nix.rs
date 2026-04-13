@@ -29,9 +29,10 @@ pub fn validate_store_path(store_path: &str) -> Result<()> {
     // Hash prefix must be alphanumeric (nixbase32); name may contain
     // alnum, '.', '-', '_', '+'.
     let bytes = rest.as_bytes();
-    if !bytes.iter().all(|b| {
-        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'+')
-    }) {
+    if !bytes
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'+'))
+    {
         anyhow::bail!("invalid characters in store path: {store_path}");
     }
     Ok(())
@@ -138,10 +139,7 @@ pub async fn rollback() -> Result<()> {
     // Ignore blank/whitespace-only lines defensively — nix-env output is
     // normally well-formed, but we don't want an empty trailing line to
     // pass the `len() >= 2` gate and crash parsing below.
-    let generations: Vec<&str> = stdout
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .collect();
+    let generations: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
 
     if generations.len() < 2 {
         anyhow::bail!("no previous generation to roll back to");
@@ -174,10 +172,9 @@ mod tests {
     #[test]
     fn test_validate_store_path_accepts_valid() {
         assert!(validate_store_path("/nix/store/abc123-hello").is_ok());
-        assert!(validate_store_path(
-            "/nix/store/0abc123def45678-nixos-system-web-01-25.05"
-        )
-        .is_ok());
+        assert!(
+            validate_store_path("/nix/store/0abc123def45678-nixos-system-web-01-25.05").is_ok()
+        );
         assert!(validate_store_path("/nix/store/a-b.c+d_e").is_ok());
     }
 

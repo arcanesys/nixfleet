@@ -179,7 +179,7 @@ pub struct RolloutEvent {
 // ---------------------------------------------------------------------------
 
 fn default_failure_threshold() -> String {
-    "1".to_string()
+    "0".to_string()
 }
 
 /// Request body to create a new rollout.
@@ -313,7 +313,7 @@ mod tests {
     /// Pins every `#[serde(default)]` on `CreateRolloutRequest`. Older
     /// clients that omit optional fields must still produce a valid
     /// request with the documented defaults (on_failure=pause,
-    /// failure_threshold="1", health_timeout=None, etc.). This is a
+    /// failure_threshold="0", health_timeout=None, etc.). This is a
     /// wire-contract test, not a serde-derive test.
     #[test]
     fn create_rollout_request_serde_defaults() {
@@ -328,6 +328,6 @@ mod tests {
         assert_eq!(request.health_timeout, None);
         assert_eq!(request.cache_url, None);
         assert_eq!(request.batch_sizes, None);
-        assert_eq!(request.failure_threshold, "1");
+        assert_eq!(request.failure_threshold, "0");
     }
 }

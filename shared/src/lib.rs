@@ -46,13 +46,9 @@ pub mod api {
     /// Path parameter: `{id}` = rollout ID.
     pub const ROLLOUT_CANCEL: &str = "/api/v1/rollouts/{id}/cancel";
 
-    /// Tags base path for a machine.
+    /// DELETE: Clear desired generation for a machine.
     /// Path parameter: `{id}` = machine ID.
-    pub const MACHINE_TAGS: &str = "/api/v1/machines/{id}/tags";
-
-    /// DELETE: Remove a specific tag from a machine.
-    /// Path parameters: `{id}` = machine ID, `{tag}` = tag name.
-    pub const MACHINE_TAG: &str = "/api/v1/machines/{id}/tags/{tag}";
+    pub const MACHINE_DESIRED: &str = "/api/v1/machines/{id}/desired-generation";
 
     /// GET: List releases. POST: Create a new release.
     pub const RELEASES: &str = "/api/v1/releases";
@@ -151,6 +147,10 @@ pub struct Report {
     pub tags: Vec<String>,
     #[serde(default)]
     pub health: Option<health::HealthReport>,
+    #[serde(default)]
+    pub agent_version: String,
+    #[serde(default)]
+    pub uptime_seconds: u64,
 }
 
 /// Machine status for inventory reporting.

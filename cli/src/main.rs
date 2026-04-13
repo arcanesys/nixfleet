@@ -12,6 +12,7 @@ mod display;
 mod glob;
 mod host;
 mod machines;
+mod oplog;
 mod release;
 mod rollout;
 mod status;
@@ -82,7 +83,12 @@ enum Commands {
         flake: String,
 
         /// Target tags for rollout deploy (comma-separated or repeatable)
-        #[arg(long, value_delimiter = ',', value_name = "TAG", help_heading = "Rollout")]
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_name = "TAG",
+            help_heading = "Rollout"
+        )]
         tags: Vec<String>,
 
         /// Rollout strategy: canary, staged, or all-at-once
@@ -132,13 +138,17 @@ enum Commands {
         hook_url: Option<String>,
 
         /// Implicitly create a release and copy closures via SSH
-        #[arg(long, conflicts_with = "release", conflicts_with = "push_to", help_heading = "Build & Push")]
+        #[arg(
+            long,
+            conflicts_with = "release",
+            conflicts_with = "push_to",
+            help_heading = "Build & Push"
+        )]
         copy: bool,
 
         /// Binary cache URL for agents to fetch closures from (e.g. http://cache:5000)
         #[arg(long, help_heading = "Build & Push")]
         cache_url: Option<String>,
-
     },
 
     /// Show fleet status from the control plane
@@ -253,7 +263,6 @@ enum HostAction {
         #[arg(long)]
         target: Option<String>,
     },
-
 }
 
 #[derive(Subcommand)]
@@ -279,6 +288,12 @@ enum RolloutAction {
 
     /// Cancel a rollout
     Cancel {
+        /// Rollout ID
+        id: String,
+    },
+
+    /// Delete a terminal rollout (completed, cancelled, or failed)
+    Delete {
         /// Rollout ID
         id: String,
     },
@@ -313,11 +328,22 @@ enum ReleaseAction {
         cache_url: Option<String>,
         #[arg(long)]
         dry_run: bool,
+        /// Evaluate store paths without building (assumes closures in cache)
+        #[arg(
+            long,
+            conflicts_with = "push_to",
+            conflicts_with = "hook",
+            conflicts_with = "copy"
+        )]
+        eval_only: bool,
     },
     /// List recent releases
     List {
         #[arg(long, default_value = "20")]
         limit: u32,
+        /// Filter by hostname
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Show release details
     Show { release_id: String },
@@ -339,13 +365,18 @@ enum MachineAction {
         tags: Vec<String>,
     },
 
-    /// Remove a tag from a machine
-    Untag {
+    /// Change machine lifecycle state
+    SetLifecycle {
         /// Machine ID
         id: String,
+        /// Target state (active, pending, provisioning, maintenance, decommissioned)
+        state: String,
+    },
 
-        /// Tag to remove
-        tag: String,
+    /// Clear a machine's desired generation
+    ClearDesired {
+        /// Machine ID
+        id: String,
     },
 
     /// Register a machine with the control plane
@@ -356,6 +387,14 @@ enum MachineAction {
         /// Initial tags (comma-separated or repeatable)
         #[arg(long, value_delimiter = ',', value_name = "TAG")]
         tags: Vec<String>,
+    },
+
+    /// Notify the CP of an out-of-band deploy (e.g. SSH)
+    NotifyDeploy {
+        /// Machine ID
+        id: String,
+        /// Store path that was deployed
+        store_path: String,
     },
 }
 
@@ -370,10 +409,7 @@ async fn main() -> Result<()> {
         _ => "nixfleet=debug",
     };
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_writer(display::SharedWriter::new()),
-        )
+        .with(tracing_subscriber::fmt::layer().with_writer(display::SharedWriter::new()))
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| default_level.into()),
@@ -424,22 +460,10 @@ async fn main() -> Result<()> {
         .control_plane_url
         .as_deref()
         .unwrap_or(&cli.control_plane_url);
-    let effective_api_key = resolved
-        .api_key
-        .as_deref()
-        .unwrap_or(&cli.api_key);
-    let effective_ca_cert = resolved
-        .ca_cert
-        .as_deref()
-        .unwrap_or(&cli.ca_cert);
-    let effective_client_cert = resolved
-        .client_cert
-        .as_deref()
-        .unwrap_or(&cli.client_cert);
-    let effective_client_key = resolved
-        .client_key
-        .as_deref()
-        .unwrap_or(&cli.client_key);
+    let effective_api_key = resolved.api_key.as_deref().unwrap_or(&cli.api_key);
+    let effective_ca_cert = resolved.ca_cert.as_deref().unwrap_or(&cli.ca_cert);
+    let effective_client_cert = resolved.client_cert.as_deref().unwrap_or(&cli.client_cert);
+    let effective_client_key = resolved.client_key.as_deref().unwrap_or(&cli.client_key);
 
     // Warn if mTLS certs are set but URL is plaintext HTTP
     if !effective_client_cert.is_empty() && effective_cp_url.starts_with("http://") {
@@ -488,7 +512,8 @@ async fn main() -> Result<()> {
                     .ok_or_else(|| {
                         anyhow::anyhow!("--hook requires --hook-push-cmd or [cache.hook] push-cmd in .nixfleet.toml")
                     })?;
-                let hook_cache = cache_url.as_deref()
+                let hook_cache = cache_url
+                    .as_deref()
                     .or(hook_url.as_deref())
                     .or(resolved.hook_url.as_deref())
                     .or(resolved.cache_url.as_deref());
@@ -521,7 +546,7 @@ async fn main() -> Result<()> {
                 let release_id = if let Some(id) = release {
                     id
                 } else if effective_push_to.is_some() || copy || effective_push_hook.is_some() {
-                    let id = crate::release::create(
+                    let (id, mut oplog) = crate::release::create(
                         &http_client,
                         effective_cp_url,
                         &flake,
@@ -531,14 +556,50 @@ async fn main() -> Result<()> {
                         copy,
                         effective_cache_url,
                         dry_run,
+                        false,
                     )
                     .await?;
-                    match id {
+                    let release_id = match id {
                         Some(id) => id,
-                        None => return Ok(()), // dry-run, nothing to deploy
+                        None => {
+                            oplog.finish(true, None);
+                            return Ok(()); // dry-run, nothing to deploy
+                        }
+                    };
+
+                    // --tags takes precedence; otherwise pass explicit host names
+                    let rollout_hosts: Vec<String> = if !tags.is_empty() {
+                        vec![]
+                    } else {
+                        hosts.iter().filter(|s| *s != "*").cloned().collect()
+                    };
+
+                    let rollout_result = deploy::deploy_rollout(
+                        &http_client,
+                        effective_cp_url,
+                        &release_id,
+                        &tags,
+                        &rollout_hosts,
+                        effective_strategy,
+                        batch_size,
+                        &failure_threshold,
+                        &on_failure,
+                        health_timeout,
+                        wait,
+                        effective_cache_url,
+                    )
+                    .await;
+
+                    match &rollout_result {
+                        Ok(()) => oplog.finish(true, None),
+                        Err(e) => oplog.finish(false, Some(&format!("{e:#}"))),
                     }
+
+                    return rollout_result;
                 } else {
-                    bail!("--release, --push-to, --hook, or --copy is required for non-SSH deploys");
+                    bail!(
+                        "--release, --push-to, --hook, or --copy is required for non-SSH deploys"
+                    );
                 };
 
                 // --tags takes precedence; otherwise pass explicit host names
@@ -576,7 +637,14 @@ async fn main() -> Result<()> {
             target,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
-            rollback(&http_client, effective_cp_url, &host, generation, target.as_deref()).await
+            rollback(
+                &http_client,
+                effective_cp_url,
+                &host,
+                generation,
+                target.as_deref(),
+            )
+            .await
         }
         Commands::Host { action } => match action {
             HostAction::Add {
@@ -601,7 +669,13 @@ async fn main() -> Result<()> {
             let http_client = client::build_client(&tls, effective_api_key)?;
             match action {
                 RolloutAction::List { status } => {
-                    rollout::list(&http_client, effective_cp_url, status.as_deref(), json_output).await
+                    rollout::list(
+                        &http_client,
+                        effective_cp_url,
+                        status.as_deref(),
+                        json_output,
+                    )
+                    .await
                 }
                 RolloutAction::Status { id } => {
                     rollout::status(&http_client, effective_cp_url, &id, json_output).await
@@ -611,6 +685,9 @@ async fn main() -> Result<()> {
                 }
                 RolloutAction::Cancel { id } => {
                     rollout::cancel(&http_client, effective_cp_url, &id).await
+                }
+                RolloutAction::Delete { id } => {
+                    rollout::delete(&http_client, effective_cp_url, &id).await
                 }
             }
         }
@@ -627,6 +704,7 @@ async fn main() -> Result<()> {
                     copy,
                     cache_url,
                     dry_run,
+                    eval_only,
                 } => {
                     let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
                         let push_cmd = hook_push_cmd.as_deref()
@@ -634,17 +712,22 @@ async fn main() -> Result<()> {
                             .ok_or_else(|| {
                                 anyhow::anyhow!("--hook requires --hook-push-cmd or [cache.hook] push-cmd in .nixfleet.toml")
                             })?;
-                        let hook_cache = cache_url.as_deref()
+                        let hook_cache = cache_url
+                            .as_deref()
                             .or(hook_url.as_deref())
                             .or(resolved.hook_url.as_deref())
                             .or(resolved.cache_url.as_deref());
-                        (push_to.as_deref().map(str::to_string), Some(push_cmd), hook_cache.map(str::to_string))
+                        (
+                            push_to.as_deref().map(str::to_string),
+                            Some(push_cmd),
+                            hook_cache.map(str::to_string),
+                        )
                     } else {
                         let pt = push_to.or_else(|| resolved.push_to.clone());
                         let cu = cache_url.or_else(|| resolved.cache_url.clone());
                         (pt, None, cu)
                     };
-                    release::create(
+                    let (_, mut oplog) = release::create(
                         &http_client,
                         effective_cp_url,
                         &flake,
@@ -654,12 +737,21 @@ async fn main() -> Result<()> {
                         copy,
                         effective_cache_url.as_deref(),
                         dry_run,
+                        eval_only,
                     )
                     .await?;
+                    oplog.finish(true, None);
                     Ok(())
                 }
-                ReleaseAction::List { limit } => {
-                    release::list(&http_client, effective_cp_url, limit, json_output).await
+                ReleaseAction::List { limit, host } => {
+                    release::list(
+                        &http_client,
+                        effective_cp_url,
+                        limit,
+                        host.as_deref(),
+                        json_output,
+                    )
+                    .await
                 }
                 ReleaseAction::Show { release_id } => {
                     release::show(&http_client, effective_cp_url, &release_id, json_output).await
@@ -688,11 +780,17 @@ async fn main() -> Result<()> {
                 MachineAction::List { tags } => {
                     machines::list(&http_client, effective_cp_url, &tags, json_output).await
                 }
-                MachineAction::Untag { id, tag } => {
-                    machines::untag(&http_client, effective_cp_url, &id, &tag).await
+                MachineAction::SetLifecycle { id, state } => {
+                    machines::set_lifecycle(&http_client, effective_cp_url, &id, &state).await
+                }
+                MachineAction::ClearDesired { id } => {
+                    machines::clear_desired(&http_client, effective_cp_url, &id).await
                 }
                 MachineAction::Register { id, tags } => {
                     machines::register(&http_client, effective_cp_url, &id, &tags).await
+                }
+                MachineAction::NotifyDeploy { id, store_path } => {
+                    machines::notify_deploy(&http_client, effective_cp_url, &id, &store_path).await
                 }
             }
         }
@@ -767,11 +865,11 @@ async fn rollback(
                 .stderr(Stdio::piped())
                 .output()
                 .await
-                .context("Failed to query previous generation via SSH")?;
+                .context("failed to query previous generation via SSH")?;
 
             if !output.status.success() {
                 bail!(
-                    "Failed to get previous generation: {}",
+                    "failed to get previous generation: {}",
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
@@ -782,10 +880,15 @@ async fn rollback(
     println!("Rolling back {} to {}", host, store_path);
 
     // SSH rollback: switch to the specified profile on the target
-    let stderr = if display::passthrough_output() { Stdio::inherit() } else { Stdio::piped() };
+    let stderr = if display::passthrough_output() {
+        Stdio::inherit()
+    } else {
+        Stdio::piped()
+    };
     let switch_output = tokio::process::Command::new("ssh")
         .args([
-            "-o", "BatchMode=yes",
+            "-o",
+            "BatchMode=yes",
             ssh_dest,
             &format!("{}/bin/switch-to-configuration", store_path),
             "switch",

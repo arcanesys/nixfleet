@@ -158,10 +158,7 @@ where
                 _ => PeerCertificates::empty(),
             };
 
-            Ok((
-                tls_stream,
-                PeerCertService::new(inner_service, peer_certs),
-            ))
+            Ok((tls_stream, PeerCertService::new(inner_service, peer_certs)))
         })
     }
 }
@@ -182,10 +179,7 @@ pub struct PeerCertService<S> {
 
 impl<S> PeerCertService<S> {
     fn new(inner: S, peer_certs: PeerCertificates) -> Self {
-        Self {
-            inner,
-            peer_certs,
-        }
+        Self { inner, peer_certs }
     }
 }
 

@@ -122,7 +122,11 @@ mod tests {
         let filtered = filter_hosts(&hosts, &["web-*".into(), "db-01".into()]);
         assert_eq!(
             filtered,
-            vec!["web-01".to_string(), "web-02".to_string(), "db-01".to_string()]
+            vec![
+                "web-01".to_string(),
+                "web-02".to_string(),
+                "db-01".to_string()
+            ]
         );
     }
 }

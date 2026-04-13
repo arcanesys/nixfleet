@@ -77,7 +77,7 @@ Full scope table with activation conditions and details: `docs/mdbook/guide/defi
 
 ## CLI
 
-Commands: `init`, `bootstrap`, `status`, `deploy`, `rollback`, `release` (create/list/show/diff/delete), `rollout` (list/status/resume/cancel), `machines` (list/register/untag), `host` (add).
+Commands: `init`, `bootstrap`, `status`, `deploy`, `rollback`, `release` (create/list/show/diff/delete, `--eval-only`, `--host`), `rollout` (list/status/resume/cancel/delete), `machines` (list/register/set-lifecycle/clear-desired/notify-deploy), `host` (add).
 
 ```bash
 nixfleet init --control-plane-url https://cp:8080 --ca-cert fleet-ca.pem
@@ -87,6 +87,11 @@ nixfleet deploy --hook --tags web --strategy canary --wait               # push 
 nixfleet deploy --hosts web-02 --ssh                                     # direct SSH (no CP)
 nixfleet rollback --host web-02 --ssh                                    # SSH-only rollback
 ```
+
+> **Note:** `--ssh` deploys directly via `nix-copy-closure` and `switch-to-configuration`,
+> bypassing the control plane entirely. Lifecycle state is not checked — a machine in
+> `maintenance` will still receive the deploy. Use `--ssh` as an emergency escape hatch
+> when the CP is unavailable, not as a routine deployment method.
 
 Config priority (highest wins): CLI flags → env vars → `~/.config/nixfleet/credentials.toml` → `.nixfleet.toml` (via `--config <path>` or cwd walk)
 
@@ -116,12 +121,14 @@ Roles: `admin` (full access), `deploy` (create releases/rollouts), `readonly` (r
 | GET | `/api/v1/machines` | readonly | List all machines |
 | POST | `/api/v1/machines/{id}/register` | admin | Pre-register a machine |
 | PATCH | `/api/v1/machines/{id}/lifecycle` | admin | Change machine lifecycle state |
-| DELETE | `/api/v1/machines/{id}/tags/{tag}` | admin | Remove a tag from a machine |
+| DELETE | `/api/v1/machines/{id}/desired-generation` | admin | Clear a machine's desired generation |
+| POST | `/api/v1/machines/{id}/notify-deploy` | deploy | Notify CP of an SSH deploy (sets desired generation) |
 | POST | `/api/v1/rollouts` | deploy | Create a rollout (requires `release_id`) |
 | GET | `/api/v1/rollouts` | readonly | List rollouts |
 | GET | `/api/v1/rollouts/{id}` | readonly | Get rollout detail (includes `events` timeline) |
 | POST | `/api/v1/rollouts/{id}/resume` | deploy | Resume a paused rollout |
 | POST | `/api/v1/rollouts/{id}/cancel` | deploy | Cancel a rollout |
+| DELETE | `/api/v1/rollouts/{id}` | admin | Delete a terminal rollout |
 | POST | `/api/v1/releases` | deploy | Create a release from a manifest |
 | GET | `/api/v1/releases` | readonly | List releases (paginated, newest first) |
 | GET | `/api/v1/releases/{id}` | readonly | Get release with entries |
@@ -146,6 +153,10 @@ Roles: `admin` (full access), `deploy` (create releases/rollouts), `readonly` (r
 ### Agent tag sync
 
 Agent tags (from `services.nixfleet-agent.tags`) are automatically synced to the CP on every health report. No manual tag management needed — tags are self-managing from NixOS config.
+
+### Rollout lifecycle filtering
+
+Only `active` machines participate in rollouts. Machines in `maintenance`, `decommissioned`, `pending`, or `provisioning` state are excluded — both when targeted by tags and by explicit hostname. Use `machines set-lifecycle <id> maintenance` to temporarily exclude a machine from fleet operations.
 
 ## Consuming the Framework
 

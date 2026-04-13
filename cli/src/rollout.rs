@@ -1,7 +1,7 @@
+use crate::display;
 use anyhow::{bail, Context, Result};
 use nixfleet_types::rollout::{RolloutDetail, RolloutStatus};
 use std::time::{Duration, Instant};
-use crate::display;
 
 /// Default upper bound on how long `deploy --wait` / `rollout status --wait`
 /// will block before aborting with a timeout error. Keeps CI jobs from
@@ -28,11 +28,11 @@ pub async fn list(
         .get(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     let resp = crate::client::check_response(resp).await?;
 
-    let rollouts: Vec<RolloutDetail> = resp.json().await.context("Failed to parse rollout list")?;
+    let rollouts: Vec<RolloutDetail> = resp.json().await.context("failed to parse rollout list")?;
 
     if rollouts.is_empty() {
         if json {
@@ -72,26 +72,21 @@ pub async fn list(
 }
 
 /// GET /api/v1/rollouts/{id} — show rollout detail with batch breakdown.
-pub async fn status(
-    client: &reqwest::Client,
-    cp_url: &str,
-    id: &str,
-    json: bool,
-) -> Result<()> {
+pub async fn status(client: &reqwest::Client, cp_url: &str, id: &str, json: bool) -> Result<()> {
     let url = format!("{}/api/v1/rollouts/{}", cp_url, id);
 
     let resp = client
         .get(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     let resp = crate::client::check_response(resp).await?;
 
     let rollout: RolloutDetail = resp
         .json()
         .await
-        .context("Failed to parse rollout detail")?;
+        .context("failed to parse rollout detail")?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&rollout)?);
@@ -110,7 +105,7 @@ pub async fn resume(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         .post(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     crate::client::check_response(resp).await?;
 
@@ -126,12 +121,38 @@ pub async fn cancel(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<
         .post(&url)
         .send()
         .await
-        .context("Failed to reach control plane")?;
+        .context("failed to reach control plane")?;
 
     crate::client::check_response(resp).await?;
 
     println!("Rollout {} cancelled.", id);
     Ok(())
+}
+
+/// DELETE /api/v1/rollouts/{id} — delete a terminal rollout.
+pub async fn delete(client: &reqwest::Client, cp_url: &str, id: &str) -> Result<()> {
+    let url = format!("{}/api/v1/rollouts/{}", cp_url, id);
+
+    let resp = client
+        .delete(&url)
+        .send()
+        .await
+        .context("failed to DELETE rollout")?;
+
+    let status = resp.status();
+    if status.as_u16() == 204 || status.is_success() {
+        println!("Rollout {} deleted.", id);
+        return Ok(());
+    }
+    if status.as_u16() == 409 {
+        let body = crate::client::read_error_body(resp).await;
+        anyhow::bail!("Rollout {} cannot be deleted: {}", id, body);
+    }
+    if status.as_u16() == 404 {
+        anyhow::bail!("Rollout {} not found", id);
+    }
+    let body = crate::client::read_error_body(resp).await;
+    anyhow::bail!("failed to delete rollout: {} {}", status, body);
 }
 
 /// Poll a rollout until it reaches a terminal state, printing progress every interval.
@@ -153,10 +174,9 @@ pub async fn wait_for_completion(
             .get(&url)
             .send()
             .await
-            .context("Failed to reach control plane")?;
+            .context("failed to reach control plane")?;
 
         if !resp.status().is_success() {
-
             bail!(
                 "Control plane returned {}: {}",
                 resp.status(),
@@ -169,7 +189,7 @@ pub async fn wait_for_completion(
         let rollout: RolloutDetail = resp
             .json()
             .await
-            .context("Failed to parse rollout detail")?;
+            .context("failed to parse rollout detail")?;
 
         let total_machines: usize = rollout.batches.iter().map(|b| b.machine_ids.len()).sum();
         let healthy_machines: usize = rollout
@@ -201,10 +221,12 @@ pub async fn wait_for_completion(
         );
 
         if !rollout.status.is_active() {
-
             println!(
                 "Rollout {} finished: {} ({} machines, {} batches)",
-                id, rollout.status, total_machines, rollout.batches.len()
+                id,
+                rollout.status,
+                total_machines,
+                rollout.batches.len()
             );
             if rollout.status == RolloutStatus::Failed {
                 bail!("Rollout failed");
@@ -213,7 +235,6 @@ pub async fn wait_for_completion(
         }
 
         if !timeout.is_zero() && started.elapsed() >= timeout {
-
             bail!(
                 "Timed out after {}s waiting for rollout {} to finish (last status: {}). \
                  Re-run with --wait-timeout 0 to block indefinitely, or inspect with \
@@ -284,11 +305,7 @@ fn print_rollout_detail(rollout: &RolloutDetail) {
                 .get(machine_id)
                 .map(|h| h.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            println!(
-                "  {} → {}",
-                machine_id,
-                display::color_status(&health)
-            );
+            println!("  {} → {}", machine_id, display::color_status(&health));
         }
     }
 

@@ -254,6 +254,8 @@ pub async fn fake_agent_report(
         timestamp: chrono::Utc::now(),
         tags: tags.iter().map(|s| s.to_string()).collect(),
         health: None,
+        agent_version: String::new(),
+        uptime_seconds: 0,
     };
     let resp = cp
         .admin

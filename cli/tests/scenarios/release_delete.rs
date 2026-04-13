@@ -6,6 +6,7 @@
 //! returned by the CP. We mock the CP with wiremock so the test asserts
 //! ONLY the CLI behaviour, not the CP behaviour.
 
+use super::harness::cli_lock;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use wiremock::matchers::{method, path};
@@ -13,6 +14,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn release_delete_orphan_returns_zero_with_confirmation() {
+    let _guard = cli_lock().await;
     let server = MockServer::start().await;
 
     Mock::given(method("DELETE"))
@@ -39,13 +41,14 @@ async fn release_delete_orphan_returns_zero_with_confirmation() {
 
 #[tokio::test]
 async fn release_delete_referenced_exits_with_error_message() {
+    let _guard = cli_lock().await;
     let server = MockServer::start().await;
 
     Mock::given(method("DELETE"))
         .and(path("/api/v1/releases/rel-referenced-001"))
-        .respond_with(ResponseTemplate::new(409).set_body_string(
-            "release referenced by rollout rollout-abc",
-        ))
+        .respond_with(
+            ResponseTemplate::new(409).set_body_string("release referenced by rollout rollout-abc"),
+        )
         .mount(&server)
         .await;
 
@@ -62,13 +65,12 @@ async fn release_delete_referenced_exits_with_error_message() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "still referenced by a rollout",
-        ));
+        .stderr(predicate::str::contains("still referenced by a rollout"));
 }
 
 #[tokio::test]
 async fn release_delete_unknown_id_exits_with_not_found_message() {
+    let _guard = cli_lock().await;
     let server = MockServer::start().await;
 
     Mock::given(method("DELETE"))
@@ -93,8 +95,9 @@ async fn release_delete_unknown_id_exits_with_not_found_message() {
         .stderr(predicate::str::contains("not found"));
 }
 
-#[test]
-fn release_delete_subcommand_is_registered() {
+#[tokio::test]
+async fn release_delete_subcommand_is_registered() {
+    let _guard = cli_lock().await;
     // Negative: a stale clap definition that omits the Delete variant
     // would surface as "unrecognized subcommand 'delete'". This test
     // confirms the subcommand is dispatchable at the parser level

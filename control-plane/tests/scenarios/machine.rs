@@ -9,6 +9,10 @@
 //! | M5 | Three-machine desired-generation isolation |
 //! | M6 | `Pending → Active` auto-transition on first report |
 //! | M7 | `Active ↔ Maintenance` round-trip via PATCH lifecycle |
+//! | M8 | `clear-desired` removes generation from DB and fleet state |
+//! | M9 | Agent report populates `agent_version` and `uptime_seconds` |
+//! | M10 | Maintenance machine excluded from rollout even when targeted by name |
+//! | M11 | `notify-deploy` sets desired generation in DB and fleet state |
 //!
 //! Every scenario spins up a fresh in-process CP via `harness::spawn_cp`
 //! and drives it over real HTTP.
@@ -209,6 +213,8 @@ async fn m4_failed_report_transitions_state_to_error() {
         timestamp: chrono::Utc::now(),
         tags: vec![],
         health: None,
+        agent_version: String::new(),
+        uptime_seconds: 0,
     };
     cp.admin
         .post(format!("{}/api/v1/machines/m4-host/report", cp.base))
@@ -273,7 +279,10 @@ async fn m5_multi_machine_desired_gen_isolation() {
             .json()
             .await
             .unwrap();
-        assert_eq!(&desired.hash, hash, "machine {id} must see only its own gen");
+        assert_eq!(
+            &desired.hash, hash,
+            "machine {id} must see only its own gen"
+        );
     }
 
     let list: Vec<MachineStatus> = cp
@@ -381,4 +390,267 @@ async fn m7_active_maintenance_round_trip() {
         .await
         .unwrap();
     assert_eq!(to_active.status(), 200, "maintenance → active must 200");
+}
+
+/// M8 — DELETE /api/v1/machines/{id}/desired-generation clears from both
+/// the in-memory fleet state and the DB, and the change is visible in
+/// GET /machines.
+#[tokio::test]
+async fn m8_clear_desired_removes_generation() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "web-01", &["web"]).await;
+
+    // Set a desired generation (DB + in-memory).
+    set_desired_gen(&cp, "web-01", "/nix/store/m8-desired").await;
+
+    // Sanity: GET /machines shows the desired generation.
+    let before: Vec<MachineStatus> = cp
+        .admin
+        .get(format!("{}/api/v1/machines", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let m_before = before
+        .iter()
+        .find(|m| m.machine_id == "web-01")
+        .expect("web-01 in inventory");
+    assert_eq!(
+        m_before.desired_generation.as_deref(),
+        Some("/nix/store/m8-desired"),
+        "desired generation must be visible before clear"
+    );
+
+    // DELETE the desired generation.
+    let resp = cp
+        .admin
+        .delete(format!(
+            "{}/api/v1/machines/web-01/desired-generation",
+            cp.base
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204, "clear desired must return 204");
+
+    // GET /machines must no longer show the desired generation.
+    let after: Vec<MachineStatus> = cp
+        .admin
+        .get(format!("{}/api/v1/machines", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let m_after = after
+        .iter()
+        .find(|m| m.machine_id == "web-01")
+        .expect("web-01 in inventory after clear");
+    assert_eq!(
+        m_after.desired_generation, None,
+        "desired generation must be None after DELETE"
+    );
+
+    // DB must also be cleared.
+    let db_gen = cp.db.get_desired_generation("web-01").unwrap();
+    assert!(
+        db_gen.is_none(),
+        "DB desired_generation must be None after DELETE"
+    );
+}
+
+/// M9 — agent report with `agent_version` and `uptime_seconds` populates
+/// those fields in the MachineStatus returned by GET /machines.
+#[tokio::test]
+async fn m9_report_populates_agent_version_and_uptime() {
+    let cp = harness::spawn_cp().await;
+
+    // Submit a report with agent_version and uptime_seconds populated.
+    let report = Report {
+        machine_id: "m9-host".to_string(),
+        current_generation: "/nix/store/m9-gen".to_string(),
+        success: true,
+        message: "ok".to_string(),
+        timestamp: chrono::Utc::now(),
+        tags: vec![],
+        health: None,
+        agent_version: "0.1.0".to_string(),
+        uptime_seconds: 86400,
+    };
+    cp.admin
+        .post(format!("{}/api/v1/machines/m9-host/report", cp.base))
+        .json(&report)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+
+    // GET /machines must surface those fields.
+    let machines: Vec<MachineStatus> = cp
+        .admin
+        .get(format!("{}/api/v1/machines", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let m = machines
+        .iter()
+        .find(|m| m.machine_id == "m9-host")
+        .expect("m9-host in inventory");
+    assert_eq!(
+        m.agent_version, "0.1.0",
+        "agent_version must be populated from report"
+    );
+    assert_eq!(
+        m.uptime_seconds, 86400,
+        "uptime_seconds must be populated from report"
+    );
+}
+
+/// M10 — a machine in maintenance lifecycle is excluded from rollouts
+/// even when explicitly targeted by hostname (not just by tags).
+#[tokio::test]
+async fn m10_maintenance_machine_excluded_from_host_targeted_rollout() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "web-01", &["web"]).await;
+    harness::register_machine(&cp, "web-02", &["web"]).await;
+
+    // Put web-02 in maintenance
+    let resp = cp
+        .admin
+        .patch(format!("{}/api/v1/machines/web-02/lifecycle", cp.base))
+        .json(&serde_json::json!({"lifecycle": "maintenance"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    // Create a release covering both machines
+    let release_id = harness::create_release(
+        &cp,
+        &[
+            ("web-01", "/nix/store/m10-web-01"),
+            ("web-02", "/nix/store/m10-web-02"),
+        ],
+    )
+    .await;
+
+    // Create rollout targeting both by name — web-02 should be excluded
+    let resp = cp
+        .admin
+        .post(format!("{}/api/v1/rollouts", cp.base))
+        .json(&serde_json::json!({
+            "release_id": release_id,
+            "strategy": "all_at_once",
+            "failure_threshold": "0",
+            "on_failure": "pause",
+            "health_timeout": 60,
+            "target": {"hosts": ["web-01", "web-02"]}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let total = body["total_machines"].as_u64().unwrap();
+    assert_eq!(
+        total, 1,
+        "only web-01 (active) should be in the rollout, not web-02 (maintenance)"
+    );
+}
+
+/// M11 — POST /api/v1/machines/{id}/notify-deploy sets desired_generation
+/// in both DB and fleet state, and the change is visible in GET /machines.
+#[tokio::test]
+async fn m11_notify_deploy_sets_desired_generation() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "ssh-01", &["web"]).await;
+
+    let store_path = "/nix/store/m11-ssh-deploy-system";
+
+    // POST notify-deploy
+    let resp = cp
+        .admin
+        .post(format!("{}/api/v1/machines/ssh-01/notify-deploy", cp.base))
+        .json(&serde_json::json!({ "store_path": store_path }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "notify-deploy must return 200: {}",
+        resp.text().await.unwrap_or_default()
+    );
+
+    // GET /machines must show the desired generation.
+    let machines: Vec<MachineStatus> = cp
+        .admin
+        .get(format!("{}/api/v1/machines", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let m = machines
+        .iter()
+        .find(|m| m.machine_id == "ssh-01")
+        .expect("ssh-01 in inventory");
+    assert_eq!(
+        m.desired_generation.as_deref(),
+        Some(store_path),
+        "desired_generation must be set after notify-deploy"
+    );
+
+    // DB must also have the desired generation.
+    let db_gen = cp.db.get_desired_generation("ssh-01").unwrap();
+    assert_eq!(
+        db_gen.as_deref(),
+        Some(store_path),
+        "DB desired_generation must be set after notify-deploy"
+    );
+}
+
+/// M10b — rollout targeting ONLY a maintenance machine by name returns 400.
+#[tokio::test]
+async fn m10b_rollout_targeting_only_maintenance_host_returns_400() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "maint-01", &["web"]).await;
+
+    // Put in maintenance
+    cp.admin
+        .patch(format!("{}/api/v1/machines/maint-01/lifecycle", cp.base))
+        .json(&serde_json::json!({"lifecycle": "maintenance"}))
+        .send()
+        .await
+        .unwrap();
+
+    let release_id = harness::create_release(&cp, &[("maint-01", "/nix/store/m10b")]).await;
+
+    let resp = cp
+        .admin
+        .post(format!("{}/api/v1/rollouts", cp.base))
+        .json(&serde_json::json!({
+            "release_id": release_id,
+            "strategy": "all_at_once",
+            "failure_threshold": "0",
+            "on_failure": "pause",
+            "health_timeout": 60,
+            "target": {"hosts": ["maint-01"]}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        400,
+        "rollout targeting only maintenance machines should be rejected"
+    );
 }

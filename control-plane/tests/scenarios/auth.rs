@@ -19,9 +19,7 @@
 
 use super::harness;
 
-use nixfleet_types::rollout::{
-    CreateRolloutRequest, OnFailure, RolloutStrategy, RolloutTarget,
-};
+use nixfleet_types::rollout::{CreateRolloutRequest, OnFailure, RolloutStrategy, RolloutTarget};
 use rusqlite::Connection;
 use serde_json::Value;
 
