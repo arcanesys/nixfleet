@@ -10,7 +10,10 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 /// Discover all nixosConfigurations host names from a flake.
-pub(crate) async fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<Vec<String>> {
+pub(crate) async fn discover_hosts(
+    flake: &str,
+    oplog: &mut crate::oplog::OpLog,
+) -> Result<Vec<String>> {
     let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
@@ -47,7 +50,11 @@ pub(crate) async fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog)
 }
 
 /// Detect platform for a host.
-async fn detect_platform(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Result<String> {
+async fn detect_platform(
+    flake: &str,
+    hostname: &str,
+    oplog: &mut crate::oplog::OpLog,
+) -> Result<String> {
     let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([

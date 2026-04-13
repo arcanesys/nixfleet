@@ -5,7 +5,7 @@
 //! `subprocess`, `op_end`.
 //!
 //! Integration pattern: subprocess functions accept `&mut OpLog` and call
-//! `oplog.log_output()` after each `display::run_cmd()` / `run_cmd_async()`.
+//! `oplog.log_output()` after each `display::run_cmd_async()`.
 //! The OpLog captures the full `Output` (stdout, stderr, exit code, timing).
 
 use anyhow::{Context, Result};
@@ -98,7 +98,7 @@ impl OpLog {
     /// Log a subprocess from its raw `Output`, capturing stdout, stderr, exit code, and timing.
     ///
     /// This is the primary logging method. Subprocess functions call this after
-    /// `display::run_cmd()` / `run_cmd_async()` with the full `Output`.
+    /// `display::run_cmd_async()` with the full `Output`.
     pub fn log_output(
         &mut self,
         cmd_desc: &str,

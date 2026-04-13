@@ -499,13 +499,14 @@ pub async fn notify_deploy(
         ));
     }
 
-    db.set_desired_generation(&id, &body.store_path).map_err(|e| {
-        tracing::error!(error = %e, machine_id = %id, "failed to set desired generation");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal error".to_string(),
-        )
-    })?;
+    db.set_desired_generation(&id, &body.store_path)
+        .map_err(|e| {
+            tracing::error!(error = %e, machine_id = %id, "failed to set desired generation");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error".to_string(),
+            )
+        })?;
 
     let mut fleet = state.write().await;
     let machine = fleet.get_or_create(&id);
@@ -517,7 +518,12 @@ pub async fn notify_deploy(
 
     crate::log_insert_err(
         "audit_event",
-        db.insert_audit_event(&actor.identifier(), "notify_deploy", &id, Some(&body.store_path)),
+        db.insert_audit_event(
+            &actor.identifier(),
+            "notify_deploy",
+            &id,
+            Some(&body.store_path),
+        ),
     );
     drop(fleet);
 

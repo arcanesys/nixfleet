@@ -756,8 +756,7 @@ async fn main() -> Result<()> {
                     machines::register(&http_client, effective_cp_url, &id, &tags).await
                 }
                 MachineAction::NotifyDeploy { id, store_path } => {
-                    machines::notify_deploy(&http_client, effective_cp_url, &id, &store_path)
-                        .await
+                    machines::notify_deploy(&http_client, effective_cp_url, &id, &store_path).await
                 }
             }
         }

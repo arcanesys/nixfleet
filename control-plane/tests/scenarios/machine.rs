@@ -577,10 +577,7 @@ async fn m11_notify_deploy_sets_desired_generation() {
     // POST notify-deploy
     let resp = cp
         .admin
-        .post(format!(
-            "{}/api/v1/machines/ssh-01/notify-deploy",
-            cp.base
-        ))
+        .post(format!("{}/api/v1/machines/ssh-01/notify-deploy", cp.base))
         .json(&serde_json::json!({ "store_path": store_path }))
         .send()
         .await

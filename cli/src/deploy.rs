@@ -134,7 +134,16 @@ pub async fn run(
 
     oplog.log_start("deploy", flake, &targets);
 
-    let result = run_inner(client, cp_url, flake, &targets, dry_run, target_override, &mut oplog).await;
+    let result = run_inner(
+        client,
+        cp_url,
+        flake,
+        &targets,
+        dry_run,
+        target_override,
+        &mut oplog,
+    )
+    .await;
 
     match &result {
         Ok(()) => oplog.finish(true, None),
@@ -247,7 +256,8 @@ async fn run_inner(
                         // Notify the CP of the deployed store path so it
                         // tracks desired_generation and shows the machine
                         // in sync once the agent confirms.
-                        if let Err(e) = notify_deploy_on_cp(client, cp_url, host, store_path).await {
+                        if let Err(e) = notify_deploy_on_cp(client, cp_url, host, store_path).await
+                        {
                             tracing::debug!(host, error = %e, "could not notify CP of deploy (CP may be unavailable)");
                         }
                         success_count += 1;
@@ -288,10 +298,7 @@ async fn notify_deploy_on_cp(
     machine_id: &str,
     store_path: &str,
 ) -> Result<()> {
-    let url = format!(
-        "{}/api/v1/machines/{}/notify-deploy",
-        cp_url, machine_id
-    );
+    let url = format!("{}/api/v1/machines/{}/notify-deploy", cp_url, machine_id);
     let body = serde_json::json!({ "store_path": store_path });
     let resp = client
         .post(&url)

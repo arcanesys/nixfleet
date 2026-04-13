@@ -10,8 +10,8 @@ use console::style;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Serialize;
 use std::collections::VecDeque;
-use std::io::{Read as IoRead, Write as IoWrite};
-use std::process::{Command, Output, Stdio};
+use std::io::Write as IoWrite;
+use std::process::{Output, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -271,79 +271,7 @@ impl Drop for RollingWindow {
 // Subprocess runner
 // ---------------------------------------------------------------
 
-/// Run a command, piping stderr into the rolling window line-by-line.
-///
-/// - `window = Some(w)`: pipes stderr, feeds each line into `w.log_line()`.
-/// - `window = None`: pipes stderr and discards it (quiet mode).
-/// - For `-vv` passthrough mode, callers should use `Stdio::inherit()`
-///   directly instead of this helper.
-pub fn run_cmd(
-    cmd: &mut Command,
-    mut window: Option<&mut RollingWindow>,
-) -> std::io::Result<Output> {
-    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
-
-    let stderr_handle = child.stderr.take();
-    let mut stderr_buf = Vec::new();
-    if let Some(mut stderr) = stderr_handle {
-        let mut buf = [0u8; 4096];
-        let mut line_buf = String::new();
-        let mut last_was_cr = false;
-        loop {
-            let n = stderr.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            stderr_buf.extend_from_slice(&buf[..n]);
-            let chunk = String::from_utf8_lossy(&buf[..n]);
-            for ch in chunk.chars() {
-                if ch == '\r' {
-                    if !line_buf.is_empty() {
-                        if let Some(ref mut w) = window {
-                            if last_was_cr {
-                                w.log_line_replace(&line_buf);
-                            } else {
-                                w.log_line(&line_buf);
-                            }
-                        }
-                        line_buf.clear();
-                    }
-                    last_was_cr = true;
-                } else if ch == '\n' {
-                    if !line_buf.is_empty() {
-                        if let Some(ref mut w) = window {
-                            w.log_line(&line_buf);
-                        }
-                        line_buf.clear();
-                    }
-                    last_was_cr = false;
-                } else {
-                    line_buf.push(ch);
-                }
-            }
-        }
-        if !line_buf.is_empty() {
-            if let Some(ref mut w) = window {
-                w.log_line(&line_buf);
-            }
-        }
-    }
-
-    let mut stdout_buf = Vec::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        stdout.read_to_end(&mut stdout_buf)?;
-    }
-
-    let status = child.wait()?;
-
-    Ok(Output {
-        status,
-        stdout: stdout_buf,
-        stderr: stderr_buf,
-    })
-}
-
-/// Async version of `run_cmd` for deploy.rs (uses tokio::process::Command).
+/// Run a command asynchronously, piping stderr into the rolling window line-by-line.
 pub async fn run_cmd_async(
     cmd: &mut tokio::process::Command,
     mut window: Option<&mut RollingWindow>,
@@ -579,12 +507,13 @@ mod tests {
         assert_eq!(ring.back().unwrap(), "line 14");
     }
 
-    #[test]
-    fn run_cmd_captures_stderr() {
-        let output = run_cmd(
-            Command::new("sh").args(["-c", "echo hello >&2; echo stdout"]),
+    #[tokio::test]
+    async fn run_cmd_async_captures_stderr() {
+        let output = run_cmd_async(
+            tokio::process::Command::new("sh").args(["-c", "echo hello >&2; echo stdout"]),
             None,
         )
+        .await
         .unwrap();
         assert!(output.status.success());
         assert!(String::from_utf8_lossy(&output.stdout).contains("stdout"));
