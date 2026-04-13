@@ -373,6 +373,11 @@ nixfleet machines set-lifecycle <ID> <STATE>
 | `<ID>` | string | Machine ID |
 | `<STATE>` | string | Lifecycle state: `active`, `pending`, `provisioning`, `maintenance`, `decommissioned` |
 
+Only `active` machines participate in rollouts. Machines in `maintenance` or
+`decommissioned` state are excluded even when explicitly targeted by hostname.
+Use `maintenance` to temporarily remove a machine from fleet operations without
+deregistering it.
+
 ---
 
 ## machines clear-desired

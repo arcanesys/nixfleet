@@ -35,7 +35,10 @@ pub async fn create_rollout(
         ));
     }
 
-    // Resolve target machines
+    // Resolve target machines — only active machines participate in rollouts.
+    // Tags path: get_machines_by_tags already filters by lifecycle = 'active'.
+    // Hosts path: filter explicitly so that maintenance/decommissioned machines
+    // are excluded even when targeted by name.
     let mut machine_ids = match &req.target {
         RolloutTarget::Tags(tags) => db.get_machines_by_tags(tags).map_err(|e| {
             tracing::error!(error = %e, "Failed to resolve machines by tags");
@@ -44,7 +47,29 @@ pub async fn create_rollout(
                 "failed to resolve machines".to_string(),
             )
         })?,
-        RolloutTarget::Hosts(hosts) => hosts.clone(),
+        RolloutTarget::Hosts(hosts) => {
+            let mut active = Vec::new();
+            for host in hosts {
+                match db.get_machine_lifecycle(host) {
+                    Ok(Some(ref lc)) if lc == "active" => active.push(host.clone()),
+                    Ok(Some(lc)) => {
+                        tracing::warn!(machine_id = %host, lifecycle = %lc, "skipping non-active machine");
+                    }
+                    Ok(None) => {
+                        // Machine not registered — allow it (agent will auto-register on first report)
+                        active.push(host.clone());
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, machine_id = %host, "failed to check lifecycle");
+                        return Err((
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "failed to check machine lifecycle".to_string(),
+                        ));
+                    }
+                }
+            }
+            active
+        }
         _ => {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -56,7 +81,7 @@ pub async fn create_rollout(
     if machine_ids.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            "no machines match the target".to_string(),
+            "no active machines match the target".to_string(),
         ));
     }
 

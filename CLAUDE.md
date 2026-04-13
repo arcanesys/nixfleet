@@ -148,6 +148,10 @@ Roles: `admin` (full access), `deploy` (create releases/rollouts), `readonly` (r
 
 Agent tags (from `services.nixfleet-agent.tags`) are automatically synced to the CP on every health report. No manual tag management needed — tags are self-managing from NixOS config.
 
+### Rollout lifecycle filtering
+
+Only `active` machines participate in rollouts. Machines in `maintenance`, `decommissioned`, `pending`, or `provisioning` state are excluded — both when targeted by tags and by explicit hostname. Use `machines set-lifecycle <id> maintenance` to temporarily exclude a machine from fleet operations.
+
 ## Consuming the Framework
 
 See `examples/` for standalone-host, batch-hosts, and client-fleet patterns. Quick start: `docs/mdbook/guide/getting-started/quick-start.md`

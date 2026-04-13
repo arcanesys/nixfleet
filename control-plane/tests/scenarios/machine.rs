@@ -9,6 +9,9 @@
 //! | M5 | Three-machine desired-generation isolation |
 //! | M6 | `Pending → Active` auto-transition on first report |
 //! | M7 | `Active ↔ Maintenance` round-trip via PATCH lifecycle |
+//! | M8 | `clear-desired` removes generation from DB and fleet state |
+//! | M9 | Agent report populates `agent_version` and `uptime_seconds` |
+//! | M10 | Maintenance machine excluded from rollout even when targeted by name |
 //!
 //! Every scenario spins up a fresh in-process CP via `harness::spawn_cp`
 //! and drives it over real HTTP.
@@ -506,5 +509,94 @@ async fn m9_report_populates_agent_version_and_uptime() {
     assert_eq!(
         m.uptime_seconds, 86400,
         "uptime_seconds must be populated from report"
+    );
+}
+
+/// M10 — a machine in maintenance lifecycle is excluded from rollouts
+/// even when explicitly targeted by hostname (not just by tags).
+#[tokio::test]
+async fn m10_maintenance_machine_excluded_from_host_targeted_rollout() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "web-01", &["web"]).await;
+    harness::register_machine(&cp, "web-02", &["web"]).await;
+
+    // Put web-02 in maintenance
+    let resp = cp
+        .admin
+        .patch(format!("{}/api/v1/machines/web-02/lifecycle", cp.base))
+        .json(&serde_json::json!({"lifecycle": "maintenance"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    // Create a release covering both machines
+    let release_id = harness::create_release(
+        &cp,
+        &[
+            ("web-01", "/nix/store/m10-web-01"),
+            ("web-02", "/nix/store/m10-web-02"),
+        ],
+    )
+    .await;
+
+    // Create rollout targeting both by name — web-02 should be excluded
+    let resp = cp
+        .admin
+        .post(format!("{}/api/v1/rollouts", cp.base))
+        .json(&serde_json::json!({
+            "release_id": release_id,
+            "strategy": "all_at_once",
+            "failure_threshold": "0",
+            "on_failure": "pause",
+            "health_timeout": 60,
+            "target": {"hosts": ["web-01", "web-02"]}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let total = body["total_machines"].as_u64().unwrap();
+    assert_eq!(
+        total, 1,
+        "only web-01 (active) should be in the rollout, not web-02 (maintenance)"
+    );
+}
+
+/// M10b — rollout targeting ONLY a maintenance machine by name returns 400.
+#[tokio::test]
+async fn m10b_rollout_targeting_only_maintenance_host_returns_400() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "maint-01", &["web"]).await;
+
+    // Put in maintenance
+    cp.admin
+        .patch(format!("{}/api/v1/machines/maint-01/lifecycle", cp.base))
+        .json(&serde_json::json!({"lifecycle": "maintenance"}))
+        .send()
+        .await
+        .unwrap();
+
+    let release_id = harness::create_release(&cp, &[("maint-01", "/nix/store/m10b")]).await;
+
+    let resp = cp
+        .admin
+        .post(format!("{}/api/v1/rollouts", cp.base))
+        .json(&serde_json::json!({
+            "release_id": release_id,
+            "strategy": "all_at_once",
+            "failure_threshold": "0",
+            "on_failure": "pause",
+            "health_timeout": 60,
+            "target": {"hosts": ["maint-01"]}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        400,
+        "rollout targeting only maintenance machines should be rejected"
     );
 }
