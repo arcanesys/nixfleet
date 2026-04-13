@@ -117,6 +117,41 @@ fn is_lock_contention(stderr: &str) -> bool {
         || lower.contains("resource busy")
 }
 
+/// Parse the output of `systemctl show nixfleet-switch.service -p ActiveState,Result`.
+///
+/// Returns `Some(true)` if the unit completed successfully,
+/// `Some(false)` if it failed, or `None` if still running / not found.
+fn parse_switch_status(output: &str) -> Option<bool> {
+    let mut active_state = None;
+    let mut result = None;
+    for line in output.lines() {
+        if let Some(val) = line.strip_prefix("ActiveState=") {
+            active_state = Some(val);
+        }
+        if let Some(val) = line.strip_prefix("Result=") {
+            result = Some(val);
+        }
+    }
+    match (active_state, result) {
+        (Some("inactive"), Some("success")) => Some(true),
+        (Some("inactive"), Some(_)) => Some(false),
+        _ => None,
+    }
+}
+
+/// Check the exit status of the `nixfleet-switch.service` transient unit.
+///
+/// Returns `Some(true)` if it completed successfully, `Some(false)` if
+/// it failed, or `None` if still running or not found.
+pub async fn check_switch_exit_status() -> Result<Option<bool>> {
+    let mut cmd = Command::new("systemctl");
+    cmd.args(["show", "nixfleet-switch.service", "-p", "ActiveState,Result"]);
+    let output = run_with_timeout(cmd, "systemctl show nixfleet-switch").await?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_switch_status(&stdout))
+}
+
 /// Fire switch-to-configuration in a detached transient systemd service.
 ///
 /// Spawns `systemd-run --unit=nixfleet-switch -- <switch-bin> switch`
@@ -463,5 +498,28 @@ mod tests {
         .await
         .unwrap();
         assert!(matched);
+    }
+
+    #[test]
+    fn test_parse_switch_status_success() {
+        let output = "ActiveState=inactive\nResult=success\n";
+        assert_eq!(parse_switch_status(output), Some(true));
+    }
+
+    #[test]
+    fn test_parse_switch_status_failed() {
+        let output = "ActiveState=inactive\nResult=exit-code\n";
+        assert_eq!(parse_switch_status(output), Some(false));
+    }
+
+    #[test]
+    fn test_parse_switch_status_still_running() {
+        let output = "ActiveState=active\nResult=success\n";
+        assert_eq!(parse_switch_status(output), None);
+    }
+
+    #[test]
+    fn test_parse_switch_status_empty() {
+        assert_eq!(parse_switch_status(""), None);
     }
 }
