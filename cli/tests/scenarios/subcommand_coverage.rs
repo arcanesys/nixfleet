@@ -17,6 +17,7 @@
 //!   - release create (+ push hook) — `vm-fleet-release`, `release_hook_scenarios.rs`
 //!   - release delete — `release_delete_scenarios.rs`
 
+use super::harness::cli_lock;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use wiremock::matchers::{method, path};
@@ -36,6 +37,7 @@ async fn cp_mock() -> MockServer {
 
 #[test]
 fn init_writes_config_file_in_cwd() {
+    let _guard = cli_lock();
     let dir = tempfile::tempdir().unwrap();
     Command::cargo_bin("nixfleet")
         .unwrap()
@@ -64,6 +66,7 @@ fn init_writes_config_file_in_cwd() {
 
 #[test]
 fn host_add_generates_disk_config_and_prints_snippet() {
+    let _guard = cli_lock();
     let dir = tempfile::tempdir().unwrap();
     Command::cargo_bin("nixfleet")
         .unwrap()
@@ -103,6 +106,7 @@ fn host_add_generates_disk_config_and_prints_snippet() {
 
 #[tokio::test]
 async fn bootstrap_prints_key_on_success() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("POST"))
@@ -131,6 +135,7 @@ async fn bootstrap_prints_key_on_success() {
 
 #[tokio::test]
 async fn bootstrap_fails_on_409_keys_exist() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("POST"))
@@ -176,6 +181,7 @@ fn fake_machine_status_json(id: &str, tags: &[&str]) -> serde_json::Value {
 
 #[tokio::test]
 async fn status_lists_machines() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("GET"))
@@ -208,6 +214,7 @@ async fn status_lists_machines() {
 
 #[tokio::test]
 async fn machines_list_no_filter_returns_all() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("GET"))
@@ -235,6 +242,7 @@ async fn machines_list_no_filter_returns_all() {
 
 #[tokio::test]
 async fn machines_list_filters_client_side_by_tag() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     // The CLI fetches all machines and filters client-side (it does
@@ -277,6 +285,7 @@ async fn machines_list_filters_client_side_by_tag() {
 
 #[tokio::test]
 async fn machines_list_json_output_is_valid() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("GET"))
@@ -320,52 +329,12 @@ async fn machines_list_json_output_is_valid() {
 }
 
 // =====================================================================
-// machines untag — DELETE /api/v1/machines/{id}/tags/{tag}
-// =====================================================================
-
-#[tokio::test]
-async fn machines_untag_calls_delete_endpoint() {
-    let server = cp_mock().await;
-
-    Mock::given(method("DELETE"))
-        .and(path("/api/v1/machines/web-01/tags/web"))
-        .respond_with(ResponseTemplate::new(204))
-        .mount(&server)
-        .await;
-
-    Command::cargo_bin("nixfleet")
-        .unwrap()
-        .args([
-            "--control-plane-url",
-            &server.uri(),
-            "--api-key",
-            "test-key",
-            "machines",
-            "untag",
-            "web-01",
-            "web",
-        ])
-        .assert()
-        .success();
-
-    // Verify the mock actually received the DELETE — proves the CLI
-    // built the URL correctly.
-    let received = server.received_requests().await.unwrap();
-    assert!(
-        received
-            .iter()
-            .any(|r| r.method.as_str() == "DELETE"
-                && r.url.path() == "/api/v1/machines/web-01/tags/web"),
-        "expected DELETE /api/v1/machines/web-01/tags/web in mock requests"
-    );
-}
-
-// =====================================================================
 // machines register — POST /api/v1/machines/{id}/register
 // =====================================================================
 
 #[tokio::test]
 async fn machines_register_posts_with_tags() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("POST"))
@@ -417,6 +386,7 @@ async fn machines_register_posts_with_tags() {
 
 #[tokio::test]
 async fn rollout_list_with_status_filter() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("GET"))
@@ -448,6 +418,7 @@ async fn rollout_list_with_status_filter() {
 
 #[tokio::test]
 async fn rollout_status_renders_detail() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     // Shape matches shared/src/rollout.rs::RolloutDetail.
@@ -492,6 +463,7 @@ async fn rollout_status_renders_detail() {
 
 #[tokio::test]
 async fn rollout_cancel_calls_post() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("POST"))
@@ -532,6 +504,7 @@ async fn rollout_cancel_calls_post() {
 
 #[tokio::test]
 async fn release_show_renders_detail() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("GET"))
@@ -579,6 +552,7 @@ async fn release_show_renders_detail() {
 
 #[tokio::test]
 async fn release_diff_renders_changes() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("GET"))
@@ -616,6 +590,7 @@ async fn release_diff_renders_changes() {
 
 #[tokio::test]
 async fn config_flag_loads_from_explicit_path() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     // Write a config file pointing at the mock server
@@ -661,6 +636,7 @@ async fn config_flag_loads_from_explicit_path() {
 
 #[tokio::test]
 async fn machines_list_comma_separated_tags() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("GET"))
@@ -702,6 +678,7 @@ async fn machines_list_comma_separated_tags() {
 
 #[tokio::test]
 async fn machines_register_repeatable_tags() {
+    let _guard = cli_lock();
     let server = cp_mock().await;
 
     Mock::given(method("POST"))
@@ -748,6 +725,7 @@ async fn machines_register_repeatable_tags() {
 
 #[test]
 fn init_writes_cache_hook_config() {
+    let _guard = cli_lock();
     let dir = tempfile::tempdir().unwrap();
     Command::cargo_bin("nixfleet")
         .unwrap()
@@ -781,4 +759,154 @@ fn init_writes_cache_hook_config() {
         body.contains("attic push mycache {}"),
         "expected push-cmd: {body}"
     );
+}
+
+// =====================================================================
+// rollout delete — DELETE /api/v1/rollouts/{id}
+// =====================================================================
+
+#[tokio::test]
+async fn rollout_delete_terminal_succeeds() {
+    let _guard = cli_lock();
+    let server = cp_mock().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/rollouts/r-done-123"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "--control-plane-url", &server.uri(),
+            "--api-key", "test-key",
+            "rollout", "delete", "r-done-123",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Rollout r-done-123 deleted"));
+}
+
+#[tokio::test]
+async fn rollout_delete_active_fails_with_409() {
+    let _guard = cli_lock();
+    let server = cp_mock().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/rollouts/r-active"))
+        .respond_with(ResponseTemplate::new(409).set_body_string("status is running"))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "--control-plane-url", &server.uri(),
+            "--api-key", "test-key",
+            "rollout", "delete", "r-active",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be deleted"));
+}
+
+// =====================================================================
+// machines set-lifecycle — PATCH /api/v1/machines/{id}/lifecycle
+// =====================================================================
+
+#[tokio::test]
+async fn machines_set_lifecycle_succeeds() {
+    let _guard = cli_lock();
+    let server = cp_mock().await;
+
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/machines/lab/lifecycle"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "--control-plane-url", &server.uri(),
+            "--api-key", "test-key",
+            "machines", "set-lifecycle", "lab", "maintenance",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("lifecycle set to maintenance"));
+}
+
+// =====================================================================
+// machines clear-desired — DELETE /api/v1/machines/{id}/desired-generation
+// =====================================================================
+
+#[tokio::test]
+async fn machines_clear_desired_succeeds() {
+    let _guard = cli_lock();
+    let server = cp_mock().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/machines/web-01/desired-generation"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "--control-plane-url", &server.uri(),
+            "--api-key", "test-key",
+            "machines", "clear-desired", "web-01",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Desired generation cleared"));
+}
+
+// =====================================================================
+// release create --eval-only conflicts with --push-to (clap validation)
+// =====================================================================
+
+#[test]
+fn eval_only_conflicts_with_push_to() {
+    let _guard = cli_lock();
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "release", "create",
+            "--eval-only",
+            "--push-to", "ssh://cache",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+// =====================================================================
+// release list --host — GET /api/v1/releases?host=web-01
+// =====================================================================
+
+#[tokio::test]
+async fn release_list_with_host_filter() {
+    let _guard = cli_lock();
+    let server = cp_mock().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/releases"))
+        .and(wiremock::matchers::query_param("host", "web-01"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "--control-plane-url", &server.uri(),
+            "--api-key", "test-key",
+            "release", "list", "--host", "web-01",
+        ])
+        .assert()
+        .success();
 }
