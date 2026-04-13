@@ -6,10 +6,11 @@ use nixfleet_types::release::{
     CreateReleaseRequest, CreateReleaseResponse, Release, ReleaseDiff, ReleaseEntry,
 };
 use reqwest::Client;
-use std::process::Command;
+use std::process::Stdio;
+use tokio::process::Command;
 
 /// Discover all nixosConfigurations host names from a flake.
-fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<Vec<String>> {
+pub(crate) async fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<Vec<String>> {
     let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
@@ -23,11 +24,15 @@ fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<Vec<St
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit())
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
             .output()
+            .await
             .context("failed to run nix eval")?
     } else {
-        display::run_cmd(&mut cmd, None).context("failed to run nix eval")?
+        display::run_cmd_async(&mut cmd, None)
+            .await
+            .context("failed to run nix eval")?
     };
     oplog.log_output("nix eval discover hosts", None, &output, t.elapsed());
     if !output.status.success() {
@@ -42,7 +47,7 @@ fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<Vec<St
 }
 
 /// Detect platform for a host.
-fn detect_platform(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Result<String> {
+async fn detect_platform(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Result<String> {
     let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
@@ -54,11 +59,15 @@ fn detect_platform(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog)
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit())
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
             .output()
+            .await
             .context("failed to detect platform")?
     } else {
-        display::run_cmd(&mut cmd, None).context("failed to detect platform")?
+        display::run_cmd_async(&mut cmd, None)
+            .await
+            .context("failed to detect platform")?
     };
     oplog.log_output(
         &format!("nix eval platform {}", hostname),
@@ -77,7 +86,7 @@ fn detect_platform(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog)
 }
 
 /// Detect tags for a host (best-effort).
-fn detect_tags(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Vec<String> {
+async fn detect_tags(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Vec<String> {
     let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
@@ -92,9 +101,12 @@ fn detect_tags(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> 
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit()).output()
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .output()
+            .await
     } else {
-        display::run_cmd(&mut cmd, None)
+        display::run_cmd_async(&mut cmd, None).await
     };
     match output {
         Ok(ref o) => {
@@ -115,7 +127,7 @@ fn detect_tags(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> 
 }
 
 /// Build a host's toplevel closure.
-fn build_host(
+pub(crate) async fn build_host(
     flake: &str,
     hostname: &str,
     window: Option<&mut display::RollingWindow>,
@@ -137,11 +149,15 @@ fn build_host(
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit())
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
             .output()
+            .await
             .context("failed to run nix build")?
     } else {
-        display::run_cmd(&mut cmd, window).context("failed to run nix build")?
+        display::run_cmd_async(&mut cmd, window)
+            .await
+            .context("failed to run nix build")?
     };
     oplog.log_output(
         &format!("nix build {}", hostname),
@@ -160,15 +176,15 @@ fn build_host(
 }
 
 /// Evaluate a host's store path without building.
-fn eval_host(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Result<String> {
+async fn eval_host(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Result<String> {
     let t = std::time::Instant::now();
     let attr = format!(
         "{}#nixosConfigurations.{}.config.system.build.toplevel.outPath",
         flake, hostname
     );
-    let mut cmd = std::process::Command::new("nix");
+    let mut cmd = Command::new("nix");
     cmd.args(["eval", &attr, "--raw"]);
-    let output = display::run_cmd(&mut cmd, None)?;
+    let output = display::run_cmd_async(&mut cmd, None).await?;
     oplog.log_output(
         &format!("nix eval {}", hostname),
         Some(hostname),
@@ -186,7 +202,7 @@ fn eval_host(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Re
 }
 
 /// Copy a store path to a Nix binary cache (S3, SSH, HTTP, etc.).
-fn nix_copy_to(
+async fn nix_copy_to(
     cache_url: &str,
     store_path: &str,
     window: Option<&mut display::RollingWindow>,
@@ -201,9 +217,10 @@ fn nix_copy_to(
     }
     let output = if display::passthrough_output() {
         let status = cmd
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .status()
+            .await
             .context("failed to run nix copy --to")?;
         std::process::Output {
             status,
@@ -211,7 +228,9 @@ fn nix_copy_to(
             stderr: vec![],
         }
     } else {
-        display::run_cmd(&mut cmd, window).context("failed to run nix copy --to")?
+        display::run_cmd_async(&mut cmd, window)
+            .await
+            .context("failed to run nix copy --to")?
     };
     oplog.log_output(
         &format!("nix copy --to {}", cache_url),
@@ -231,7 +250,7 @@ fn nix_copy_to(
 }
 
 /// Copy a closure to a remote host via SSH.
-fn copy_to_host(
+async fn copy_to_host(
     hostname: &str,
     store_path: &str,
     window: Option<&mut display::RollingWindow>,
@@ -243,9 +262,10 @@ fn copy_to_host(
     cmd.args(["--to", &format!("root@{}", hostname), store_path]);
     let output = if display::passthrough_output() {
         let status = cmd
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .status()
+            .await
             .context("failed to run nix-copy-closure")?;
         std::process::Output {
             status,
@@ -253,7 +273,9 @@ fn copy_to_host(
             stderr: vec![],
         }
     } else {
-        display::run_cmd(&mut cmd, window).context("failed to run nix-copy-closure")?
+        display::run_cmd_async(&mut cmd, window)
+            .await
+            .context("failed to run nix-copy-closure")?
     };
     oplog.log_output(
         &format!("nix-copy-closure {}", hostname),
@@ -268,13 +290,17 @@ fn copy_to_host(
 }
 
 /// Resolve the flake's git revision.
-fn flake_revision(flake: &str) -> Option<String> {
+async fn flake_revision(flake: &str) -> Option<String> {
     let mut cmd = Command::new("nix");
     cmd.args(["flake", "metadata", flake, "--json"]);
     let output = if display::passthrough_output() {
-        cmd.stderr(std::process::Stdio::inherit()).output().ok()?
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .output()
+            .await
+            .ok()?
     } else {
-        display::run_cmd(&mut cmd, None).ok()?
+        display::run_cmd_async(&mut cmd, None).await.ok()?
     };
     if !output.status.success() {
         return None;
@@ -284,7 +310,7 @@ fn flake_revision(flake: &str) -> Option<String> {
 }
 
 /// Run a push hook command for a store path, optionally on a remote host via SSH.
-pub fn run_push_hook(
+pub async fn run_push_hook(
     push_to_host: Option<&str>,
     hook_cmd: &str,
     store_path: &str,
@@ -306,16 +332,19 @@ pub fn run_push_hook(
     };
     if display::passthrough_output() {
         let status = cmd
-            .stderr(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .stdout(Stdio::inherit())
             .status()
+            .await
             .context("failed to run push hook")?;
         if !status.success() {
             anyhow::bail!("push hook failed: {}", cmd_str);
         }
         return Ok(());
     }
-    let output = display::run_cmd(&mut cmd, window).context("failed to run push hook")?;
+    let output = display::run_cmd_async(&mut cmd, window)
+        .await
+        .context("failed to run push hook")?;
     if !output.status.success() {
         anyhow::bail!("push hook failed: {}", cmd_str);
     }
@@ -346,7 +375,7 @@ pub async fn create(
     let mut oplog = crate::oplog::OpLog::new("release-create")?;
 
     tracing::info!("discovering hosts");
-    let all_hosts = discover_hosts(flake, &mut oplog)?;
+    let all_hosts = discover_hosts(flake, &mut oplog).await?;
     let hosts = filter_hosts(&all_hosts, host_patterns);
     if hosts.is_empty() {
         anyhow::bail!("no hosts match pattern '{}'", host_patterns.join(","));
@@ -397,10 +426,10 @@ async fn create_inner(
             if let Some(ref mut w) = window {
                 w.set_line_prefix(hostname);
             }
-            let platform = detect_platform(flake, hostname, oplog)?;
-            let tags = detect_tags(flake, hostname, oplog);
+            let platform = detect_platform(flake, hostname, oplog).await?;
+            let tags = detect_tags(flake, hostname, oplog).await;
             let build_result = if eval_only {
-                eval_host(flake, hostname, oplog)
+                eval_host(flake, hostname, oplog).await
             } else {
                 build_host(
                     flake,
@@ -408,6 +437,7 @@ async fn create_inner(
                     window.as_mut().and_then(|w| w.for_output()),
                     oplog,
                 )
+                .await
             };
             match build_result {
                 Ok(store_path) => {
@@ -460,7 +490,9 @@ async fn create_inner(
                             &entry.store_path,
                             window.as_mut().and_then(|w| w.for_output()),
                             oplog,
-                        ) {
+                        )
+                        .await
+                        {
                             if let Some(ref mut w) = window {
                                 w.mark_error();
                             }
@@ -496,7 +528,8 @@ async fn create_inner(
                         hook,
                         &entry.store_path,
                         window.as_mut().and_then(|w| w.for_output()),
-                    )?;
+                    )
+                    .await?;
                     if let Some(ref w) = window {
                         w.inc();
                     }
@@ -521,7 +554,8 @@ async fn create_inner(
                     hook,
                     &entry.store_path,
                     window.as_mut().and_then(|w| w.for_output()),
-                )?;
+                )
+                .await?;
                 if let Some(ref w) = window {
                     w.inc();
                 }
@@ -550,7 +584,8 @@ async fn create_inner(
                         &entry.store_path,
                         window.as_mut().and_then(|w| w.for_output()),
                         oplog,
-                    );
+                    )
+                    .await;
                     if let Err(e) = copy_result {
                         tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
                         if let Some(ref mut w) = window {
@@ -586,7 +621,7 @@ async fn create_inner(
     }
 
     // Register with CP
-    let flake_rev = flake_revision(flake);
+    let flake_rev = flake_revision(flake).await;
     let req = CreateReleaseRequest {
         flake_ref: Some(flake.to_string()),
         flake_rev,
