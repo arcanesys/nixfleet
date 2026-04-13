@@ -2,7 +2,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::Router;
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::sync::Arc;
@@ -168,9 +168,16 @@ pub fn build_app(
             "/api/v1/machines/{id}/lifecycle",
             patch(routes::update_lifecycle),
         )
+        .route(
+            "/api/v1/machines/{id}/desired-generation",
+            delete(routes::clear_desired_generation),
+        )
         .route("/api/v1/rollouts", post(rollout::routes::create_rollout))
         .route("/api/v1/rollouts", get(rollout::routes::list_rollouts))
-        .route("/api/v1/rollouts/{id}", get(rollout::routes::get_rollout))
+        .route(
+            "/api/v1/rollouts/{id}",
+            get(rollout::routes::get_rollout).delete(rollout::routes::delete_rollout),
+        )
         .route(
             "/api/v1/rollouts/{id}/resume",
             post(rollout::routes::resume_rollout),
