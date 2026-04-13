@@ -244,6 +244,7 @@ in {
         );
         Restart = "always";
         RestartSec = 30;
+        StartLimitIntervalSec = 0;
         StateDirectory = "nixfleet";
 
         # The agent is a privileged system manager: it runs
