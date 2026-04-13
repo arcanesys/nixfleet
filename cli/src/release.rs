@@ -42,11 +42,7 @@ fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<Vec<St
 }
 
 /// Detect platform for a host.
-fn detect_platform(
-    flake: &str,
-    hostname: &str,
-    oplog: &mut crate::oplog::OpLog,
-) -> Result<String> {
+fn detect_platform(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Result<String> {
     let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
@@ -311,7 +307,12 @@ pub fn run_push_hook(
                 stdout: vec![],
                 stderr: vec![],
             };
-            oplog.log_output(&format!("push-hook {}", hostname.unwrap_or("local")), hostname, &output, t.elapsed());
+            oplog.log_output(
+                &format!("push-hook {}", hostname.unwrap_or("local")),
+                hostname,
+                &output,
+                t.elapsed(),
+            );
         }
         if !status.success() {
             anyhow::bail!("push hook failed: {}", cmd_str);
@@ -320,7 +321,12 @@ pub fn run_push_hook(
     }
     let output = display::run_cmd(&mut cmd, window).context("failed to run push hook")?;
     if let Some(oplog) = oplog {
-        oplog.log_output(&format!("push-hook {}", hostname.unwrap_or("local")), hostname, &output, t.elapsed());
+        oplog.log_output(
+            &format!("push-hook {}", hostname.unwrap_or("local")),
+            hostname,
+            &output,
+            t.elapsed(),
+        );
     }
     if !output.status.success() {
         anyhow::bail!("push hook failed: {}", cmd_str);
