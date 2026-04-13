@@ -129,7 +129,6 @@ pub fn update_fleet_gauges(state: &FleetState) {
 /// Replaces dynamic path segments with placeholder tokens:
 /// - Nix store paths and UUID-like machine IDs → `{id}`
 /// - Rollout UUIDs → `{id}`
-/// - Tag names in /tags/{tag} → `{tag}`
 pub fn normalize_path(path: &str) -> String {
     let segments: Vec<&str> = path.split('/').collect();
     let mut result = Vec::with_capacity(segments.len());
@@ -138,17 +137,8 @@ pub fn normalize_path(path: &str) -> String {
     while i < segments.len() {
         let segment = segments[i];
 
-        // /tags/{tag} — segment after "tags" is a tag name
-        if segment == "tags" {
-            result.push("tags");
-            if i + 1 < segments.len() && !segments[i + 1].is_empty() {
-                result.push("{tag}");
-                i += 2;
-                continue;
-            }
-        }
         // Nix store paths: start with /nix/store/
-        else if segment == "nix" && i + 1 < segments.len() && segments[i + 1] == "store" {
+        if segment == "nix" && i + 1 < segments.len() && segments[i + 1] == "store" {
             result.push("nix");
             result.push("store");
             result.push("{id}");
@@ -189,7 +179,7 @@ fn is_dynamic_segment(segment: &str) -> bool {
         "desired-generation",
         "register",
         "lifecycle",
-        "tags",
+        "notify-deploy",
         "report",
         "resume",
         "cancel",
@@ -269,18 +259,10 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_tag_paths() {
+    fn test_normalize_notify_deploy_path() {
         assert_eq!(
-            normalize_path("/api/v1/machines/web-01/tags"),
-            "/api/v1/machines/{id}/tags"
-        );
-        assert_eq!(
-            normalize_path("/api/v1/machines/web-01/tags/production"),
-            "/api/v1/machines/{id}/tags/{tag}"
-        );
-        assert_eq!(
-            normalize_path("/api/v1/machines/web-01/tags/env:prod"),
-            "/api/v1/machines/{id}/tags/{tag}"
+            normalize_path("/api/v1/machines/web-01/notify-deploy"),
+            "/api/v1/machines/{id}/notify-deploy"
         );
     }
 
