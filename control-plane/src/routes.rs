@@ -95,7 +95,6 @@ pub async fn post_report(
     let mut fleet = state.write().await;
     let is_new = !fleet.machines.contains_key(&id);
     let machine = fleet.get_or_create(&id);
-    machine.last_seen = Some(report.timestamp);
     machine.last_received = Some(chrono::Utc::now());
     machine.last_report = Some(report);
     machine.agent_version = machine

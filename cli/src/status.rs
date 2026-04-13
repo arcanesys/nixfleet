@@ -3,6 +3,14 @@ use nixfleet_types::MachineStatus;
 
 use crate::display;
 
+/// Check if a machine's last report exceeds the stale threshold.
+/// Returns false if the machine has never reported (seconds_since_last_report is None).
+fn is_stale(m: &MachineStatus, threshold: u64) -> bool {
+    m.seconds_since_last_report
+        .map(|s| s > threshold)
+        .unwrap_or(false)
+}
+
 pub async fn run(
     client: &reqwest::Client,
     cp_url: &str,
@@ -38,10 +46,7 @@ pub async fn run(
                 "error" => "ERROR",
                 _ => "?",
             };
-            let is_stale = m
-                .seconds_since_last_report
-                .map(|s| s > stale_threshold)
-                .unwrap_or(false);
+            let is_stale = is_stale(m, stale_threshold);
             let state = if is_stale {
                 format!("{state_str} (stale)")
             } else {
@@ -100,6 +105,7 @@ pub async fn run(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use nixfleet_types::{MachineLifecycle, MachineStatus};
 
     fn make_machine(system_state: &str, seconds_since: Option<u64>) -> MachineStatus {
@@ -122,35 +128,18 @@ mod tests {
         let threshold: u64 = 600;
 
         // Fresh machine — no stale annotation
-        let m = make_machine("ok", Some(300));
-        let is_stale = m
-            .seconds_since_last_report
-            .map(|s| s > threshold)
-            .unwrap_or(false);
-        assert!(!is_stale);
+        assert!(!is_stale(&make_machine("ok", Some(300)), threshold));
 
         // Stale machine
-        let m = make_machine("ok", Some(900));
-        let is_stale = m
-            .seconds_since_last_report
-            .map(|s| s > threshold)
-            .unwrap_or(false);
-        assert!(is_stale);
+        assert!(is_stale(&make_machine("ok", Some(900)), threshold));
 
         // Never reported — not stale (already shows "?" / "never")
-        let m = make_machine("unknown", None);
-        let is_stale = m
-            .seconds_since_last_report
-            .map(|s| s > threshold)
-            .unwrap_or(false);
-        assert!(!is_stale);
+        assert!(!is_stale(&make_machine("unknown", None), threshold));
 
         // Error + stale
-        let m = make_machine("error", Some(1200));
-        let is_stale = m
-            .seconds_since_last_report
-            .map(|s| s > threshold)
-            .unwrap_or(false);
-        assert!(is_stale);
+        assert!(is_stale(&make_machine("error", Some(1200)), threshold));
+
+        // Exactly at threshold — not stale (> not >=)
+        assert!(!is_stale(&make_machine("ok", Some(600)), threshold));
     }
 }

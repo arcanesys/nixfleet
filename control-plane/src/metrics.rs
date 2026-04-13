@@ -105,8 +105,8 @@ pub fn update_fleet_gauges(state: &FleetState) {
             _ => {}
         }
 
-        if let Some(last_seen) = machine.last_seen {
-            let ts = last_seen.timestamp() as f64;
+        if let Some(last_received) = machine.last_received {
+            let ts = last_received.timestamp() as f64;
             metrics::gauge!(
                 m::MACHINE_LAST_SEEN_TIMESTAMP,
                 "machine_id" => machine_id.clone()
