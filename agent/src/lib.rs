@@ -12,13 +12,17 @@ use tokio::signal;
 use tokio::time::{interval_at, Instant, Interval, MissedTickBehavior};
 use tracing::{error, info, warn};
 
-use crate::nix::ApplyOutcome;
+/// Maximum retries when a fired switch fails (poll timeout + bad exit status).
+const MAX_SWITCH_RETRIES: u32 = 3;
 
-/// Maximum retries on activation lock contention.
-const MAX_APPLY_RETRIES: u32 = 3;
+/// Timeout for polling `/run/current-system` after firing a switch.
+const SWITCH_POLL_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Base delay for exponential backoff on lock contention.
-const APPLY_RETRY_BASE: Duration = Duration::from_secs(5);
+/// Interval between polls of `/run/current-system`.
+const SWITCH_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Path to the current system symlink.
+const CURRENT_SYSTEM_PATH: &str = "/run/current-system";
 
 pub mod comms;
 pub mod config;
@@ -190,38 +194,48 @@ async fn run_health_report(client: &comms::Client, config: &Config, health_runne
     }
 }
 
-/// Retry an apply operation with exponential backoff on lock contention.
+/// Fire switch-to-configuration and poll until the generation matches.
 ///
-/// Calls `apply_fn` up to `MAX_APPLY_RETRIES + 1` times (initial + retries).
-/// Returns `Ok(())` on success, `Ok(ApplyOutcome::LockContention(msg))` if
-/// all retries exhausted, or `Err` on fatal failure.
-async fn apply_with_retry<F, Fut>(apply_fn: F) -> anyhow::Result<nix::ApplyOutcome>
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<nix::ApplyOutcome>>,
-{
-    let mut attempts = 0u32;
-    loop {
-        match apply_fn().await {
-            Ok(ApplyOutcome::Applied) => return Ok(ApplyOutcome::Applied),
-            Ok(ApplyOutcome::LockContention(msg)) => {
-                attempts += 1;
-                if attempts > MAX_APPLY_RETRIES {
-                    return Ok(ApplyOutcome::LockContention(msg));
-                }
-                let delay = APPLY_RETRY_BASE * 2u32.pow(attempts - 1);
+/// Retries the entire fire+poll cycle up to `MAX_SWITCH_RETRIES` times
+/// if the switch unit exits with failure. Returns `Ok(true)` on success,
+/// `Ok(false)` if all retries exhausted or the switch outcome is unknown.
+async fn fire_poll_switch(store_path: &str) -> anyhow::Result<bool> {
+    nix::fire_switch(store_path).await?;
+
+    let path = std::path::Path::new(CURRENT_SYSTEM_PATH);
+    if nix::poll_generation(store_path, path, SWITCH_POLL_TIMEOUT, SWITCH_POLL_INTERVAL).await? {
+        return Ok(true);
+    }
+
+    // Poll timed out — check transient unit status and retry if it failed.
+    for attempt in 1..=MAX_SWITCH_RETRIES {
+        match nix::check_switch_exit_status().await? {
+            Some(false) => {
                 warn!(
-                    attempt = attempts,
-                    max = MAX_APPLY_RETRIES,
-                    delay_secs = delay.as_secs(),
-                    stderr = %msg,
-                    "Activation lock held, retrying"
+                    attempt,
+                    max = MAX_SWITCH_RETRIES,
+                    "Switch unit failed, retrying"
                 );
-                tokio::time::sleep(delay).await;
+                nix::fire_switch(store_path).await?;
+                if nix::poll_generation(
+                    store_path,
+                    path,
+                    SWITCH_POLL_TIMEOUT,
+                    SWITCH_POLL_INTERVAL,
+                )
+                .await?
+                {
+                    return Ok(true);
+                }
             }
-            Err(e) => return Err(e),
+            _ => {
+                // Still running, succeeded-but-mismatch, or unit not found.
+                warn!("Switch poll timed out, unit status inconclusive");
+                return Ok(false);
+            }
         }
     }
+    Ok(false)
 }
 
 /// Run a full deploy cycle: check → fetch → apply → verify → report.
@@ -304,37 +318,32 @@ async fn run_deploy_cycle(
         return PollOutcome::Success { poll_hint };
     }
 
-    // Apply: switch-to-configuration with retry on lock contention.
+    // Apply: fire switch-to-configuration in a detached transient service,
+    // then poll /run/current-system until it matches the desired generation.
+    // The agent may be killed mid-switch (self-switch); on restart the
+    // initial deploy cycle re-enters this path and the poll succeeds.
     metrics::record_state_transition("fetching", "applying");
+    send_report(client, config, true, "applying").await;
 
-    match apply_with_retry(|| nix::apply_generation(&desired.hash)).await {
-        Ok(ApplyOutcome::Applied) => {
+    let applied = match fire_poll_switch(&desired.hash).await {
+        Ok(true) => {
             info!(hash = %desired.hash, "Generation applied");
+            true
         }
-        Ok(ApplyOutcome::LockContention(msg)) => {
-            error!(
-                retries = MAX_APPLY_RETRIES,
-                "Lock contention after all retries: {msg}"
-            );
-            if let Err(se) = store.log_error(&format!("lock contention: {msg}")).await {
-                warn!("store error: {se}");
-            }
-            metrics::record_state_transition("applying", "reporting");
-            send_report(
-                client,
-                config,
-                false,
-                &format!("lock contention after {MAX_APPLY_RETRIES} retries: {msg}"),
-            )
-            .await;
-            return PollOutcome::Failed;
+        Ok(false) => {
+            error!("Failed to apply generation after retries");
+            false
         }
         Err(e) => {
-            error!("Failed to apply generation: {e}");
-            metrics::record_state_transition("applying", "rolling_back");
-            rollback_and_report(client, config, store, &format!("apply failed: {e}")).await;
-            return PollOutcome::Success { poll_hint };
+            error!("Fatal error during apply: {e}");
+            false
         }
+    };
+
+    if !applied {
+        metrics::record_state_transition("applying", "rolling_back");
+        rollback_and_report(client, config, store, "switch timed out after retries").await;
+        return PollOutcome::Success { poll_hint };
     }
 
     // Verify: run health checks after apply.
@@ -418,69 +427,40 @@ async fn send_report(client: &comms::Client, config: &Config, success: bool, mes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nix::ApplyOutcome;
-    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[tokio::test]
-    async fn test_apply_with_retry_succeeds_immediately() {
-        let result = apply_with_retry(|| async { Ok(ApplyOutcome::Applied) }).await;
-        assert!(matches!(result, Ok(ApplyOutcome::Applied)));
-    }
-
-    #[tokio::test]
-    async fn test_apply_with_retry_succeeds_after_contention() {
+    async fn test_poll_succeeds_immediately() {
         tokio::time::pause();
-        let call_count = AtomicU32::new(0);
-        let result = apply_with_retry(|| {
-            let n = call_count.fetch_add(1, Ordering::SeqCst);
-            async move {
-                if n < 2 {
-                    Ok(ApplyOutcome::LockContention("busy".to_string()))
-                } else {
-                    Ok(ApplyOutcome::Applied)
-                }
-            }
-        })
-        .await;
-        assert!(matches!(result, Ok(ApplyOutcome::Applied)));
-        assert_eq!(call_count.load(Ordering::SeqCst), 3); // initial + 2 retries
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("current-system");
+        std::os::unix::fs::symlink("/nix/store/abc-target", &link).unwrap();
+
+        let matched = nix::poll_generation(
+            "/nix/store/abc-target",
+            &link,
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+        assert!(matched);
     }
 
     #[tokio::test]
-    async fn test_apply_with_retry_exhausts_retries() {
+    async fn test_poll_timeout() {
         tokio::time::pause();
-        let call_count = AtomicU32::new(0);
-        let result = apply_with_retry(|| {
-            call_count.fetch_add(1, Ordering::SeqCst);
-            async { Ok(ApplyOutcome::LockContention("still busy".to_string())) }
-        })
-        .await;
-        assert!(matches!(result, Ok(ApplyOutcome::LockContention(_))));
-        assert_eq!(call_count.load(Ordering::SeqCst), 4); // initial + 3 retries
-    }
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("current-system");
+        std::os::unix::fs::symlink("/nix/store/abc-wrong", &link).unwrap();
 
-    #[tokio::test]
-    async fn test_apply_with_retry_propagates_fatal_error() {
-        let result = apply_with_retry(|| async { Err(anyhow::anyhow!("spawn failed")) }).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_apply_with_retry_fatal_after_contention() {
-        tokio::time::pause();
-        let call_count = AtomicU32::new(0);
-        let result = apply_with_retry(|| {
-            let n = call_count.fetch_add(1, Ordering::SeqCst);
-            async move {
-                if n == 0 {
-                    Ok(ApplyOutcome::LockContention("busy".to_string()))
-                } else {
-                    Err(anyhow::anyhow!("real failure"))
-                }
-            }
-        })
-        .await;
-        assert!(result.is_err());
-        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+        let matched = nix::poll_generation(
+            "/nix/store/abc-target",
+            &link,
+            Duration::from_secs(5),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+        assert!(!matched);
     }
 }
