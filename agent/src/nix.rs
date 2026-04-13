@@ -127,26 +127,8 @@ pub async fn apply_generation(store_path: &str) -> Result<ApplyOutcome> {
     let switch_bin = format!("{store_path}/bin/switch-to-configuration");
     info!(switch_bin, "Applying generation");
 
-    // Spawn switch-to-configuration in a transient systemd service so it
-    // survives the agent being stopped. Without this, switch-to-configuration
-    // is a child process in the agent's cgroup — when it runs
-    // `systemctl stop nixfleet-agent`, systemd kills ALL processes in the
-    // cgroup, including switch-to-configuration itself. The activation never
-    // completes, the system profile never updates, and the agent loops.
-    //
-    // --pipe: connect stdin/stdout/stderr so we can capture output.
-    // --wait: block until the transient unit finishes (like a synchronous call).
-    // --unit: named unit so concurrent invocations are rejected by systemd
-    //         rather than racing.
-    let mut cmd = Command::new("systemd-run");
-    cmd.args([
-        "--pipe",
-        "--wait",
-        "--unit=nixfleet-switch",
-        "--",
-        &switch_bin,
-        "switch",
-    ]);
+    let mut cmd = Command::new(&switch_bin);
+    cmd.arg("switch");
     let output = run_with_timeout(cmd, "switch-to-configuration").await?;
 
     if !output.status.success() {
