@@ -20,7 +20,7 @@ struct Cli {
     machine_id: String,
 
     /// Poll interval in seconds (steady-state)
-    #[arg(long, default_value = "300", env = "NIXFLEET_POLL_INTERVAL")]
+    #[arg(long, default_value = "60", env = "NIXFLEET_POLL_INTERVAL")]
     poll_interval: u64,
 
     /// Retry interval in seconds after a failed poll

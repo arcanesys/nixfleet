@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 pub struct MachineState {
     pub desired_generation: Option<DesiredGeneration>,
     pub last_report: Option<Report>,
-    pub last_seen: Option<DateTime<Utc>>,
+    pub last_received: Option<DateTime<Utc>>,
     pub lifecycle: MachineLifecycle,
     pub registered_at: Option<DateTime<Utc>>,
     pub tags: Vec<String>,
@@ -28,7 +28,7 @@ impl MachineState {
         Self {
             desired_generation: None,
             last_report: None,
-            last_seen: None,
+            last_received: None,
             lifecycle: MachineLifecycle::Active,
             registered_at: None,
             tags: vec![],
@@ -42,7 +42,7 @@ impl MachineState {
         Self {
             desired_generation: None,
             last_report: None,
-            last_seen: None,
+            last_received: None,
             lifecycle: MachineLifecycle::Pending,
             registered_at: Some(Utc::now()),
             tags: vec![],

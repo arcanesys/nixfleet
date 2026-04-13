@@ -27,7 +27,7 @@ in {
 
     pollInterval = lib.mkOption {
       type = lib.types.int;
-      default = 300;
+      default = 60;
       description = "Poll interval in seconds (steady-state).";
     };
 
@@ -183,6 +183,7 @@ in {
       wantedBy = ["multi-user.target"];
       after = ["network-online.target" "nix-daemon.service"];
       wants = ["network-online.target"];
+      startLimitIntervalSec = 0;
 
       # Agent shells out to nix (copy, path-info) and switch-to-configuration
       path = [config.nix.package pkgs.systemd];

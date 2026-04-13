@@ -96,23 +96,97 @@ pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<
     Ok(())
 }
 
-/// Apply a generation by running its `switch-to-configuration switch`.
+/// Parse the output of `systemctl show nixfleet-switch.service -p ActiveState,Result`.
 ///
-/// Runs: `<store_path>/bin/switch-to-configuration switch`
-pub async fn apply_generation(store_path: &str) -> Result<()> {
+/// Returns `Some(true)` if the unit completed successfully,
+/// `Some(false)` if it failed, or `None` if still running / not found.
+fn parse_switch_status(output: &str) -> Option<bool> {
+    let mut active_state = None;
+    let mut result = None;
+    for line in output.lines() {
+        if let Some(val) = line.strip_prefix("ActiveState=") {
+            active_state = Some(val);
+        }
+        if let Some(val) = line.strip_prefix("Result=") {
+            result = Some(val);
+        }
+    }
+    match (active_state, result) {
+        (Some("inactive"), Some("success")) => Some(true),
+        (Some("inactive"), Some(_)) => Some(false),
+        _ => None,
+    }
+}
+
+/// Check the exit status of the `nixfleet-switch.service` transient unit.
+///
+/// Returns `Some(true)` if it completed successfully, `Some(false)` if
+/// it failed, or `None` if still running or not found.
+pub async fn check_switch_exit_status() -> Result<Option<bool>> {
+    let mut cmd = Command::new("systemctl");
+    cmd.args([
+        "show",
+        "nixfleet-switch.service",
+        "-p",
+        "ActiveState,Result",
+    ]);
+    let output = run_with_timeout(cmd, "systemctl show nixfleet-switch").await?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_switch_status(&stdout))
+}
+
+/// Fire switch-to-configuration in a detached transient systemd service.
+///
+/// Spawns `systemd-run --unit=nixfleet-switch -- <switch-bin> switch`
+/// and returns as soon as the transient unit is queued. The switch runs
+/// asynchronously in `nixfleet-switch.service` — the agent does NOT
+/// wait for it to complete. This allows the agent to survive being
+/// killed by its own switch-to-configuration.
+///
+/// Errors on spawn failure or if the transient unit cannot be created
+/// (e.g., a previous `nixfleet-switch.service` hasn't been cleaned up).
+pub async fn fire_switch(store_path: &str) -> Result<()> {
     validate_store_path(store_path)?;
     let switch_bin = format!("{store_path}/bin/switch-to-configuration");
-    info!(switch_bin, "Applying generation");
+    info!(switch_bin, "Firing switch-to-configuration (detached)");
 
-    let mut cmd = Command::new(&switch_bin);
-    cmd.arg("switch");
-    let output = run_with_timeout(cmd, "switch-to-configuration").await?;
+    let mut cmd = Command::new("systemd-run");
+    cmd.args(["--unit=nixfleet-switch", "--", &switch_bin, "switch"]);
+    let output = run_with_timeout(cmd, "systemd-run").await?;
 
     if !output.status.success() {
         let stderr = truncated_stderr(&output.stderr);
-        anyhow::bail!("switch-to-configuration failed: {stderr}");
+        anyhow::bail!("systemd-run failed to queue switch: {stderr}");
     }
+    info!("Switch queued as nixfleet-switch.service");
     Ok(())
+}
+
+/// Poll a symlink path until it resolves to the expected store path.
+///
+/// Returns `Ok(true)` when the symlink target matches `expected`,
+/// `Ok(false)` when `timeout` expires without a match. The `path`
+/// parameter allows tests to use a temp directory instead of
+/// `/run/current-system`.
+pub async fn poll_generation(
+    expected: &str,
+    path: &std::path::Path,
+    timeout: Duration,
+    interval: Duration,
+) -> Result<bool> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(target) = tokio::fs::read_link(path).await {
+            if target.to_string_lossy() == expected {
+                return Ok(true);
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        tokio::time::sleep(interval).await;
+    }
 }
 
 /// Roll back to the previous system generation.
@@ -157,12 +231,24 @@ pub async fn rollback() -> Result<()> {
     let prev_path = format!("/nix/var/nix/profiles/system-{gen_num}-link");
     info!(prev_path, "Switching to previous generation");
 
-    // Resolve profile symlink to store path (apply_generation expects a store path)
+    // Resolve profile symlink to store path
     let store_path = tokio::fs::read_link(&prev_path)
         .await
         .context("failed to resolve profile symlink to store path")?;
-    apply_generation(&store_path.to_string_lossy()).await?;
-    Ok(())
+    let store_path_str = store_path.to_string_lossy();
+
+    // Fire the rollback switch in a detached transient service
+    fire_switch(&store_path_str).await?;
+
+    // Poll until the system switches to the previous generation
+    let path = std::path::Path::new("/run/current-system");
+    let timeout = Duration::from_secs(300);
+    let interval = Duration::from_secs(2);
+    if poll_generation(&store_path_str, path, timeout, interval).await? {
+        Ok(())
+    } else {
+        anyhow::bail!("rollback timed out: /run/current-system did not match {store_path_str}")
+    }
 }
 
 #[cfg(test)]
@@ -216,16 +302,6 @@ mod tests {
     }
 
     #[test]
-    fn test_switch_bin_path_construction() {
-        let store_path = "/nix/store/abc123-nixos-system";
-        let switch_bin = format!("{store_path}/bin/switch-to-configuration");
-        assert_eq!(
-            switch_bin,
-            "/nix/store/abc123-nixos-system/bin/switch-to-configuration"
-        );
-    }
-
-    #[test]
     fn test_generation_profile_path_construction() {
         let gen_num: u64 = 42;
         let prev_path = format!("/nix/var/nix/profiles/system-{gen_num}-link");
@@ -272,5 +348,106 @@ mod tests {
         let args = ["path-info", store_path];
         assert_eq!(args[0], "path-info");
         assert_eq!(args[1], store_path);
+    }
+
+    #[tokio::test]
+    async fn test_poll_generation_matches_immediately() {
+        tokio::time::pause();
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("current-system");
+        std::os::unix::fs::symlink("/nix/store/abc-target", &link).unwrap();
+
+        let matched = poll_generation(
+            "/nix/store/abc-target",
+            &link,
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+        assert!(matched);
+    }
+
+    #[tokio::test]
+    async fn test_poll_generation_times_out() {
+        tokio::time::pause();
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("current-system");
+        std::os::unix::fs::symlink("/nix/store/abc-wrong", &link).unwrap();
+
+        let matched = poll_generation(
+            "/nix/store/abc-target",
+            &link,
+            Duration::from_secs(5),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+        assert!(!matched);
+    }
+
+    #[test]
+    fn test_fire_switch_command_construction() {
+        let store_path = "/nix/store/abc123-nixos-system";
+        let switch_bin = format!("{store_path}/bin/switch-to-configuration");
+        let expected_args = [
+            "systemd-run",
+            "--unit=nixfleet-switch",
+            "--",
+            &switch_bin,
+            "switch",
+        ];
+        assert_eq!(expected_args[0], "systemd-run");
+        assert_eq!(expected_args[1], "--unit=nixfleet-switch");
+        assert_eq!(expected_args[3], &switch_bin);
+        assert_eq!(expected_args[4], "switch");
+    }
+
+    #[tokio::test]
+    async fn test_poll_generation_detects_change() {
+        tokio::time::pause();
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("current-system");
+        std::os::unix::fs::symlink("/nix/store/abc-old", &link).unwrap();
+
+        let link_clone = link.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let _ = std::fs::remove_file(&link_clone);
+            std::os::unix::fs::symlink("/nix/store/abc-target", &link_clone).unwrap();
+        });
+
+        let matched = poll_generation(
+            "/nix/store/abc-target",
+            &link,
+            Duration::from_secs(10),
+            Duration::from_millis(500),
+        )
+        .await
+        .unwrap();
+        assert!(matched);
+    }
+
+    #[test]
+    fn test_parse_switch_status_success() {
+        let output = "ActiveState=inactive\nResult=success\n";
+        assert_eq!(parse_switch_status(output), Some(true));
+    }
+
+    #[test]
+    fn test_parse_switch_status_failed() {
+        let output = "ActiveState=inactive\nResult=exit-code\n";
+        assert_eq!(parse_switch_status(output), Some(false));
+    }
+
+    #[test]
+    fn test_parse_switch_status_still_running() {
+        let output = "ActiveState=active\nResult=success\n";
+        assert_eq!(parse_switch_status(output), None);
+    }
+
+    #[test]
+    fn test_parse_switch_status_empty() {
+        assert_eq!(parse_switch_status(""), None);
     }
 }

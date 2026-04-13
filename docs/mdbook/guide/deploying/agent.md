@@ -9,7 +9,7 @@ services.nixfleet-agent = {
   enable = true;
   controlPlaneUrl = "https://fleet.example.com";
   tags = ["web" "prod" "eu-west"];
-  pollInterval = 300;
+  pollInterval = 60;
   healthInterval = 60;
 
   healthChecks = {

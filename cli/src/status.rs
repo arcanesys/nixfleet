@@ -3,7 +3,20 @@ use nixfleet_types::MachineStatus;
 
 use crate::display;
 
-pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool) -> Result<()> {
+/// Check if a machine's last report exceeds the stale threshold.
+/// Returns false if the machine has never reported (seconds_since_last_report is None).
+fn is_stale(m: &MachineStatus, threshold: u64) -> bool {
+    m.seconds_since_last_report
+        .map(|s| s > threshold)
+        .unwrap_or(false)
+}
+
+pub async fn run(
+    client: &reqwest::Client,
+    cp_url: &str,
+    json: bool,
+    stale_threshold: u64,
+) -> Result<()> {
     let url = format!("{}/api/v1/machines", cp_url);
 
     let resp = client
@@ -28,10 +41,16 @@ pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool) -> Result<(
     let rows: Vec<Vec<String>> = machines
         .iter()
         .map(|m| {
-            let state = match m.system_state.as_str() {
+            let state_str = match m.system_state.as_str() {
                 "ok" => "ok",
                 "error" => "ERROR",
                 _ => "?",
+            };
+            let is_stale = is_stale(m, stale_threshold);
+            let state = if is_stale {
+                format!("{state_str} (stale)")
+            } else {
+                state_str.to_string()
             };
             let current = display::truncate_store_path(&m.current_generation, 36);
             let desired = m
@@ -45,7 +64,7 @@ pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool) -> Result<(
                 .unwrap_or_else(|| "never".to_string());
             vec![
                 m.machine_id.clone(),
-                display::color_status(state),
+                display::color_status(&state),
                 display::color_status(&m.lifecycle.to_string()),
                 current,
                 desired,
@@ -82,4 +101,45 @@ pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool) -> Result<(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nixfleet_types::{MachineLifecycle, MachineStatus};
+
+    fn make_machine(system_state: &str, seconds_since: Option<u64>) -> MachineStatus {
+        MachineStatus {
+            machine_id: "web-01".to_string(),
+            current_generation: "/nix/store/abc".to_string(),
+            desired_generation: None,
+            agent_version: "0.1.0".to_string(),
+            system_state: system_state.to_string(),
+            uptime_seconds: 3600,
+            last_report: Some(chrono::Utc::now()),
+            lifecycle: MachineLifecycle::Active,
+            tags: vec![],
+            seconds_since_last_report: seconds_since,
+        }
+    }
+
+    #[test]
+    fn test_stale_annotation() {
+        let threshold: u64 = 600;
+
+        // Fresh machine — no stale annotation
+        assert!(!is_stale(&make_machine("ok", Some(300)), threshold));
+
+        // Stale machine
+        assert!(is_stale(&make_machine("ok", Some(900)), threshold));
+
+        // Never reported — not stale (already shows "?" / "never")
+        assert!(!is_stale(&make_machine("unknown", None), threshold));
+
+        // Error + stale
+        assert!(is_stale(&make_machine("error", Some(1200)), threshold));
+
+        // Exactly at threshold — not stale (> not >=)
+        assert!(!is_stale(&make_machine("ok", Some(600)), threshold));
+    }
 }

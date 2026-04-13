@@ -49,22 +49,30 @@ Future work that cannot be closed inside this repository.
 - [x] **CLI: consolidate sync/async subprocess functions.** `release.rs`
   converted to async, `deploy.rs` imports from `crate::release::`.
 
-- [ ] **Agent: survive self-switch without restart rate-limiting.**
-  When the agent applies a generation that changes its own systemd
-  service, `switch-to-configuration` stops and restarts the agent.
-  If the agent previously hit the activation lock (concurrent
-  `nh os switch` / `nixos-rebuild`), the failed attempts count toward
-  systemd's `StartLimitBurst` and the post-switch restart gets
-  rate-limited — leaving the agent dead for minutes. Observed:
-  agent killed at 14:31:38, not restarted until manual intervention
-  13 minutes later despite `Restart=always` + `RestartSec=30`.
-  Potential fixes: increase `StartLimitIntervalSec`/`StartLimitBurst`
-  in the service module, add `StartLimitAction=none`, or use a
-  watchdog timer that detects the agent is down and force-starts it.
-  Also consider: the agent should detect the activation lock and
-  back off instead of failing (reducing restart count toward the limit).
+- [x] **Agent: lock contention detection and restart rate-limiting.**
+  Lock contention from concurrent `nh os switch` / `nixos-rebuild` is
+  now detected via stderr pattern matching and retried with exponential
+  backoff (5s, 10s, 20s). `StartLimitIntervalSec=0` prevents systemd
+  from rate-limiting restarts.
 
-- [ ] **Agent liveness in `nixfleet status`.** The `LAST SEEN` column
+- [x] **Agent: survive self-switch (fire-and-forget apply).**
+  When the agent applies a generation that changes its own systemd
+  service, `switch-to-configuration` kills the agent mid-activation.
+  The child process is in the agent's cgroup and dies with it — the
+  activation never completes, the profile never updates, and the agent
+  loops on restart. `systemd-run --scope` doesn't help (scope is under
+  the agent's cgroup). `systemd-run --pipe --wait` doesn't help (the
+  agent dies before reading the result).
+  The correct fix is fire-and-forget + poll-for-outcome: the agent
+  spawns `switch-to-configuration` as a detached transient service
+  (`systemd-run --unit=nixfleet-switch`), does NOT wait for it, and
+  expects to be killed. After restart, the agent checks
+  `/run/current-system` — if it matches desired, report success; if
+  not after a timeout, report failure. This changes the deploy cycle
+  from synchronous (apply → check exit code) to asynchronous
+  (fire → die → restart → poll → verify → report).
+
+- [x] **Agent liveness in `nixfleet status`.** The `LAST SEEN` column
   shows the timestamp of the last agent report, but there's no visual
   indicator when a machine hasn't reported in a suspiciously long time.
   A machine could be dead for hours and the operator would only notice

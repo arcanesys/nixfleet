@@ -12,6 +12,18 @@ use tokio::signal;
 use tokio::time::{interval_at, Instant, Interval, MissedTickBehavior};
 use tracing::{error, info, warn};
 
+/// Maximum retries when a fired switch fails (poll timeout + bad exit status).
+const MAX_SWITCH_RETRIES: u32 = 3;
+
+/// Timeout for polling `/run/current-system` after firing a switch.
+const SWITCH_POLL_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Interval between polls of `/run/current-system`.
+const SWITCH_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Path to the current system symlink.
+const CURRENT_SYSTEM_PATH: &str = "/run/current-system";
+
 pub mod comms;
 pub mod config;
 pub mod health;
@@ -182,6 +194,45 @@ async fn run_health_report(client: &comms::Client, config: &Config, health_runne
     }
 }
 
+/// Fire switch-to-configuration and poll until the generation matches.
+///
+/// Retries the entire fire+poll cycle up to `MAX_SWITCH_RETRIES` times
+/// if the switch unit exits with failure. Returns `Ok(true)` on success,
+/// `Ok(false)` if all retries exhausted or the switch outcome is unknown.
+async fn fire_poll_switch(store_path: &str) -> anyhow::Result<bool> {
+    nix::fire_switch(store_path).await?;
+
+    let path = std::path::Path::new(CURRENT_SYSTEM_PATH);
+    if nix::poll_generation(store_path, path, SWITCH_POLL_TIMEOUT, SWITCH_POLL_INTERVAL).await? {
+        return Ok(true);
+    }
+
+    // Poll timed out — check transient unit status and retry if it failed.
+    for attempt in 1..=MAX_SWITCH_RETRIES {
+        match nix::check_switch_exit_status().await? {
+            Some(false) => {
+                warn!(
+                    attempt,
+                    max = MAX_SWITCH_RETRIES,
+                    "Switch unit failed, retrying"
+                );
+                nix::fire_switch(store_path).await?;
+                if nix::poll_generation(store_path, path, SWITCH_POLL_TIMEOUT, SWITCH_POLL_INTERVAL)
+                    .await?
+                {
+                    return Ok(true);
+                }
+            }
+            _ => {
+                // Still running, succeeded-but-mismatch, or unit not found.
+                warn!("Switch poll timed out, unit status inconclusive");
+                return Ok(false);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Run a full deploy cycle: check → fetch → apply → verify → report.
 /// Returns a PollOutcome telling the main loop how to schedule the next tick.
 async fn run_deploy_cycle(
@@ -262,15 +313,33 @@ async fn run_deploy_cycle(
         return PollOutcome::Success { poll_hint };
     }
 
-    // Apply: switch-to-configuration.
+    // Apply: fire switch-to-configuration in a detached transient service,
+    // then poll /run/current-system until it matches the desired generation.
+    // The agent may be killed mid-switch (self-switch); on restart the
+    // initial deploy cycle re-enters this path and the poll succeeds.
     metrics::record_state_transition("fetching", "applying");
-    if let Err(e) = nix::apply_generation(&desired.hash).await {
-        error!("Failed to apply generation: {e}");
+    send_report(client, config, true, "applying").await;
+
+    let applied = match fire_poll_switch(&desired.hash).await {
+        Ok(true) => {
+            info!(hash = %desired.hash, "Generation applied");
+            true
+        }
+        Ok(false) => {
+            error!("Failed to apply generation after retries");
+            false
+        }
+        Err(e) => {
+            error!("Fatal error during apply: {e}");
+            false
+        }
+    };
+
+    if !applied {
         metrics::record_state_transition("applying", "rolling_back");
-        rollback_and_report(client, config, store, &format!("apply failed: {e}")).await;
+        rollback_and_report(client, config, store, "switch timed out after retries").await;
         return PollOutcome::Success { poll_hint };
     }
-    info!(hash = %desired.hash, "Generation applied");
 
     // Verify: run health checks after apply.
     metrics::record_state_transition("applying", "verifying");
@@ -349,3 +418,4 @@ async fn send_report(client: &comms::Client, config: &Config, success: bool, mes
     }
     metrics::record_state_transition("reporting", "idle");
 }
+

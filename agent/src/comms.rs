@@ -120,7 +120,7 @@ mod tests {
         Config {
             control_plane_url: url.to_string(),
             machine_id: "web-01".to_string(),
-            poll_interval: Duration::from_secs(300),
+            poll_interval: Duration::from_secs(60),
             retry_interval: Duration::from_secs(30),
             cache_url: None,
             db_path: ":memory:".to_string(),

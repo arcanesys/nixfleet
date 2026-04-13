@@ -152,7 +152,11 @@ enum Commands {
     },
 
     /// Show fleet status from the control plane
-    Status {},
+    Status {
+        /// Seconds without a report before a machine is marked stale (default: 600)
+        #[arg(long, default_value = "600")]
+        stale_threshold: u64,
+    },
 
     /// Rollback a host to a previous generation
     Rollback {
@@ -626,9 +630,9 @@ async fn main() -> Result<()> {
                 .await
             }
         }
-        Commands::Status {} => {
+        Commands::Status { stale_threshold } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
-            status::run(&http_client, effective_cp_url, json_output).await
+            status::run(&http_client, effective_cp_url, json_output, stale_threshold).await
         }
         Commands::Rollback {
             host,
