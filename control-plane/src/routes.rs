@@ -504,7 +504,10 @@ pub async fn clear_desired_generation(
     // Update in-memory state
     let mut fleet = state.write().await;
     let machine = fleet.machines.get_mut(&id).ok_or_else(|| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "machine state inconsistency".to_string())
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "machine state inconsistency".to_string(),
+        )
     })?;
     machine.desired_generation = None;
     crate::log_insert_err(

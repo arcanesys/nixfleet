@@ -98,7 +98,12 @@ fn detect_tags(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> 
     };
     match output {
         Ok(ref o) => {
-            oplog.log_output(&format!("nix eval tags {}", hostname), Some(hostname), o, t.elapsed());
+            oplog.log_output(
+                &format!("nix eval tags {}", hostname),
+                Some(hostname),
+                o,
+                t.elapsed(),
+            );
             if o.status.success() {
                 serde_json::from_slice(&o.stdout).unwrap_or_default()
             } else {
