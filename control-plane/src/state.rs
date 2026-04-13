@@ -13,6 +13,8 @@ pub struct MachineState {
     pub lifecycle: MachineLifecycle,
     pub registered_at: Option<DateTime<Utc>>,
     pub tags: Vec<String>,
+    pub agent_version: String,
+    pub uptime_seconds: u64,
 }
 
 impl Default for MachineState {
@@ -30,6 +32,8 @@ impl MachineState {
             lifecycle: MachineLifecycle::Active,
             registered_at: None,
             tags: vec![],
+            agent_version: String::new(),
+            uptime_seconds: 0,
         }
     }
 
@@ -42,6 +46,8 @@ impl MachineState {
             lifecycle: MachineLifecycle::Pending,
             registered_at: Some(Utc::now()),
             tags: vec![],
+            agent_version: String::new(),
+            uptime_seconds: 0,
         }
     }
 }
