@@ -12,6 +12,14 @@ use tokio::signal;
 use tokio::time::{interval_at, Instant, Interval, MissedTickBehavior};
 use tracing::{error, info, warn};
 
+use crate::nix::ApplyOutcome;
+
+/// Maximum retries on activation lock contention.
+const MAX_APPLY_RETRIES: u32 = 3;
+
+/// Base delay for exponential backoff on lock contention.
+const APPLY_RETRY_BASE: Duration = Duration::from_secs(5);
+
 pub mod comms;
 pub mod config;
 pub mod health;
@@ -182,6 +190,40 @@ async fn run_health_report(client: &comms::Client, config: &Config, health_runne
     }
 }
 
+/// Retry an apply operation with exponential backoff on lock contention.
+///
+/// Calls `apply_fn` up to `MAX_APPLY_RETRIES + 1` times (initial + retries).
+/// Returns `Ok(())` on success, `Ok(ApplyOutcome::LockContention(msg))` if
+/// all retries exhausted, or `Err` on fatal failure.
+async fn apply_with_retry<F, Fut>(apply_fn: F) -> anyhow::Result<nix::ApplyOutcome>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<nix::ApplyOutcome>>,
+{
+    let mut attempts = 0u32;
+    loop {
+        match apply_fn().await {
+            Ok(ApplyOutcome::Applied) => return Ok(ApplyOutcome::Applied),
+            Ok(ApplyOutcome::LockContention(msg)) => {
+                attempts += 1;
+                if attempts > MAX_APPLY_RETRIES {
+                    return Ok(ApplyOutcome::LockContention(msg));
+                }
+                let delay = APPLY_RETRY_BASE * 2u32.pow(attempts - 1);
+                warn!(
+                    attempt = attempts,
+                    max = MAX_APPLY_RETRIES,
+                    delay_secs = delay.as_secs(),
+                    stderr = %msg,
+                    "Activation lock held, retrying"
+                );
+                tokio::time::sleep(delay).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 /// Run a full deploy cycle: check → fetch → apply → verify → report.
 /// Returns a PollOutcome telling the main loop how to schedule the next tick.
 async fn run_deploy_cycle(
@@ -265,53 +307,33 @@ async fn run_deploy_cycle(
     // Apply: switch-to-configuration with retry on lock contention.
     metrics::record_state_transition("fetching", "applying");
 
-    const MAX_RETRIES: u32 = 3;
-    const RETRY_BASE: Duration = Duration::from_secs(5);
-
-    let mut attempts = 0u32;
-    loop {
-        match nix::apply_generation(&desired.hash).await {
-            Ok(nix::ApplyOutcome::Applied) => {
-                info!(hash = %desired.hash, "Generation applied");
-                break;
+    match apply_with_retry(|| nix::apply_generation(&desired.hash)).await {
+        Ok(ApplyOutcome::Applied) => {
+            info!(hash = %desired.hash, "Generation applied");
+        }
+        Ok(ApplyOutcome::LockContention(msg)) => {
+            error!(
+                retries = MAX_APPLY_RETRIES,
+                "Lock contention after all retries: {msg}"
+            );
+            if let Err(se) = store.log_error(&format!("lock contention: {msg}")).await {
+                warn!("store error: {se}");
             }
-            Ok(nix::ApplyOutcome::LockContention(msg)) => {
-                attempts += 1;
-                if attempts > MAX_RETRIES {
-                    error!(
-                        retries = MAX_RETRIES,
-                        "Lock contention after all retries: {msg}"
-                    );
-                    if let Err(se) = store.log_error(&format!("lock contention: {msg}")).await {
-                        warn!("store error: {se}");
-                    }
-                    metrics::record_state_transition("applying", "reporting");
-                    send_report(
-                        client,
-                        config,
-                        false,
-                        &format!("lock contention after {MAX_RETRIES} retries: {msg}"),
-                    )
-                    .await;
-                    // No rollback — the lock is transient, rollback would hit the same lock.
-                    return PollOutcome::Failed;
-                }
-                let delay = RETRY_BASE * 2u32.pow(attempts - 1);
-                warn!(
-                    attempt = attempts,
-                    max = MAX_RETRIES,
-                    delay_secs = delay.as_secs(),
-                    stderr = %msg,
-                    "Activation lock held, retrying"
-                );
-                tokio::time::sleep(delay).await;
-            }
-            Err(e) => {
-                error!("Failed to apply generation: {e}");
-                metrics::record_state_transition("applying", "rolling_back");
-                rollback_and_report(client, config, store, &format!("apply failed: {e}")).await;
-                return PollOutcome::Success { poll_hint };
-            }
+            metrics::record_state_transition("applying", "reporting");
+            send_report(
+                client,
+                config,
+                false,
+                &format!("lock contention after {MAX_APPLY_RETRIES} retries: {msg}"),
+            )
+            .await;
+            return PollOutcome::Failed;
+        }
+        Err(e) => {
+            error!("Failed to apply generation: {e}");
+            metrics::record_state_transition("applying", "rolling_back");
+            rollback_and_report(client, config, store, &format!("apply failed: {e}")).await;
+            return PollOutcome::Success { poll_hint };
         }
     }
 
@@ -396,19 +418,70 @@ async fn send_report(client: &comms::Client, config: &Config, success: bool, mes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nix::ApplyOutcome;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
-    #[test]
-    fn test_retry_delays() {
-        // Verify the exponential backoff sequence
-        let base = Duration::from_secs(5);
-        let delays: Vec<Duration> = (0..3).map(|i| base * 2u32.pow(i)).collect();
-        assert_eq!(
-            delays,
-            vec![
-                Duration::from_secs(5),
-                Duration::from_secs(10),
-                Duration::from_secs(20),
-            ]
-        );
+    #[tokio::test]
+    async fn test_apply_with_retry_succeeds_immediately() {
+        let result = apply_with_retry(|| async { Ok(ApplyOutcome::Applied) }).await;
+        assert!(matches!(result, Ok(ApplyOutcome::Applied)));
+    }
+
+    #[tokio::test]
+    async fn test_apply_with_retry_succeeds_after_contention() {
+        tokio::time::pause();
+        let call_count = AtomicU32::new(0);
+        let result = apply_with_retry(|| {
+            let n = call_count.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if n < 2 {
+                    Ok(ApplyOutcome::LockContention("busy".to_string()))
+                } else {
+                    Ok(ApplyOutcome::Applied)
+                }
+            }
+        })
+        .await;
+        assert!(matches!(result, Ok(ApplyOutcome::Applied)));
+        assert_eq!(call_count.load(Ordering::SeqCst), 3); // initial + 2 retries
+    }
+
+    #[tokio::test]
+    async fn test_apply_with_retry_exhausts_retries() {
+        tokio::time::pause();
+        let call_count = AtomicU32::new(0);
+        let result = apply_with_retry(|| {
+            call_count.fetch_add(1, Ordering::SeqCst);
+            async { Ok(ApplyOutcome::LockContention("still busy".to_string())) }
+        })
+        .await;
+        assert!(matches!(result, Ok(ApplyOutcome::LockContention(_))));
+        assert_eq!(call_count.load(Ordering::SeqCst), 4); // initial + 3 retries
+    }
+
+    #[tokio::test]
+    async fn test_apply_with_retry_propagates_fatal_error() {
+        let result =
+            apply_with_retry(|| async { Err(anyhow::anyhow!("spawn failed")) }).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_apply_with_retry_fatal_after_contention() {
+        tokio::time::pause();
+        let call_count = AtomicU32::new(0);
+        let result = apply_with_retry(|| {
+            let n = call_count.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if n == 0 {
+                    Ok(ApplyOutcome::LockContention("busy".to_string()))
+                } else {
+                    Err(anyhow::anyhow!("real failure"))
+                }
+            }
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
     }
 }
