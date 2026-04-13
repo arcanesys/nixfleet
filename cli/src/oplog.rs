@@ -13,6 +13,7 @@ use std::time::Instant;
 
 #[derive(Serialize)]
 #[serde(tag = "event")]
+#[allow(dead_code)] // Subprocess variant used in tests; per-command logging deferred
 enum LogEvent<'a> {
     #[serde(rename = "op_start")]
     OpStart {
@@ -90,6 +91,7 @@ impl OpLog {
         self.write_event(&event);
     }
 
+    #[allow(dead_code)] // per-command logging deferred; tested in unit tests
     pub fn log_subprocess(
         &mut self,
         cmd: &[String],
