@@ -131,6 +131,7 @@ nixfleet release create [FLAGS]
 | `--hook-url <URL>` | string | -- | Override hook cache URL. Requires `--hook` |
 | `--copy` | bool | `false` | Push closures directly to each target host via `nix-copy-closure` (no binary cache) |
 | `--cache-url <URL>` | string | -- | Override the cache URL recorded in the release (defaults to `--push-to` URL, or config file) |
+| `--eval-only` | bool | `false` | Evaluate `config.system.build.toplevel.outPath` without building. Assumes closures are already in the cache (e.g., CI-built). Useful for cross-platform fleets where the operator cannot build non-native closures locally. |
 | `--dry-run` | bool | `false` | Build and show the manifest without registering |
 
 Output prints the release ID, host count, and per-host store paths. Use the ID with `nixfleet deploy --release <ID>`.
@@ -148,6 +149,7 @@ nixfleet release list [FLAGS]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--limit <N>` | u32 | `20` | Number of releases to show (newest first) |
+| `--host <HOSTNAME>` | string | -- | Filter releases to those containing entries for this hostname |
 
 ---
 
@@ -358,18 +360,66 @@ nixfleet machines list [FLAGS]
 
 ---
 
-## machines untag
+## machines set-lifecycle
 
-Remove a tag from a machine.
+Change a machine's lifecycle state.
 
 ```sh
-nixfleet machines untag <ID> <TAG>
+nixfleet machines set-lifecycle <ID> <STATE>
 ```
 
 | Argument | Type | Description |
 |----------|------|-------------|
 | `<ID>` | string | Machine ID |
-| `<TAG>` | string | Tag to remove |
+| `<STATE>` | string | Lifecycle state: `active`, `pending`, `provisioning`, `maintenance`, `decommissioned` |
+
+---
+
+## machines clear-desired
+
+Clear a machine's stale desired generation. Use this when an agent is stuck polling for a generation that will never be fulfilled (e.g., after a cancelled rollout).
+
+```sh
+nixfleet machines clear-desired <ID>
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `<ID>` | string | Machine ID |
+
+Exit codes:
+- `0` — desired generation cleared (CP returned 204)
+- `1` — machine not found (CP returned 404), or another non-2xx status
+
+---
+
+## rollout delete
+
+Delete a terminal rollout (completed, cancelled, or failed). The control plane rejects deletion of active rollouts with 409.
+
+```sh
+nixfleet rollout delete <ID>
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `<ID>` | string | Rollout ID |
+
+Exit codes:
+- `0` — rollout deleted (CP returned 204)
+- `1` — rollout is still active (CP returned 409), rollout not found (CP returned 404), or another non-2xx status
+
+---
+
+## Operation logs
+
+All CLI operations (deploy, release create, rollout commands) write persistent logs to:
+
+```
+~/.local/state/nixfleet/logs/
+```
+
+Each operation creates a JSONL file with timestamped entries covering subprocess invocations (command, stdout, stderr, exit code), tracing events, and host context. Logs are written regardless of verbosity level.
 
 ---
 
