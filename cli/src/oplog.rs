@@ -178,7 +178,7 @@ mod tests {
 
         // Simulate a subprocess with a real Output
         let output = std::process::Output {
-            status: std::process::Command::new("true").status().unwrap().into(),
+            status: std::process::Command::new("true").status().unwrap(),
             stdout: b"/nix/store/abc-system\n".to_vec(),
             stderr: b"warning: Git tree is dirty\n".to_vec(),
         };

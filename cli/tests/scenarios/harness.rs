@@ -15,28 +15,31 @@
 //!    `cli_lock()` serializes these tests, eliminating flaky failures
 //!    that only reproduce under `cargo test` (not `cargo nextest`).
 //!
-//! Both locks are independent: `config.rs` tests that call `resolve()`
-//! in-process only need `env_lock()`. Tests that spawn the binary need
-//! `cli_lock()` (which implicitly covers env safety since the binary
-//! inherits a stable environment when only one test runs at a time).
+//! `cli_lock` uses `tokio::sync::Mutex` because async tests hold it
+//! across `.await` points. `env_lock` uses `std::sync::Mutex` because
+//! it's used by sync `#[test]` functions in `config.rs`.
 
 #![allow(dead_code)]
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 
-/// Serialize tests that spawn the real `nixfleet` binary via `assert_cmd`.
+/// Serialize async tests that spawn the real `nixfleet` binary via `assert_cmd`.
 ///
-/// Prevents ephemeral-port races between concurrent wiremock listeners
-/// and env-var leakage into the spawned binary's inherited environment.
-pub fn cli_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
+/// Uses `tokio::sync::Mutex` so the guard can be held across `.await` points
+/// without triggering clippy's `await_holding_lock` lint.
+pub async fn cli_lock() -> OwnedMutexGuard<()> {
+    static LOCK: OnceLock<std::sync::Arc<TokioMutex<()>>> = OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Arc::new(TokioMutex::new(())))
+        .clone()
+        .lock_owned()
+        .await
 }
 
 /// Serialize tests that mutate `NIXFLEET_*` or `HOSTNAME` environment
 /// variables. Held by `config.rs` tests that call `resolve()` in-process.
+///
+/// Uses `std::sync::Mutex` because these are sync `#[test]` functions.
 pub fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
