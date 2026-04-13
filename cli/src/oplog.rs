@@ -134,17 +134,19 @@ impl OpLog {
         &self.path
     }
 
-    /// Log a completed command with its result and timing.
-    pub fn log_cmd<E: std::fmt::Display>(
+    /// Log a command result (success/failure only, no captured output).
+    ///
+    /// Useful for async callers that don't have a raw `Output` to hand over.
+    pub fn log_cmd<T, E: std::fmt::Display>(
         &mut self,
         cmd_desc: &str,
         host: Option<&str>,
-        result: &std::result::Result<(), E>,
+        result: &Result<T, E>,
         duration: std::time::Duration,
     ) {
         let (exit_code, stderr) = match result {
-            Ok(()) => (0, None),
-            Err(e) => (1, Some(format!("{e:#}"))),
+            Ok(_) => (0, None),
+            Err(e) => (1, Some(format!("{e}"))),
         };
         let event = LogEvent::Subprocess {
             ts: now_iso(),
@@ -158,12 +160,12 @@ impl OpLog {
         self.write_event(&event);
     }
 
-    /// Log a successful command with stdout capture (e.g. store path) and timing.
+    /// Log a successful command with its output value (e.g. a store path).
     pub fn log_cmd_ok(
         &mut self,
         cmd_desc: &str,
         host: Option<&str>,
-        stdout: &str,
+        output_value: &str,
         duration: std::time::Duration,
     ) {
         let event = LogEvent::Subprocess {
@@ -171,8 +173,61 @@ impl OpLog {
             cmd: &[cmd_desc.to_string()],
             exit_code: 0,
             duration_ms: duration.as_millis() as u64,
-            stdout: Some(stdout),
+            stdout: Some(output_value),
             stderr: None,
+            host,
+        };
+        self.write_event(&event);
+    }
+
+    /// Log a subprocess from its raw `Output`, capturing stdout, stderr, and exit code.
+    pub fn log_output(
+        &mut self,
+        cmd_desc: &str,
+        host: Option<&str>,
+        output: &std::process::Output,
+        duration: std::time::Duration,
+    ) {
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        let stdout = if stdout_str.trim().is_empty() {
+            None
+        } else {
+            Some(stdout_str.trim().to_string())
+        };
+        let stderr = if stderr_str.trim().is_empty() {
+            None
+        } else {
+            Some(stderr_str.trim().to_string())
+        };
+        let event = LogEvent::Subprocess {
+            ts: now_iso(),
+            cmd: &[cmd_desc.to_string()],
+            exit_code: output.status.code().unwrap_or(-1),
+            duration_ms: duration.as_millis() as u64,
+            stdout: stdout.as_deref(),
+            stderr: stderr.as_deref(),
+            host,
+        };
+        self.write_event(&event);
+    }
+
+    /// Log a failed operation that didn't produce an `Output` (e.g. spawn failure).
+    #[allow(dead_code)] // public API for callers that catch spawn errors
+    pub fn log_error(
+        &mut self,
+        cmd_desc: &str,
+        host: Option<&str>,
+        error: &str,
+        duration: std::time::Duration,
+    ) {
+        let event = LogEvent::Subprocess {
+            ts: now_iso(),
+            cmd: &[cmd_desc.to_string()],
+            exit_code: 1,
+            duration_ms: duration.as_millis() as u64,
+            stdout: None,
+            stderr: Some(error),
             host,
         };
         self.write_event(&event);

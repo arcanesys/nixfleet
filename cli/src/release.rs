@@ -9,7 +9,8 @@ use reqwest::Client;
 use std::process::Command;
 
 /// Discover all nixosConfigurations host names from a flake.
-fn discover_hosts(flake: &str) -> Result<Vec<String>> {
+fn discover_hosts(flake: &str, oplog: &mut crate::oplog::OpLog) -> Result<Vec<String>> {
+    let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
         "eval",
@@ -28,6 +29,7 @@ fn discover_hosts(flake: &str) -> Result<Vec<String>> {
     } else {
         display::run_cmd(&mut cmd, None).context("failed to run nix eval")?
     };
+    oplog.log_output("nix eval discover hosts", None, &output, t.elapsed());
     if !output.status.success() {
         anyhow::bail!(
             "nix eval failed: {}",
@@ -40,7 +42,12 @@ fn discover_hosts(flake: &str) -> Result<Vec<String>> {
 }
 
 /// Detect platform for a host.
-fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
+fn detect_platform(
+    flake: &str,
+    hostname: &str,
+    oplog: &mut crate::oplog::OpLog,
+) -> Result<String> {
+    let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
         "eval",
@@ -57,6 +64,12 @@ fn detect_platform(flake: &str, hostname: &str) -> Result<String> {
     } else {
         display::run_cmd(&mut cmd, None).context("failed to detect platform")?
     };
+    oplog.log_output(
+        &format!("nix eval platform {}", hostname),
+        Some(hostname),
+        &output,
+        t.elapsed(),
+    );
     if !output.status.success() {
         anyhow::bail!(
             "failed to detect platform for {}: {}",
@@ -97,7 +110,9 @@ fn build_host(
     flake: &str,
     hostname: &str,
     window: Option<&mut display::RollingWindow>,
+    oplog: &mut crate::oplog::OpLog,
 ) -> Result<String> {
+    let t = std::time::Instant::now();
     tracing::info!(hostname, "building closure");
     let mut cmd = Command::new("nix");
     cmd.args([
@@ -119,6 +134,12 @@ fn build_host(
     } else {
         display::run_cmd(&mut cmd, window).context("failed to run nix build")?
     };
+    oplog.log_output(
+        &format!("nix build {}", hostname),
+        Some(hostname),
+        &output,
+        t.elapsed(),
+    );
     if !output.status.success() {
         anyhow::bail!(
             "nix build failed for {}: {}",
@@ -130,7 +151,8 @@ fn build_host(
 }
 
 /// Evaluate a host's store path without building.
-fn eval_host(flake: &str, hostname: &str) -> Result<String> {
+fn eval_host(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Result<String> {
+    let t = std::time::Instant::now();
     let attr = format!(
         "{}#nixosConfigurations.{}.config.system.build.toplevel.outPath",
         flake, hostname
@@ -138,6 +160,12 @@ fn eval_host(flake: &str, hostname: &str) -> Result<String> {
     let mut cmd = std::process::Command::new("nix");
     cmd.args(["eval", &attr, "--raw"]);
     let output = display::run_cmd(&mut cmd, None)?;
+    oplog.log_output(
+        &format!("nix eval {}", hostname),
+        Some(hostname),
+        &output,
+        t.elapsed(),
+    );
     if !output.status.success() {
         anyhow::bail!(
             "nix eval failed for {}: {}",
@@ -152,8 +180,11 @@ fn eval_host(flake: &str, hostname: &str) -> Result<String> {
 fn nix_copy_to(
     cache_url: &str,
     store_path: &str,
+    hostname: &str,
     window: Option<&mut display::RollingWindow>,
+    oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
+    let t = std::time::Instant::now();
     tracing::info!(store_path, dest = cache_url, "copying closure");
     let mut cmd = Command::new("nix");
     cmd.args(["copy", "--to", cache_url, store_path]);
@@ -174,6 +205,12 @@ fn nix_copy_to(
     } else {
         display::run_cmd(&mut cmd, window).context("failed to run nix copy --to")?
     };
+    oplog.log_output(
+        &format!("nix copy --to {} {}", cache_url, hostname),
+        Some(hostname),
+        &output,
+        t.elapsed(),
+    );
     if !output.status.success() {
         anyhow::bail!(
             "nix copy --to {} failed for {}: {}",
@@ -190,7 +227,9 @@ fn copy_to_host(
     hostname: &str,
     store_path: &str,
     window: Option<&mut display::RollingWindow>,
+    oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
+    let t = std::time::Instant::now();
     tracing::info!(store_path, dest = hostname, "copying closure");
     let mut cmd = Command::new("nix-copy-closure");
     cmd.args(["--to", &format!("root@{}", hostname), store_path]);
@@ -208,6 +247,12 @@ fn copy_to_host(
     } else {
         display::run_cmd(&mut cmd, window).context("failed to run nix-copy-closure")?
     };
+    oplog.log_output(
+        &format!("nix-copy-closure {}", hostname),
+        Some(hostname),
+        &output,
+        t.elapsed(),
+    );
     if !output.status.success() {
         anyhow::bail!("nix-copy-closure failed for {}", hostname);
     }
@@ -235,8 +280,11 @@ pub fn run_push_hook(
     push_to_host: Option<&str>,
     hook_cmd: &str,
     store_path: &str,
+    hostname: Option<&str>,
     window: Option<&mut display::RollingWindow>,
+    oplog: Option<&mut crate::oplog::OpLog>,
 ) -> Result<()> {
+    let t = std::time::Instant::now();
     let cmd_str = hook_cmd.replace("{}", store_path);
     tracing::info!(cmd = %cmd_str, "running push hook");
     let mut cmd = match push_to_host {
@@ -257,12 +305,23 @@ pub fn run_push_hook(
             .stdout(std::process::Stdio::inherit())
             .status()
             .context("failed to run push hook")?;
+        if let Some(oplog) = oplog {
+            let output = std::process::Output {
+                status,
+                stdout: vec![],
+                stderr: vec![],
+            };
+            oplog.log_output(&format!("push-hook {}", hostname.unwrap_or("local")), hostname, &output, t.elapsed());
+        }
         if !status.success() {
             anyhow::bail!("push hook failed: {}", cmd_str);
         }
         return Ok(());
     }
     let output = display::run_cmd(&mut cmd, window).context("failed to run push hook")?;
+    if let Some(oplog) = oplog {
+        oplog.log_output(&format!("push-hook {}", hostname.unwrap_or("local")), hostname, &output, t.elapsed());
+    }
     if !output.status.success() {
         anyhow::bail!("push hook failed: {}", cmd_str);
     }
@@ -293,15 +352,7 @@ pub async fn create(
     let mut oplog = crate::oplog::OpLog::new("release-create")?;
 
     tracing::info!("discovering hosts");
-    let t = std::time::Instant::now();
-    let all_hosts = discover_hosts(flake);
-    oplog.log_cmd(
-        "nix eval discover hosts",
-        None,
-        &all_hosts.as_ref().map(|_| ()),
-        t.elapsed(),
-    );
-    let all_hosts = all_hosts?;
+    let all_hosts = discover_hosts(flake, &mut oplog)?;
     let hosts = filter_hosts(&all_hosts, host_patterns);
     if hosts.is_empty() {
         anyhow::bail!("no hosts match pattern '{}'", host_patterns.join(","));
@@ -352,40 +403,18 @@ async fn create_inner(
             if let Some(ref mut w) = window {
                 w.set_line_prefix(hostname);
             }
-            let t = std::time::Instant::now();
-            let platform = detect_platform(flake, hostname);
-            oplog.log_cmd(
-                &format!("nix eval platform {}", hostname),
-                Some(hostname),
-                &platform.as_ref().map(|_| ()),
-                t.elapsed(),
-            );
-            let platform = platform?;
+            let platform = detect_platform(flake, hostname, oplog)?;
             let tags = detect_tags(flake, hostname);
-            let t = std::time::Instant::now();
             let build_result = if eval_only {
-                eval_host(flake, hostname)
+                eval_host(flake, hostname, oplog)
             } else {
                 build_host(
                     flake,
                     hostname,
                     window.as_mut().and_then(|w| w.for_output()),
+                    oplog,
                 )
             };
-            let build_elapsed = t.elapsed();
-            let build_desc = format!(
-                "{} {}",
-                if eval_only { "nix eval" } else { "nix build" },
-                hostname
-            );
-            match &build_result {
-                Ok(store_path) => {
-                    oplog.log_cmd_ok(&build_desc, Some(hostname), store_path, build_elapsed)
-                }
-                Err(e) => {
-                    oplog.log_cmd(&build_desc, Some(hostname), &Err::<(), _>(e), build_elapsed)
-                }
-            }
             match build_result {
                 Ok(store_path) => {
                     if platform.contains("darwin") {
@@ -432,19 +461,13 @@ async fn create_inner(
 
                 for entry in &entries {
                     if pushed.insert(entry.store_path.clone()) {
-                        let t = std::time::Instant::now();
-                        let push_result = nix_copy_to(
+                        if let Err(e) = nix_copy_to(
                             push_url,
                             &entry.store_path,
+                            &entry.hostname,
                             window.as_mut().and_then(|w| w.for_output()),
-                        );
-                        oplog.log_cmd(
-                            &format!("nix copy --to {} {}", push_url, entry.hostname),
-                            Some(&entry.hostname),
-                            &push_result,
-                            t.elapsed(),
-                        );
-                        if let Err(e) = push_result {
+                            oplog,
+                        ) {
                             if let Some(ref mut w) = window {
                                 w.mark_error();
                             }
@@ -475,20 +498,14 @@ async fn create_inner(
                     if let Some(ref mut w) = window {
                         w.set_line_prefix(&entry.hostname);
                     }
-                    let t = std::time::Instant::now();
-                    let hook_result = run_push_hook(
+                    run_push_hook(
                         remote_host.as_deref(),
                         hook,
                         &entry.store_path,
-                        window.as_mut().and_then(|w| w.for_output()),
-                    );
-                    oplog.log_cmd(
-                        &format!("push-hook {}", entry.hostname),
                         Some(&entry.hostname),
-                        &hook_result,
-                        t.elapsed(),
-                    );
-                    hook_result?;
+                        window.as_mut().and_then(|w| w.for_output()),
+                        Some(oplog),
+                    )?;
                     if let Some(ref w) = window {
                         w.inc();
                     }
@@ -508,20 +525,14 @@ async fn create_inner(
                 if let Some(ref mut w) = window {
                     w.set_line_prefix(&entry.hostname);
                 }
-                let t = std::time::Instant::now();
-                let hook_result = run_push_hook(
+                run_push_hook(
                     None,
                     hook,
                     &entry.store_path,
-                    window.as_mut().and_then(|w| w.for_output()),
-                );
-                oplog.log_cmd(
-                    &format!("push-hook {}", entry.hostname),
                     Some(&entry.hostname),
-                    &hook_result,
-                    t.elapsed(),
-                );
-                hook_result?;
+                    window.as_mut().and_then(|w| w.for_output()),
+                    Some(oplog),
+                )?;
                 if let Some(ref w) = window {
                     w.inc();
                 }
@@ -545,17 +556,11 @@ async fn create_inner(
                         }
                         continue;
                     }
-                    let t = std::time::Instant::now();
                     let copy_result = copy_to_host(
                         &entry.hostname,
                         &entry.store_path,
                         window.as_mut().and_then(|w| w.for_output()),
-                    );
-                    oplog.log_cmd(
-                        &format!("nix-copy-closure {}", entry.hostname),
-                        Some(&entry.hostname),
-                        &copy_result,
-                        t.elapsed(),
+                        oplog,
                     );
                     if let Err(e) = copy_result {
                         tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
