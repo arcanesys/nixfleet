@@ -10,7 +10,9 @@
 //!     GET    /api/v1/machines
 //!     POST   /api/v1/machines/{id}/register
 //!     PATCH  /api/v1/machines/{id}/lifecycle
-//!     DELETE /api/v1/machines/{id}/tags/{tag}
+//!     DELETE /api/v1/machines/{id}/desired-generation
+//!     POST   /api/v1/machines/{id}/notify-deploy
+//!     DELETE /api/v1/rollouts/{id}
 //!     GET    /api/v1/machines/{id}/desired-generation
 //!     POST   /api/v1/machines/{id}/report
 //!
