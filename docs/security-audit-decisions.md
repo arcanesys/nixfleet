@@ -62,6 +62,24 @@
 - **Issue:** Uses TOFU for initial host provisioning.
 - **Rationale for deferral:** Correct behavior for `nixfleet host add`. Accepts unknown keys on first connect, rejects changes on subsequent connects.
 
+### L11. Flake inputs from non-trusted-list orgs
+
+- **Location:** flake.nix
+- **Issue:** `vic/import-tree`, `astro/microvm.nix`, and `LnL7/nix-darwin` are not on the predefined trusted-org list for this audit.
+- **Rationale for deferral:** All three are canonical community projects with wide adoption. `import-tree` is a minimal pure-Nix utility. `microvm.nix` is the standard NixOS microVM framework. `nix-darwin` is the only macOS Nix management tool. The trusted-org list should be expanded to include them.
+
+### L12. Mutable branch refs in flake inputs
+
+- **Location:** flake.nix (darwin/master, nixos-hardware/master)
+- **Issue:** Two inputs use mutable `master` branch refs instead of tagged releases.
+- **Rationale for deferral:** Standard practice for nix-darwin and nixos-hardware, which do not publish release tags. The lock file pins each to a specific revision, so builds remain reproducible.
+
+### L13. nixfleet-demo stale nixfleet pin (cross-repo)
+
+- **Location:** nixfleet-demo/flake.lock
+- **Issue:** Demo pins nixfleet rev d8502d72 (2026-04-05) which still includes the now-removed attic input.
+- **Rationale for deferral:** The lock still pins attic to a specific rev -- reproducibility is maintained. Resolves with `nix flake update nixfleet` in the demo repo. No changes were needed in nixfleet-demo, so no branch was created there.
+
 ---
 
 ## ACCEPTED (false positive / intentional / out of scope)
@@ -92,4 +110,4 @@ All keyword matches are variable names, documentation examples, or test fixtures
 
 ### Flake inputs -- CLEAN
 
-All direct inputs from trusted or well-known community sources. Lock files within 3-week freshness window. Non-trusted-list orgs (`vic/import-tree`, `astro/microvm.nix`, `LnL7/nix-darwin`) are canonical community projects.
+All direct inputs from trusted or well-known community sources. Lock files within 3-week freshness window.
