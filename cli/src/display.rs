@@ -340,6 +340,45 @@ pub async fn run_cmd_async(
     })
 }
 
+/// Like `run_cmd_async` but tees stderr to the terminal in real time.
+/// Used at `-vv` verbosity where the user wants live output AND oplog capture.
+pub async fn run_cmd_async_passthrough(
+    cmd: &mut tokio::process::Command,
+) -> std::io::Result<Output> {
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+
+    let mut stderr_buf = Vec::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let mut buf = [0u8; 4096];
+        let mut term_stderr = tokio::io::stderr();
+        loop {
+            let n = stderr.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            stderr_buf.extend_from_slice(&buf[..n]);
+            let _ = term_stderr.write_all(&buf[..n]).await;
+        }
+    }
+
+    let mut stdout_buf = Vec::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        use tokio::io::AsyncReadExt;
+        stdout.read_to_end(&mut stdout_buf).await?;
+    }
+
+    let status = child.wait().await?;
+
+    Ok(std::process::Output {
+        status,
+        stdout: stdout_buf,
+        stderr: stderr_buf,
+    })
+}
+
 // ---------------------------------------------------------------
 // Tables
 // ---------------------------------------------------------------

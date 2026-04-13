@@ -3,7 +3,6 @@ use nixfleet_types::rollout::{
     CreateRolloutRequest, CreateRolloutResponse, OnFailure, RolloutStrategy, RolloutTarget,
 };
 use std::collections::HashMap;
-use std::process::Stdio;
 
 use crate::display;
 use crate::glob::filter_hosts;
@@ -26,17 +25,9 @@ async fn deploy_via_ssh(
     copy_cmd.args(["--to", ssh_target, store_path]);
 
     let copy_output = if display::passthrough_output() {
-        let status = copy_cmd
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
+        display::run_cmd_async_passthrough(&mut copy_cmd)
             .await
-            .context(format!("nix-copy-closure failed for {}", host))?;
-        std::process::Output {
-            status,
-            stdout: vec![],
-            stderr: vec![],
-        }
+            .context(format!("nix-copy-closure failed for {}", host))?
     } else {
         display::run_cmd_async(&mut copy_cmd, window.as_deref_mut())
             .await
@@ -68,17 +59,9 @@ async fn deploy_via_ssh(
     ]);
 
     let switch_output = if display::passthrough_output() {
-        let status = switch_cmd
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
+        display::run_cmd_async_passthrough(&mut switch_cmd)
             .await
-            .context(format!("SSH switch failed for {}", host))?;
-        std::process::Output {
-            status,
-            stdout: vec![],
-            stderr: vec![],
-        }
+            .context(format!("SSH switch failed for {}", host))?
     } else {
         display::run_cmd_async(&mut switch_cmd, window.as_deref_mut())
             .await

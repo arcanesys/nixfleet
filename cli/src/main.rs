@@ -546,7 +546,7 @@ async fn main() -> Result<()> {
                 let release_id = if let Some(id) = release {
                     id
                 } else if effective_push_to.is_some() || copy || effective_push_hook.is_some() {
-                    let id = crate::release::create(
+                    let (id, mut oplog) = crate::release::create(
                         &http_client,
                         effective_cp_url,
                         &flake,
@@ -559,10 +559,43 @@ async fn main() -> Result<()> {
                         false,
                     )
                     .await?;
-                    match id {
+                    let release_id = match id {
                         Some(id) => id,
-                        None => return Ok(()), // dry-run, nothing to deploy
+                        None => {
+                            oplog.finish(true, None);
+                            return Ok(()); // dry-run, nothing to deploy
+                        }
+                    };
+
+                    // --tags takes precedence; otherwise pass explicit host names
+                    let rollout_hosts: Vec<String> = if !tags.is_empty() {
+                        vec![]
+                    } else {
+                        hosts.iter().filter(|s| *s != "*").cloned().collect()
+                    };
+
+                    let rollout_result = deploy::deploy_rollout(
+                        &http_client,
+                        effective_cp_url,
+                        &release_id,
+                        &tags,
+                        &rollout_hosts,
+                        effective_strategy,
+                        batch_size,
+                        &failure_threshold,
+                        &on_failure,
+                        health_timeout,
+                        wait,
+                        effective_cache_url,
+                    )
+                    .await;
+
+                    match &rollout_result {
+                        Ok(()) => oplog.finish(true, None),
+                        Err(e) => oplog.finish(false, Some(&format!("{e:#}"))),
                     }
+
+                    return rollout_result;
                 } else {
                     bail!(
                         "--release, --push-to, --hook, or --copy is required for non-SSH deploys"
@@ -694,7 +727,7 @@ async fn main() -> Result<()> {
                         let cu = cache_url.or_else(|| resolved.cache_url.clone());
                         (pt, None, cu)
                     };
-                    release::create(
+                    let (_, mut oplog) = release::create(
                         &http_client,
                         effective_cp_url,
                         &flake,
@@ -707,6 +740,7 @@ async fn main() -> Result<()> {
                         eval_only,
                     )
                     .await?;
+                    oplog.finish(true, None);
                     Ok(())
                 }
                 ReleaseAction::List { limit, host } => {

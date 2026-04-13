@@ -6,7 +6,6 @@ use nixfleet_types::release::{
     CreateReleaseRequest, CreateReleaseResponse, Release, ReleaseDiff, ReleaseEntry,
 };
 use reqwest::Client;
-use std::process::Stdio;
 use tokio::process::Command;
 
 /// Discover all nixosConfigurations host names from a flake.
@@ -27,9 +26,7 @@ pub(crate) async fn discover_hosts(
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .output()
+        display::run_cmd_async_passthrough(&mut cmd)
             .await
             .context("failed to run nix eval")?
     } else {
@@ -66,9 +63,7 @@ async fn detect_platform(
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .output()
+        display::run_cmd_async_passthrough(&mut cmd)
             .await
             .context("failed to detect platform")?
     } else {
@@ -108,10 +103,7 @@ async fn detect_tags(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLo
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .output()
-            .await
+        display::run_cmd_async_passthrough(&mut cmd).await
     } else {
         display::run_cmd_async(&mut cmd, None).await
     };
@@ -156,9 +148,7 @@ pub(crate) async fn build_host(
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .output()
+        display::run_cmd_async_passthrough(&mut cmd)
             .await
             .context("failed to run nix build")?
     } else {
@@ -223,17 +213,9 @@ async fn nix_copy_to(
         cmd.arg("--quiet");
     }
     let output = if display::passthrough_output() {
-        let status = cmd
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
+        display::run_cmd_async_passthrough(&mut cmd)
             .await
-            .context("failed to run nix copy --to")?;
-        std::process::Output {
-            status,
-            stdout: vec![],
-            stderr: vec![],
-        }
+            .context("failed to run nix copy --to")?
     } else {
         display::run_cmd_async(&mut cmd, window)
             .await
@@ -268,17 +250,9 @@ async fn copy_to_host(
     let mut cmd = Command::new("nix-copy-closure");
     cmd.args(["--to", &format!("root@{}", hostname), store_path]);
     let output = if display::passthrough_output() {
-        let status = cmd
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
+        display::run_cmd_async_passthrough(&mut cmd)
             .await
-            .context("failed to run nix-copy-closure")?;
-        std::process::Output {
-            status,
-            stdout: vec![],
-            stderr: vec![],
-        }
+            .context("failed to run nix-copy-closure")?
     } else {
         display::run_cmd_async(&mut cmd, window)
             .await
@@ -301,11 +275,7 @@ async fn flake_revision(flake: &str) -> Option<String> {
     let mut cmd = Command::new("nix");
     cmd.args(["flake", "metadata", flake, "--json"]);
     let output = if display::passthrough_output() {
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .output()
-            .await
-            .ok()?
+        display::run_cmd_async_passthrough(&mut cmd).await.ok()?
     } else {
         display::run_cmd_async(&mut cmd, None).await.ok()?
     };
@@ -337,21 +307,15 @@ pub async fn run_push_hook(
             c
         }
     };
-    if display::passthrough_output() {
-        let status = cmd
-            .stderr(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .status()
+    let output = if display::passthrough_output() {
+        display::run_cmd_async_passthrough(&mut cmd)
             .await
-            .context("failed to run push hook")?;
-        if !status.success() {
-            anyhow::bail!("push hook failed: {}", cmd_str);
-        }
-        return Ok(());
-    }
-    let output = display::run_cmd_async(&mut cmd, window)
-        .await
-        .context("failed to run push hook")?;
+            .context("failed to run push hook")?
+    } else {
+        display::run_cmd_async(&mut cmd, window)
+            .await
+            .context("failed to run push hook")?
+    };
     if !output.status.success() {
         anyhow::bail!("push hook failed: {}", cmd_str);
     }
@@ -378,13 +342,14 @@ pub async fn create(
     cache_url: Option<&str>,
     dry_run: bool,
     eval_only: bool,
-) -> Result<Option<String>> {
+) -> Result<(Option<String>, crate::oplog::OpLog)> {
     let mut oplog = crate::oplog::OpLog::new("release-create")?;
 
     tracing::info!("discovering hosts");
     let all_hosts = discover_hosts(flake, &mut oplog).await?;
     let hosts = filter_hosts(&all_hosts, host_patterns);
     if hosts.is_empty() {
+        oplog.finish(false, Some("no hosts match pattern"));
         anyhow::bail!("no hosts match pattern '{}'", host_patterns.join(","));
     }
     tracing::info!(count = hosts.len(), "found hosts");
@@ -397,12 +362,13 @@ pub async fn create(
     )
     .await;
 
-    match &result {
-        Ok(_) => oplog.finish(true, None),
-        Err(e) => oplog.finish(false, Some(&format!("{e:#}"))),
+    match result {
+        Ok(id) => Ok((id, oplog)),
+        Err(e) => {
+            oplog.finish(false, Some(&format!("{e:#}")));
+            Err(e)
+        }
     }
-
-    result
 }
 
 /// Inner implementation for `create`, split out so oplog can wrap the result.
