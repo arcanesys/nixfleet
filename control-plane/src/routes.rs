@@ -472,6 +472,59 @@ pub struct BootstrapKeyResponse {
     pub role: String,
 }
 
+/// Request body for notifying an SSH deploy.
+#[derive(Debug, Deserialize)]
+pub struct NotifyDeployRequest {
+    pub store_path: String,
+}
+
+/// POST /api/v1/machines/{id}/notify-deploy — notify the CP of an SSH deploy.
+///
+/// Sets both desired_generation (DB + fleet state) and current_generation
+/// (fleet state only — the agent will confirm on its next report).
+/// Used by `nixfleet deploy --ssh` to keep the CP in sync.
+pub async fn notify_deploy(
+    State((state, db)): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+    Json(body): Json<NotifyDeployRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "machine ID too long".to_string()));
+    }
+    if !actor.has_role(&["admin", "deploy"]) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "admin or deploy role required".to_string(),
+        ));
+    }
+
+    db.set_desired_generation(&id, &body.store_path).map_err(|e| {
+        tracing::error!(error = %e, machine_id = %id, "failed to set desired generation");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        )
+    })?;
+
+    let mut fleet = state.write().await;
+    let machine = fleet.get_or_create(&id);
+    machine.desired_generation = Some(DesiredGeneration {
+        hash: body.store_path.clone(),
+        cache_url: None,
+        poll_hint: None,
+    });
+
+    crate::log_insert_err(
+        "audit_event",
+        db.insert_audit_event(&actor.identifier(), "notify_deploy", &id, Some(&body.store_path)),
+    );
+    drop(fleet);
+
+    tracing::info!(machine_id = %id, store_path = %body.store_path, "SSH deploy notified");
+    Ok(StatusCode::OK)
+}
+
 /// DELETE /api/v1/machines/{id}/desired-generation
 pub async fn clear_desired_generation(
     State((state, db)): State<AppState>,

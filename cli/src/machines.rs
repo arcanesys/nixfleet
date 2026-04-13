@@ -118,6 +118,29 @@ pub async fn clear_desired(client: &reqwest::Client, cp_url: &str, machine_id: &
     anyhow::bail!("failed to clear desired generation: {} {}", status, body);
 }
 
+/// POST /api/v1/machines/{id}/notify-deploy — notify CP of an SSH deploy.
+pub async fn notify_deploy(
+    client: &reqwest::Client,
+    cp_url: &str,
+    machine_id: &str,
+    store_path: &str,
+) -> Result<()> {
+    let url = format!("{}/api/v1/machines/{}/notify-deploy", cp_url, machine_id);
+    let body = serde_json::json!({ "store_path": store_path });
+
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("failed to reach control plane")?;
+
+    crate::client::check_response(resp).await?;
+
+    println!("CP notified: {} is now running {}", machine_id, store_path);
+    Ok(())
+}
+
 /// POST /api/v1/machines/{id}/register — register a machine with the control plane.
 pub async fn register(
     client: &reqwest::Client,

@@ -851,6 +851,49 @@ async fn machines_set_lifecycle_succeeds() {
 }
 
 // =====================================================================
+// machines notify-deploy — POST /api/v1/machines/{id}/notify-deploy
+// =====================================================================
+
+#[tokio::test]
+async fn machines_notify_deploy_posts_store_path() {
+    let _guard = cli_lock();
+    let server = cp_mock().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/machines/web-01/notify-deploy"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "--control-plane-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "machines",
+            "notify-deploy",
+            "web-01",
+            "/nix/store/abc-system",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CP notified"));
+
+    let received = server.received_requests().await.unwrap();
+    let req = received
+        .iter()
+        .find(|r| r.url.path() == "/api/v1/machines/web-01/notify-deploy")
+        .expect("notify-deploy request must reach the mock");
+    let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+    assert_eq!(
+        body["store_path"], "/nix/store/abc-system",
+        "request body must contain store_path"
+    );
+}
+
+// =====================================================================
 // machines clear-desired — DELETE /api/v1/machines/{id}/desired-generation
 // =====================================================================
 

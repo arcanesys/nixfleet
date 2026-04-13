@@ -77,7 +77,7 @@ Full scope table with activation conditions and details: `docs/mdbook/guide/defi
 
 ## CLI
 
-Commands: `init`, `bootstrap`, `status`, `deploy`, `rollback`, `release` (create/list/show/diff/delete, `--eval-only`, `--host`), `rollout` (list/status/resume/cancel/delete), `machines` (list/register/set-lifecycle/clear-desired), `host` (add).
+Commands: `init`, `bootstrap`, `status`, `deploy`, `rollback`, `release` (create/list/show/diff/delete, `--eval-only`, `--host`), `rollout` (list/status/resume/cancel/delete), `machines` (list/register/set-lifecycle/clear-desired/notify-deploy), `host` (add).
 
 ```bash
 nixfleet init --control-plane-url https://cp:8080 --ca-cert fleet-ca.pem
@@ -122,6 +122,7 @@ Roles: `admin` (full access), `deploy` (create releases/rollouts), `readonly` (r
 | POST | `/api/v1/machines/{id}/register` | admin | Pre-register a machine |
 | PATCH | `/api/v1/machines/{id}/lifecycle` | admin | Change machine lifecycle state |
 | DELETE | `/api/v1/machines/{id}/desired-generation` | admin | Clear a machine's desired generation |
+| POST | `/api/v1/machines/{id}/notify-deploy` | deploy | Notify CP of an SSH deploy (sets desired generation) |
 | POST | `/api/v1/rollouts` | deploy | Create a rollout (requires `release_id`) |
 | GET | `/api/v1/rollouts` | readonly | List rollouts |
 | GET | `/api/v1/rollouts/{id}` | readonly | Get rollout detail (includes `events` timeline) |

@@ -351,10 +351,11 @@ async fn run_inner(
                 {
                     Ok(()) => {
                         tracing::info!(host, "deployed");
-                        // Clear any stale desired generation so the agent
-                        // doesn't try to re-apply an old rollout target.
-                        if let Err(e) = clear_desired_on_cp(client, cp_url, host).await {
-                            tracing::debug!(host, error = %e, "could not clear desired generation on CP (CP may be unavailable)");
+                        // Notify the CP of the deployed store path so it
+                        // tracks desired_generation and shows the machine
+                        // in sync once the agent confirms.
+                        if let Err(e) = notify_deploy_on_cp(client, cp_url, host, store_path).await {
+                            tracing::debug!(host, error = %e, "could not notify CP of deploy (CP may be unavailable)");
                         }
                         success_count += 1;
                     }
@@ -385,26 +386,28 @@ async fn run_inner(
     Ok(())
 }
 
-/// Best-effort: clear a machine's desired generation on the CP after an SSH deploy.
-/// This prevents the agent from fighting the SSH deploy by re-applying a stale
-/// rollout target. Failures are logged at debug level — the SSH deploy already
-/// succeeded, so CP unavailability is not fatal.
-async fn clear_desired_on_cp(
+/// Best-effort: notify the CP of a successful SSH deploy.
+/// Sets the machine's desired generation to the deployed store path so
+/// the CP shows the machine in sync once the agent confirms.
+async fn notify_deploy_on_cp(
     client: &reqwest::Client,
     cp_url: &str,
     machine_id: &str,
+    store_path: &str,
 ) -> Result<()> {
     let url = format!(
-        "{}/api/v1/machines/{}/desired-generation",
+        "{}/api/v1/machines/{}/notify-deploy",
         cp_url, machine_id
     );
+    let body = serde_json::json!({ "store_path": store_path });
     let resp = client
-        .delete(&url)
+        .post(&url)
+        .json(&body)
         .send()
         .await
         .context("failed to reach control plane")?;
     let status = resp.status();
-    if status.is_success() || status.as_u16() == 404 {
+    if status.is_success() {
         Ok(())
     } else {
         anyhow::bail!("CP returned {}", status)

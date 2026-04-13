@@ -12,6 +12,7 @@
 //! | M8 | `clear-desired` removes generation from DB and fleet state |
 //! | M9 | Agent report populates `agent_version` and `uptime_seconds` |
 //! | M10 | Maintenance machine excluded from rollout even when targeted by name |
+//! | M11 | `notify-deploy` sets desired generation in DB and fleet state |
 //!
 //! Every scenario spins up a fresh in-process CP via `harness::spawn_cp`
 //! and drives it over real HTTP.
@@ -561,6 +562,62 @@ async fn m10_maintenance_machine_excluded_from_host_targeted_rollout() {
     assert_eq!(
         total, 1,
         "only web-01 (active) should be in the rollout, not web-02 (maintenance)"
+    );
+}
+
+/// M11 — POST /api/v1/machines/{id}/notify-deploy sets desired_generation
+/// in both DB and fleet state, and the change is visible in GET /machines.
+#[tokio::test]
+async fn m11_notify_deploy_sets_desired_generation() {
+    let cp = harness::spawn_cp().await;
+    harness::register_machine(&cp, "ssh-01", &["web"]).await;
+
+    let store_path = "/nix/store/m11-ssh-deploy-system";
+
+    // POST notify-deploy
+    let resp = cp
+        .admin
+        .post(format!(
+            "{}/api/v1/machines/ssh-01/notify-deploy",
+            cp.base
+        ))
+        .json(&serde_json::json!({ "store_path": store_path }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "notify-deploy must return 200: {}",
+        resp.text().await.unwrap_or_default()
+    );
+
+    // GET /machines must show the desired generation.
+    let machines: Vec<MachineStatus> = cp
+        .admin
+        .get(format!("{}/api/v1/machines", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let m = machines
+        .iter()
+        .find(|m| m.machine_id == "ssh-01")
+        .expect("ssh-01 in inventory");
+    assert_eq!(
+        m.desired_generation.as_deref(),
+        Some(store_path),
+        "desired_generation must be set after notify-deploy"
+    );
+
+    // DB must also have the desired generation.
+    let db_gen = cp.db.get_desired_generation("ssh-01").unwrap();
+    assert_eq!(
+        db_gen.as_deref(),
+        Some(store_path),
+        "DB desired_generation must be set after notify-deploy"
     );
 }
 

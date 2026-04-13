@@ -172,6 +172,10 @@ pub fn build_app(
             "/api/v1/machines/{id}/desired-generation",
             delete(routes::clear_desired_generation),
         )
+        .route(
+            "/api/v1/machines/{id}/notify-deploy",
+            post(routes::notify_deploy),
+        )
         .route("/api/v1/rollouts", post(rollout::routes::create_rollout))
         .route("/api/v1/rollouts", get(rollout::routes::list_rollouts))
         .route(

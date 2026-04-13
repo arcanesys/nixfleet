@@ -403,6 +403,25 @@ Exit codes:
 
 ---
 
+## machines notify-deploy
+
+Notify the control plane of an out-of-band deploy (e.g. SSH). Sets the machine's desired generation to the deployed store path so `nixfleet status` shows the machine in sync once the agent confirms.
+
+Called automatically by `deploy --ssh` after a successful switch. Also available manually for other out-of-band deploy workflows.
+
+```sh
+nixfleet machines notify-deploy <ID> <STORE_PATH>
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `<ID>` | string | Machine ID |
+| `<STORE_PATH>` | string | Store path that was deployed |
+
+Requires `deploy` or `admin` role.
+
+---
+
 ## rollout delete
 
 Delete a terminal rollout (completed, cancelled, or failed). The control plane rejects deletion of active rollouts with 409.

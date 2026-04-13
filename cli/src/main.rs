@@ -388,6 +388,14 @@ enum MachineAction {
         #[arg(long, value_delimiter = ',', value_name = "TAG")]
         tags: Vec<String>,
     },
+
+    /// Notify the CP of an out-of-band deploy (e.g. SSH)
+    NotifyDeploy {
+        /// Machine ID
+        id: String,
+        /// Store path that was deployed
+        store_path: String,
+    },
 }
 
 #[tokio::main]
@@ -746,6 +754,10 @@ async fn main() -> Result<()> {
                 }
                 MachineAction::Register { id, tags } => {
                     machines::register(&http_client, effective_cp_url, &id, &tags).await
+                }
+                MachineAction::NotifyDeploy { id, store_path } => {
+                    machines::notify_deploy(&http_client, effective_cp_url, &id, &store_path)
+                        .await
                 }
             }
         }
