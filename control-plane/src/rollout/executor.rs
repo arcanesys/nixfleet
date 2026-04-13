@@ -117,8 +117,16 @@ async fn process_rollout(
     match batch.status.as_str() {
         "pending" => deploy_batch(state, db, rollout, batch, &machine_ids).await?,
         "deploying" | "waiting_health" => {
-            evaluate_batch(state, db, rollout, batch, &machine_ids, &batches, &entry_map)
-                .await?;
+            evaluate_batch(
+                state,
+                db,
+                rollout,
+                batch,
+                &machine_ids,
+                &batches,
+                &entry_map,
+            )
+            .await?;
         }
         _ => {}
     }
@@ -299,14 +307,13 @@ async fn evaluate_batch(
     // timeout" — that would make the batch wait forever. Surface the
     // parse error so the executor can pause the rollout explicitly.
     if pending_count > 0 {
-        let batch_start =
-            chrono::NaiveDateTime::parse_from_str(started_at, "%Y-%m-%d %H:%M:%S")
-                .with_context(|| {
-                    format!(
-                        "invalid batch started_at timestamp {started_at:?} for batch {}",
-                        batch.id
-                    )
-                })?;
+        let batch_start = chrono::NaiveDateTime::parse_from_str(started_at, "%Y-%m-%d %H:%M:%S")
+            .with_context(|| {
+                format!(
+                    "invalid batch started_at timestamp {started_at:?} for batch {}",
+                    batch.id
+                )
+            })?;
         let batch_start_utc = chrono::TimeZone::from_utc_datetime(&chrono::Utc, &batch_start);
         let elapsed = chrono::Utc::now()
             .signed_duration_since(batch_start_utc)

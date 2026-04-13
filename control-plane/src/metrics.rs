@@ -286,10 +286,7 @@ mod tests {
 
     #[test]
     fn test_normalize_release_paths() {
-        assert_eq!(
-            normalize_path("/api/v1/releases"),
-            "/api/v1/releases"
-        );
+        assert_eq!(normalize_path("/api/v1/releases"), "/api/v1/releases");
         let uuid = "550e8400-e29b-41d4-a716-446655440000";
         assert_eq!(
             normalize_path(&format!("/api/v1/releases/{uuid}")),

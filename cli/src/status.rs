@@ -56,7 +56,14 @@ pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool) -> Result<(
 
     display::print_list(
         json,
-        &["HOST", "STATE", "LIFECYCLE", "CURRENT", "DESIRED", "LAST SEEN"],
+        &[
+            "HOST",
+            "STATE",
+            "LIFECYCLE",
+            "CURRENT",
+            "DESIRED",
+            "LAST SEEN",
+        ],
         &rows,
         &machines,
     );

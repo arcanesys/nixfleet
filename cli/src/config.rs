@@ -113,7 +113,12 @@ pub fn expand_env_vars(s: &str) -> String {
         if let Some(end) = result[start..].find('}') {
             let var_name = &result[start + 2..start + end];
             let value = resolve_var(var_name);
-            result = format!("{}{}{}", &result[..start], value, &result[start + end + 1..]);
+            result = format!(
+                "{}{}{}",
+                &result[..start],
+                value,
+                &result[start + end + 1..]
+            );
         } else {
             break;
         }
@@ -149,8 +154,7 @@ pub fn find_config_file(start_dir: &Path) -> Option<PathBuf> {
 pub fn load_config_file(path: &Path) -> Result<ConfigFile> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
-    toml::from_str(&content)
-        .with_context(|| format!("failed to parse {}", path.display()))
+    toml::from_str(&content).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 /// Load credentials from `~/.config/nixfleet/credentials.toml`.
@@ -161,8 +165,7 @@ pub fn load_credentials() -> Result<CredentialsFile> {
     }
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read {}", path.display()))?;
-    toml::from_str(&content)
-        .with_context(|| format!("failed to parse {}", path.display()))
+    toml::from_str(&content).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 /// Path to the credentials file.
@@ -204,8 +207,7 @@ pub fn save_api_key(cp_url: &str, api_key: &str) -> Result<()> {
     let entry = creds.entry(cp_url.to_string()).or_default();
     entry.insert("api-key".to_string(), api_key.to_string());
 
-    let content = toml::to_string_pretty(&creds)
-        .context("failed to serialize credentials")?;
+    let content = toml::to_string_pretty(&creds).context("failed to serialize credentials")?;
 
     std::fs::write(&path, &content)
         .with_context(|| format!("failed to write {}", path.display()))?;
@@ -315,7 +317,11 @@ pub fn write_config_file(
         } else {
             None
         },
-        cache: if cache_url.is_some() || push_to.is_some() || hook_url.is_some() || hook_push_cmd.is_some() {
+        cache: if cache_url.is_some()
+            || push_to.is_some()
+            || hook_url.is_some()
+            || hook_push_cmd.is_some()
+        {
             Some(WritableCache {
                 url: cache_url.map(str::to_string),
                 push_to: push_to.map(str::to_string),
@@ -341,8 +347,7 @@ pub fn write_config_file(
         },
     };
 
-    let content =
-        toml::to_string_pretty(&file).context("failed to serialize .nixfleet.toml")?;
+    let content = toml::to_string_pretty(&file).context("failed to serialize .nixfleet.toml")?;
 
     std::fs::write(path, &content)
         .with_context(|| format!("failed to write {}", path.display()))?;
@@ -546,7 +551,10 @@ health-timeout = 300
         assert_eq!(cp.url, Some("https://cp-01:8080".to_string()));
         assert_eq!(cp.ca_cert, Some("modules/_config/fleet-ca.pem".to_string()));
         let tls = config.tls.unwrap();
-        assert_eq!(tls.client_cert, Some("/run/agenix/agent-${HOSTNAME}-cert".to_string()));
+        assert_eq!(
+            tls.client_cert,
+            Some("/run/agenix/agent-${HOSTNAME}-cert".to_string())
+        );
         let cache = config.cache.unwrap();
         assert_eq!(cache.url, Some("http://cache-01:5000".to_string()));
         assert_eq!(cache.push_to, Some("ssh://root@cache-01".to_string()));
@@ -592,7 +600,10 @@ url = "https://cp-01:8080"
                 ..CliOverrides::default()
             },
         );
-        assert_eq!(resolved.control_plane_url, Some("https://prod:8080".to_string()));
+        assert_eq!(
+            resolved.control_plane_url,
+            Some("https://prod:8080".to_string())
+        );
     }
 
     #[test]
@@ -612,7 +623,10 @@ url = "https://cp-01:8080"
                 ..CliOverrides::default()
             },
         );
-        assert_eq!(resolved.control_plane_url, Some("https://cp-01:8080".to_string()));
+        assert_eq!(
+            resolved.control_plane_url,
+            Some("https://cp-01:8080".to_string())
+        );
     }
 
     #[cfg(unix)]

@@ -1,7 +1,7 @@
+use crate::display;
 use anyhow::{bail, Context, Result};
 use nixfleet_types::rollout::{RolloutDetail, RolloutStatus};
 use std::time::{Duration, Instant};
-use crate::display;
 
 /// Default upper bound on how long `deploy --wait` / `rollout status --wait`
 /// will block before aborting with a timeout error. Keeps CI jobs from
@@ -72,12 +72,7 @@ pub async fn list(
 }
 
 /// GET /api/v1/rollouts/{id} — show rollout detail with batch breakdown.
-pub async fn status(
-    client: &reqwest::Client,
-    cp_url: &str,
-    id: &str,
-    json: bool,
-) -> Result<()> {
+pub async fn status(client: &reqwest::Client, cp_url: &str, id: &str, json: bool) -> Result<()> {
     let url = format!("{}/api/v1/rollouts/{}", cp_url, id);
 
     let resp = client
@@ -182,7 +177,6 @@ pub async fn wait_for_completion(
             .context("Failed to reach control plane")?;
 
         if !resp.status().is_success() {
-
             bail!(
                 "Control plane returned {}: {}",
                 resp.status(),
@@ -227,10 +221,12 @@ pub async fn wait_for_completion(
         );
 
         if !rollout.status.is_active() {
-
             println!(
                 "Rollout {} finished: {} ({} machines, {} batches)",
-                id, rollout.status, total_machines, rollout.batches.len()
+                id,
+                rollout.status,
+                total_machines,
+                rollout.batches.len()
             );
             if rollout.status == RolloutStatus::Failed {
                 bail!("Rollout failed");
@@ -239,7 +235,6 @@ pub async fn wait_for_completion(
         }
 
         if !timeout.is_zero() && started.elapsed() >= timeout {
-
             bail!(
                 "Timed out after {}s waiting for rollout {} to finish (last status: {}). \
                  Re-run with --wait-timeout 0 to block indefinitely, or inspect with \
@@ -310,11 +305,7 @@ fn print_rollout_detail(rollout: &RolloutDetail) {
                 .get(machine_id)
                 .map(|h| h.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            println!(
-                "  {} → {}",
-                machine_id,
-                display::color_status(&health)
-            );
+            println!("  {} → {}", machine_id, display::color_status(&health));
         }
     }
 

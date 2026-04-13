@@ -322,9 +322,7 @@ pub async fn get_rollout(
 
     let events = db.get_rollout_events(&rollout.id).unwrap_or_default();
 
-    Ok(Json(row_to_detail_with_events(
-        &rollout, &batches, &events,
-    )))
+    Ok(Json(row_to_detail_with_events(&rollout, &batches, &events)))
 }
 
 /// POST /api/v1/rollouts/{id}/resume

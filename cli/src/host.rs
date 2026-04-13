@@ -26,10 +26,7 @@ pub async fn add_host(
     println!("\nNext steps:");
     println!("  1. Add the above snippet to modules/fleet.nix");
     println!("  2. git add && git commit");
-    println!(
-        "  3. nixos-anywhere --flake .#{} root@<ip>",
-        hostname
-    );
+    println!("  3. nixos-anywhere --flake .#{} root@<ip>", hostname);
 
     Ok(())
 }
@@ -147,7 +144,6 @@ fn print_fleet_snippet(hostname: &str, org: &str, role: &str, platform: &str, cp
 }})"#
     );
 }
-
 
 #[cfg(test)]
 mod tests {

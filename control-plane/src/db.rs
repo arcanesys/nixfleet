@@ -749,11 +749,8 @@ impl Db {
             rusqlite::params![id],
         )
         .context("failed to delete rollout batches")?;
-        tx.execute(
-            "DELETE FROM rollouts WHERE id = ?1",
-            rusqlite::params![id],
-        )
-        .context("failed to delete rollout")?;
+        tx.execute("DELETE FROM rollouts WHERE id = ?1", rusqlite::params![id])
+            .context("failed to delete rollout")?;
         tx.commit().context("failed to commit rollout deletion")?;
         Ok(true)
     }
@@ -1738,5 +1735,4 @@ mod tests {
         let deleted = db.delete_rollout("r-nonexistent").unwrap();
         assert!(!deleted);
     }
-
 }

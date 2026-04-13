@@ -583,8 +583,7 @@ async fn rollouts_delete_terminal_returns_204() {
 
     // GET must now return 404.
     harness::assert_status(
-        cp.admin
-            .get(format!("{}/api/v1/rollouts/{}", cp.base, id)),
+        cp.admin.get(format!("{}/api/v1/rollouts/{}", cp.base, id)),
         404,
     )
     .await;
@@ -634,8 +633,7 @@ async fn rollouts_delete_readonly_returns_403() {
 
     // Readonly key must be rejected.
     harness::assert_status(
-        client_with_key(TEST_READONLY_KEY)
-            .delete(format!("{}/api/v1/rollouts/{}", cp.base, id)),
+        client_with_key(TEST_READONLY_KEY).delete(format!("{}/api/v1/rollouts/{}", cp.base, id)),
         403,
     )
     .await;
@@ -828,8 +826,7 @@ async fn releases_delete_deploy_role_returns_403() {
     let cp = harness::spawn_cp().await;
     let id = harness::create_release(&cp, &[("web-01", "/nix/store/x")]).await;
     harness::assert_status(
-        client_with_key(TEST_DEPLOY_KEY)
-            .delete(format!("{}/api/v1/releases/{}", cp.base, id)),
+        client_with_key(TEST_DEPLOY_KEY).delete(format!("{}/api/v1/releases/{}", cp.base, id)),
         403,
     )
     .await;
@@ -1032,9 +1029,5 @@ async fn metrics_route_returns_200_without_auth() {
     // contract: /metrics is reachable without an Authorization header
     // and returns 200.
     let cp = harness::spawn_cp().await;
-    harness::assert_status(
-        client_anonymous().get(format!("{}/metrics", cp.base)),
-        200,
-    )
-    .await;
+    harness::assert_status(client_anonymous().get(format!("{}/metrics", cp.base)), 200).await;
 }

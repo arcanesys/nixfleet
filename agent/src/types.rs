@@ -4,4 +4,3 @@
 //! `MachineStatus` is available as `nixfleet_types::MachineStatus`.
 
 pub use nixfleet_types::{DesiredGeneration, Report};
-

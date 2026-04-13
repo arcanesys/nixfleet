@@ -116,7 +116,11 @@ async fn deploy_via_ssh(
             .status()
             .await
             .context(format!("nix-copy-closure failed for {}", host))?;
-        std::process::Output { status, stdout: vec![], stderr: vec![] }
+        std::process::Output {
+            status,
+            stdout: vec![],
+            stderr: vec![],
+        }
     } else {
         display::run_cmd_async(&mut copy_cmd, window.as_deref_mut())
             .await
@@ -146,7 +150,11 @@ async fn deploy_via_ssh(
             .status()
             .await
             .context(format!("SSH switch failed for {}", host))?;
-        std::process::Output { status, stdout: vec![], stderr: vec![] }
+        std::process::Output {
+            status,
+            stdout: vec![],
+            stderr: vec![],
+        }
     } else {
         display::run_cmd_async(&mut switch_cmd, window.as_deref_mut())
             .await
@@ -215,7 +223,10 @@ async fn run_inner(
     // Build all targets
     {
         let mut window = if display::use_progress() {
-            Some(display::RollingWindow::new("building", targets.len() as u64))
+            Some(display::RollingWindow::new(
+                "building",
+                targets.len() as u64,
+            ))
         } else {
             None
         };
@@ -262,7 +273,10 @@ async fn run_inner(
 
     {
         let mut window = if display::use_progress() {
-            Some(display::RollingWindow::new("deploying", targets.len() as u64))
+            Some(display::RollingWindow::new(
+                "deploying",
+                targets.len() as u64,
+            ))
         } else {
             None
         };
@@ -276,7 +290,14 @@ async fn run_inner(
                     Some(t) => t.to_string(),
                     None => format!("root@{}", host),
                 };
-                match deploy_via_ssh(host, store_path, &ssh_dest, window.as_mut().and_then(|w| w.for_output())).await {
+                match deploy_via_ssh(
+                    host,
+                    store_path,
+                    &ssh_dest,
+                    window.as_mut().and_then(|w| w.for_output()),
+                )
+                .await
+                {
                     Ok(()) => {
                         tracing::info!(host, "deployed");
                         success_count += 1;

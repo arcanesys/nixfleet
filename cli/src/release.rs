@@ -1,3 +1,5 @@
+use crate::display;
+use crate::glob::filter_hosts;
 use anyhow::{Context, Result};
 use console::style;
 use nixfleet_types::release::{
@@ -5,8 +7,6 @@ use nixfleet_types::release::{
 };
 use reqwest::Client;
 use std::process::Command;
-use crate::display;
-use crate::glob::filter_hosts;
 
 /// Discover all nixosConfigurations host names from a flake.
 fn discover_hosts(flake: &str) -> Result<Vec<String>> {
@@ -166,7 +166,11 @@ fn nix_copy_to(
             .stderr(std::process::Stdio::inherit())
             .status()
             .context("failed to run nix copy --to")?;
-        std::process::Output { status, stdout: vec![], stderr: vec![] }
+        std::process::Output {
+            status,
+            stdout: vec![],
+            stderr: vec![],
+        }
     } else {
         display::run_cmd(&mut cmd, window).context("failed to run nix copy --to")?
     };
@@ -196,15 +200,16 @@ fn copy_to_host(
             .stderr(std::process::Stdio::inherit())
             .status()
             .context("failed to run nix-copy-closure")?;
-        std::process::Output { status, stdout: vec![], stderr: vec![] }
+        std::process::Output {
+            status,
+            stdout: vec![],
+            stderr: vec![],
+        }
     } else {
         display::run_cmd(&mut cmd, window).context("failed to run nix-copy-closure")?
     };
     if !output.status.success() {
-        anyhow::bail!(
-            "nix-copy-closure failed for {}",
-            hostname
-        );
+        anyhow::bail!("nix-copy-closure failed for {}", hostname);
     }
     Ok(())
 }
@@ -341,12 +346,19 @@ async fn create_inner(
             let build_result = if eval_only {
                 eval_host(flake, hostname)
             } else {
-                build_host(flake, hostname, window.as_mut().and_then(|w| w.for_output()))
+                build_host(
+                    flake,
+                    hostname,
+                    window.as_mut().and_then(|w| w.for_output()),
+                )
             };
             match build_result {
                 Ok(store_path) => {
                     if platform.contains("darwin") {
-                        tracing::info!(hostname, "Darwin host — built and cached but not deployable via agent");
+                        tracing::info!(
+                            hostname,
+                            "Darwin host — built and cached but not deployable via agent"
+                        );
                     }
                     entries.push(ReleaseEntry {
                         hostname: hostname.clone(),
@@ -369,27 +381,121 @@ async fn create_inner(
     }
 
     // Distribute
-    if !eval_only { if let Some(push_url) = push_to {
-        let mut pushed: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let unique_count = entries
-            .iter()
-            .map(|e| &e.store_path)
-            .collect::<std::collections::HashSet<_>>()
-            .len();
-        {
+    if !eval_only {
+        if let Some(push_url) = push_to {
+            let mut pushed: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let unique_count = entries
+                .iter()
+                .map(|e| &e.store_path)
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            {
+                let mut window = if display::use_progress() {
+                    Some(display::RollingWindow::new("pushing", unique_count as u64))
+                } else {
+                    None
+                };
+
+                for entry in &entries {
+                    if pushed.insert(entry.store_path.clone()) {
+                        if let Err(e) = nix_copy_to(
+                            push_url,
+                            &entry.store_path,
+                            window.as_mut().and_then(|w| w.for_output()),
+                        ) {
+                            if let Some(ref mut w) = window {
+                                w.mark_error();
+                            }
+                            return Err(e);
+                        }
+                        if let Some(ref w) = window {
+                            w.inc();
+                        }
+                    }
+                }
+            }
+
+            if let Some(hook) = push_hook {
+                let remote_host = extract_ssh_host(push_url);
+                tracing::info!(
+                    host = remote_host.as_deref().unwrap_or("localhost"),
+                    "running push hook"
+                );
+                let mut window = if display::use_progress() {
+                    Some(display::RollingWindow::new(
+                        "push-hook",
+                        entries.len() as u64,
+                    ))
+                } else {
+                    None
+                };
+                for entry in &entries {
+                    if let Some(ref mut w) = window {
+                        w.set_line_prefix(&entry.hostname);
+                    }
+                    run_push_hook(
+                        remote_host.as_deref(),
+                        hook,
+                        &entry.store_path,
+                        window.as_mut().and_then(|w| w.for_output()),
+                    )?;
+                    if let Some(ref w) = window {
+                        w.inc();
+                    }
+                }
+            }
+        } else if let Some(hook) = push_hook {
+            tracing::info!("running push hook locally");
             let mut window = if display::use_progress() {
-                Some(display::RollingWindow::new("pushing", unique_count as u64))
+                Some(display::RollingWindow::new(
+                    "push-hook",
+                    entries.len() as u64,
+                ))
             } else {
                 None
             };
-
             for entry in &entries {
-                if pushed.insert(entry.store_path.clone()) {
-                    if let Err(e) = nix_copy_to(push_url, &entry.store_path, window.as_mut().and_then(|w| w.for_output())) {
+                if let Some(ref mut w) = window {
+                    w.set_line_prefix(&entry.hostname);
+                }
+                run_push_hook(
+                    None,
+                    hook,
+                    &entry.store_path,
+                    window.as_mut().and_then(|w| w.for_output()),
+                )?;
+                if let Some(ref w) = window {
+                    w.inc();
+                }
+            }
+        } else if copy {
+            {
+                let mut window = if display::use_progress() {
+                    Some(display::RollingWindow::new("copying", entries.len() as u64))
+                } else {
+                    None
+                };
+
+                for entry in &entries {
+                    if let Some(ref mut w) = window {
+                        w.set_line_prefix(&entry.hostname);
+                    }
+                    if entry.platform.contains("darwin") {
+                        tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
+                        if let Some(ref w) = window {
+                            w.inc();
+                        }
+                        continue;
+                    }
+                    if let Err(e) = copy_to_host(
+                        &entry.hostname,
+                        &entry.store_path,
+                        window.as_mut().and_then(|w| w.for_output()),
+                    ) {
+                        tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
                         if let Some(ref mut w) = window {
                             w.mark_error();
                         }
-                        return Err(e);
                     }
                     if let Some(ref w) = window {
                         w.inc();
@@ -397,75 +503,7 @@ async fn create_inner(
                 }
             }
         }
-
-        if let Some(hook) = push_hook {
-            let remote_host = extract_ssh_host(push_url);
-            tracing::info!(
-                host = remote_host.as_deref().unwrap_or("localhost"),
-                "running push hook"
-            );
-            let mut window = if display::use_progress() {
-                Some(display::RollingWindow::new("push-hook", entries.len() as u64))
-            } else {
-                None
-            };
-            for entry in &entries {
-                if let Some(ref mut w) = window {
-                    w.set_line_prefix(&entry.hostname);
-                }
-                run_push_hook(remote_host.as_deref(), hook, &entry.store_path, window.as_mut().and_then(|w| w.for_output()))?;
-                if let Some(ref w) = window {
-                    w.inc();
-                }
-            }
-        }
-    } else if let Some(hook) = push_hook {
-        tracing::info!("running push hook locally");
-        let mut window = if display::use_progress() {
-            Some(display::RollingWindow::new("push-hook", entries.len() as u64))
-        } else {
-            None
-        };
-        for entry in &entries {
-            if let Some(ref mut w) = window {
-                w.set_line_prefix(&entry.hostname);
-            }
-            run_push_hook(None, hook, &entry.store_path, window.as_mut().and_then(|w| w.for_output()))?;
-            if let Some(ref w) = window {
-                w.inc();
-            }
-        }
-    } else if copy {
-        {
-            let mut window = if display::use_progress() {
-                Some(display::RollingWindow::new("copying", entries.len() as u64))
-            } else {
-                None
-            };
-
-            for entry in &entries {
-                if let Some(ref mut w) = window {
-                    w.set_line_prefix(&entry.hostname);
-                }
-                if entry.platform.contains("darwin") {
-                    tracing::info!(hostname = %entry.hostname, "skipping Darwin host");
-                    if let Some(ref w) = window {
-                        w.inc();
-                    }
-                    continue;
-                }
-                if let Err(e) = copy_to_host(&entry.hostname, &entry.store_path, window.as_mut().and_then(|w| w.for_output())) {
-                    tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
-                    if let Some(ref mut w) = window {
-                        w.mark_error();
-                    }
-                }
-                if let Some(ref w) = window {
-                    w.inc();
-                }
-            }
-        }
-    } } // close if !eval_only
+    } // close if !eval_only
 
     // Print summary
     let manifest_rows: Vec<Vec<String>> = entries
@@ -514,7 +552,13 @@ async fn create_inner(
 }
 
 /// `nixfleet release list`
-pub async fn list(client: &Client, base_url: &str, limit: u32, host: Option<&str>, json: bool) -> Result<()> {
+pub async fn list(
+    client: &Client,
+    base_url: &str,
+    limit: u32,
+    host: Option<&str>,
+    json: bool,
+) -> Result<()> {
     let mut url = format!("{}/api/v1/releases?limit={}", base_url, limit);
     if let Some(h) = host {
         url.push_str(&format!("&host={}", h));
@@ -583,27 +627,15 @@ pub async fn show(client: &Client, base_url: &str, release_id: &str, json: bool)
         ("Release", release.id.clone()),
         (
             "Flake ref",
-            release
-                .flake_ref
-                .as_deref()
-                .unwrap_or("-")
-                .to_string(),
+            release.flake_ref.as_deref().unwrap_or("-").to_string(),
         ),
         (
             "Flake rev",
-            release
-                .flake_rev
-                .as_deref()
-                .unwrap_or("-")
-                .to_string(),
+            release.flake_rev.as_deref().unwrap_or("-").to_string(),
         ),
         (
             "Cache URL",
-            release
-                .cache_url
-                .as_deref()
-                .unwrap_or("-")
-                .to_string(),
+            release.cache_url.as_deref().unwrap_or("-").to_string(),
         ),
         ("Hosts", release.host_count.to_string()),
         (
@@ -632,10 +664,7 @@ pub async fn show(client: &Client, base_url: &str, release_id: &str, json: bool)
         })
         .collect();
 
-    display::print_table(
-        &["HOST", "PLATFORM", "STORE PATH", "TAGS"],
-        &entry_rows,
-    );
+    display::print_table(&["HOST", "PLATFORM", "STORE PATH", "TAGS"], &entry_rows);
 
     Ok(())
 }

@@ -73,11 +73,20 @@ impl OpLog {
         let path = dir.join(&filename);
         let file = File::create(&path)
             .with_context(|| format!("failed to create log file {}", path.display()))?;
-        Ok(Self { file, path, start: Instant::now() })
+        Ok(Self {
+            file,
+            path,
+            start: Instant::now(),
+        })
     }
 
     pub fn log_start(&mut self, operation: &str, flake: &str, hosts: &[String]) {
-        let event = LogEvent::OpStart { ts: now_iso(), operation, flake, hosts };
+        let event = LogEvent::OpStart {
+            ts: now_iso(),
+            operation,
+            flake,
+            hosts,
+        };
         self.write_event(&event);
     }
 
@@ -91,14 +100,25 @@ impl OpLog {
         host: Option<&str>,
     ) {
         let event = LogEvent::Subprocess {
-            ts: now_iso(), cmd, exit_code, duration_ms, stdout, stderr, host,
+            ts: now_iso(),
+            cmd,
+            exit_code,
+            duration_ms,
+            stdout,
+            stderr,
+            host,
         };
         self.write_event(&event);
     }
 
     pub fn finish(&mut self, success: bool, error: Option<&str>) {
         let duration_ms = self.start.elapsed().as_millis() as u64;
-        let event = LogEvent::OpEnd { ts: now_iso(), success, duration_ms, error };
+        let event = LogEvent::OpEnd {
+            ts: now_iso(),
+            success,
+            duration_ms,
+            error,
+        };
         self.write_event(&event);
         eprintln!("Log: {}", self.path.display());
     }
@@ -120,18 +140,31 @@ mod tests {
         // Override the log dir by creating the OpLog manually
         let path = dir.path().join("test_op.jsonl");
         let file = File::create(&path).unwrap();
-        let mut log = OpLog { file, path: path.clone(), start: Instant::now() };
+        let mut log = OpLog {
+            file,
+            path: path.clone(),
+            start: Instant::now(),
+        };
 
         log.log_start("release_create", ".", &["web-01".to_string()]);
         log.log_subprocess(
             &["nix".to_string(), "eval".to_string()],
-            0, 100, Some("/nix/store/abc"), None, Some("web-01"),
+            0,
+            100,
+            Some("/nix/store/abc"),
+            None,
+            Some("web-01"),
         );
         log.finish(true, None);
 
         let content = fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(lines.len(), 3, "expected 3 JSONL lines, got {}", lines.len());
+        assert_eq!(
+            lines.len(),
+            3,
+            "expected 3 JSONL lines, got {}",
+            lines.len()
+        );
         for (i, line) in lines.iter().enumerate() {
             let parsed: serde_json::Value = serde_json::from_str(line)
                 .unwrap_or_else(|e| panic!("line {} is not valid JSON: {}: {}", i, e, line));

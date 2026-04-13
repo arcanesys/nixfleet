@@ -275,7 +275,10 @@ async fn m5_multi_machine_desired_gen_isolation() {
             .json()
             .await
             .unwrap();
-        assert_eq!(&desired.hash, hash, "machine {id} must see only its own gen");
+        assert_eq!(
+            &desired.hash, hash,
+            "machine {id} must see only its own gen"
+        );
     }
 
     let list: Vec<MachineStatus> = cp

@@ -11,35 +11,10 @@
 //! it does not affect precedence. Integration test for `--config` is in
 //! `subcommand_coverage.rs::config_flag_loads_from_explicit_path`.
 
+use super::harness::{clear_nixfleet_env, env_lock};
 use nixfleet::config::{self, ConfigFile, CredentialsFile, ResolvedConfig};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard, OnceLock};
-
-/// Process-wide lock serializing every test that touches `NIXFLEET_*` env
-/// vars. cargo test runs tests in parallel by default; std::env mutations
-/// are global so two parallel tests reading/writing the same vars race.
-/// Every env-touching test in this file calls `env_lock()` first.
-fn env_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|p| p.into_inner())
-}
-
-/// Clear every NIXFLEET_* env var that `resolve()` reads. Used at the
-/// start of every env-sensitive test so the test starts from a known
-/// blank-env baseline regardless of leakage from sibling tests or the
-/// developer's outer shell.
-fn clear_nixfleet_env() {
-    for k in [
-        "NIXFLEET_CONTROL_PLANE_URL",
-        "NIXFLEET_API_KEY",
-        "NIXFLEET_CA_CERT",
-        "NIXFLEET_CLIENT_CERT",
-        "NIXFLEET_CLIENT_KEY",
-    ] {
-        std::env::remove_var(k);
-    }
-}
 
 fn empty_credentials() -> CredentialsFile {
     CredentialsFile {
@@ -265,6 +240,7 @@ url = "https://file.example"
 /// env var is unset.
 #[test]
 fn i3_hostname_fallback_uses_gethostname_when_env_unset() {
+    let _guard = env_lock();
     let saved = std::env::var("HOSTNAME").ok();
     std::env::remove_var("HOSTNAME");
 
@@ -332,7 +308,10 @@ push-cmd = "attic push mycache {}"
 
     assert_eq!(resolved.cache_url.as_deref(), Some("http://cache-01:5000"));
     assert_eq!(resolved.push_to.as_deref(), Some("ssh://root@cache-01"));
-    assert_eq!(resolved.hook_url.as_deref(), Some("http://cache-01:8081/mycache"));
+    assert_eq!(
+        resolved.hook_url.as_deref(),
+        Some("http://cache-01:8081/mycache")
+    );
     assert_eq!(
         resolved.hook_push_cmd.as_deref(),
         Some("attic push mycache {}")

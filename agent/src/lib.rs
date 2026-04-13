@@ -86,7 +86,10 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
     let initial = run_deploy_cycle(&client, &config, &store, &health_runner).await;
     let mut poll_tick = build_interval(match initial {
         PollOutcome::Success { poll_hint: Some(h) } => {
-            info!(poll_hint = h, "Initial poll: adjusting interval from CP hint");
+            info!(
+                poll_hint = h,
+                "Initial poll: adjusting interval from CP hint"
+            );
             Duration::from_secs(h)
         }
         PollOutcome::Success { poll_hint: None } => config.poll_interval,
@@ -159,11 +162,7 @@ async fn current_generation_or_warn() -> String {
 }
 
 /// Send a periodic health report to the control plane.
-async fn run_health_report(
-    client: &comms::Client,
-    config: &Config,
-    health_runner: &HealthRunner,
-) {
+async fn run_health_report(client: &comms::Client, config: &Config, health_runner: &HealthRunner) {
     info!("Running periodic health check");
     let health_report = health_runner.run_all().await;
     let report = types::Report {
@@ -244,10 +243,7 @@ async fn run_deploy_cycle(
 
     // Fetch: pull closure from binary cache (or verify local presence).
     metrics::record_state_transition("checking", "fetching");
-    let cache = desired
-        .cache_url
-        .as_deref()
-        .or(config.cache_url.as_deref());
+    let cache = desired.cache_url.as_deref().or(config.cache_url.as_deref());
     if let Err(e) = nix::fetch_closure(&desired.hash, cache).await {
         error!("Failed to fetch closure: {e}");
         if let Err(se) = store.log_error(&format!("fetch failed: {e}")).await {

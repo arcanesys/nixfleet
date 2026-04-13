@@ -48,8 +48,6 @@ pub fn use_progress() -> bool {
     !passthrough_output() && console::Term::stderr().is_term()
 }
 
-
-
 // ---------------------------------------------------------------
 // Shared tracing writer
 // ---------------------------------------------------------------
@@ -141,10 +139,9 @@ impl RollingWindow {
         let multi = MultiProgress::new();
 
         // No lines pre-created — they're inserted before the bar in log_line()
-        let bar_style =
-            ProgressStyle::with_template("{spinner} {prefix} {bar:30} {pos}/{len}")
-                .unwrap()
-                .progress_chars("█▓░");
+        let bar_style = ProgressStyle::with_template("{spinner} {prefix} {bar:30} {pos}/{len}")
+            .unwrap()
+            .progress_chars("█▓░");
         let bar = multi.add(ProgressBar::new(total));
         bar.set_style(bar_style);
         bar.set_prefix(phase_name.to_string());
@@ -280,7 +277,10 @@ impl Drop for RollingWindow {
 /// - `window = None`: pipes stderr and discards it (quiet mode).
 /// - For `-vv` passthrough mode, callers should use `Stdio::inherit()`
 ///   directly instead of this helper.
-pub fn run_cmd(cmd: &mut Command, mut window: Option<&mut RollingWindow>) -> std::io::Result<Output> {
+pub fn run_cmd(
+    cmd: &mut Command,
+    mut window: Option<&mut RollingWindow>,
+) -> std::io::Result<Output> {
     let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
 
     let stderr_handle = child.stderr.take();
@@ -466,10 +466,7 @@ pub fn truncate_store_path(path: &str, max_len: usize) -> String {
             }
             let budget = max_len.saturating_sub("/nix/store/…-…".len() + hash.len());
             if budget > 3 {
-                return format!(
-                    "/nix/store/{hash}…-{}…",
-                    &name[..budget.min(name.len())]
-                );
+                return format!("/nix/store/{hash}…-{}…", &name[..budget.min(name.len())]);
             }
         }
     }
@@ -490,8 +487,9 @@ pub fn color_status(s: &str) -> String {
     let styled = match lower.as_str() {
         "ok" | "completed" | "healthy" | "succeeded" | "active" => style(s).green(),
         "error" | "failed" | "unhealthy" => style(s).red(),
-        "paused" | "pending" | "waiting_health" | "deploying" | "maintenance"
-        | "provisioning" => style(s).yellow(),
+        "paused" | "pending" | "waiting_health" | "deploying" | "maintenance" | "provisioning" => {
+            style(s).yellow()
+        }
         _ => style(s).force_styling(false),
     };
     styled.to_string()
@@ -524,16 +522,12 @@ mod tests {
 
     #[test]
     fn truncate_short_path_unchanged() {
-        assert_eq!(
-            truncate_store_path("/nix/store/abc", 50),
-            "/nix/store/abc"
-        );
+        assert_eq!(truncate_store_path("/nix/store/abc", 50), "/nix/store/abc");
     }
 
     #[test]
     fn truncate_preserves_hash_and_name() {
-        let long =
-            "/nix/store/abc123def456ghi789jkl012mno345pqr678-nixos-system-web-01-25.05";
+        let long = "/nix/store/abc123def456ghi789jkl012mno345pqr678-nixos-system-web-01-25.05";
         let result = truncate_store_path(long, 50);
         assert!(
             result.contains("abc123d"),

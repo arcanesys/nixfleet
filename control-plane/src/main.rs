@@ -115,8 +115,7 @@ async fn main() -> anyhow::Result<()> {
             // middleware (wired in lib.rs::build_app on agent routes
             // only) reads the extension and enforces CN-vs-path-id.
             let rustls_acceptor = axum_server::tls_rustls::RustlsAcceptor::new(tls_config);
-            let mtls_acceptor =
-                nixfleet_control_plane::auth_cn::MtlsAcceptor::new(rustls_acceptor);
+            let mtls_acceptor = nixfleet_control_plane::auth_cn::MtlsAcceptor::new(rustls_acceptor);
 
             tracing::info!("Control plane listening on {} (TLS+mTLS-CN)", cli.listen);
             axum_server::bind(cli.listen.parse()?)

@@ -182,10 +182,7 @@ async fn r7_list_releases_filtered_by_host() {
         filtered.len()
     );
     assert!(
-        filtered[0]
-            .entries
-            .iter()
-            .any(|e| e.hostname == "web-01"),
+        filtered[0].entries.iter().any(|e| e.hostname == "web-01"),
         "filtered release must contain web-01 entry"
     );
 

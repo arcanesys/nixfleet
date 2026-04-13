@@ -2,8 +2,6 @@
 // Each scenario module was formerly a separate binary; combining them
 // into one eliminates redundant link passes.
 
-#[path = "scenarios/harness.rs"]
-mod harness;
 #[path = "scenarios/audit.rs"]
 mod audit;
 #[path = "scenarios/auth.rs"]
@@ -14,6 +12,8 @@ mod cn_validation;
 mod deploy;
 #[path = "scenarios/failure.rs"]
 mod failure;
+#[path = "scenarios/harness.rs"]
+mod harness;
 #[path = "scenarios/hydration.rs"]
 mod hydration;
 #[path = "scenarios/machine.rs"]

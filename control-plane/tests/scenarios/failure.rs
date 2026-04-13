@@ -219,10 +219,7 @@ async fn f_stale_resume_does_not_reflip_on_pre_resume_report() {
     // to the new batch evaluation window.
     let resume = cp
         .admin
-        .post(format!(
-            "{}/api/v1/rollouts/{}/resume",
-            cp.base, rollout_id
-        ))
+        .post(format!("{}/api/v1/rollouts/{}/resume", cp.base, rollout_id))
         .send()
         .await
         .unwrap();
@@ -293,8 +290,7 @@ async fn f_stale_resume_does_not_reflip_on_pre_resume_report() {
 /// so no dedicated executor_transition file is needed.
 #[tokio::test]
 async fn f_paused_cancel_transitions_to_cancelled() {
-    let (cp, _, rollout_id) =
-        harness::spawn_cp_with_rollout("/nix/store/p2c-web-01").await;
+    let (cp, _, rollout_id) = harness::spawn_cp_with_rollout("/nix/store/p2c-web-01").await;
 
     // Pause via failure: insert an unhealthy report on the desired gen.
     harness::tick_once(&cp).await;

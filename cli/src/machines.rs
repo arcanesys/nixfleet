@@ -57,7 +57,12 @@ pub async fn list(
         })
         .collect();
 
-    display::print_list(json, &["ID", "LIFECYCLE", "STATE", "TAGS"], &rows, &filtered);
+    display::print_list(
+        json,
+        &["ID", "LIFECYCLE", "STATE", "TAGS"],
+        &rows,
+        &filtered,
+    );
 
     if !json {
         println!("\n{} machine(s)", filtered.len());
@@ -89,12 +94,11 @@ pub async fn set_lifecycle(
 }
 
 /// DELETE /api/v1/machines/{id}/desired-generation — clear stale desired generation.
-pub async fn clear_desired(
-    client: &reqwest::Client,
-    cp_url: &str,
-    machine_id: &str,
-) -> Result<()> {
-    let url = format!("{}/api/v1/machines/{}/desired-generation", cp_url, machine_id);
+pub async fn clear_desired(client: &reqwest::Client, cp_url: &str, machine_id: &str) -> Result<()> {
+    let url = format!(
+        "{}/api/v1/machines/{}/desired-generation",
+        cp_url, machine_id
+    );
 
     let resp = client
         .delete(&url)

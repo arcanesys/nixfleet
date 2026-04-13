@@ -54,7 +54,10 @@ fn init_writes_config_file_in_cwd() {
         .stdout(predicate::str::contains(".nixfleet.toml"));
 
     let config_path = dir.path().join(".nixfleet.toml");
-    assert!(config_path.exists(), "init must write .nixfleet.toml in cwd");
+    assert!(
+        config_path.exists(),
+        "init must write .nixfleet.toml in cwd"
+    );
     let body = std::fs::read_to_string(&config_path).unwrap();
     assert!(body.contains("https://cp.example.com:8080"));
     assert!(body.contains("/run/secrets/fleet-ca.pem"));
@@ -89,9 +92,7 @@ fn host_add_generates_disk_config_and_prints_snippet() {
         // The fleet.nix snippet block is printed to stdout.
         .stdout(predicate::str::contains("mkHost"));
 
-    let disk_config = dir
-        .path()
-        .join("modules/_hardware/edge-42/disk-config.nix");
+    let disk_config = dir.path().join("modules/_hardware/edge-42/disk-config.nix");
     assert!(
         disk_config.exists(),
         "host add must generate modules/_hardware/<host>/disk-config.nix"
@@ -272,7 +273,10 @@ async fn machines_list_filters_client_side_by_tag() {
         .assert()
         .success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("web-01"), "expected web-01 in output: {stdout}");
+    assert!(
+        stdout.contains("web-01"),
+        "expected web-01 in output: {stdout}"
+    );
     assert!(
         !stdout.contains("db-01"),
         "tag filter must exclude db-01 from output: {stdout}"
@@ -290,21 +294,19 @@ async fn machines_list_json_output_is_valid() {
 
     Mock::given(method("GET"))
         .and(path("/api/v1/machines"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                {
-                    "machine_id": "web-01",
-                    "current_generation": "/nix/store/abc-system",
-                    "desired_generation": null,
-                    "agent_version": "",
-                    "system_state": "ok",
-                    "uptime_seconds": 0,
-                    "last_report": null,
-                    "lifecycle": "active",
-                    "tags": ["web"]
-                }
-            ])),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "machine_id": "web-01",
+                "current_generation": "/nix/store/abc-system",
+                "desired_generation": null,
+                "agent_version": "",
+                "system_state": "ok",
+                "uptime_seconds": 0,
+                "last_report": null,
+                "lifecycle": "active",
+                "tags": ["web"]
+            }
+        ])))
         .mount(&server)
         .await;
 
@@ -323,8 +325,8 @@ async fn machines_list_json_output_is_valid() {
         .success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     // Verify it's valid JSON
-    let parsed: serde_json::Value =
-        serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("expected valid JSON, got: {stdout}"));
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|_| panic!("expected valid JSON, got: {stdout}"));
     assert!(parsed.is_array(), "expected JSON array, got: {parsed}");
 }
 
@@ -598,10 +600,7 @@ async fn config_flag_loads_from_explicit_path() {
     let config_path = dir.path().join(".nixfleet.toml");
     std::fs::write(
         &config_path,
-        format!(
-            "[control-plane]\nurl = \"{}\"\n",
-            server.uri()
-        ),
+        format!("[control-plane]\nurl = \"{}\"\n", server.uri()),
     )
     .unwrap();
 
@@ -779,9 +778,13 @@ async fn rollout_delete_terminal_succeeds() {
     Command::cargo_bin("nixfleet")
         .unwrap()
         .args([
-            "--control-plane-url", &server.uri(),
-            "--api-key", "test-key",
-            "rollout", "delete", "r-done-123",
+            "--control-plane-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "rollout",
+            "delete",
+            "r-done-123",
         ])
         .assert()
         .success()
@@ -802,9 +805,13 @@ async fn rollout_delete_active_fails_with_409() {
     Command::cargo_bin("nixfleet")
         .unwrap()
         .args([
-            "--control-plane-url", &server.uri(),
-            "--api-key", "test-key",
-            "rollout", "delete", "r-active",
+            "--control-plane-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "rollout",
+            "delete",
+            "r-active",
         ])
         .assert()
         .failure()
@@ -829,9 +836,14 @@ async fn machines_set_lifecycle_succeeds() {
     Command::cargo_bin("nixfleet")
         .unwrap()
         .args([
-            "--control-plane-url", &server.uri(),
-            "--api-key", "test-key",
-            "machines", "set-lifecycle", "lab", "maintenance",
+            "--control-plane-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "machines",
+            "set-lifecycle",
+            "lab",
+            "maintenance",
         ])
         .assert()
         .success()
@@ -856,9 +868,13 @@ async fn machines_clear_desired_succeeds() {
     Command::cargo_bin("nixfleet")
         .unwrap()
         .args([
-            "--control-plane-url", &server.uri(),
-            "--api-key", "test-key",
-            "machines", "clear-desired", "web-01",
+            "--control-plane-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "machines",
+            "clear-desired",
+            "web-01",
         ])
         .assert()
         .success()
@@ -875,9 +891,11 @@ fn eval_only_conflicts_with_push_to() {
     Command::cargo_bin("nixfleet")
         .unwrap()
         .args([
-            "release", "create",
+            "release",
+            "create",
             "--eval-only",
-            "--push-to", "ssh://cache",
+            "--push-to",
+            "ssh://cache",
         ])
         .assert()
         .failure()
@@ -903,9 +921,14 @@ async fn release_list_with_host_filter() {
     Command::cargo_bin("nixfleet")
         .unwrap()
         .args([
-            "--control-plane-url", &server.uri(),
-            "--api-key", "test-key",
-            "release", "list", "--host", "web-01",
+            "--control-plane-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "release",
+            "list",
+            "--host",
+            "web-01",
         ])
         .assert()
         .success();

@@ -97,8 +97,16 @@ pub async fn post_report(
     let machine = fleet.get_or_create(&id);
     machine.last_seen = Some(report.timestamp);
     machine.last_report = Some(report);
-    machine.agent_version = machine.last_report.as_ref().map(|r| r.agent_version.clone()).unwrap_or_default();
-    machine.uptime_seconds = machine.last_report.as_ref().map(|r| r.uptime_seconds).unwrap_or(0);
+    machine.agent_version = machine
+        .last_report
+        .as_ref()
+        .map(|r| r.agent_version.clone())
+        .unwrap_or_default();
+    machine.uptime_seconds = machine
+        .last_report
+        .as_ref()
+        .map(|r| r.uptime_seconds)
+        .unwrap_or(0);
 
     // Auto-register: persist to DB on first report from unknown machine
     if is_new {
@@ -480,7 +488,10 @@ pub async fn clear_desired_generation(
     // Check machine exists in DB
     let machines = db.list_machines().map_err(|e| {
         tracing::error!(error = %e, "Failed to list machines");
-        (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        )
     })?;
     if !machines.iter().any(|m| m.machine_id == id) {
         return Err((StatusCode::NOT_FOUND, format!("machine {id} not found")));
@@ -488,7 +499,10 @@ pub async fn clear_desired_generation(
 
     db.clear_desired_generation(&id).map_err(|e| {
         tracing::error!(error = %e, machine_id = %id, "Failed to clear desired generation");
-        (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        )
     })?;
 
     // Update in-memory state
