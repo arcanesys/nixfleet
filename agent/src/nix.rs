@@ -117,6 +117,33 @@ fn is_lock_contention(stderr: &str) -> bool {
         || lower.contains("resource busy")
 }
 
+/// Fire switch-to-configuration in a detached transient systemd service.
+///
+/// Spawns `systemd-run --unit=nixfleet-switch -- <switch-bin> switch`
+/// and returns as soon as the transient unit is queued. The switch runs
+/// asynchronously in `nixfleet-switch.service` — the agent does NOT
+/// wait for it to complete. This allows the agent to survive being
+/// killed by its own switch-to-configuration.
+///
+/// Errors on spawn failure or if the transient unit cannot be created
+/// (e.g., a previous `nixfleet-switch.service` hasn't been cleaned up).
+pub async fn fire_switch(store_path: &str) -> Result<()> {
+    validate_store_path(store_path)?;
+    let switch_bin = format!("{store_path}/bin/switch-to-configuration");
+    info!(switch_bin, "Firing switch-to-configuration (detached)");
+
+    let mut cmd = Command::new("systemd-run");
+    cmd.args(["--unit=nixfleet-switch", "--", &switch_bin, "switch"]);
+    let output = run_with_timeout(cmd, "systemd-run").await?;
+
+    if !output.status.success() {
+        let stderr = truncated_stderr(&output.stderr);
+        anyhow::bail!("systemd-run failed to queue switch: {stderr}");
+    }
+    info!("Switch queued as nixfleet-switch.service");
+    Ok(())
+}
+
 /// Poll a symlink path until it resolves to the expected store path.
 ///
 /// Returns `Ok(true)` when the symlink target matches `expected`,
@@ -394,6 +421,23 @@ mod tests {
         .await
         .unwrap();
         assert!(!matched);
+    }
+
+    #[test]
+    fn test_fire_switch_command_construction() {
+        let store_path = "/nix/store/abc123-nixos-system";
+        let switch_bin = format!("{store_path}/bin/switch-to-configuration");
+        let expected_args = [
+            "systemd-run",
+            "--unit=nixfleet-switch",
+            "--",
+            &switch_bin,
+            "switch",
+        ];
+        assert_eq!(expected_args[0], "systemd-run");
+        assert_eq!(expected_args[1], "--unit=nixfleet-switch");
+        assert_eq!(expected_args[3], &switch_bin);
+        assert_eq!(expected_args[4], "switch");
     }
 
     #[tokio::test]
