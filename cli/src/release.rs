@@ -290,15 +290,24 @@ pub async fn create(
     dry_run: bool,
     eval_only: bool,
 ) -> Result<Option<String>> {
+    let mut oplog = crate::oplog::OpLog::new("release-create")?;
+
     tracing::info!("discovering hosts");
-    let all_hosts = discover_hosts(flake)?;
+    let t = std::time::Instant::now();
+    let all_hosts = discover_hosts(flake);
+    oplog.log_cmd(
+        "nix eval discover hosts",
+        None,
+        &all_hosts.as_ref().map(|_| ()),
+        t.elapsed(),
+    );
+    let all_hosts = all_hosts?;
     let hosts = filter_hosts(&all_hosts, host_patterns);
     if hosts.is_empty() {
         anyhow::bail!("no hosts match pattern '{}'", host_patterns.join(","));
     }
     tracing::info!(count = hosts.len(), "found hosts");
 
-    let mut oplog = crate::oplog::OpLog::new("release-create")?;
     oplog.log_start("release_create", flake, &hosts);
 
     let result = create_inner(
@@ -343,10 +352,17 @@ async fn create_inner(
             if let Some(ref mut w) = window {
                 w.set_line_prefix(hostname);
             }
+            let t = std::time::Instant::now();
             let platform = detect_platform(flake, hostname);
-            oplog.log_cmd(&format!("nix eval platform {}", hostname), Some(hostname), &platform.as_ref().map(|_| ()));
+            oplog.log_cmd(
+                &format!("nix eval platform {}", hostname),
+                Some(hostname),
+                &platform.as_ref().map(|_| ()),
+                t.elapsed(),
+            );
             let platform = platform?;
             let tags = detect_tags(flake, hostname);
+            let t = std::time::Instant::now();
             let build_result = if eval_only {
                 eval_host(flake, hostname)
             } else {
@@ -356,11 +372,20 @@ async fn create_inner(
                     window.as_mut().and_then(|w| w.for_output()),
                 )
             };
-            oplog.log_cmd(
-                &format!("{} {}", if eval_only { "nix eval" } else { "nix build" }, hostname),
-                Some(hostname),
-                &build_result.as_ref().map(|_| ()),
+            let build_elapsed = t.elapsed();
+            let build_desc = format!(
+                "{} {}",
+                if eval_only { "nix eval" } else { "nix build" },
+                hostname
             );
+            match &build_result {
+                Ok(store_path) => {
+                    oplog.log_cmd_ok(&build_desc, Some(hostname), store_path, build_elapsed)
+                }
+                Err(e) => {
+                    oplog.log_cmd(&build_desc, Some(hostname), &Err::<(), _>(e), build_elapsed)
+                }
+            }
             match build_result {
                 Ok(store_path) => {
                     if platform.contains("darwin") {
@@ -407,12 +432,18 @@ async fn create_inner(
 
                 for entry in &entries {
                     if pushed.insert(entry.store_path.clone()) {
+                        let t = std::time::Instant::now();
                         let push_result = nix_copy_to(
                             push_url,
                             &entry.store_path,
                             window.as_mut().and_then(|w| w.for_output()),
                         );
-                        oplog.log_cmd(&format!("nix copy --to {} {}", push_url, entry.hostname), Some(&entry.hostname), &push_result);
+                        oplog.log_cmd(
+                            &format!("nix copy --to {} {}", push_url, entry.hostname),
+                            Some(&entry.hostname),
+                            &push_result,
+                            t.elapsed(),
+                        );
                         if let Err(e) = push_result {
                             if let Some(ref mut w) = window {
                                 w.mark_error();
@@ -444,13 +475,19 @@ async fn create_inner(
                     if let Some(ref mut w) = window {
                         w.set_line_prefix(&entry.hostname);
                     }
+                    let t = std::time::Instant::now();
                     let hook_result = run_push_hook(
                         remote_host.as_deref(),
                         hook,
                         &entry.store_path,
                         window.as_mut().and_then(|w| w.for_output()),
                     );
-                    oplog.log_cmd(&format!("push-hook {}", entry.hostname), Some(&entry.hostname), &hook_result);
+                    oplog.log_cmd(
+                        &format!("push-hook {}", entry.hostname),
+                        Some(&entry.hostname),
+                        &hook_result,
+                        t.elapsed(),
+                    );
                     hook_result?;
                     if let Some(ref w) = window {
                         w.inc();
@@ -471,13 +508,19 @@ async fn create_inner(
                 if let Some(ref mut w) = window {
                     w.set_line_prefix(&entry.hostname);
                 }
+                let t = std::time::Instant::now();
                 let hook_result = run_push_hook(
                     None,
                     hook,
                     &entry.store_path,
                     window.as_mut().and_then(|w| w.for_output()),
                 );
-                oplog.log_cmd(&format!("push-hook {}", entry.hostname), Some(&entry.hostname), &hook_result);
+                oplog.log_cmd(
+                    &format!("push-hook {}", entry.hostname),
+                    Some(&entry.hostname),
+                    &hook_result,
+                    t.elapsed(),
+                );
                 hook_result?;
                 if let Some(ref w) = window {
                     w.inc();
@@ -502,12 +545,18 @@ async fn create_inner(
                         }
                         continue;
                     }
+                    let t = std::time::Instant::now();
                     let copy_result = copy_to_host(
                         &entry.hostname,
                         &entry.store_path,
                         window.as_mut().and_then(|w| w.for_output()),
                     );
-                    oplog.log_cmd(&format!("nix-copy-closure {}", entry.hostname), Some(&entry.hostname), &copy_result);
+                    oplog.log_cmd(
+                        &format!("nix-copy-closure {}", entry.hostname),
+                        Some(&entry.hostname),
+                        &copy_result,
+                        t.elapsed(),
+                    );
                     if let Err(e) = copy_result {
                         tracing::warn!(hostname = %entry.hostname, error = %e, "failed to copy");
                         if let Some(ref mut w) = window {

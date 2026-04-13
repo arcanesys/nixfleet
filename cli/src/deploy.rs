@@ -178,8 +178,18 @@ pub async fn run(
     _ssh: bool,
     target_override: Option<&str>,
 ) -> Result<()> {
+    let mut oplog = crate::oplog::OpLog::new("deploy")?;
+
     println!("Discovering hosts from {}...", flake);
-    let all_hosts = discover_hosts(flake).await?;
+    let t = std::time::Instant::now();
+    let all_hosts = discover_hosts(flake).await;
+    oplog.log_cmd(
+        "nix eval discover hosts",
+        None,
+        &all_hosts.as_ref().map(|_| ()),
+        t.elapsed(),
+    );
+    let all_hosts = all_hosts?;
     let targets = filter_hosts(&all_hosts, patterns);
 
     if targets.is_empty() {
@@ -198,7 +208,6 @@ pub async fn run(
         );
     }
 
-    let mut oplog = crate::oplog::OpLog::new("deploy")?;
     oplog.log_start("deploy", flake, &targets);
 
     let result = run_inner(flake, &targets, dry_run, target_override, &mut oplog).await;
@@ -236,8 +245,23 @@ async fn run_inner(
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }
-            let build_result = build_host(flake, host, window.as_mut().and_then(|w| w.for_output())).await;
-            oplog.log_cmd(&format!("nix build {}", host), Some(host), &build_result.as_ref().map(|_| ()));
+            let t = std::time::Instant::now();
+            let build_result =
+                build_host(flake, host, window.as_mut().and_then(|w| w.for_output())).await;
+            match &build_result {
+                Ok(path) => oplog.log_cmd_ok(
+                    &format!("nix build {}", host),
+                    Some(host),
+                    path,
+                    t.elapsed(),
+                ),
+                Err(_) => oplog.log_cmd(
+                    &format!("nix build {}", host),
+                    Some(host),
+                    &build_result.as_ref().map(|_| ()),
+                    t.elapsed(),
+                ),
+            }
             match build_result {
                 Ok(path) => {
                     tracing::info!(host, path = %display::truncate_store_path(&path, 60), "built");
@@ -293,6 +317,7 @@ async fn run_inner(
                     Some(t) => t.to_string(),
                     None => format!("root@{}", host),
                 };
+                let t = std::time::Instant::now();
                 let deploy_result = deploy_via_ssh(
                     host,
                     store_path,
@@ -300,7 +325,12 @@ async fn run_inner(
                     window.as_mut().and_then(|w| w.for_output()),
                 )
                 .await;
-                oplog.log_cmd(&format!("ssh deploy {}", host), Some(host), &deploy_result);
+                oplog.log_cmd(
+                    &format!("ssh deploy {}", host),
+                    Some(host),
+                    &deploy_result,
+                    t.elapsed(),
+                );
                 match deploy_result {
                     Ok(()) => {
                         tracing::info!(host, "deployed");

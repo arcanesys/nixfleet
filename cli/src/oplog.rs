@@ -134,8 +134,14 @@ impl OpLog {
         &self.path
     }
 
-    /// Log a completed command with its result.
-    pub fn log_cmd<E: std::fmt::Display>(&mut self, cmd_desc: &str, host: Option<&str>, result: &std::result::Result<(), E>) {
+    /// Log a completed command with its result and timing.
+    pub fn log_cmd<E: std::fmt::Display>(
+        &mut self,
+        cmd_desc: &str,
+        host: Option<&str>,
+        result: &std::result::Result<(), E>,
+        duration: std::time::Duration,
+    ) {
         let (exit_code, stderr) = match result {
             Ok(()) => (0, None),
             Err(e) => (1, Some(format!("{e:#}"))),
@@ -144,9 +150,29 @@ impl OpLog {
             ts: now_iso(),
             cmd: &[cmd_desc.to_string()],
             exit_code,
-            duration_ms: 0,
+            duration_ms: duration.as_millis() as u64,
             stdout: None,
             stderr: stderr.as_deref(),
+            host,
+        };
+        self.write_event(&event);
+    }
+
+    /// Log a successful command with stdout capture (e.g. store path) and timing.
+    pub fn log_cmd_ok(
+        &mut self,
+        cmd_desc: &str,
+        host: Option<&str>,
+        stdout: &str,
+        duration: std::time::Duration,
+    ) {
+        let event = LogEvent::Subprocess {
+            ts: now_iso(),
+            cmd: &[cmd_desc.to_string()],
+            exit_code: 0,
+            duration_ms: duration.as_millis() as u64,
+            stdout: Some(stdout),
+            stderr: None,
             host,
         };
         self.write_event(&event);
