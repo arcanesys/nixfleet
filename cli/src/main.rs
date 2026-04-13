@@ -13,6 +13,7 @@ mod glob;
 mod host;
 mod machines;
 mod release;
+mod oplog;
 mod rollout;
 mod status;
 
@@ -282,6 +283,12 @@ enum RolloutAction {
         /// Rollout ID
         id: String,
     },
+
+    /// Delete a terminal rollout (completed, cancelled, or failed)
+    Delete {
+        /// Rollout ID
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -313,11 +320,17 @@ enum ReleaseAction {
         cache_url: Option<String>,
         #[arg(long)]
         dry_run: bool,
+        /// Evaluate store paths without building (assumes closures in cache)
+        #[arg(long, conflicts_with = "push_to", conflicts_with = "hook", conflicts_with = "copy")]
+        eval_only: bool,
     },
     /// List recent releases
     List {
         #[arg(long, default_value = "20")]
         limit: u32,
+        /// Filter by hostname
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Show release details
     Show { release_id: String },
@@ -339,13 +352,18 @@ enum MachineAction {
         tags: Vec<String>,
     },
 
-    /// Remove a tag from a machine
-    Untag {
+    /// Change machine lifecycle state
+    SetLifecycle {
         /// Machine ID
         id: String,
+        /// Target state (active, pending, provisioning, maintenance, decommissioned)
+        state: String,
+    },
 
-        /// Tag to remove
-        tag: String,
+    /// Clear a machine's desired generation
+    ClearDesired {
+        /// Machine ID
+        id: String,
     },
 
     /// Register a machine with the control plane
@@ -531,6 +549,7 @@ async fn main() -> Result<()> {
                         copy,
                         effective_cache_url,
                         dry_run,
+                        false,
                     )
                     .await?;
                     match id {
@@ -612,6 +631,9 @@ async fn main() -> Result<()> {
                 RolloutAction::Cancel { id } => {
                     rollout::cancel(&http_client, effective_cp_url, &id).await
                 }
+                RolloutAction::Delete { id } => {
+                    rollout::delete(&http_client, effective_cp_url, &id).await
+                }
             }
         }
         Commands::Release { action } => {
@@ -627,6 +649,7 @@ async fn main() -> Result<()> {
                     copy,
                     cache_url,
                     dry_run,
+                    eval_only,
                 } => {
                     let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
                         let push_cmd = hook_push_cmd.as_deref()
@@ -654,12 +677,13 @@ async fn main() -> Result<()> {
                         copy,
                         effective_cache_url.as_deref(),
                         dry_run,
+                        eval_only,
                     )
                     .await?;
                     Ok(())
                 }
-                ReleaseAction::List { limit } => {
-                    release::list(&http_client, effective_cp_url, limit, json_output).await
+                ReleaseAction::List { limit, host } => {
+                    release::list(&http_client, effective_cp_url, limit, host.as_deref(), json_output).await
                 }
                 ReleaseAction::Show { release_id } => {
                     release::show(&http_client, effective_cp_url, &release_id, json_output).await
@@ -688,8 +712,11 @@ async fn main() -> Result<()> {
                 MachineAction::List { tags } => {
                     machines::list(&http_client, effective_cp_url, &tags, json_output).await
                 }
-                MachineAction::Untag { id, tag } => {
-                    machines::untag(&http_client, effective_cp_url, &id, &tag).await
+                MachineAction::SetLifecycle { id, state } => {
+                    machines::set_lifecycle(&http_client, effective_cp_url, &id, &state).await
+                }
+                MachineAction::ClearDesired { id } => {
+                    machines::clear_desired(&http_client, effective_cp_url, &id).await
                 }
                 MachineAction::Register { id, tags } => {
                     machines::register(&http_client, effective_cp_url, &id, &tags).await
