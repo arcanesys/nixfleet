@@ -5,7 +5,7 @@
 
 ## Context
 
-The agent applies NixOS generations by running `switch-to-configuration switch`. When the new generation changes the agent's own systemd service, `switch-to-configuration` stops and restarts the agent. In the original synchronous design, `switch-to-configuration` was a child process in the agent's cgroup. When systemd stopped the agent, it killed all processes in the cgroup — including `switch-to-configuration` itself. The activation never completed, the system profile never updated, and the agent looped on restart.
+The agent applies NixOS generations by running `switch-to-configuration switch`. When the new generation changes the agent's own systemd service, `switch-to-configuration` stops and restarts the agent. In the original synchronous design, `switch-to-configuration` was a child process in the agent's cgroup. When systemd stopped the agent, it killed all processes in the cgroup -- including `switch-to-configuration` itself. The activation never completed, the system profile never updated, and the agent looped on restart.
 
 Attempted mitigations:
 - `systemd-run --scope`: the scope is created under the agent's service cgroup and dies with it.
@@ -28,7 +28,7 @@ The agent sends a `"applying"` report to the control plane before firing the swi
 **Positive:**
 - The agent survives self-switch. The activation always completes because it runs in an independent systemd unit.
 - Rollouts no longer stall on machines that receive agent-affecting generations.
-- The startup deploy cycle is the recovery path — no special restart-detection logic needed.
+- The startup deploy cycle is the recovery path -- no special restart-detection logic needed.
 - Lock contention from concurrent rebuilds is handled indirectly: the switch fails in the background, poll times out, the agent retries.
 
 **Negative:**
@@ -37,5 +37,5 @@ The agent sends a `"applying"` report to the control plane before firing the swi
 - The `"applying"` report briefly shows the machine in an intermediate state in the control plane (old generation + success=true + message="applying"). The rollout engine ignores it, but `nixfleet status` may show it during the ~2-30s switch window.
 
 **Trade-offs accepted:**
-- Slower lock contention detection (rare during agent-driven deploys — the common case is the agent being the only process switching).
+- Slower lock contention detection (rare during agent-driven deploys -- the common case is the agent being the only process switching).
 - Fire-and-forget means the agent trusts systemd to manage the transient unit lifecycle. If systemd itself has issues, the agent has no recourse.

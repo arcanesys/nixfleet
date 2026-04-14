@@ -5,7 +5,7 @@
 
 ## Context
 
-NixFleet organizes functionality into "scopes" — modules that provide a cohesive set of features (base packages, impermanence, fleet agent, etc.). These scopes need to activate conditionally based on host configuration.
+NixFleet organizes functionality into "scopes" -- modules that provide a cohesive set of features (base packages, impermanence, fleet agent, etc.). These scopes need to activate conditionally based on host configuration.
 
 Two approaches: mkHost could explicitly include/exclude scopes based on flags, or scopes could be always-included and self-activate by guarding their config behind `lib.mkIf`.
 
@@ -32,8 +32,8 @@ Service modules (agent, control plane) follow the same pattern using `lib.mkIf c
 
 ## Consequences
 
-- mkHost has no conditional logic — it includes everything, scopes decide for themselves
-- Adding a new scope requires no changes to mkHost — just create the module and import it
+- mkHost has no conditional logic -- it includes everything, scopes decide for themselves
+- Adding a new scope requires no changes to mkHost -- just create the module and import it
 - Scope activation is visible in the scope's own code, not hidden in mkHost wiring
 - Persist paths live alongside their program definitions (scope-aware impermanence), not centralized
 - NixOS lazy evaluation means inactive scopes add zero overhead
