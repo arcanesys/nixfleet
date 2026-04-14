@@ -88,16 +88,26 @@ pub async fn create_rollout(
     // Load release and intersect with target machines
     let release = db
         .get_release(&req.release_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| {
+            tracing::error!(error = %e, release_id = %req.release_id, "failed to get release");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to get release".to_string(),
+            )
+        })?
         .ok_or_else(|| {
             (
                 StatusCode::NOT_FOUND,
                 format!("release {} not found", req.release_id),
             )
         })?;
-    let release_entries = db
-        .get_release_entries(&req.release_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let release_entries = db.get_release_entries(&req.release_id).map_err(|e| {
+        tracing::error!(error = %e, release_id = %req.release_id, "failed to get release entries");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to get release entries".to_string(),
+        )
+    })?;
     let release_hosts: std::collections::HashSet<String> =
         release_entries.iter().map(|e| e.hostname.clone()).collect();
     let original_count = machine_ids.len();

@@ -64,7 +64,13 @@ pub async fn create_release(
         &actor_name,
         &entries,
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(error = %e, release_id = %id, "failed to create release");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to create release".to_string(),
+        )
+    })?;
 
     db.insert_audit_event(
         &actor_name,
@@ -72,7 +78,13 @@ pub async fn create_release(
         &id,
         Some(&format!("{} hosts", host_count)),
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(error = %e, "failed to insert audit event for release creation");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        )
+    })?;
 
     info!(release_id = %id, host_count, "release created");
 
@@ -105,18 +117,32 @@ pub async fn list_releases(
         .clamp(1, MAX_PAGE_SIZE);
 
     let rows = if let Some(hostname) = params.get("host") {
-        db.list_releases_for_host(hostname, limit)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        db.list_releases_for_host(hostname, limit).map_err(|e| {
+            tracing::error!(error = %e, "failed to list releases for host");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to list releases".to_string(),
+            )
+        })?
     } else {
-        db.list_releases(limit)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        db.list_releases(limit).map_err(|e| {
+            tracing::error!(error = %e, "failed to list releases");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to list releases".to_string(),
+            )
+        })?
     };
 
     let mut releases = Vec::with_capacity(rows.len());
     for row in rows {
-        let entry_rows = db
-            .get_release_entries(&row.id)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let entry_rows = db.get_release_entries(&row.id).map_err(|e| {
+            tracing::error!(error = %e, release_id = %row.id, "failed to get release entries");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to get release entries".to_string(),
+            )
+        })?;
         releases.push(row_to_release(row, entry_rows));
     }
 
@@ -139,12 +165,22 @@ pub async fn get_release(
     }
     let row = db
         .get_release(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| {
+            tracing::error!(error = %e, release_id = %id, "failed to get release");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to get release".to_string(),
+            )
+        })?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("release {} not found", id)))?;
 
-    let entry_rows = db
-        .get_release_entries(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let entry_rows = db.get_release_entries(&id).map_err(|e| {
+        tracing::error!(error = %e, release_id = %id, "failed to get release entries");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to get release entries".to_string(),
+        )
+    })?;
 
     Ok(Json(row_to_release(row, entry_rows)))
 }
@@ -163,12 +199,20 @@ pub async fn diff_releases(
     if id_a.len() > MAX_ID_LEN || id_b.len() > MAX_ID_LEN {
         return Err((StatusCode::BAD_REQUEST, "release id too long".into()));
     }
-    let entries_a = db
-        .get_release_entries(&id_a)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let entries_b = db
-        .get_release_entries(&id_b)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let entries_a = db.get_release_entries(&id_a).map_err(|e| {
+        tracing::error!(error = %e, release_id = %id_a, "failed to get release entries");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to get release entries".to_string(),
+        )
+    })?;
+    let entries_b = db.get_release_entries(&id_b).map_err(|e| {
+        tracing::error!(error = %e, release_id = %id_b, "failed to get release entries");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to get release entries".to_string(),
+        )
+    })?;
 
     if entries_a.is_empty() {
         return Err((
@@ -240,9 +284,13 @@ pub async fn delete_release(
     if id.len() > MAX_ID_LEN {
         return Err((StatusCode::BAD_REQUEST, "release id too long".into()));
     }
-    let referenced = db
-        .release_referenced_by_rollout(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let referenced = db.release_referenced_by_rollout(&id).map_err(|e| {
+        tracing::error!(error = %e, release_id = %id, "failed to check rollout references");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        )
+    })?;
     if referenced {
         return Err((
             StatusCode::CONFLICT,
@@ -250,15 +298,25 @@ pub async fn delete_release(
         ));
     }
 
-    let deleted = db
-        .delete_release(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let deleted = db.delete_release(&id).map_err(|e| {
+        tracing::error!(error = %e, release_id = %id, "failed to delete release");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to delete release".to_string(),
+        )
+    })?;
     if !deleted {
         return Err((StatusCode::NOT_FOUND, format!("release {} not found", id)));
     }
 
     db.insert_audit_event(&actor.identifier(), "delete_release", &id, None)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to insert audit event for release deletion");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error".to_string(),
+            )
+        })?;
 
     info!(release_id = %id, "release deleted");
     Ok(StatusCode::NO_CONTENT)
