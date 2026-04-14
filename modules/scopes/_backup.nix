@@ -15,10 +15,8 @@
     cfg = config.nixfleet.backup;
     types = lib.types;
 
-    excludeFlags = backend:
-      if backend == "restic"
-      then lib.concatMapStringsSep " " (p: "--exclude ${lib.escapeShellArg p}") cfg.exclude
-      else lib.concatMapStringsSep " " (p: "--exclude ${lib.escapeShellArg p}") cfg.exclude;
+    excludeFlags =
+      lib.concatMapStringsSep " " (p: "--exclude ${lib.escapeShellArg p}") cfg.exclude;
 
     resticBackupScript = pkgs.writeShellScript "nixfleet-backup-restic" ''
       set -euo pipefail
@@ -33,7 +31,7 @@
       # Backup
       ${pkgs.restic}/bin/restic backup \
         --tag ${lib.escapeShellArg config.networking.hostName} \
-        ${excludeFlags "restic"} \
+        ${excludeFlags} \
         ${lib.concatStringsSep " " (map lib.escapeShellArg cfg.paths)}
 
       # Prune
@@ -60,7 +58,7 @@
 
       # Backup
       ${pkgs.borgbackup}/bin/borg create \
-        ${excludeFlags "borgbackup"} \
+        ${excludeFlags} \
         "$BORG_REPO::${borgArchiveName}" \
         ${lib.concatStringsSep " " (map lib.escapeShellArg cfg.paths)}
 
