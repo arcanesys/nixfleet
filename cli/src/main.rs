@@ -205,11 +205,16 @@ enum Commands {
         action: ReleaseAction,
     },
 
-    /// Bootstrap the first admin API key (only works when no keys exist)
+    /// Bootstrap the first admin API key, or save an existing key
     Bootstrap {
-        /// Name for the admin key
+        /// Name for the admin key (used when creating a new key via the CP)
         #[arg(long, default_value = "admin")]
         name: String,
+
+        /// Save an existing API key instead of requesting a new one from the CP.
+        /// Use this on additional machines that share the same fleet.
+        #[arg(long = "save-key")]
+        save_key: Option<String>,
     },
 
     /// Initialize a .nixfleet.toml config file
@@ -804,19 +809,29 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Bootstrap { name } => {
-            // Bootstrap does not require an API key, but does use mTLS
-            let http_client = client::build_client(&tls, "")?;
-            let result = bootstrap(&http_client, effective_cp_url, &name, json_output).await;
-            // Save API key to credentials file
-            if let Ok(Some(ref key_str)) = result {
-                if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
+        Commands::Bootstrap { name, save_key } => {
+            if let Some(key) = save_key {
+                // Save an existing key (no CP call needed)
+                if let Err(e) = config::save_api_key(effective_cp_url, &key) {
                     eprintln!("Warning: failed to save API key: {}", e);
                 } else {
-                    println!("Saved to {}", config::credentials_path().display());
+                    println!("API key saved to {}", config::credentials_path().display());
                 }
+                Ok(())
+            } else {
+                // Bootstrap: request a new key from the CP
+                let http_client = client::build_client(&tls, "")?;
+                let result =
+                    bootstrap(&http_client, effective_cp_url, &name, json_output).await;
+                if let Ok(Some(ref key_str)) = result {
+                    if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
+                        eprintln!("Warning: failed to save API key: {}", e);
+                    } else {
+                        println!("Saved to {}", config::credentials_path().display());
+                    }
+                }
+                result.map(|_| ())
             }
-            result.map(|_| ())
         }
         Commands::Init {
             control_plane_url,
