@@ -6,48 +6,47 @@ fleet lifecycle: health checks, deployments, rollbacks.
 
 ## Cross-Platform Builds
 
-An operator on macOS cannot `nix build` Linux closures natively (and vice versa).
-Two approaches solve this:
+An operator on one platform cannot `nix build` closures for another platform
+without a remote builder. This applies to all combinations: Linux ↔ Darwin,
+x86_64 ↔ aarch64.
 
-### Option 1: Remote Builders (transparent)
+### Remote Builders (nix.buildMachines)
 
-Configure remote builders in `~/.config/nix/nix.conf` or `/etc/nix/nix.conf`:
+Configure remote builders in your NixOS/nix-darwin configuration:
 
-    builders = ssh://root@linux-builder x86_64-linux
-    builders-use-substitutes = true
+    # On a Linux machine that needs to build Darwin closures:
+    nix.buildMachines = [{
+      hostName = "aether";
+      systems = ["aarch64-darwin"];
+      sshUser = "s33d";
+      sshKey = "/root/.ssh/id_ed25519";
+      maxJobs = 4;
+    }];
+    nix.distributedBuilds = true;
 
-On macOS with nix-darwin, the simplest setup is the built-in Linux builder VM:
+    # On a Darwin machine that needs to build Linux closures:
+    nix.buildMachines = [{
+      hostName = "krach";
+      systems = ["x86_64-linux"];
+      sshUser = "root";
+      sshKey = "/root/.ssh/id_ed25519";
+      maxJobs = 4;
+    }];
+    nix.distributedBuilds = true;
 
-    # In your darwin configuration:
+On macOS with nix-darwin, the simplest Linux builder is the built-in VM:
+
     nix.linux-builder.enable = true;
 
 With remote builders configured, `nix build` delegates transparently — all
 `nixfleet` commands work unchanged.
 
-### Option 2: NixFleet Builder Config
+**Requirements:**
+- Root on the operator's machine needs SSH access to the builder (key-based, no password)
+- The builder's host key must be in root's `known_hosts`
+- The builder needs nix installed with the target platform's store
 
-Configure builders per platform in `.nixfleet.toml`:
-
-    [builders]
-    aarch64-darwin = "ssh://user@mac-builder"
-    aarch64-linux = "ssh://root@arm-builder"
-    x86_64-linux = "ssh://root@linux-builder"
-
-Set up via `nixfleet init`:
-
-    nixfleet init --control-plane-url https://cp:8080 \
-      --builder aarch64-darwin=ssh://user@mac \
-      --builder x86_64-linux=ssh://root@linux-box
-
-Override per-command:
-
-    nixfleet release create . --builder aarch64-darwin=ssh://user@other-mac
-
-When a target platform differs from the operator's platform, NixFleet
-automatically passes `--builders` to `nix build`. If no builder is
-configured, the command fails with an actionable error message.
-
-### Option 3: CI + Eval-Only Releases (recommended for production)
+### CI + Eval-Only Releases (recommended for production)
 
 Build all platforms in CI, push closures to a binary cache, then create
 releases without building locally:

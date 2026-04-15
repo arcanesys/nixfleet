@@ -194,7 +194,6 @@ pub(crate) async fn build_host(
     flake: &str,
     hostname: &str,
     config_set: &str,
-    builder: Option<&str>,
     window: Option<&mut display::RollingWindow>,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<String> {
@@ -210,9 +209,6 @@ pub(crate) async fn build_host(
         "--print-out-paths",
         "--no-link",
     ]);
-    if let Some(b) = builder {
-        cmd.args(["--builders", b]);
-    }
     if display::quiet_subprocess() {
         cmd.arg("--quiet");
     }
@@ -437,7 +433,6 @@ pub async fn create(
     cache_url: Option<&str>,
     dry_run: bool,
     eval_only: bool,
-    effective_builders: &std::collections::HashMap<String, String>,
 ) -> Result<(Option<String>, crate::oplog::OpLog)> {
     let mut oplog = crate::oplog::OpLog::new("release-create")?;
 
@@ -460,7 +455,7 @@ pub async fn create(
 
     let result = create_inner(
         client, base_url, flake, &hosts, push_to, push_hook, copy, cache_url, dry_run, eval_only,
-        effective_builders, &mut oplog,
+        &mut oplog,
     )
     .await;
 
@@ -486,7 +481,6 @@ async fn create_inner(
     cache_url: Option<&str>,
     dry_run: bool,
     eval_only: bool,
-    effective_builders: &std::collections::HashMap<String, String>,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<Option<String>> {
     let local_nix_platform = detect_local_nix_platform();
@@ -509,25 +503,14 @@ async fn create_inner(
             let platform = detect_platform(flake, hostname, config_set, oplog).await?;
             let tags = detect_tags(flake, hostname, config_set, oplog).await;
 
-            // Nix --builders format: "<store-uri> <system>" e.g. "ssh://user@host aarch64-darwin"
-            let builder_spec;
-            let builder_for_host = if !eval_only && platform != local_nix_platform {
-                if let Some(builder_uri) = effective_builders.get(&platform) {
-                    builder_spec = format!("{builder_uri} {platform}");
-                    tracing::info!(hostname, platform, builder = builder_uri.as_str(), "Cross-platform build — using remote builder");
-                    Some(builder_spec.as_str())
-                } else {
-                    anyhow::bail!(
-                        "Cannot build {platform} closure for \"{hostname}\" on {local_nix_platform}.\n\n\
-                         Options:\n  \
-                         nixfleet release create --builder {platform}=ssh://user@builder\n  \
-                         nixfleet init --builder {platform}=ssh://user@builder  (persist in config)\n  \
-                         nixfleet release create --eval-only  (assumes closures in cache)",
-                    );
-                }
-            } else {
-                None
-            };
+            if !eval_only && platform != local_nix_platform {
+                tracing::info!(
+                    hostname,
+                    platform,
+                    local = local_nix_platform,
+                    "Cross-platform build — nix will delegate to a remote builder"
+                );
+            }
 
             let build_result = if eval_only {
                 eval_host(flake, hostname, config_set, oplog).await
@@ -536,7 +519,6 @@ async fn create_inner(
                     flake,
                     hostname,
                     config_set,
-                    builder_for_host,
                     window.as_mut().and_then(|w| w.for_output()),
                     oplog,
                 )

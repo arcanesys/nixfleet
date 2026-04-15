@@ -151,7 +151,6 @@ pub async fn run(
     dry_run: bool,
     _ssh: bool,
     target_override: Option<&str>,
-    effective_builders: &HashMap<String, String>,
 ) -> Result<()> {
     let mut oplog = crate::oplog::OpLog::new("deploy")?;
 
@@ -192,7 +191,6 @@ pub async fn run(
         &targets,
         dry_run,
         target_override,
-        effective_builders,
         &mut oplog,
     )
     .await;
@@ -213,7 +211,6 @@ async fn run_inner(
     targets: &[DiscoveredHost],
     dry_run: bool,
     target_override: Option<&str>,
-    effective_builders: &HashMap<String, String>,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
     let local_nix_platform = crate::release::detect_local_nix_platform();
@@ -237,7 +234,7 @@ async fn run_inner(
                 w.set_line_prefix(host);
             }
 
-            // Detect platform for builder selection
+            // Detect platform for cross-platform logging
             let platform = match crate::release::detect_platform_pub(flake, host, config_set, oplog).await {
                 Ok(p) => p,
                 Err(e) => {
@@ -253,38 +250,19 @@ async fn run_inner(
                 }
             };
 
-            let builder_spec;
-            let builder_for_host = if platform != local_nix_platform {
-                if let Some(builder_uri) = effective_builders.get(&platform) {
-                    builder_spec = format!("{builder_uri} {platform}");
-                    tracing::info!(host, platform, builder = builder_uri.as_str(), "Cross-platform build — using remote builder");
-                    Some(builder_spec.as_str())
-                } else {
-                    let e = anyhow::anyhow!(
-                        "Cannot build {platform} closure for \"{host}\" on {local_nix_platform}.\n\n\
-                         Options:\n  \
-                         nixfleet deploy --builder {platform}=ssh://user@builder\n  \
-                         nixfleet init --builder {platform}=ssh://user@builder  (persist in config)",
-                    );
-                    tracing::warn!(host, error = %e, "build failed");
-                    if let Some(ref mut w) = window {
-                        w.mark_error();
-                    }
-                    results.insert(host.clone(), Err(e));
-                    if let Some(ref w) = window {
-                        w.inc();
-                    }
-                    continue;
-                }
-            } else {
-                None
-            };
+            if platform != local_nix_platform {
+                tracing::info!(
+                    host,
+                    platform,
+                    local = local_nix_platform,
+                    "Cross-platform build — nix will delegate to a remote builder"
+                );
+            }
 
             match build_host(
                 flake,
                 host,
                 config_set,
-                builder_for_host,
                 window.as_mut().and_then(|w| w.for_output()),
                 oplog,
             )
