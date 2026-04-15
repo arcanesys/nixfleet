@@ -534,6 +534,8 @@ async fn main() -> Result<()> {
                 &strategy
             };
 
+            let empty_builders = std::collections::HashMap::new();
+
             if ssh {
                 deploy::run(
                     &http_client,
@@ -543,6 +545,7 @@ async fn main() -> Result<()> {
                     dry_run,
                     true,
                     target.as_deref(),
+                    &empty_builders,
                 )
                 .await
             } else {
@@ -561,6 +564,7 @@ async fn main() -> Result<()> {
                         effective_cache_url,
                         dry_run,
                         false,
+                        &empty_builders,
                     )
                     .await?;
                     let release_id = match id {
@@ -731,6 +735,7 @@ async fn main() -> Result<()> {
                         let cu = cache_url.or_else(|| resolved.cache_url.clone());
                         (pt, None, cu)
                     };
+                    let empty_builders = std::collections::HashMap::new();
                     let (_, mut oplog) = release::create(
                         &http_client,
                         effective_cp_url,
@@ -742,6 +747,7 @@ async fn main() -> Result<()> {
                         effective_cache_url.as_deref(),
                         dry_run,
                         eval_only,
+                        &empty_builders,
                     )
                     .await?;
                     oplog.finish(true, None);

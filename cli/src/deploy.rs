@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::display;
 use crate::glob::filter_hosts;
-use crate::release::{build_host, discover_hosts};
+use crate::release::{build_host, discover_hosts, DiscoveredHost};
 
 /// Deploy via SSH fallback: nix-copy-closure + switch-to-configuration.
 #[allow(clippy::needless_option_as_deref)]
@@ -90,19 +90,25 @@ pub async fn run(
     dry_run: bool,
     _ssh: bool,
     target_override: Option<&str>,
+    effective_builders: &HashMap<String, String>,
 ) -> Result<()> {
     let mut oplog = crate::oplog::OpLog::new("deploy")?;
 
     println!("Discovering hosts from {}...", flake);
     let all_hosts = discover_hosts(flake, &mut oplog).await?;
-    let targets = filter_hosts(&all_hosts, patterns);
+    let all_hostnames: Vec<String> = all_hosts.iter().map(|h| h.hostname.clone()).collect();
+    let matched_names = filter_hosts(&all_hostnames, patterns);
+    let targets: Vec<DiscoveredHost> = all_hosts
+        .into_iter()
+        .filter(|h| matched_names.contains(&h.hostname))
+        .collect();
 
     if targets.is_empty() {
         oplog.finish(false, Some("no hosts match pattern"));
         bail!(
             "No hosts match pattern '{}'. Available: {}",
             patterns.join(","),
-            all_hosts.join(", ")
+            all_hostnames.join(", ")
         );
     }
 
@@ -115,7 +121,8 @@ pub async fn run(
         );
     }
 
-    oplog.log_start("deploy", flake, &targets);
+    let target_names: Vec<String> = targets.iter().map(|h| h.hostname.clone()).collect();
+    oplog.log_start("deploy", flake, &target_names);
 
     let result = run_inner(
         client,
@@ -124,6 +131,7 @@ pub async fn run(
         &targets,
         dry_run,
         target_override,
+        effective_builders,
         &mut oplog,
     )
     .await;
@@ -141,11 +149,13 @@ async fn run_inner(
     client: &reqwest::Client,
     cp_url: &str,
     flake: &str,
-    targets: &[String],
+    targets: &[DiscoveredHost],
     dry_run: bool,
     target_override: Option<&str>,
+    effective_builders: &HashMap<String, String>,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
+    let local_nix_platform = crate::release::detect_local_nix_platform();
     let mut results: HashMap<String, Result<String>> = HashMap::new();
 
     // Build all targets
@@ -159,13 +169,59 @@ async fn run_inner(
             None
         };
 
-        for host in targets {
+        for target in targets {
+            let host = &target.hostname;
+            let config_set = &target.config_set;
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }
+
+            // Detect platform for builder selection
+            let platform = match crate::release::detect_platform_pub(flake, host, config_set, oplog).await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(host, error = %e, "platform detection failed");
+                    if let Some(ref mut w) = window {
+                        w.mark_error();
+                    }
+                    results.insert(host.clone(), Err(e));
+                    if let Some(ref w) = window {
+                        w.inc();
+                    }
+                    continue;
+                }
+            };
+
+            let builder_for_host = if platform != local_nix_platform {
+                if let Some(builder) = effective_builders.get(&platform) {
+                    tracing::info!(host, platform, builder = builder.as_str(), "Cross-platform build — using remote builder");
+                    Some(builder.as_str())
+                } else {
+                    let e = anyhow::anyhow!(
+                        "Cannot build {platform} closure for \"{host}\" on {local_nix_platform}.\n\n\
+                         Options:\n  \
+                         nixfleet deploy --builder {platform}=ssh://user@builder\n  \
+                         nixfleet init --builder {platform}=ssh://user@builder  (persist in config)",
+                    );
+                    tracing::warn!(host, error = %e, "build failed");
+                    if let Some(ref mut w) = window {
+                        w.mark_error();
+                    }
+                    results.insert(host.clone(), Err(e));
+                    if let Some(ref w) = window {
+                        w.inc();
+                    }
+                    continue;
+                }
+            } else {
+                None
+            };
+
             match build_host(
                 flake,
                 host,
+                config_set,
+                builder_for_host,
                 window.as_mut().and_then(|w| w.for_output()),
                 oplog,
             )
@@ -191,7 +247,8 @@ async fn run_inner(
 
     if dry_run {
         println!("\n--- Dry run summary ---");
-        for host in targets {
+        for target in targets {
+            let host = &target.hostname;
             match results.get(host) {
                 Some(Ok(path)) => println!("  {} -> {}", host, path),
                 Some(Err(e)) => println!("  {} -> BUILD FAILED: {}", host, e),
@@ -216,7 +273,8 @@ async fn run_inner(
             None
         };
 
-        for host in targets {
+        for target in targets {
+            let host = &target.hostname;
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }
