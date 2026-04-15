@@ -109,6 +109,7 @@ async fn host_add_generates_disk_config_and_prints_snippet() {
 async fn bootstrap_prints_key_on_success() {
     let _guard = cli_lock().await;
     let server = cp_mock().await;
+    let home = tempfile::tempdir().unwrap();
 
     Mock::given(method("POST"))
         .and(path("/api/v1/keys/bootstrap"))
@@ -122,6 +123,8 @@ async fn bootstrap_prints_key_on_success() {
 
     Command::cargo_bin("nixfleet")
         .unwrap()
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path().join("config"))
         .args([
             "--control-plane-url",
             &server.uri(),
@@ -138,6 +141,7 @@ async fn bootstrap_prints_key_on_success() {
 async fn bootstrap_fails_on_409_keys_exist() {
     let _guard = cli_lock().await;
     let server = cp_mock().await;
+    let home = tempfile::tempdir().unwrap();
 
     Mock::given(method("POST"))
         .and(path("/api/v1/keys/bootstrap"))
@@ -147,6 +151,8 @@ async fn bootstrap_fails_on_409_keys_exist() {
 
     Command::cargo_bin("nixfleet")
         .unwrap()
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path().join("config"))
         .args([
             "--control-plane-url",
             &server.uri(),
