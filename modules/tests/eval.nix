@@ -14,6 +14,7 @@
     helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
     mkEvalCheck = helpers.mkEvalCheck pkgs;
     nixosCfg = name: self.nixosConfigurations.${name}.config;
+    darwinCfg = name: self.darwinConfigurations.${name}.config;
   in
     lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
@@ -349,6 +350,58 @@
             {
               check = builtins.any (p: (p.pname or "") == "restic") cfg.environment.systemPackages;
               msg = "backup-restic-test should have restic in system packages";
+            }
+          ];
+
+        # --- Darwin agent: launchd service present ---
+        eval-darwin-agent-launchd = let
+          cfg = darwinCfg "darwin-agent-test";
+        in
+          mkEvalCheck "darwin-agent-launchd" [
+            {
+              check = cfg.launchd.daemons.nixfleet-agent.serviceConfig.Label == "com.nixfleet.agent";
+              msg = "darwin-agent-test should have launchd daemon with correct label";
+            }
+            {
+              check = cfg.launchd.daemons.nixfleet-agent.serviceConfig.KeepAlive == true;
+              msg = "darwin-agent-test should have KeepAlive enabled";
+            }
+          ];
+
+        # --- Darwin agent: health config written ---
+        eval-darwin-agent-health = let
+          cfg = darwinCfg "darwin-agent-test";
+        in
+          mkEvalCheck "darwin-agent-health" [
+            {
+              check = cfg.environment.etc."nixfleet/health-checks.json".text != "";
+              msg = "darwin-agent-test should have health-checks.json config file";
+            }
+          ];
+
+        # --- Darwin agent: tags in environment ---
+        eval-darwin-agent-tags = let
+          cfg = darwinCfg "darwin-agent-test";
+        in
+          mkEvalCheck "darwin-agent-tags" [
+            {
+              check = cfg.launchd.daemons.nixfleet-agent.serviceConfig.EnvironmentVariables.NIXFLEET_TAGS == "workstation,darwin";
+              msg = "darwin-agent-test should have NIXFLEET_TAGS set";
+            }
+          ];
+
+        # --- Darwin hostSpec: isDarwin flag ---
+        eval-darwin-hostspec = let
+          cfg = darwinCfg "darwin-agent-test";
+        in
+          mkEvalCheck "darwin-hostspec" [
+            {
+              check = cfg.hostSpec.isDarwin == true;
+              msg = "darwin-agent-test should have isDarwin set to true";
+            }
+            {
+              check = cfg.hostSpec.hostName == "darwin-agent-test";
+              msg = "darwin-agent-test should have correct hostName";
             }
           ];
       };
