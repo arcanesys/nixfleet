@@ -253,10 +253,12 @@ async fn run_inner(
                 }
             };
 
+            let builder_spec;
             let builder_for_host = if platform != local_nix_platform {
-                if let Some(builder) = effective_builders.get(&platform) {
-                    tracing::info!(host, platform, builder = builder.as_str(), "Cross-platform build — using remote builder");
-                    Some(builder.as_str())
+                if let Some(builder_uri) = effective_builders.get(&platform) {
+                    builder_spec = format!("{builder_uri} {platform}");
+                    tracing::info!(host, platform, builder = builder_uri.as_str(), "Cross-platform build — using remote builder");
+                    Some(builder_spec.as_str())
                 } else {
                     let e = anyhow::anyhow!(
                         "Cannot build {platform} closure for \"{host}\" on {local_nix_platform}.\n\n\

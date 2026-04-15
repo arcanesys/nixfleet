@@ -509,10 +509,13 @@ async fn create_inner(
             let platform = detect_platform(flake, hostname, config_set, oplog).await?;
             let tags = detect_tags(flake, hostname, config_set, oplog).await;
 
+            // Nix --builders format: "<store-uri> <system>" e.g. "ssh://user@host aarch64-darwin"
+            let builder_spec;
             let builder_for_host = if !eval_only && platform != local_nix_platform {
-                if let Some(builder) = effective_builders.get(&platform) {
-                    tracing::info!(hostname, platform, builder = builder.as_str(), "Cross-platform build — using remote builder");
-                    Some(builder.as_str())
+                if let Some(builder_uri) = effective_builders.get(&platform) {
+                    builder_spec = format!("{builder_uri} {platform}");
+                    tracing::info!(hostname, platform, builder = builder_uri.as_str(), "Cross-platform build — using remote builder");
+                    Some(builder_spec.as_str())
                 } else {
                     anyhow::bail!(
                         "Cannot build {platform} closure for \"{hostname}\" on {local_nix_platform}.\n\n\
