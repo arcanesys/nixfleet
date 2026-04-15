@@ -637,7 +637,11 @@ url = "https://cp-01:8080"
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
+        // Set both XDG_CONFIG_HOME (Linux) and HOME (macOS) so that
+        // dirs::config_dir() resolves to the temp dir on both platforms.
+        // On macOS, dirs ignores XDG_CONFIG_HOME and uses ~/Library/Application Support.
         std::env::set_var("XDG_CONFIG_HOME", dir.path());
+        std::env::set_var("HOME", dir.path());
 
         save_api_key("https://test.example.com", "nfk-testkey").unwrap();
 
