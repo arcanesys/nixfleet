@@ -63,6 +63,12 @@ in {
     };
 
     tls = {
+      caCert = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Path to CA certificate PEM for verifying the control plane.";
+      };
+
       clientCert = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
@@ -194,6 +200,10 @@ in {
           ]
           ++ lib.optionals cfg.dryRun ["--dry-run"]
           ++ lib.optionals cfg.allowInsecure ["--allow-insecure"]
+          ++ lib.optionals (cfg.tls.caCert != null) [
+            "--ca-cert"
+            cfg.tls.caCert
+          ]
           ++ lib.optionals (cfg.tls.clientCert != null) [
             "--client-cert"
             cfg.tls.clientCert

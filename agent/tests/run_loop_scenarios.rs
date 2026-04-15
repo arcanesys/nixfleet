@@ -35,6 +35,7 @@ fn base_config(server_url: String, db_path: String) -> Config {
         dry_run: true,
         // Wiremock listens on http:// — allow it.
         allow_insecure: true,
+        ca_cert: None,
         client_cert: None,
         client_key: None,
         // Path that does not exist; HealthRunner falls back to the

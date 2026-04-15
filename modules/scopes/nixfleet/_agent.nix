@@ -63,6 +63,13 @@ in {
     };
 
     tls = {
+      caCert = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/etc/nixfleet/fleet-ca.pem";
+        description = "Path to CA certificate PEM file for verifying the control plane. Trusted alongside system roots.";
+      };
+
       clientCert = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
@@ -229,6 +236,10 @@ in {
           ]
           ++ lib.optionals cfg.allowInsecure [
             "--allow-insecure"
+          ]
+          ++ lib.optionals (cfg.tls.caCert != null) [
+            "--ca-cert"
+            (lib.escapeShellArg cfg.tls.caCert)
           ]
           ++ lib.optionals (cfg.tls.clientCert != null) [
             "--client-cert"
