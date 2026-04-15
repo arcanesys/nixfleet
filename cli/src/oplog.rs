@@ -59,13 +59,24 @@ fn now_iso() -> String {
 }
 
 fn log_dir() -> PathBuf {
-    dirs::state_dir()
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".local/state")
-        })
-        .join("nixfleet/logs")
+    // Linux: ~/.local/state/nixfleet/logs (XDG state dir)
+    // macOS: ~/Library/Logs/nixfleet (macOS convention)
+    #[cfg(target_os = "macos")]
+    {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Library/Logs/nixfleet")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        dirs::state_dir()
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(".local/state")
+            })
+            .join("nixfleet/logs")
+    }
 }
 
 impl OpLog {
