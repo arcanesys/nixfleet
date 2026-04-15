@@ -6,9 +6,16 @@ pub struct HealthConfig {
     #[serde(default)]
     pub systemd: Vec<SystemdConfig>,
     #[serde(default)]
+    pub launchd: Vec<LaunchdConfig>,
+    #[serde(default)]
     pub http: Vec<HttpConfig>,
     #[serde(default)]
     pub command: Vec<CommandConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LaunchdConfig {
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
