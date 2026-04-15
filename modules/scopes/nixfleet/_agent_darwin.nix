@@ -161,8 +161,9 @@ in {
       command = cfg.healthChecks.command;
     };
 
-    # Ensure state directory exists
-    system.activationScripts.nixfleet-agent-dirs.text = ''
+    # Ensure state directory exists before launchd tries to start the agent.
+    # nix-darwin uses preActivation/postActivation, not named scripts like NixOS.
+    system.activationScripts.preActivation.text = ''
       mkdir -p /var/lib/nixfleet
     '';
 
