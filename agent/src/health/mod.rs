@@ -1,7 +1,12 @@
 pub mod command;
 pub mod config;
 pub mod http;
+
+#[cfg(target_os = "linux")]
 pub mod systemd;
+
+#[cfg(target_os = "macos")]
+pub mod launchd;
 
 use async_trait::async_trait;
 use nixfleet_types::health::{HealthCheckResult, HealthReport};
@@ -27,27 +32,33 @@ impl HealthRunner {
         match config::load_config(path) {
             Ok(cfg) => Self::from_config(cfg),
             Err(e) => {
-                // An operator who set a custom health config path
-                // expects their checks to run; a silent fallback to the
-                // systemd default masks typos and missing files. Warn
-                // so it surfaces at the default log level.
                 warn!(
                     health_config = path,
                     error = %e,
-                    "health config not loaded; falling back to systemd default"
+                    "health config not loaded; falling back to platform default"
                 );
-                Self::new(vec![Box::new(systemd::SystemdFallback)])
+                Self::new(vec![Box::new(platform_fallback())])
             }
         }
     }
 
     pub fn from_config(cfg: config::HealthConfig) -> Self {
         let mut checks: Vec<Box<dyn Check>> = vec![];
+
+        #[cfg(target_os = "linux")]
         for sc in cfg.systemd {
             for unit in sc.units {
                 checks.push(Box::new(systemd::SystemdChecker { unit }));
             }
         }
+
+        #[cfg(target_os = "macos")]
+        for lc in cfg.launchd {
+            for label in lc.labels {
+                checks.push(Box::new(launchd::LaunchdChecker { label }));
+            }
+        }
+
         for hc in cfg.http {
             checks.push(Box::new(http::HttpChecker::new(
                 hc.url,
@@ -63,7 +74,7 @@ impl HealthRunner {
             }));
         }
         if checks.is_empty() {
-            checks.push(Box::new(systemd::SystemdFallback));
+            checks.push(Box::new(platform_fallback()));
         }
         Self::new(checks)
     }
@@ -97,4 +108,15 @@ impl HealthRunner {
             timestamp: chrono::Utc::now(),
         }
     }
+}
+
+/// Platform-appropriate fallback health check.
+#[cfg(target_os = "linux")]
+fn platform_fallback() -> impl Check {
+    systemd::SystemdFallback
+}
+
+#[cfg(target_os = "macos")]
+fn platform_fallback() -> impl Check {
+    launchd::LaunchdFallback
 }
