@@ -118,6 +118,10 @@ fn parse_switch_status(output: &str) -> Option<bool> {
     }
 }
 
+/// Check the exit status of the `nixfleet-switch.service` transient unit.
+///
+/// Returns `Some(true)` if it completed successfully, `Some(false)` if
+/// it failed, or `None` if still running or not found.
 #[cfg(target_os = "linux")]
 pub async fn check_switch_exit_status() -> Result<Option<bool>> {
     let mut cmd = Command::new("systemctl");
@@ -132,6 +136,12 @@ pub async fn check_switch_exit_status() -> Result<Option<bool>> {
     Ok(parse_switch_status(&stdout))
 }
 
+/// Check the exit status of the system switch.
+///
+/// Darwin: activation via `fire_switch` is synchronous — if it returned Ok,
+/// the activation succeeded. The polling loop in `lib.rs::fire_poll_switch`
+/// calls this after a poll timeout; on Darwin it immediately confirms success
+/// so the retry loop exits on the first iteration.
 #[cfg(target_os = "macos")]
 pub async fn check_switch_exit_status() -> Result<Option<bool>> {
     Ok(Some(true))
@@ -165,7 +175,7 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
         info!(store_path, "Activating Darwin system");
 
         let activate = format!("{store_path}/activate");
-        let mut cmd = Command::new(&activate);
+        let cmd = Command::new(&activate);
         let output = run_with_timeout(cmd, "darwin activate").await?;
         if !output.status.success() {
             let stderr = truncated_stderr(&output.stderr);
