@@ -6,14 +6,15 @@ use std::collections::HashMap;
 
 use crate::display;
 use crate::glob::filter_hosts;
-use crate::release::{build_host, discover_hosts};
+use crate::release::{build_host, discover_hosts, DiscoveredHost};
 
-/// Deploy via SSH fallback: nix-copy-closure + switch-to-configuration.
+/// Deploy via SSH fallback: nix-copy-closure + platform-specific activation.
 #[allow(clippy::needless_option_as_deref)]
 async fn deploy_via_ssh(
     host: &str,
     store_path: &str,
     ssh_target: &str,
+    platform: &str,
     mut window: Option<&mut display::RollingWindow>,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
@@ -45,38 +46,98 @@ async fn deploy_via_ssh(
         bail!("nix-copy-closure failed for {}: {}", host, stderr);
     }
 
-    // switch-to-configuration
+    // Platform-specific activation
     let t = std::time::Instant::now();
-    tracing::info!(host, "switching configuration");
+    if platform.contains("darwin") {
+        tracing::info!(host, "activating Darwin configuration");
 
-    let mut switch_cmd = tokio::process::Command::new("ssh");
-    switch_cmd.args([
-        "-o",
-        "BatchMode=yes",
-        ssh_target,
-        &format!("{}/bin/switch-to-configuration", store_path),
-        "switch",
-    ]);
+        // Step 1: update profile
+        let mut profile_cmd = tokio::process::Command::new("ssh");
+        profile_cmd.args([
+            "-o",
+            "BatchMode=yes",
+            ssh_target,
+            &format!("nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
+        ]);
+        let profile_output = if display::passthrough_output() {
+            display::run_cmd_async_passthrough(&mut profile_cmd)
+                .await
+                .context(format!("SSH profile update failed for {}", host))?
+        } else {
+            display::run_cmd_async(&mut profile_cmd, window.as_deref_mut())
+                .await
+                .context(format!("SSH profile update failed for {}", host))?
+        };
+        oplog.log_output(
+            &format!("ssh nix-env --set {}", host),
+            Some(host),
+            &profile_output,
+            t.elapsed(),
+        );
+        if !profile_output.status.success() {
+            let stderr = String::from_utf8_lossy(&profile_output.stderr);
+            bail!("nix-env --set failed on {}: {}", host, stderr);
+        }
 
-    let switch_output = if display::passthrough_output() {
-        display::run_cmd_async_passthrough(&mut switch_cmd)
-            .await
-            .context(format!("SSH switch failed for {}", host))?
+        // Step 2: activate
+        let mut activate_cmd = tokio::process::Command::new("ssh");
+        activate_cmd.args([
+            "-o",
+            "BatchMode=yes",
+            ssh_target,
+            &format!("{}/activate", store_path),
+        ]);
+        let activate_output = if display::passthrough_output() {
+            display::run_cmd_async_passthrough(&mut activate_cmd)
+                .await
+                .context(format!("SSH activate failed for {}", host))?
+        } else {
+            display::run_cmd_async(&mut activate_cmd, window.as_deref_mut())
+                .await
+                .context(format!("SSH activate failed for {}", host))?
+        };
+        oplog.log_output(
+            &format!("ssh activate {}", host),
+            Some(host),
+            &activate_output,
+            t.elapsed(),
+        );
+        if !activate_output.status.success() {
+            let stderr = String::from_utf8_lossy(&activate_output.stderr);
+            bail!("activate failed on {}: {}", host, stderr);
+        }
     } else {
-        display::run_cmd_async(&mut switch_cmd, window.as_deref_mut())
-            .await
-            .context(format!("SSH switch failed for {}", host))?
-    };
-    oplog.log_output(
-        &format!("ssh switch-to-configuration {}", host),
-        Some(host),
-        &switch_output,
-        t.elapsed(),
-    );
+        tracing::info!(host, "switching NixOS configuration");
 
-    if !switch_output.status.success() {
-        let stderr = String::from_utf8_lossy(&switch_output.stderr);
-        bail!("switch-to-configuration failed on {}: {}", host, stderr);
+        let mut switch_cmd = tokio::process::Command::new("ssh");
+        switch_cmd.args([
+            "-o",
+            "BatchMode=yes",
+            ssh_target,
+            &format!("{}/bin/switch-to-configuration", store_path),
+            "switch",
+        ]);
+
+        let switch_output = if display::passthrough_output() {
+            display::run_cmd_async_passthrough(&mut switch_cmd)
+                .await
+                .context(format!("SSH switch failed for {}", host))?
+        } else {
+            display::run_cmd_async(&mut switch_cmd, window.as_deref_mut())
+                .await
+                .context(format!("SSH switch failed for {}", host))?
+        };
+        oplog.log_output(
+            &format!("ssh switch-to-configuration {}", host),
+            Some(host),
+            &switch_output,
+            t.elapsed(),
+        );
+
+        if !switch_output.status.success() {
+            let stderr = String::from_utf8_lossy(&switch_output.stderr);
+            bail!("switch-to-configuration failed on {}: {}", host, stderr);
+        }
     }
 
     Ok(())
@@ -90,19 +151,25 @@ pub async fn run(
     dry_run: bool,
     _ssh: bool,
     target_override: Option<&str>,
+    effective_builders: &HashMap<String, String>,
 ) -> Result<()> {
     let mut oplog = crate::oplog::OpLog::new("deploy")?;
 
     println!("Discovering hosts from {}...", flake);
     let all_hosts = discover_hosts(flake, &mut oplog).await?;
-    let targets = filter_hosts(&all_hosts, patterns);
+    let all_hostnames: Vec<String> = all_hosts.iter().map(|h| h.hostname.clone()).collect();
+    let matched_names = filter_hosts(&all_hostnames, patterns);
+    let targets: Vec<DiscoveredHost> = all_hosts
+        .into_iter()
+        .filter(|h| matched_names.contains(&h.hostname))
+        .collect();
 
     if targets.is_empty() {
         oplog.finish(false, Some("no hosts match pattern"));
         bail!(
             "No hosts match pattern '{}'. Available: {}",
             patterns.join(","),
-            all_hosts.join(", ")
+            all_hostnames.join(", ")
         );
     }
 
@@ -115,7 +182,8 @@ pub async fn run(
         );
     }
 
-    oplog.log_start("deploy", flake, &targets);
+    let target_names: Vec<String> = targets.iter().map(|h| h.hostname.clone()).collect();
+    oplog.log_start("deploy", flake, &target_names);
 
     let result = run_inner(
         client,
@@ -124,6 +192,7 @@ pub async fn run(
         &targets,
         dry_run,
         target_override,
+        effective_builders,
         &mut oplog,
     )
     .await;
@@ -141,12 +210,14 @@ async fn run_inner(
     client: &reqwest::Client,
     cp_url: &str,
     flake: &str,
-    targets: &[String],
+    targets: &[DiscoveredHost],
     dry_run: bool,
     target_override: Option<&str>,
+    effective_builders: &HashMap<String, String>,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
-    let mut results: HashMap<String, Result<String>> = HashMap::new();
+    let local_nix_platform = crate::release::detect_local_nix_platform();
+    let mut results: HashMap<String, Result<(String, String)>> = HashMap::new();
 
     // Build all targets
     {
@@ -159,13 +230,59 @@ async fn run_inner(
             None
         };
 
-        for host in targets {
+        for target in targets {
+            let host = &target.hostname;
+            let config_set = &target.config_set;
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }
+
+            // Detect platform for builder selection
+            let platform = match crate::release::detect_platform_pub(flake, host, config_set, oplog).await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(host, error = %e, "platform detection failed");
+                    if let Some(ref mut w) = window {
+                        w.mark_error();
+                    }
+                    results.insert(host.clone(), Err(e));
+                    if let Some(ref w) = window {
+                        w.inc();
+                    }
+                    continue;
+                }
+            };
+
+            let builder_for_host = if platform != local_nix_platform {
+                if let Some(builder) = effective_builders.get(&platform) {
+                    tracing::info!(host, platform, builder = builder.as_str(), "Cross-platform build — using remote builder");
+                    Some(builder.as_str())
+                } else {
+                    let e = anyhow::anyhow!(
+                        "Cannot build {platform} closure for \"{host}\" on {local_nix_platform}.\n\n\
+                         Options:\n  \
+                         nixfleet deploy --builder {platform}=ssh://user@builder\n  \
+                         nixfleet init --builder {platform}=ssh://user@builder  (persist in config)",
+                    );
+                    tracing::warn!(host, error = %e, "build failed");
+                    if let Some(ref mut w) = window {
+                        w.mark_error();
+                    }
+                    results.insert(host.clone(), Err(e));
+                    if let Some(ref w) = window {
+                        w.inc();
+                    }
+                    continue;
+                }
+            } else {
+                None
+            };
+
             match build_host(
                 flake,
                 host,
+                config_set,
+                builder_for_host,
                 window.as_mut().and_then(|w| w.for_output()),
                 oplog,
             )
@@ -173,7 +290,7 @@ async fn run_inner(
             {
                 Ok(path) => {
                     tracing::info!(host, path = %display::truncate_store_path(&path, 60), "built");
-                    results.insert(host.clone(), Ok(path));
+                    results.insert(host.clone(), Ok((path, platform)));
                 }
                 Err(e) => {
                     tracing::warn!(host, error = %e, "build failed");
@@ -191,9 +308,10 @@ async fn run_inner(
 
     if dry_run {
         println!("\n--- Dry run summary ---");
-        for host in targets {
+        for target in targets {
+            let host = &target.hostname;
             match results.get(host) {
-                Some(Ok(path)) => println!("  {} -> {}", host, path),
+                Some(Ok((path, _platform))) => println!("  {} -> {}", host, path),
                 Some(Err(e)) => println!("  {} -> BUILD FAILED: {}", host, e),
                 None => println!("  {} -> SKIPPED", host),
             }
@@ -216,11 +334,12 @@ async fn run_inner(
             None
         };
 
-        for host in targets {
+        for target in targets {
+            let host = &target.hostname;
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }
-            if let Some(Ok(store_path)) = results.get(host) {
+            if let Some(Ok((store_path, platform))) = results.get(host) {
                 let ssh_dest = match target_override {
                     Some(t) => t.to_string(),
                     None => format!("root@{}", host),
@@ -229,6 +348,7 @@ async fn run_inner(
                     host,
                     store_path,
                     &ssh_dest,
+                    platform,
                     window.as_mut().and_then(|w| w.for_output()),
                     oplog,
                 )

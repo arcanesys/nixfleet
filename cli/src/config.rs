@@ -15,6 +15,8 @@ pub struct ConfigFile {
     pub cache: Option<CacheConfig>,
     #[serde(default)]
     pub deploy: Option<DeployConfig>,
+    #[serde(default)]
+    pub builders: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -85,6 +87,7 @@ pub struct ResolvedConfig {
     pub health_timeout: Option<u64>,
     pub failure_threshold: Option<String>,
     pub on_failure: Option<String>,
+    pub builders: HashMap<String, String>,
 }
 
 /// Resolve a well-known variable by name. Falls back to env var lookup.
@@ -236,6 +239,8 @@ struct WritableConfigFile {
     cache: Option<WritableCache>,
     #[serde(skip_serializing_if = "Option::is_none")]
     deploy: Option<WritableDeploy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    builders: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -303,6 +308,7 @@ pub fn write_config_file(
     hook_push_cmd: Option<&str>,
     strategy: Option<&str>,
     on_failure: Option<&str>,
+    builders: &HashMap<String, String>,
 ) -> Result<()> {
     let file = WritableConfigFile {
         control_plane: Some(WritableControlPlane {
@@ -344,6 +350,11 @@ pub fn write_config_file(
             })
         } else {
             None
+        },
+        builders: if builders.is_empty() {
+            None
+        } else {
+            Some(builders.clone())
         },
     };
 
@@ -416,6 +427,9 @@ pub fn resolve(
             resolved.failure_threshold = deploy.failure_threshold.clone();
             resolved.on_failure = deploy.on_failure.clone();
         }
+        if let Some(ref builders) = cfg.builders {
+            resolved.builders = builders.clone();
+        }
     }
 
     // Layer 2: credentials (keyed by CP URL)
@@ -486,6 +500,30 @@ pub fn resolve(
     }
 
     resolved
+}
+
+/// Parse `--builder PLATFORM=URI` CLI arguments into a map.
+pub fn parse_builder_args(args: &[String]) -> Result<HashMap<String, String>> {
+    let mut map = HashMap::new();
+    for arg in args {
+        let (platform, uri) = arg.split_once('=').with_context(|| {
+            format!("invalid --builder format: {arg:?} (expected PLATFORM=URI)")
+        })?;
+        let valid = [
+            "x86_64-linux",
+            "aarch64-linux",
+            "aarch64-darwin",
+            "x86_64-darwin",
+        ];
+        if !valid.contains(&platform) {
+            anyhow::bail!(
+                "unknown platform: {platform:?} (expected one of: {})",
+                valid.join(", ")
+            );
+        }
+        map.insert(platform.to_string(), uri.to_string());
+    }
+    Ok(map)
 }
 
 #[cfg(test)]

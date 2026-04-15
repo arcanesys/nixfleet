@@ -197,4 +197,26 @@ in {
       ];
     };
   };
+
+  flake.darwinConfigurations = {
+    # darwin-agent-test: exercises agent with launchd on Darwin
+    darwin-agent-test = mkHost {
+      hostName = "darwin-agent-test";
+      platform = "aarch64-darwin";
+      hostSpec = orgDefaults;
+      modules = [
+        {
+          services.nixfleet-agent = {
+            enable = true;
+            controlPlaneUrl = "https://cp.test:8080";
+            tags = ["workstation" "darwin"];
+            healthChecks = {
+              launchd = [{labels = ["com.example.myservice"];}];
+              http = [{url = "http://localhost:8080/health";}];
+            };
+          };
+        }
+      ];
+    };
+  };
 }
