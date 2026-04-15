@@ -30,7 +30,7 @@
 
       # Backup
       ${pkgs.restic}/bin/restic backup \
-        --tag ${lib.escapeShellArg config.networking.hostName} \
+        --tag ${lib.escapeShellArg config.hostSpec.hostName} \
         ${excludeFlags} \
         ${lib.concatStringsSep " " (map lib.escapeShellArg cfg.paths)}
 
@@ -42,7 +42,7 @@
         --prune
     '';
 
-    borgArchiveName = "${config.networking.hostName}-{now:%Y-%m-%dT%H:%M:%S}";
+    borgArchiveName = "${config.hostSpec.hostName}-{now:%Y-%m-%dT%H:%M:%S}";
 
     borgBackupScript = pkgs.writeShellScript "nixfleet-backup-borg" ''
       set -euo pipefail
@@ -244,7 +244,7 @@
             "${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 ${lib.escapeShellArg cfg.healthCheck.onSuccess} || true";
           statusCmd = ''
             cat > ${cfg.stateDirectory}/status.json <<STATUSEOF
-            {"lastRun": "$(date -Is)", "status": "success", "hostname": "${config.networking.hostName}"}
+            {"lastRun": "$(date -Is)", "status": "success", "hostname": "${config.hostSpec.hostName}"}
             STATUSEOF
           '';
         in

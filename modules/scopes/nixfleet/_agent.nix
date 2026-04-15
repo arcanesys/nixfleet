@@ -20,8 +20,8 @@ in {
 
     machineId = lib.mkOption {
       type = lib.types.str;
-      default = config.networking.hostName;
-      defaultText = lib.literalExpression "config.networking.hostName";
+      default = config.hostSpec.hostName;
+      defaultText = lib.literalExpression "config.hostSpec.hostName";
       description = "Machine identifier reported to the control plane.";
     };
 
