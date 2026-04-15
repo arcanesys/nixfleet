@@ -67,15 +67,22 @@ pub(crate) async fn discover_hosts(
 ) -> Result<Vec<DiscoveredHost>> {
     let mut hosts = Vec::new();
 
-    let nixos = discover_config_set(flake, "nixosConfigurations", oplog).await?;
-    for h in nixos {
-        hosts.push(DiscoveredHost {
-            hostname: h,
-            config_set: "nixosConfigurations".into(),
-        });
+    // NixOS hosts (optional — fleet may be Darwin-only)
+    match discover_config_set(flake, "nixosConfigurations", oplog).await {
+        Ok(nixos) => {
+            for h in nixos {
+                hosts.push(DiscoveredHost {
+                    hostname: h,
+                    config_set: "nixosConfigurations".into(),
+                });
+            }
+        }
+        Err(_) => {
+            tracing::debug!("no nixosConfigurations found");
+        }
     }
 
-    // Darwin is optional — not every fleet has macOS
+    // Darwin hosts (optional — fleet may be Linux-only)
     match discover_config_set(flake, "darwinConfigurations", oplog).await {
         Ok(darwin) => {
             for h in darwin {
@@ -86,8 +93,12 @@ pub(crate) async fn discover_hosts(
             }
         }
         Err(_) => {
-            tracing::debug!("no darwinConfigurations found (normal for Linux-only fleets)");
+            tracing::debug!("no darwinConfigurations found");
         }
+    }
+
+    if hosts.is_empty() {
+        anyhow::bail!("no nixosConfigurations or darwinConfigurations found in flake");
     }
 
     Ok(hosts)
