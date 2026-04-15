@@ -149,6 +149,9 @@ enum Commands {
         /// Binary cache URL for agents to fetch closures from (e.g. http://cache:5000)
         #[arg(long, help_heading = "Build & Push")]
         cache_url: Option<String>,
+        /// Remote builder (repeatable, format: PLATFORM=URI)
+        #[arg(long = "builder", value_name = "PLATFORM=URI", help_heading = "Build & Push")]
+        builders: Vec<String>,
     },
 
     /// Show fleet status from the control plane
@@ -240,6 +243,9 @@ enum Commands {
         /// Default deploy failure action (pause, revert)
         #[arg(long)]
         on_failure: Option<String>,
+        /// Remote builder (repeatable, format: PLATFORM=URI)
+        #[arg(long = "builder", value_name = "PLATFORM=URI")]
+        builders: Vec<String>,
     },
 }
 
@@ -340,6 +346,9 @@ enum ReleaseAction {
             conflicts_with = "copy"
         )]
         eval_only: bool,
+        /// Remote builder (repeatable, format: PLATFORM=URI)
+        #[arg(long = "builder", value_name = "PLATFORM=URI")]
+        builders: Vec<String>,
     },
     /// List recent releases
     List {
@@ -506,6 +515,7 @@ async fn main() -> Result<()> {
             hook_url,
             copy,
             cache_url,
+            builders,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
 
@@ -534,7 +544,9 @@ async fn main() -> Result<()> {
                 &strategy
             };
 
-            let empty_builders = std::collections::HashMap::new();
+            let cli_builders = config::parse_builder_args(&builders)?;
+            let mut effective_builders = resolved.builders.clone();
+            effective_builders.extend(cli_builders);
 
             if ssh {
                 deploy::run(
@@ -545,7 +557,7 @@ async fn main() -> Result<()> {
                     dry_run,
                     true,
                     target.as_deref(),
-                    &empty_builders,
+                    &effective_builders,
                 )
                 .await
             } else {
@@ -564,7 +576,7 @@ async fn main() -> Result<()> {
                         effective_cache_url,
                         dry_run,
                         false,
-                        &empty_builders,
+                        &effective_builders,
                     )
                     .await?;
                     let release_id = match id {
@@ -713,6 +725,7 @@ async fn main() -> Result<()> {
                     cache_url,
                     dry_run,
                     eval_only,
+                    builders,
                 } => {
                     let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
                         let push_cmd = hook_push_cmd.as_deref()
@@ -735,7 +748,9 @@ async fn main() -> Result<()> {
                         let cu = cache_url.or_else(|| resolved.cache_url.clone());
                         (pt, None, cu)
                     };
-                    let empty_builders = std::collections::HashMap::new();
+                    let cli_builders = config::parse_builder_args(&builders)?;
+                    let mut effective_builders = resolved.builders.clone();
+                    effective_builders.extend(cli_builders);
                     let (_, mut oplog) = release::create(
                         &http_client,
                         effective_cp_url,
@@ -747,7 +762,7 @@ async fn main() -> Result<()> {
                         effective_cache_url.as_deref(),
                         dry_run,
                         eval_only,
-                        &empty_builders,
+                        &effective_builders,
                     )
                     .await?;
                     oplog.finish(true, None);
@@ -829,7 +844,9 @@ async fn main() -> Result<()> {
             hook_push_cmd,
             strategy,
             on_failure,
+            builders,
         } => {
+            let parsed_builders = config::parse_builder_args(&builders)?;
             let path = cwd.join(".nixfleet.toml");
             config::write_config_file(
                 &path,
@@ -843,6 +860,7 @@ async fn main() -> Result<()> {
                 hook_push_cmd.as_deref(),
                 strategy.as_deref(),
                 on_failure.as_deref(),
+                &parsed_builders,
             )?;
             println!("Config written to {}", path.display());
             Ok(())
