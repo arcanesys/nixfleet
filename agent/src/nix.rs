@@ -57,16 +57,15 @@ async fn run_with_timeout(mut cmd: Command, label: &'static str) -> Result<std::
         .with_context(|| format!("failed to spawn {label}"))
 }
 
-/// Read the current system generation by fully resolving the system symlink.
+/// Read the current system generation by reading the system symlink.
 ///
-/// Uses `canonicalize` instead of `read_link` because profile paths
-/// (especially on Darwin) involve multi-level symlink chains:
-///   /nix/var/nix/profiles/system → system-42-link → /nix/store/<hash>-...
+/// `/run/current-system` is a single-level symlink on both NixOS and Darwin,
+/// so `read_link` is sufficient (no need for `canonicalize`).
 pub async fn current_generation() -> Result<String> {
     let path = crate::platform::CURRENT_SYSTEM_PATH;
-    let target = tokio::fs::canonicalize(path)
+    let target = tokio::fs::read_link(path)
         .await
-        .with_context(|| format!("failed to resolve {path}"))?;
+        .with_context(|| format!("failed to readlink {path}"))?;
     Ok(target.to_string_lossy().into_owned())
 }
 
@@ -178,6 +177,17 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
     {
         info!(store_path, "Activating Darwin system");
 
+        // Step 1: update profile first (darwin-rebuild does profile before activate)
+        let mut cmd = Command::new("nix-env");
+        cmd.args(["-p", crate::platform::SYSTEM_PROFILE, "--set", store_path]);
+        let output = run_with_timeout(cmd, "nix-env --set profile").await?;
+        if !output.status.success() {
+            let stderr = truncated_stderr(&output.stderr);
+            anyhow::bail!("nix-env --set failed: {stderr}");
+        }
+        info!("Darwin profile updated");
+
+        // Step 2: activate (may read from the profile)
         let activate = format!("{store_path}/activate");
         let cmd = Command::new(&activate);
         let output = run_with_timeout(cmd, "darwin activate").await?;
@@ -186,24 +196,16 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
             anyhow::bail!("darwin activate failed: {stderr}");
         }
 
-        let mut cmd = Command::new("nix-env");
-        cmd.args(["-p", crate::platform::SYSTEM_PROFILE, "--set", store_path]);
-        let output = run_with_timeout(cmd, "nix-env --set profile").await?;
-        if !output.status.success() {
-            let stderr = truncated_stderr(&output.stderr);
-            anyhow::bail!("nix-env --set failed: {stderr}");
-        }
-
-        info!("Darwin system activated and profile updated");
+        info!("Darwin system activated");
     }
 
     Ok(())
 }
 
-/// Poll a symlink path until it fully resolves to the expected store path.
+/// Poll a symlink path until it points to the expected store path.
 ///
-/// Uses `canonicalize` instead of `read_link` to handle multi-level
-/// symlink chains (Darwin profile paths).
+/// Uses `read_link` since `/run/current-system` is a single-level symlink
+/// on both NixOS and Darwin.
 pub async fn poll_generation(
     expected: &str,
     path: &std::path::Path,
@@ -212,7 +214,7 @@ pub async fn poll_generation(
 ) -> Result<bool> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        if let Ok(target) = tokio::fs::canonicalize(path).await {
+        if let Ok(target) = tokio::fs::read_link(path).await {
             if target.to_string_lossy() == expected {
                 return Ok(true);
             }
@@ -382,14 +384,10 @@ mod tests {
         tokio::time::pause();
         let dir = tempfile::tempdir().unwrap();
         let link = dir.path().join("current-system");
-        // Create a real file for the symlink to point to
-        let target_file = dir.path().join("target");
-        std::fs::write(&target_file, "").unwrap();
-        let target_path = target_file.to_str().unwrap();
-        std::os::unix::fs::symlink(target_path, &link).unwrap();
+        std::os::unix::fs::symlink("/nix/store/abc-target", &link).unwrap();
 
         let matched = poll_generation(
-            target_path,
+            "/nix/store/abc-target",
             &link,
             Duration::from_secs(10),
             Duration::from_millis(100),
@@ -404,11 +402,7 @@ mod tests {
         tokio::time::pause();
         let dir = tempfile::tempdir().unwrap();
         let link = dir.path().join("current-system");
-        // Create a real file for the symlink to point to (wrong target)
-        let wrong_file = dir.path().join("wrong");
-        std::fs::write(&wrong_file, "").unwrap();
-        let wrong_path = wrong_file.to_str().unwrap();
-        std::os::unix::fs::symlink(wrong_path, &link).unwrap();
+        std::os::unix::fs::symlink("/nix/store/wrong-target", &link).unwrap();
 
         let matched = poll_generation(
             "/nix/store/abc-target",
@@ -443,24 +437,17 @@ mod tests {
         tokio::time::pause();
         let dir = tempfile::tempdir().unwrap();
         let link = dir.path().join("current-system");
-        // Create real files for symlink targets
-        let old_file = dir.path().join("old");
-        let target_file = dir.path().join("target");
-        std::fs::write(&old_file, "").unwrap();
-        std::fs::write(&target_file, "").unwrap();
-        let target_path = target_file.to_str().unwrap().to_string();
-        std::os::unix::fs::symlink(old_file.to_str().unwrap(), &link).unwrap();
+        std::os::unix::fs::symlink("/nix/store/old-system", &link).unwrap();
 
         let link_clone = link.clone();
-        let target_path_clone = target_path.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(2)).await;
             let _ = std::fs::remove_file(&link_clone);
-            std::os::unix::fs::symlink(&target_path_clone, &link_clone).unwrap();
+            std::os::unix::fs::symlink("/nix/store/abc-target", &link_clone).unwrap();
         });
 
         let matched = poll_generation(
-            &target_path,
+            "/nix/store/abc-target",
             &link,
             Duration::from_secs(10),
             Duration::from_millis(500),

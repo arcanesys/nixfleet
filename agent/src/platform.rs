@@ -2,13 +2,10 @@
 
 /// Path to the symlink representing the current active system generation.
 ///
-/// NixOS:  `/run/current-system` → `/nix/store/<hash>-nixos-system-...`
-/// Darwin: `/nix/var/nix/profiles/system` → `/nix/store/<hash>-darwin-system-...`
-#[cfg(target_os = "linux")]
+/// Both NixOS and nix-darwin maintain `/run/current-system` as a direct
+/// symlink to the active store path. On NixOS this is created by
+/// `switch-to-configuration`; on Darwin by the `activate` script.
 pub const CURRENT_SYSTEM_PATH: &str = "/run/current-system";
-
-#[cfg(target_os = "macos")]
-pub const CURRENT_SYSTEM_PATH: &str = "/nix/var/nix/profiles/system";
 
 /// System profile path for nix-env generation listing.
 pub const SYSTEM_PROFILE: &str = "/nix/var/nix/profiles/system";

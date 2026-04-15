@@ -8,12 +8,13 @@ use crate::display;
 use crate::glob::filter_hosts;
 use crate::release::{build_host, discover_hosts, DiscoveredHost};
 
-/// Deploy via SSH fallback: nix-copy-closure + switch-to-configuration.
+/// Deploy via SSH fallback: nix-copy-closure + platform-specific activation.
 #[allow(clippy::needless_option_as_deref)]
 async fn deploy_via_ssh(
     host: &str,
     store_path: &str,
     ssh_target: &str,
+    platform: &str,
     mut window: Option<&mut display::RollingWindow>,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
@@ -45,38 +46,98 @@ async fn deploy_via_ssh(
         bail!("nix-copy-closure failed for {}: {}", host, stderr);
     }
 
-    // switch-to-configuration
+    // Platform-specific activation
     let t = std::time::Instant::now();
-    tracing::info!(host, "switching configuration");
+    if platform.contains("darwin") {
+        tracing::info!(host, "activating Darwin configuration");
 
-    let mut switch_cmd = tokio::process::Command::new("ssh");
-    switch_cmd.args([
-        "-o",
-        "BatchMode=yes",
-        ssh_target,
-        &format!("{}/bin/switch-to-configuration", store_path),
-        "switch",
-    ]);
+        // Step 1: update profile
+        let mut profile_cmd = tokio::process::Command::new("ssh");
+        profile_cmd.args([
+            "-o",
+            "BatchMode=yes",
+            ssh_target,
+            &format!("nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
+        ]);
+        let profile_output = if display::passthrough_output() {
+            display::run_cmd_async_passthrough(&mut profile_cmd)
+                .await
+                .context(format!("SSH profile update failed for {}", host))?
+        } else {
+            display::run_cmd_async(&mut profile_cmd, window.as_deref_mut())
+                .await
+                .context(format!("SSH profile update failed for {}", host))?
+        };
+        oplog.log_output(
+            &format!("ssh nix-env --set {}", host),
+            Some(host),
+            &profile_output,
+            t.elapsed(),
+        );
+        if !profile_output.status.success() {
+            let stderr = String::from_utf8_lossy(&profile_output.stderr);
+            bail!("nix-env --set failed on {}: {}", host, stderr);
+        }
 
-    let switch_output = if display::passthrough_output() {
-        display::run_cmd_async_passthrough(&mut switch_cmd)
-            .await
-            .context(format!("SSH switch failed for {}", host))?
+        // Step 2: activate
+        let mut activate_cmd = tokio::process::Command::new("ssh");
+        activate_cmd.args([
+            "-o",
+            "BatchMode=yes",
+            ssh_target,
+            &format!("{}/activate", store_path),
+        ]);
+        let activate_output = if display::passthrough_output() {
+            display::run_cmd_async_passthrough(&mut activate_cmd)
+                .await
+                .context(format!("SSH activate failed for {}", host))?
+        } else {
+            display::run_cmd_async(&mut activate_cmd, window.as_deref_mut())
+                .await
+                .context(format!("SSH activate failed for {}", host))?
+        };
+        oplog.log_output(
+            &format!("ssh activate {}", host),
+            Some(host),
+            &activate_output,
+            t.elapsed(),
+        );
+        if !activate_output.status.success() {
+            let stderr = String::from_utf8_lossy(&activate_output.stderr);
+            bail!("activate failed on {}: {}", host, stderr);
+        }
     } else {
-        display::run_cmd_async(&mut switch_cmd, window.as_deref_mut())
-            .await
-            .context(format!("SSH switch failed for {}", host))?
-    };
-    oplog.log_output(
-        &format!("ssh switch-to-configuration {}", host),
-        Some(host),
-        &switch_output,
-        t.elapsed(),
-    );
+        tracing::info!(host, "switching NixOS configuration");
 
-    if !switch_output.status.success() {
-        let stderr = String::from_utf8_lossy(&switch_output.stderr);
-        bail!("switch-to-configuration failed on {}: {}", host, stderr);
+        let mut switch_cmd = tokio::process::Command::new("ssh");
+        switch_cmd.args([
+            "-o",
+            "BatchMode=yes",
+            ssh_target,
+            &format!("{}/bin/switch-to-configuration", store_path),
+            "switch",
+        ]);
+
+        let switch_output = if display::passthrough_output() {
+            display::run_cmd_async_passthrough(&mut switch_cmd)
+                .await
+                .context(format!("SSH switch failed for {}", host))?
+        } else {
+            display::run_cmd_async(&mut switch_cmd, window.as_deref_mut())
+                .await
+                .context(format!("SSH switch failed for {}", host))?
+        };
+        oplog.log_output(
+            &format!("ssh switch-to-configuration {}", host),
+            Some(host),
+            &switch_output,
+            t.elapsed(),
+        );
+
+        if !switch_output.status.success() {
+            let stderr = String::from_utf8_lossy(&switch_output.stderr);
+            bail!("switch-to-configuration failed on {}: {}", host, stderr);
+        }
     }
 
     Ok(())
@@ -156,7 +217,7 @@ async fn run_inner(
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
     let local_nix_platform = crate::release::detect_local_nix_platform();
-    let mut results: HashMap<String, Result<String>> = HashMap::new();
+    let mut results: HashMap<String, Result<(String, String)>> = HashMap::new();
 
     // Build all targets
     {
@@ -229,7 +290,7 @@ async fn run_inner(
             {
                 Ok(path) => {
                     tracing::info!(host, path = %display::truncate_store_path(&path, 60), "built");
-                    results.insert(host.clone(), Ok(path));
+                    results.insert(host.clone(), Ok((path, platform)));
                 }
                 Err(e) => {
                     tracing::warn!(host, error = %e, "build failed");
@@ -250,7 +311,7 @@ async fn run_inner(
         for target in targets {
             let host = &target.hostname;
             match results.get(host) {
-                Some(Ok(path)) => println!("  {} -> {}", host, path),
+                Some(Ok((path, _platform))) => println!("  {} -> {}", host, path),
                 Some(Err(e)) => println!("  {} -> BUILD FAILED: {}", host, e),
                 None => println!("  {} -> SKIPPED", host),
             }
@@ -278,7 +339,7 @@ async fn run_inner(
             if let Some(ref mut w) = window {
                 w.set_line_prefix(host);
             }
-            if let Some(Ok(store_path)) = results.get(host) {
+            if let Some(Ok((store_path, platform))) = results.get(host) {
                 let ssh_dest = match target_override {
                     Some(t) => t.to_string(),
                     None => format!("root@{}", host),
@@ -287,6 +348,7 @@ async fn run_inner(
                     host,
                     store_path,
                     &ssh_dest,
+                    platform,
                     window.as_mut().and_then(|w| w.for_output()),
                     oplog,
                 )

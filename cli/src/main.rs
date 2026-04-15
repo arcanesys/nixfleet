@@ -178,6 +178,10 @@ enum Commands {
         /// SSH target override (e.g. root@192.168.1.10)
         #[arg(long)]
         target: Option<String>,
+
+        /// Target is a Darwin (macOS) host
+        #[arg(long)]
+        darwin: bool,
     },
 
     /// Manage fleet hosts
@@ -655,6 +659,7 @@ async fn main() -> Result<()> {
             generation,
             ssh: _,
             target,
+            darwin,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
             rollback(
@@ -663,6 +668,7 @@ async fn main() -> Result<()> {
                 &host,
                 generation,
                 target.as_deref(),
+                darwin,
             )
             .await
         }
@@ -874,6 +880,7 @@ async fn rollback(
     host: &str,
     generation: Option<String>,
     target: Option<&str>,
+    darwin: bool,
 ) -> Result<()> {
     let default_dest = format!("root@{}", host);
     let ssh_dest = target.unwrap_or(&default_dest);
@@ -908,29 +915,69 @@ async fn rollback(
     println!("Rolling back {} to {}", host, store_path);
 
     // SSH rollback: switch to the specified profile on the target
-    let stderr = if display::passthrough_output() {
+    let stderr_cfg = if display::passthrough_output() {
         Stdio::inherit()
     } else {
         Stdio::piped()
     };
-    let switch_output = tokio::process::Command::new("ssh")
-        .args([
-            "-o",
-            "BatchMode=yes",
-            ssh_dest,
-            &format!("{}/bin/switch-to-configuration", store_path),
-            "switch",
-        ])
-        .stdout(Stdio::inherit())
-        .stderr(stderr)
-        .output()
-        .await
-        .context("SSH switch-to-configuration failed")?;
 
-    if !switch_output.status.success() {
-        let stderr = String::from_utf8_lossy(&switch_output.stderr);
-        bail!("Rollback failed on {}: {}", host, stderr);
+    if darwin {
+        // Darwin: profile update first, then activate
+        let profile_output = tokio::process::Command::new("ssh")
+            .args([
+                "-o", "BatchMode=yes", ssh_dest,
+                &format!("nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
+            ])
+            .stdout(Stdio::inherit())
+            .stderr(stderr_cfg)
+            .output()
+            .await
+            .context("SSH profile update failed")?;
+        if !profile_output.status.success() {
+            bail!("nix-env --set failed on {}", host);
+        }
+
+        let stderr_cfg = if display::passthrough_output() {
+            Stdio::inherit()
+        } else {
+            Stdio::piped()
+        };
+        let activate_output = tokio::process::Command::new("ssh")
+            .args([
+                "-o", "BatchMode=yes", ssh_dest,
+                &format!("{}/activate", store_path),
+            ])
+            .stdout(Stdio::inherit())
+            .stderr(stderr_cfg)
+            .output()
+            .await
+            .context("SSH activate failed")?;
+        if !activate_output.status.success() {
+            let stderr = String::from_utf8_lossy(&activate_output.stderr);
+            bail!("Rollback activate failed on {}: {}", host, stderr);
+        }
+    } else {
+        // NixOS: switch-to-configuration
+        let switch_output = tokio::process::Command::new("ssh")
+            .args([
+                "-o",
+                "BatchMode=yes",
+                ssh_dest,
+                &format!("{}/bin/switch-to-configuration", store_path),
+                "switch",
+            ])
+            .stdout(Stdio::inherit())
+            .stderr(stderr_cfg)
+            .output()
+            .await
+            .context("SSH switch-to-configuration failed")?;
+
+        if !switch_output.status.success() {
+            let stderr = String::from_utf8_lossy(&switch_output.stderr);
+            bail!("Rollback failed on {}: {}", host, stderr);
+        }
     }
+
     println!("Rollback complete on {}", host);
 
     Ok(())
