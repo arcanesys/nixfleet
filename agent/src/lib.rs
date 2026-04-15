@@ -301,6 +301,14 @@ async fn run_deploy_cycle(
         return PollOutcome::Success { poll_hint };
     }
 
+    // Check if another switch is already in progress (e.g. manual nixos-rebuild).
+    // If so, skip — the next poll cycle will see the updated generation.
+    if nix::is_switch_in_progress() {
+        info!("System switch already in progress, deferring to next poll");
+        metrics::record_state_transition("fetching", "idle");
+        return PollOutcome::Success { poll_hint };
+    }
+
     // Apply: fire switch-to-configuration in a detached transient service,
     // then poll /run/current-system until it matches the desired generation.
     // The agent may be killed mid-switch (self-switch); on restart the

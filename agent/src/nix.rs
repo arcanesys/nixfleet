@@ -3,6 +3,45 @@ use std::time::Duration;
 use tokio::process::Command;
 use tracing::info;
 
+/// Check if a system switch is already in progress.
+///
+/// On Linux, probes the NixOS switch lock file (`/run/nixos/switch-to-configuration.lock`)
+/// with a non-blocking `flock`. If the lock is held, another `switch-to-configuration`
+/// (e.g. from `nixos-rebuild switch`) is already running — the agent should skip
+/// and let the next poll cycle pick up the result.
+///
+/// On Darwin, activation is synchronous and has no lock file, so this always returns false.
+#[cfg(target_os = "linux")]
+pub fn is_switch_in_progress() -> bool {
+    use std::fs::OpenOptions;
+    use std::os::unix::io::AsRawFd;
+
+    let file = match OpenOptions::new()
+        .read(true)
+        .open("/run/nixos/switch-to-configuration.lock")
+    {
+        Ok(f) => f,
+        Err(_) => return false, // Lock file doesn't exist — no switch in progress
+    };
+
+    let fd = file.as_raw_fd();
+    // SAFETY: fd is a valid open file descriptor. flock is safe to call.
+    let result = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+    if result == 0 {
+        // Acquired the lock — no one else holds it. Release immediately.
+        unsafe { libc::flock(fd, libc::LOCK_UN) };
+        false
+    } else {
+        // EWOULDBLOCK — another process holds the lock.
+        true
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn is_switch_in_progress() -> bool {
+    false
+}
+
 /// Maximum time any single `nix`/`nix-env` subprocess is allowed to run
 /// before we give up and return a timeout error. A hung nix command
 /// would otherwise block the agent's deploy cycle indefinitely.
