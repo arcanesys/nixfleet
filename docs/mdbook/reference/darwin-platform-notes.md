@@ -93,6 +93,19 @@ This prevents the race condition where both `nixos-rebuild switch` (manual) and 
 
 **Trusted users:** Determinate Nix defaults to `trusted-users = root` only. When the Darwin host acts as a remote builder (e.g. for NixOS hosts building Darwin closures), the SSH user must be in `trusted-users` or the daemon rejects input-addressed derivation builds with `"not privileged to build input-addressed derivations"`. Add `trusted-users = root <username>` to `nix.custom.conf`.
 
+## Sudo configuration
+
+**NixOS:** `security.sudo.extraRules` — structured option with `users`, `commands`, `options`.
+
+**Darwin:** `security.sudo.extraConfig` — raw sudoers text only. No structured `extraRules` option.
+
+**SSH deploy:** Darwin hosts need passwordless sudo for `nix-env` and `activate` since the SSH connection is as a regular user (root login disabled). Scope narrowly:
+
+    security.sudo.extraConfig = ''
+      s33d ALL=(root) NOPASSWD: /run/current-system/sw/bin/nix-env *
+      s33d ALL=(root) NOPASSWD: /nix/store/*/activate
+    '';
+
 ## Remote builder SSH
 
 The nix daemon runs as root on both platforms. For remote builders:
