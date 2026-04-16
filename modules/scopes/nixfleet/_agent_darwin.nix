@@ -224,6 +224,9 @@ in {
         EnvironmentVariables =
           {
             XDG_CACHE_HOME = "/var/lib/nixfleet/.cache";
+            # Agent shells out to nix (copy, path-info) and nix-env.
+            # Launchd daemons have a minimal PATH — add nix paths explicitly.
+            PATH = "/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin:/usr/bin:/bin";
           }
           // lib.optionalAttrs (cfg.tags != []) {
             NIXFLEET_TAGS = lib.concatStringsSep "," cfg.tags;
