@@ -238,7 +238,7 @@ async fn run_inner(
             }
 
             // Detect platform for cross-platform logging
-            let platform = match crate::release::detect_platform_pub(flake, host, config_set, oplog).await {
+            let platform = match crate::release::detect_platform(flake, host, config_set, oplog).await {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::warn!(host, error = %e, "platform detection failed");

@@ -105,7 +105,7 @@ pub(crate) async fn discover_hosts(
 }
 
 /// Detect platform for a host.
-async fn detect_platform(
+pub(crate) async fn detect_platform(
     flake: &str,
     hostname: &str,
     config_set: &str,
@@ -396,16 +396,6 @@ pub async fn run_push_hook(
 pub fn extract_ssh_host(url: &str) -> Option<String> {
     url.strip_prefix("ssh://")
         .map(|rest| rest.trim_end_matches('/').to_string())
-}
-
-/// Detect platform for a host (public wrapper for cross-module use).
-pub(crate) async fn detect_platform_pub(
-    flake: &str,
-    hostname: &str,
-    config_set: &str,
-    oplog: &mut crate::oplog::OpLog,
-) -> Result<String> {
-    detect_platform(flake, hostname, config_set, oplog).await
 }
 
 /// Detect the Nix platform of the local machine.

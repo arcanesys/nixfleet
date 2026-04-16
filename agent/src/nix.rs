@@ -235,8 +235,11 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
             path = store_path,
         );
 
-        let log_file = std::fs::File::create("/var/log/nixfleet-activate.log")
-            .context("failed to create activation log")?;
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/var/log/nixfleet-activate.log")
+            .context("failed to open activation log")?;
         let log_err = log_file.try_clone().context("failed to clone log file handle")?;
 
         // SAFETY: pre_exec runs in the forked child before exec.
