@@ -51,13 +51,13 @@ async fn deploy_via_ssh(
     if platform.contains("darwin") {
         tracing::info!(host, "activating Darwin configuration");
 
-        // Step 1: update profile
+        // Step 1: update profile (needs root — use sudo on Darwin)
         let mut profile_cmd = tokio::process::Command::new("ssh");
         profile_cmd.args([
             "-o",
             "BatchMode=yes",
             ssh_target,
-            &format!("nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
+            &format!("sudo nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
         ]);
         let profile_output = if display::passthrough_output() {
             display::run_cmd_async_passthrough(&mut profile_cmd)
@@ -85,7 +85,7 @@ async fn deploy_via_ssh(
             "-o",
             "BatchMode=yes",
             ssh_target,
-            &format!("{}/activate", store_path),
+            &format!("sudo {}/activate", store_path),
         ]);
         let activate_output = if display::passthrough_output() {
             display::run_cmd_async_passthrough(&mut activate_cmd)
@@ -322,7 +322,17 @@ async fn run_inner(
             if let Some(Ok((store_path, platform))) = results.get(host) {
                 let ssh_dest = match target_override {
                     Some(t) => t.to_string(),
-                    None => format!("root@{}", host),
+                    None => {
+                        // Darwin: root login is typically disabled on macOS.
+                        // Use the current user's name as a reasonable default.
+                        // Operators can override with --target if needed.
+                        if platform.contains("darwin") {
+                            let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+                            format!("{}@{}", user, host)
+                        } else {
+                            format!("root@{}", host)
+                        }
+                    }
                 };
                 match deploy_via_ssh(
                     host,
