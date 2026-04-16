@@ -87,6 +87,45 @@
       default = false;
       description = "Used to indicate a server host";
     };
+    managedUser = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        When true (default), NixFleet core creates the primary user at
+        users.users.''${hostSpec.userName}. Set to false on hosts where
+        a different module owns the user set (e.g. Sécurix endpoints with
+        an operator inventory). Does not affect root.
+      '';
+    };
+    enableHomeManager = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        When true (default), NixFleet injects Home Manager as a NixOS
+        module and configures home-manager.users.''${hostSpec.userName}.
+        Set to false on hosts that don't use per-user HM config (e.g.
+        locked-down endpoints with multi-operator login).
+      '';
+    };
+    customFilesystems = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        When true, NixFleet skips its built-in disk/filesystem imports
+        (qemu disk config for VMs; any future default disko template).
+        Set this on hosts that provide their own disko layout, e.g.
+        Sécurix endpoints with securix.filesystems.layout = "securix_v1".
+      '';
+    };
+    skipDefaultFirewall = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        When true, NixFleet's firewall scope (nftables + SSH rate-limit)
+        does not activate. Set this on hosts whose consuming modules own
+        the firewall (e.g. Sécurix endpoints with a strict VPN firewall).
+      '';
+    };
     hashedPasswordFile = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;

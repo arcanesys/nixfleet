@@ -404,6 +404,62 @@
               msg = "darwin-agent-test should have correct hostName";
             }
           ];
+
+        # --- endpoint escape hatches (Sécurix pilot) ---
+        eval-endpoint-no-managed-user = let
+          cfg = nixosCfg "endpoint-01";
+          web = nixosCfg "web-01";
+        in
+          mkEvalCheck "endpoint-no-managed-user" [
+            {
+              check = !(cfg.users.users ? ${cfg.hostSpec.userName});
+              msg = "endpoint-01 must NOT auto-create hostSpec.userName when managedUser=false";
+            }
+            {
+              check = web.users.users ? ${web.hostSpec.userName};
+              msg = "web-01 (control) must still auto-create hostSpec.userName when managedUser=true (default)";
+            }
+          ];
+
+        eval-endpoint-no-home-manager = let
+          cfg = nixosCfg "endpoint-01";
+          web = nixosCfg "web-01";
+        in
+          mkEvalCheck "endpoint-no-home-manager" [
+            {
+              check = !(cfg ? home-manager) || !(cfg.home-manager.users ? ${cfg.hostSpec.userName});
+              msg = "endpoint-01 must NOT inject home-manager.users.<userName> when enableHomeManager=false";
+            }
+            {
+              check = web.home-manager.users ? ${web.hostSpec.userName};
+              msg = "web-01 (control) must still inject home-manager.users when enableHomeManager=true (default)";
+            }
+          ];
+
+        eval-endpoint-skip-firewall = let
+          cfg = nixosCfg "endpoint-01";
+          web = nixosCfg "web-01";
+        in
+          mkEvalCheck "endpoint-skip-firewall" [
+            {
+              check = !cfg.networking.nftables.enable;
+              msg = "endpoint-01 must NOT force nftables when skipDefaultFirewall=true";
+            }
+            {
+              check = web.networking.nftables.enable;
+              msg = "web-01 (control) must still enable nftables (default firewall scope)";
+            }
+          ];
+
+        eval-endpoint-bootloader-overridable = let
+          cfg = nixosCfg "endpoint-01";
+        in
+          mkEvalCheck "endpoint-bootloader-overridable" [
+            {
+              check = cfg.boot.loader.systemd-boot.enable == true;
+              msg = "endpoint-01 host module (mkForce true) must win over framework bootloader default";
+            }
+          ];
       };
     };
 }

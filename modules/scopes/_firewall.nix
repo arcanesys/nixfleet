@@ -17,7 +17,7 @@
       then config.services.nixfleet-microvm-host.bridge.name
       else "";
   in {
-    config = lib.mkIf (!hS.isMinimal) {
+    config = lib.mkIf (!hS.isMinimal && !hS.skipDefaultFirewall) {
       # Enable nftables backend.
       # Forward-compatible with kernel 6.17+ (which drops ip_tables module).
       # Fleet repos using iptables extraCommands will get an assertion failure —

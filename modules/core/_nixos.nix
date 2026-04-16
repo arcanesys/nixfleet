@@ -119,28 +119,32 @@ in {
   };
 
   # --- user ---
-  users.users = {
-    ${hS.userName} = {
-      isNormalUser = true;
-      extraGroups = lib.flatten [
-        "wheel"
-        (ifTheyExist [
-          "audio"
-          "video"
-          "docker"
-          "git"
-          "networkmanager"
-        ])
-      ];
-      shell = pkgs.zsh;
-      openssh.authorizedKeys.keys = hS.sshAuthorizedKeys;
-      hashedPasswordFile = lib.mkIf (hS.hashedPasswordFile != null) hS.hashedPasswordFile;
-    };
-    root = {
-      openssh.authorizedKeys.keys = hS.sshAuthorizedKeys;
-      hashedPasswordFile = lib.mkIf (hS.rootHashedPasswordFile != null) hS.rootHashedPasswordFile;
-    };
-  };
+  users.users = lib.mkMerge [
+    (lib.mkIf hS.managedUser {
+      ${hS.userName} = {
+        isNormalUser = true;
+        extraGroups = lib.flatten [
+          "wheel"
+          (ifTheyExist [
+            "audio"
+            "video"
+            "docker"
+            "git"
+            "networkmanager"
+          ])
+        ];
+        shell = pkgs.zsh;
+        openssh.authorizedKeys.keys = hS.sshAuthorizedKeys;
+        hashedPasswordFile = lib.mkIf (hS.hashedPasswordFile != null) hS.hashedPasswordFile;
+      };
+    })
+    {
+      root = {
+        openssh.authorizedKeys.keys = hS.sshAuthorizedKeys;
+        hashedPasswordFile = lib.mkIf (hS.rootHashedPasswordFile != null) hS.rootHashedPasswordFile;
+      };
+    }
+  ];
 
   # --- services ---
   services = {

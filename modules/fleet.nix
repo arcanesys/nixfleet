@@ -119,6 +119,32 @@ in {
       ];
     };
 
+    # endpoint-01: exercises the endpoint escape hatches (Sécurix integration)
+    endpoint-01 = mkHost {
+      hostName = "endpoint-01";
+      platform = "x86_64-linux";
+      isVm = true;
+      hostSpec =
+        orgDefaults
+        // {
+          managedUser = false;
+          enableHomeManager = false;
+          customFilesystems = true;
+          skipDefaultFirewall = true;
+        };
+      modules = [
+        # Fleet must provide its own fs/user/firewall when escape hatches are on.
+        ({lib, ...}: {
+          fileSystems."/" = lib.mkForce {
+            device = "/dev/vda1";
+            fsType = "ext4";
+          };
+          boot.loader.systemd-boot.enable = lib.mkForce true;
+          users.users.root.hashedPasswordFile = null;
+        })
+      ];
+    };
+
     # infra-test: exercises backup + monitoring scopes
     infra-test = mkHost {
       hostName = "infra-test";

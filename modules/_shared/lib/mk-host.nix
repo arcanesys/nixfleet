@@ -47,7 +47,11 @@ in
     # (the system-level {hostSpec.isDarwin = true;} only applies to the
     # Darwin system config, not to the separate HM module evaluation).
     effectiveHostSpec =
-      {inherit hostName;}
+      {
+        inherit hostName;
+        enableHomeManager = true;
+        customFilesystems = false;
+      }
       // hostSpec
       // lib.optionalAttrs isDarwin {inherit isDarwin;};
 
@@ -74,9 +78,11 @@ in
         cacheModule
         microvmHostModule
       ]
-      ++ lib.optionals isVm [
+      ++ lib.optionals (isVm && !effectiveHostSpec.customFilesystems) [
         ../../_hardware/qemu/disk-config.nix
         ../../_hardware/qemu/hardware-configuration.nix
+      ]
+      ++ lib.optionals isVm [
         ({
           lib,
           pkgs,
@@ -119,7 +125,7 @@ in
       specialArgs = {inherit inputs;};
       modules =
         frameworkNixosModules
-        ++ [
+        ++ lib.optionals effectiveHostSpec.enableHomeManager [
           inputs.home-manager.nixosModules.home-manager
           {
             home-manager = {
@@ -149,7 +155,7 @@ in
       specialArgs = {inherit inputs;};
       modules =
         frameworkDarwinModules
-        ++ [
+        ++ lib.optionals effectiveHostSpec.enableHomeManager [
           inputs.home-manager.darwinModules.home-manager
           {
             home-manager = {
