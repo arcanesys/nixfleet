@@ -217,27 +217,32 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
     {
         info!(store_path, "Firing Darwin activation (detached)");
 
-        // Spawn a detached background process to do the activation.
+        // Spawn a fully detached child process for activation.
         // The activate script may unload/reload the agent's launchd plist,
-        // killing this process mid-activation. By detaching, the shell
-        // continues the activation even after the agent dies. Launchd's
-        // KeepAlive restarts the agent, which then sees the new generation.
+        // killing this process mid-activation. The detached child continues
+        // the activation. Launchd's KeepAlive restarts the agent, which
+        // then sees the new generation.
         //
-        // This mirrors the NixOS approach where systemd-run fires a
-        // detached transient unit so the agent survives self-switch.
+        // Uses Rust's Command::spawn (not .output()) so the child is fully
+        // independent. stdout/stderr redirected to a log file. nohup doesn't
+        // work in a launchd daemon context (no TTY).
         let script = format!(
             "nix-env -p {profile} --set {path} && {path}/activate",
             profile = crate::platform::SYSTEM_PROFILE,
             path = store_path,
         );
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", &format!("nohup sh -c '{script}' > /var/log/nixfleet-activate.log 2>&1 &")]);
-        let output = run_with_timeout(cmd, "darwin activate (detached)").await?;
 
-        if !output.status.success() {
-            let stderr = truncated_stderr(&output.stderr);
-            anyhow::bail!("failed to spawn detached activation: {stderr}");
-        }
+        let log_file = std::fs::File::create("/var/log/nixfleet-activate.log")
+            .context("failed to create activation log")?;
+        let log_err = log_file.try_clone().context("failed to clone log file handle")?;
+
+        std::process::Command::new("sh")
+            .args(["-c", &script])
+            .stdout(log_file)
+            .stderr(log_err)
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .context("failed to spawn detached activation")?;
 
         info!("Darwin activation spawned in background");
     }
