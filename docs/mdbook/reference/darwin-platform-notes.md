@@ -53,6 +53,22 @@ This prevents the race condition where both `nixos-rebuild switch` (manual) and 
 
 **Agent fire_switch order:** Profile update first, then activate. This matches `darwin-rebuild switch`.
 
+## Agent self-update (detached activation)
+
+**NixOS:** The agent fires `systemd-run --unit=nixfleet-switch` — a detached transient unit. The switch runs independently; if it restarts the agent's service, the agent survives because the switch is in a separate unit.
+
+**Darwin:** The activate script may unload/reload the agent's launchd plist (when the binary path in ProgramArguments changes). This kills the agent mid-activation. Without protection, the activation dies with the agent.
+
+**Fix:** The agent spawns activation in a separate process session via `setsid()`. The child process (`sh -c "nix-env --set ... && .../activate"`) runs in its own session, so when launchd kills the agent's process group during plist reload, the activation child survives and completes. Launchd's `KeepAlive` restarts the agent with the new binary, which sees the generation matches on its next poll.
+
+Key implementation details:
+- `std::process::Command::spawn()` (not `.output()`) — non-blocking, agent returns immediately
+- `pre_exec(|| { libc::setsid(); })` — new session so child survives parent's process group kill
+- `stdout`/`stderr` redirected to `/var/log/nixfleet-activate.log`
+- `stdin` set to `Stdio::null()`
+- `nohup` doesn't work in launchd daemon context (no TTY)
+- `check_switch_exit_status()` returns `None` (inconclusive) so the polling loop waits for `/run/current-system` to update
+
 **SSH deploy order:** Same — `nix-env --set` then `activate`. Not `switch-to-configuration`.
 
 ## Launchd vs systemd for the agent
@@ -93,6 +109,18 @@ This prevents the race condition where both `nixos-rebuild switch` (manual) and 
 **Fix:** Write builders to `/etc/nix/machines` directly via `postActivation`, then set `builders = @/etc/nix/machines` in `/etc/nix/nix.custom.conf`. Restart the nix daemon after activation (`sudo launchctl kickstart -k system/systems.determinate.nix-daemon`).
 
 **Trusted users:** Determinate Nix defaults to `trusted-users = root` only. When the Darwin host acts as a remote builder (e.g. for NixOS hosts building Darwin closures), the SSH user must be in `trusted-users` or the daemon rejects input-addressed derivation builds with `"not privileged to build input-addressed derivations"`. Add `trusted-users = root <username>` to `nix.custom.conf`.
+
+## SSH deploy: user@host vs root@host
+
+**NixOS:** SSH deploy connects as `root@host`. Root has SSH keys via `openssh.authorizedKeys` and can run `switch-to-configuration` directly.
+
+**Darwin:** macOS disables root SSH login. SSH deploy connects as `$USER@host` (the operator's local username). This requires:
+- The username must exist on the target with SSH key access
+- Activation commands need `sudo` (`nix-env --set` and `activate`)
+- The `nix-env` full path must match the sudoers rule (`/nix/var/nix/profiles/default/bin/nix-env` on Determinate Nix)
+- Override with `--target user@host` for single-host deploys if usernames differ
+
+For multi-host deploys (`--hosts '*'`), the CLI auto-detects: `root@` for NixOS, `$USER@` for Darwin.
 
 ## Sudo configuration
 
