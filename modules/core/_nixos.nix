@@ -49,7 +49,9 @@ in {
       ];
       auto-optimise-store = true;
     };
-    package = pkgs.nix;
+    # mkDefault so downstream distros (Sécurix uses Lix, etc.) can swap
+    # the Nix implementation without mkForce ceremony.
+    package = lib.mkDefault pkgs.nix;
     extraOptions = ''
       experimental-features = nix-command flakes
     '';
