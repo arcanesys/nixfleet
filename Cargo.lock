@@ -1500,6 +1500,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
+ "libc",
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-util",
