@@ -60,7 +60,7 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
         poll_interval = ?config.poll_interval,
         dry_run = config.dry_run,
         version = env!("CARGO_PKG_VERSION"),
-        "NixFleet agent starting (setsid activation)"
+        "NixFleet agent starting"
     );
 
     if let Some(port) = config.metrics_port {
