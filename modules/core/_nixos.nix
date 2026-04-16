@@ -52,10 +52,10 @@ in {
   boot = {
     loader = {
       systemd-boot = {
-        enable = true;
-        configurationLimit = 42;
+        enable = lib.mkDefault true;
+        configurationLimit = lib.mkDefault 42;
       };
-      efi.canTouchEfiVariables = true;
+      efi.canTouchEfiVariables = lib.mkDefault true;
     };
     initrd.availableKernelModules = [
       "xhci_pci"
