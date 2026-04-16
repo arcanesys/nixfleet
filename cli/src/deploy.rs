@@ -57,7 +57,7 @@ async fn deploy_via_ssh(
             "-o",
             "BatchMode=yes",
             ssh_target,
-            &format!("sudo nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
+            &format!("sudo /nix/var/nix/profiles/default/bin/nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
         ]);
         let profile_output = if display::passthrough_output() {
             display::run_cmd_async_passthrough(&mut profile_cmd)

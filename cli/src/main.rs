@@ -917,7 +917,7 @@ async fn rollback(
         let profile_output = tokio::process::Command::new("ssh")
             .args([
                 "-o", "BatchMode=yes", ssh_dest,
-                &format!("sudo nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
+                &format!("sudo /nix/var/nix/profiles/default/bin/nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
             ])
             .stdout(Stdio::inherit())
             .stderr(stderr_cfg)
