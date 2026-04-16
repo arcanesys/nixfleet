@@ -109,6 +109,12 @@ This prevents the race condition where both `nixos-rebuild switch` (manual) and 
 
 **nix-env path:** Determinate Nix installs to `/nix/var/nix/profiles/default/bin/`, not `/run/current-system/sw/bin/`. The sudoers rule and the CLI command must use the same full path.
 
+## environment.etc: .text vs .source
+
+**Both platforms:** `environment.etc."path".source = ./file` creates a symlink chain to the flake source in the nix store. This works when the machine builds locally (flake source is in the store). But when deployed via CP rollout, only the system closure is copied — the flake source store path isn't present, so the symlink is dangling.
+
+**Fix:** Use `environment.etc."path".text = builtins.readFile ./file` instead. This embeds the file content as a derivation in the system closure, which is always present regardless of deployment method.
+
 ## Remote builder SSH
 
 The nix daemon runs as root on both platforms. For remote builders:
