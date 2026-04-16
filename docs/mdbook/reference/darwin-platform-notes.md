@@ -102,9 +102,11 @@ This prevents the race condition where both `nixos-rebuild switch` (manual) and 
 **SSH deploy:** Darwin hosts need passwordless sudo for `nix-env` and `activate` since the SSH connection is as a regular user (root login disabled). Scope narrowly:
 
     security.sudo.extraConfig = ''
-      s33d ALL=(root) NOPASSWD: /run/current-system/sw/bin/nix-env *
+      s33d ALL=(root) NOPASSWD: /nix/var/nix/profiles/default/bin/nix-env *
       s33d ALL=(root) NOPASSWD: /nix/store/*/activate
     '';
+
+**nix-env path:** Determinate Nix installs to `/nix/var/nix/profiles/default/bin/`, not `/run/current-system/sw/bin/`. The sudoers rule and the CLI command must use the same full path.
 
 ## Remote builder SSH
 

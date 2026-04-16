@@ -101,7 +101,7 @@ nixfleet deploy [FLAGS]
 >    passwordless sudo for `nix-env` and the activation script:
 >    ```
 >    # nix-darwin: security.sudo.extraConfig
->    s33d ALL=(root) NOPASSWD: /run/current-system/sw/bin/nix-env *
+>    s33d ALL=(root) NOPASSWD: /nix/var/nix/profiles/default/bin/nix-env *
 >    s33d ALL=(root) NOPASSWD: /nix/store/*/activate
 >    ```
 > 3. **SSH key access:** The operator's SSH public key must be in the
