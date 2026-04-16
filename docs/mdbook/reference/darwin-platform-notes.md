@@ -38,6 +38,14 @@ Differences between NixOS and nix-darwin that affect nixfleet. This document cap
 
 **Darwin:** `<store_path>/activate` — a bash script (~900 lines) that manages launchd plists, /etc files, system defaults, user activation. No lock file.
 
+## Concurrent switch protection (NixOS)
+
+On NixOS, `switch-to-configuration` uses `flock` on `/run/nixos/switch-to-configuration.lock`. If the agent tries to fire a switch while `nixos-rebuild` (or another switch) is already running, the lock acquisition fails with "Could not acquire lock".
+
+The agent probes this lock with a non-blocking `flock` before firing. If the lock is held, the agent logs `"System switch already in progress, deferring to next poll"` and skips the switch. The next poll cycle picks up the result.
+
+This prevents the race condition where both `nixos-rebuild switch` (manual) and the agent's `systemd-run` switch try to run simultaneously. On Darwin, activation is synchronous and this check is not needed.
+
 **darwin-rebuild switch** does three things in order:
 1. `nix-env -p /nix/var/nix/profiles/system --set "$systemConfig"` (profile update)
 2. `$systemConfig/activate-user` (legacy user activation, if present)

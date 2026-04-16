@@ -83,9 +83,9 @@ nixfleet deploy [FLAGS]
 
 **Modes:**
 
-- **SSH mode** (`--ssh`): Builds locally, copies closures via SSH, runs `switch-to-configuration`. No control plane required.
+- **SSH mode** (`--ssh`): Builds locally, copies closures via SSH, activates on target. No control plane required. Platform-aware: NixOS hosts use `switch-to-configuration switch`, Darwin hosts use `nix-env --set` + `activate` (auto-detected from the host's platform).
 
-> **Note:** `--ssh` deploys directly via `nix-copy-closure` and `switch-to-configuration`,
+> **Note:** `--ssh` deploys directly via `nix-copy-closure` and activation,
 > bypassing the control plane entirely. Lifecycle state is not checked — a machine in
 > `maintenance` will still receive the deploy. Use `--ssh` as an emergency escape hatch
 > when the CP is unavailable, not as a routine deployment method.
@@ -231,8 +231,15 @@ nixfleet rollback --host <HOST> --ssh [FLAGS]
 | `--ssh` | bool | `false` | **Required.** SSH mode |
 | `--generation <PATH>` | string | -- | Store path to roll back to (default: previous generation from `system-1-link`) |
 | `--target` | string | — | SSH target override (e.g. `root@192.168.1.10`) |
+| `--darwin` | bool | `false` | Target is a Darwin (macOS) host — uses `activate` instead of `switch-to-configuration` |
 
 Running without `--ssh` exits with an error. For CP-driven rollback, use `--on-failure revert` on rollouts, or deploy an older release.
+
+**Darwin rollback:** Use `--darwin` for macOS hosts. This runs `nix-env --set` + `activate` instead of `switch-to-configuration`:
+
+```sh
+nixfleet rollback --host aether --ssh --darwin
+```
 
 ---
 
@@ -321,6 +328,7 @@ nixfleet bootstrap [FLAGS]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--name <NAME>` | string | `admin` | Name for the admin key |
+| `--save-key <KEY>` | string | -- | Save an existing API key without calling the CP (for setting up additional machines) |
 
 **Output:** Human-friendly info to stderr, raw key to stdout. Scriptable:
 
@@ -331,6 +339,16 @@ API_KEY=$(nixfleet bootstrap)
 Returns exit code 1 with an error message if keys already exist (409).
 
 **Note:** No `--api-key` needed (chicken-and-egg). mTLS is still required when the CP has `--client-ca` set.
+
+**Multi-machine setup:** Bootstrap once on your primary machine, then use `--save-key` on additional machines to share the same API key without re-bootstrapping:
+
+```sh
+# On the primary machine:
+nixfleet bootstrap
+
+# On additional machines (same fleet):
+nixfleet bootstrap --save-key nfk-abc123...
+```
 
 ---
 

@@ -69,6 +69,17 @@ participate in fleet orchestration (agent, health checks, deployments) but are n
 subject to compliance probes — NIS2 Article 21 controls target infrastructure, not
 developer workstations.
 
+## TLS and Custom CA
+
+Fleets using a private CA (e.g. `fleet-ca.pem`) need the agent to trust it.
+On NixOS, `security.pki.certificateFiles` adds the CA to the system trust
+store. On Darwin, this option doesn't exist.
+
+The agent accepts `--ca-cert` (or `tls.caCert` in the Nix module) to add a
+CA certificate alongside system roots. This works on both platforms:
+
+    services.nixfleet-agent.tls.caCert = "/etc/nixfleet/fleet-ca.pem";
+
 ## Darwin Agent
 
 The Darwin agent uses launchd instead of systemd:
