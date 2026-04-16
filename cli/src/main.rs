@@ -16,6 +16,7 @@ mod oplog;
 mod release;
 mod rollout;
 mod status;
+mod validate;
 
 #[derive(Parser)]
 #[command(name = "nixfleet", about = "NixFleet fleet management CLI", version)]
@@ -907,6 +908,9 @@ async fn rollback(
             String::from_utf8(output.stdout)?.trim().to_string()
         }
     };
+
+    // Validate store path before interpolating into SSH commands.
+    validate::store_path(&store_path)?;
 
     println!("Rolling back {} to {}", host, store_path);
 

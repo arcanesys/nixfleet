@@ -12,3 +12,4 @@ pub mod display;
 pub mod glob;
 pub mod oplog;
 pub mod release;
+pub mod validate;

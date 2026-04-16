@@ -18,6 +18,9 @@ async fn deploy_via_ssh(
     mut window: Option<&mut display::RollingWindow>,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<()> {
+    // Validate store path before interpolating into SSH commands (defense-in-depth).
+    crate::validate::store_path(store_path)?;
+
     // nix-copy-closure
     let t = std::time::Instant::now();
     tracing::info!(host, ssh_target, store_path, "copying closure via SSH");
