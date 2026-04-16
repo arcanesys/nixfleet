@@ -5,17 +5,17 @@
 # `runCommand` derivation. Eval-only callers that never use mkTlsCerts
 # still pass pkgs because every callsite already has it in scope (they
 # all live under `perSystem = { pkgs, lib, ... }:`).
+#
+# `inputs` lets VM test node builders reach
+# `inputs.nixfleet-scopes.scopes.*` for scope and role modules (the old
+# plain-path imports to `modules/scopes/_*.nix` were removed in the
+# Phase 2 scopes-extraction refactor). Eval-only callers can pass
+# `inputs = null` if they never use mkTestNode / mkCpNode / mkAgentNode.
 {
   lib,
   pkgs,
 }: let
-  # Import plain scope/core modules (same ones mkHost uses)
-  baseScope = import ../../scopes/_base.nix;
-  impermanenceScope = import ../../scopes/_impermanence.nix;
-  firewallScope = import ../../scopes/_firewall.nix;
-  secretsScope = import ../../scopes/_secrets.nix;
-  backupScope = import ../../scopes/_backup.nix;
-  monitoringScope = import ../../scopes/_monitoring.nix;
+  # Core (still nixfleet-local)
   coreNixos = ../../core/_nixos.nix;
   agentModule = ../../scopes/nixfleet/_agent.nix;
   controlPlaneModule = ../../scopes/nixfleet/_control-plane.nix;
@@ -119,7 +119,6 @@ in {
   defaultTestSpec = {
     hostName = "testvm";
     userName = "testuser";
-    isImpermanent = false;
   };
 
   # =====================================================================
@@ -456,18 +455,15 @@ in {
       [
         hostSpecModule
         {hostSpec = hostSpecValues;}
-        # Framework input modules (disko, impermanence) — mkHost injects these,
-        # but test nodes need them explicitly
+        # Framework input modules — test nodes wire these explicitly.
         inputs.disko.nixosModules.disko
-        inputs.impermanence.nixosModules.impermanence
-        # Framework core + scopes (plain modules, no longer need `inputs` arg)
+        # Framework core + nixfleet-scopes roles (Phase 2+ shape):
+        # VM tests compose the workstation role so base/firewall/secrets
+        # /HM/backup/impermanence are all declared. scope options are
+        # inert by default (secrets/firewall on by role; impermanence
+        # off; backup off; HM on).
         coreNixos
-        baseScope.nixos
-        impermanenceScope.nixos
-        firewallScope.nixos
-        secretsScope.nixos
-        backupScope.nixos
-        monitoringScope.nixos
+        inputs.nixfleet-scopes.scopes.roles.workstation
         agentModule
         controlPlaneModule
         cacheServerModule
@@ -476,7 +472,6 @@ in {
       ]
       ++ nixosModules
       ++ [
-        inputs.home-manager.nixosModules.home-manager
         {
           # --- Test user with known password ---
           users.users.${hostSpecValues.userName} = {
@@ -508,7 +503,7 @@ in {
             users.${hostSpecValues.userName} = {
               imports =
                 [hostSpecModule]
-                ++ [baseScope.homeManager impermanenceScope.hmLinux]
+                ++ [inputs.nixfleet-scopes.scopes.baseHm inputs.nixfleet-scopes.scopes.impermanenceHm]
                 ++ hmModules
                 ++ hmLinuxModules;
               hostSpec = hostSpecValues;

@@ -17,6 +17,7 @@
 # CN="unauth" but tries to call /machines/web-01/...).
 {
   pkgs,
+  inputs,
   mkTestNode,
   defaultTestSpec,
   mkCpNode,
@@ -24,6 +25,7 @@
   ...
 }:
 pkgs.testers.nixosTest {
+  specialArgs = {inherit inputs;};
   name = "vm-fleet-mtls-cn-mismatch";
 
   nodes.cp = mkCpNode {inherit testCerts;};

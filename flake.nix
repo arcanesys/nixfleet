@@ -46,6 +46,10 @@
       url = "github:astro/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nixfleet-scopes = {
+      url = "github:arcanesys/nixfleet-scopes";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs:

@@ -14,6 +14,7 @@
 # positive control).
 {
   pkgs,
+  inputs,
   mkTestNode,
   defaultTestSpec,
   mkCpNode,
@@ -21,6 +22,7 @@
   ...
 }:
 pkgs.testers.nixosTest {
+  specialArgs = {inherit inputs;};
   name = "vm-fleet-mtls-missing";
 
   nodes.cp = mkCpNode {inherit testCerts;};

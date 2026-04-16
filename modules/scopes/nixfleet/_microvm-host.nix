@@ -47,53 +47,55 @@ in {
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    # Bridge interface
-    systemd.network = {
-      enable = true;
-      netdevs."10-${cfg.bridge.name}" = {
-        netdevConfig = {
-          Kind = "bridge";
-          Name = cfg.bridge.name;
+  config = lib.mkMerge [
+    (lib.mkIf cfg.enable {
+      # Bridge interface
+      systemd.network = {
+        enable = true;
+        netdevs."10-${cfg.bridge.name}" = {
+          netdevConfig = {
+            Kind = "bridge";
+            Name = cfg.bridge.name;
+          };
+        };
+        networks."10-${cfg.bridge.name}" = {
+          matchConfig.Name = cfg.bridge.name;
+          networkConfig = {
+            Address = [cfg.bridge.address];
+            ConfigureWithoutCarrier = true;
+          };
         };
       };
-      networks."10-${cfg.bridge.name}" = {
-        matchConfig.Name = cfg.bridge.name;
-        networkConfig = {
-          Address = [cfg.bridge.address];
-          ConfigureWithoutCarrier = true;
+
+      # IP forwarding for NAT
+      boot.kernel.sysctl = {
+        "net.ipv4.ip_forward" = 1;
+      };
+
+      # NAT for microVM bridge subnet
+      networking.nat = {
+        enable = true;
+        internalInterfaces = [cfg.bridge.name];
+      };
+
+      # DHCP server on bridge
+      services.dnsmasq = lib.mkIf cfg.dhcp.enable {
+        enable = true;
+        settings = {
+          interface = cfg.bridge.name;
+          bind-interfaces = true;
+          dhcp-range = [cfg.dhcp.range];
+          dhcp-option = [
+            "option:router,${lib.head (lib.splitString "/" cfg.bridge.address)}"
+          ];
         };
       };
-    };
+    })
 
-    # IP forwarding for NAT
-    boot.kernel.sysctl = {
-      "net.ipv4.ip_forward" = 1;
-    };
-
-    # NAT for microVM bridge subnet
-    networking.nat = {
-      enable = true;
-      internalInterfaces = [cfg.bridge.name];
-    };
-
-    # DHCP server on bridge
-    services.dnsmasq = lib.mkIf cfg.dhcp.enable {
-      enable = true;
-      settings = {
-        interface = cfg.bridge.name;
-        bind-interfaces = true;
-        dhcp-range = [cfg.dhcp.range];
-        dhcp-option = [
-          "option:router,${lib.head (lib.splitString "/" cfg.bridge.address)}"
-        ];
-      };
-    };
-
-    # Impermanence: persist microVM state
-    environment.persistence."/persist".directories =
-      lib.mkIf
-      (config.hostSpec.isImpermanent or false)
-      ["/var/lib/microvms"];
-  };
+    # Impermanence: persist microVM state. Outer mkIf so
+    # environment.persistence isn't referenced on non-impermanent hosts.
+    (lib.mkIf (cfg.enable && (config.nixfleet.impermanence.enable or false)) {
+      environment.persistence."/persist".directories = ["/var/lib/microvms"];
+    })
+  ];
 }

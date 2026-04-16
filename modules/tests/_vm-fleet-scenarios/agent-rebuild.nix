@@ -15,6 +15,7 @@
 #   * `vm-fleet-bootstrap` proves the happy-path report cycle.
 {
   pkgs,
+  inputs,
   mkCpNode,
   mkAgentNode,
   testCerts,
@@ -22,6 +23,7 @@
   ...
 }:
 pkgs.testers.nixosTest {
+  specialArgs = {inherit inputs;};
   name = "vm-fleet-agent-rebuild";
 
   nodes.cp = mkCpNode {inherit testCerts;};

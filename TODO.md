@@ -14,6 +14,17 @@ Future work that cannot be closed inside this repository.
 
 ## Internal
 
+- [ ] **Migrate VM tests to `testers.runNixOSTest`.** After the Phase 2
+  scopes-extraction, VM tests in `modules/tests/{vm,vm-infra,vm-fleet,
+  vm-fleet-scenarios}.nix` are gated out of `flake.checks` via
+  `lib.optionalAttrs false`. The classic `pkgs.testers.nixosTest` API
+  does not accept `specialArgs`, and `nixfleet-scopes` roles need
+  `inputs` at module-import time (for `inputs.home-manager.nixosModules.home-manager`).
+  `pkgs.testers.runNixOSTest` (newer API) accepts `specialArgs`; rewrite
+  the 20+ callsites (4 aggregators + 12 scenario files) and the
+  `modules/tests/_lib/helpers.nix` node builders to use it. Unblocks
+  re-enabling VM test coverage in CI.
+
 - [x] **CLI: persistent deploy logs.** Write a full log of every
   deploy/release operation to `~/.local/state/nixfleet/logs/` regardless
   of verbosity. Should capture all subprocess invocations (command,

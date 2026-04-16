@@ -178,104 +178,106 @@ in {
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    environment.etc."nixfleet/health-checks.json".text = builtins.toJSON {
-      systemd = cfg.healthChecks.systemd;
-      http = cfg.healthChecks.http;
-      command = cfg.healthChecks.command;
-    };
-
-    systemd.services.nixfleet-agent = {
-      description = "NixFleet Fleet Management Agent";
-      wantedBy = ["multi-user.target"];
-      after = ["network-online.target" "nix-daemon.service"];
-      wants = ["network-online.target"];
-      startLimitIntervalSec = 0;
-
-      # Agent shells out to nix (copy, path-info) and switch-to-configuration
-      path = [config.nix.package pkgs.systemd];
-
-      environment =
-        {
-          # Nix writes its metadata cache (narinfo lookups, eval cache, etc.)
-          # to $XDG_CACHE_HOME (default: ~/.cache). Point it at the agent's
-          # StateDirectory so the cache persists on impermanent hosts instead
-          # of being wiped on every reboot.
-          XDG_CACHE_HOME = "/var/lib/nixfleet/.cache";
-        }
-        // lib.optionalAttrs (cfg.tags != []) {
-          NIXFLEET_TAGS = lib.concatStringsSep "," cfg.tags;
-        };
-
-      serviceConfig = {
-        Type = "simple";
-        ExecStart = lib.concatStringsSep " " (
-          [
-            "${nixfleet-agent}/bin/nixfleet-agent"
-            "--control-plane-url"
-            (lib.escapeShellArg cfg.controlPlaneUrl)
-            "--machine-id"
-            (lib.escapeShellArg cfg.machineId)
-            "--poll-interval"
-            (toString cfg.pollInterval)
-            "--retry-interval"
-            (toString cfg.retryInterval)
-            "--db-path"
-            (lib.escapeShellArg cfg.dbPath)
-            "--health-config"
-            "/etc/nixfleet/health-checks.json"
-            "--health-interval"
-            (toString cfg.healthInterval)
-          ]
-          ++ lib.optionals (cfg.cacheUrl != null) [
-            "--cache-url"
-            (lib.escapeShellArg cfg.cacheUrl)
-          ]
-          ++ lib.optionals cfg.dryRun [
-            "--dry-run"
-          ]
-          ++ lib.optionals cfg.allowInsecure [
-            "--allow-insecure"
-          ]
-          ++ lib.optionals (cfg.tls.caCert != null) [
-            "--ca-cert"
-            (lib.escapeShellArg cfg.tls.caCert)
-          ]
-          ++ lib.optionals (cfg.tls.clientCert != null) [
-            "--client-cert"
-            (lib.escapeShellArg cfg.tls.clientCert)
-          ]
-          ++ lib.optionals (cfg.tls.clientKey != null) [
-            "--client-key"
-            (lib.escapeShellArg cfg.tls.clientKey)
-          ]
-          ++ lib.optionals (cfg.metricsPort != null) [
-            "--metrics-port"
-            (toString cfg.metricsPort)
-          ]
-        );
-        Restart = "always";
-        RestartSec = 30;
-        StateDirectory = "nixfleet";
-
-        # The agent is a privileged system manager: it runs
-        # switch-to-configuration which modifies /boot, /etc, /home, /root,
-        # bootloader, kernel, systemd units, etc. Sandboxing blocks these
-        # operations (subprocess inherits the agent's namespace).
-        # Threat model is equivalent to `sudo nixos-rebuild switch` as a
-        # daemon — no sandboxing applied.
-        NoNewPrivileges = true;
+  config = lib.mkMerge [
+    (lib.mkIf cfg.enable {
+      environment.etc."nixfleet/health-checks.json".text = builtins.toJSON {
+        systemd = cfg.healthChecks.systemd;
+        http = cfg.healthChecks.http;
+        command = cfg.healthChecks.command;
       };
-    };
 
-    # Impermanence: persist agent state across reboots
-    environment.persistence."/persist".directories =
-      lib.mkIf
-      (config.hostSpec.isImpermanent or false)
-      ["/var/lib/nixfleet"];
+      systemd.services.nixfleet-agent = {
+        description = "NixFleet Fleet Management Agent";
+        wantedBy = ["multi-user.target"];
+        after = ["network-online.target" "nix-daemon.service"];
+        wants = ["network-online.target"];
+        startLimitIntervalSec = 0;
 
-    # Open metrics port if requested
-    networking.firewall.allowedTCPPorts =
-      lib.mkIf (cfg.metricsPort != null && cfg.metricsOpenFirewall) [cfg.metricsPort];
-  };
+        # Agent shells out to nix (copy, path-info) and switch-to-configuration
+        path = [config.nix.package pkgs.systemd];
+
+        environment =
+          {
+            # Nix writes its metadata cache (narinfo lookups, eval cache, etc.)
+            # to $XDG_CACHE_HOME (default: ~/.cache). Point it at the agent's
+            # StateDirectory so the cache persists on impermanent hosts instead
+            # of being wiped on every reboot.
+            XDG_CACHE_HOME = "/var/lib/nixfleet/.cache";
+          }
+          // lib.optionalAttrs (cfg.tags != []) {
+            NIXFLEET_TAGS = lib.concatStringsSep "," cfg.tags;
+          };
+
+        serviceConfig = {
+          Type = "simple";
+          ExecStart = lib.concatStringsSep " " (
+            [
+              "${nixfleet-agent}/bin/nixfleet-agent"
+              "--control-plane-url"
+              (lib.escapeShellArg cfg.controlPlaneUrl)
+              "--machine-id"
+              (lib.escapeShellArg cfg.machineId)
+              "--poll-interval"
+              (toString cfg.pollInterval)
+              "--retry-interval"
+              (toString cfg.retryInterval)
+              "--db-path"
+              (lib.escapeShellArg cfg.dbPath)
+              "--health-config"
+              "/etc/nixfleet/health-checks.json"
+              "--health-interval"
+              (toString cfg.healthInterval)
+            ]
+            ++ lib.optionals (cfg.cacheUrl != null) [
+              "--cache-url"
+              (lib.escapeShellArg cfg.cacheUrl)
+            ]
+            ++ lib.optionals cfg.dryRun [
+              "--dry-run"
+            ]
+            ++ lib.optionals cfg.allowInsecure [
+              "--allow-insecure"
+            ]
+            ++ lib.optionals (cfg.tls.caCert != null) [
+              "--ca-cert"
+              (lib.escapeShellArg cfg.tls.caCert)
+            ]
+            ++ lib.optionals (cfg.tls.clientCert != null) [
+              "--client-cert"
+              (lib.escapeShellArg cfg.tls.clientCert)
+            ]
+            ++ lib.optionals (cfg.tls.clientKey != null) [
+              "--client-key"
+              (lib.escapeShellArg cfg.tls.clientKey)
+            ]
+            ++ lib.optionals (cfg.metricsPort != null) [
+              "--metrics-port"
+              (toString cfg.metricsPort)
+            ]
+          );
+          Restart = "always";
+          RestartSec = 30;
+          StateDirectory = "nixfleet";
+
+          # The agent is a privileged system manager: it runs
+          # switch-to-configuration which modifies /boot, /etc, /home, /root,
+          # bootloader, kernel, systemd units, etc. Sandboxing blocks these
+          # operations (subprocess inherits the agent's namespace).
+          # Threat model is equivalent to `sudo nixos-rebuild switch` as a
+          # daemon — no sandboxing applied.
+          NoNewPrivileges = true;
+        };
+      };
+
+      # Open metrics port if requested
+      networking.firewall.allowedTCPPorts =
+        lib.mkIf (cfg.metricsPort != null && cfg.metricsOpenFirewall) [cfg.metricsPort];
+    })
+
+    # Impermanence: persist agent state across reboots. Outer mkIf so
+    # environment.persistence isn't referenced on non-impermanent hosts.
+    (lib.mkIf (cfg.enable && (config.nixfleet.impermanence.enable or false)) {
+      environment.persistence."/persist".directories = ["/var/lib/nixfleet"];
+    })
+  ];
 }
