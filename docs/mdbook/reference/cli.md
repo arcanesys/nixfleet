@@ -240,7 +240,7 @@ Outputs a table of all machines. Pass `--json` (global flag) for structured JSON
 
 ## rollback
 
-Rollback a single machine to a previous generation via SSH. This is an SSH-only operation — it runs `switch-to-configuration switch` directly on the target, bypassing the control plane.
+Rollback a single machine to a previous generation via SSH. Activates the previous generation directly on the target, then notifies the control plane so desired generation stays in sync.
 
 ```sh
 nixfleet rollback --host <HOST> --ssh [FLAGS]
@@ -252,9 +252,9 @@ nixfleet rollback --host <HOST> --ssh [FLAGS]
 | `--ssh` | bool | `false` | **Required.** SSH mode |
 | `--generation <PATH>` | string | -- | Store path to roll back to (default: previous generation from `system-1-link`) |
 | `--target` | string | — | SSH target override (e.g. `root@192.168.1.10`) |
-| `--darwin` | bool | `false` | Target is a Darwin (macOS) host — uses `activate` instead of `switch-to-configuration` |
+| `--darwin` | bool | `false` | Target is a Darwin (macOS) host — uses `$USER@host`, `sudo activate` instead of `switch-to-configuration` |
 
-Running without `--ssh` exits with an error. For CP-driven rollback, use `--on-failure revert` on rollouts, or deploy an older release.
+Running without `--ssh` exits with an error. For CP-driven rollback, use `--on-failure revert` on rollouts, or deploy an older release. After a successful rollback, the CP is notified (best-effort) so `nixfleet status` shows the machine in sync.
 
 **Darwin rollback:** Use `--darwin` for macOS hosts. This runs `nix-env --set` + `activate` instead of `switch-to-configuration`:
 
