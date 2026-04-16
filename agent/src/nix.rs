@@ -236,13 +236,22 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
             .context("failed to create activation log")?;
         let log_err = log_file.try_clone().context("failed to clone log file handle")?;
 
-        std::process::Command::new("sh")
-            .args(["-c", &script])
-            .stdout(log_file)
-            .stderr(log_err)
-            .stdin(std::process::Stdio::null())
-            .spawn()
-            .context("failed to spawn detached activation")?;
+        // SAFETY: pre_exec runs in the forked child before exec.
+        // setsid() creates a new session so the child survives when
+        // launchd kills the agent's process group during plist reload.
+        unsafe {
+            std::process::Command::new("sh")
+                .args(["-c", &script])
+                .stdout(log_file)
+                .stderr(log_err)
+                .stdin(std::process::Stdio::null())
+                .pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                })
+                .spawn()
+                .context("failed to spawn detached activation")?;
+        }
 
         info!("Darwin activation spawned in background");
     }
