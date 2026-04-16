@@ -83,12 +83,33 @@ nixfleet deploy [FLAGS]
 
 **Modes:**
 
-- **SSH mode** (`--ssh`): Builds locally, copies closures via SSH, runs `switch-to-configuration`. No control plane required.
+- **SSH mode** (`--ssh`): Builds locally, copies closures via SSH, activates on target. No control plane required. Platform-aware: NixOS hosts use `switch-to-configuration switch`, Darwin hosts use `nix-env --set` + `activate` (auto-detected from the host's platform).
 
-> **Note:** `--ssh` deploys directly via `nix-copy-closure` and `switch-to-configuration`,
+> **Note:** `--ssh` deploys directly via `nix-copy-closure` and activation,
 > bypassing the control plane entirely. Lifecycle state is not checked — a machine in
 > `maintenance` will still receive the deploy. Use `--ssh` as an emergency escape hatch
 > when the CP is unavailable, not as a routine deployment method.
+
+> **Darwin SSH deploy requirements:**
+> SSH deploy to Darwin hosts connects as `$USER@host` (not `root@` — macOS
+> disables root SSH login). This requires:
+>
+> 1. **Username match:** The operator's local username must exist on the
+>    Darwin target with SSH key access. Override with `--target user@host`
+>    for single-host deploys if usernames differ.
+> 2. **Passwordless sudo:** Activation requires root. The target must allow
+>    passwordless sudo for `nix-env` and the activation script:
+>    ```
+>    # nix-darwin: security.sudo.extraConfig
+>    s33d ALL=(root) NOPASSWD: /nix/var/nix/profiles/default/bin/nix-env *
+>    s33d ALL=(root) NOPASSWD: /nix/store/*/activate
+>    ```
+> 3. **SSH key access:** The operator's SSH public key must be in the
+>    target user's authorized keys.
+>
+> For production mixed-fleet deploys, prefer the **CP rollout path** — the
+> agent runs as root (launchd daemon), pulls from cache, and activates
+> locally with no SSH user/sudo requirements.
 - **Rollout mode** (requires a release): Creates a rollout on the control plane with the specified strategy. Specify an existing release with `--release <ID>`, or use `--push-to <url>` / `--hook` / `--copy` to build + push + register implicitly in one command.
 - **Hook mode** (`--hook`): Uses `[cache.hook] push-cmd` from `.nixfleet.toml` to push closures (e.g., `attic push mycache {}`). Overrides `--push-to` and uses `[cache.hook] url` as the cache URL for agents. Flags `--hook-push-cmd` and `--hook-url` override the config values.
 - **Targeting:** Use `--tags <TAG>` or `--hosts <pattern>` to select machines. Both are intersected with the release's host list (machines not in the release are skipped with a warning).
@@ -219,7 +240,7 @@ Outputs a table of all machines. Pass `--json` (global flag) for structured JSON
 
 ## rollback
 
-Rollback a single machine to a previous generation via SSH. This is an SSH-only operation — it runs `switch-to-configuration switch` directly on the target, bypassing the control plane.
+Rollback a single machine to a previous generation via SSH. Activates the previous generation directly on the target, then notifies the control plane so desired generation stays in sync.
 
 ```sh
 nixfleet rollback --host <HOST> --ssh [FLAGS]
@@ -231,8 +252,15 @@ nixfleet rollback --host <HOST> --ssh [FLAGS]
 | `--ssh` | bool | `false` | **Required.** SSH mode |
 | `--generation <PATH>` | string | -- | Store path to roll back to (default: previous generation from `system-1-link`) |
 | `--target` | string | — | SSH target override (e.g. `root@192.168.1.10`) |
+| `--darwin` | bool | `false` | Target is a Darwin (macOS) host — uses `$USER@host`, `sudo activate` instead of `switch-to-configuration` |
 
-Running without `--ssh` exits with an error. For CP-driven rollback, use `--on-failure revert` on rollouts, or deploy an older release.
+Running without `--ssh` exits with an error. For CP-driven rollback, use `--on-failure revert` on rollouts, or deploy an older release. After a successful rollback, the CP is notified (best-effort) so `nixfleet status` shows the machine in sync.
+
+**Darwin rollback:** Use `--darwin` for macOS hosts. This runs `nix-env --set` + `activate` instead of `switch-to-configuration`:
+
+```sh
+nixfleet rollback --host aether --ssh --darwin
+```
 
 ---
 
@@ -321,6 +349,7 @@ nixfleet bootstrap [FLAGS]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--name <NAME>` | string | `admin` | Name for the admin key |
+| `--save-key <KEY>` | string | -- | Save an existing API key without calling the CP (for setting up additional machines) |
 
 **Output:** Human-friendly info to stderr, raw key to stdout. Scriptable:
 
@@ -331,6 +360,16 @@ API_KEY=$(nixfleet bootstrap)
 Returns exit code 1 with an error message if keys already exist (409).
 
 **Note:** No `--api-key` needed (chicken-and-egg). mTLS is still required when the CP has `--client-ca` set.
+
+**Multi-machine setup:** Bootstrap once on your primary machine, then use `--save-key` on additional machines to share the same API key without re-bootstrapping:
+
+```sh
+# On the primary machine:
+nixfleet bootstrap
+
+# On additional machines (same fleet):
+nixfleet bootstrap --save-key nfk-abc123...
+```
 
 ---
 

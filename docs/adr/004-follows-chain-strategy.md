@@ -7,7 +7,7 @@
 
 Fleet repos consume NixFleet as a flake input. Both need nixpkgs, home-manager, disko, and other shared inputs. Two strategies exist: fleet repos pin their own versions independently, or fleet repos inherit NixFleet's pins via `follows`.
 
-Independent pins risk version skew — framework modules tested against one nixpkgs revision may break with a different one (option renames, module changes, package removals).
+Independent pins risk version skew -- framework modules tested against one nixpkgs revision may break with a different one (option renames, module changes, package removals).
 
 ## Decision
 

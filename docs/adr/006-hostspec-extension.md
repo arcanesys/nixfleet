@@ -45,8 +45,8 @@ The NixOS module system merges option declarations from multiple modules, so fle
 
 ## Consequences
 
-- Framework stays minimal — no fleet-specific flags in the framework codebase
+- Framework stays minimal -- no fleet-specific flags in the framework codebase
 - Fleet repos have full control over their configuration model
 - Multiple fleet repos can define different extensions without conflicting
-- Type safety preserved — NixOS module system validates flag types and catches typos
+- Type safety preserved -- NixOS module system validates flag types and catches typos
 - Fleet scopes use extended flags the same way framework scopes use built-in flags (`lib.mkIf hS.isGraphical`)

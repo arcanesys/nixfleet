@@ -48,11 +48,23 @@ pub fn build_batches(machines: &[String], batch_sizes: &[String]) -> Vec<Vec<Str
 
 fn parse_batch_size(spec: &str, remaining: usize) -> usize {
     if let Some(pct_str) = spec.strip_suffix('%') {
-        let pct: f64 = pct_str.parse().unwrap_or(100.0);
+        let pct: f64 = match pct_str.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::warn!(spec, "invalid batch size percentage, defaulting to 100%");
+                100.0
+            }
+        };
         let count = (remaining as f64 * pct / 100.0).ceil() as usize;
         count.max(1)
     } else {
-        spec.parse::<usize>().unwrap_or(1)
+        match spec.parse::<usize>() {
+            Ok(v) => v.max(1),
+            Err(_) => {
+                tracing::warn!(spec, "invalid batch size, defaulting to 1");
+                1
+            }
+        }
     }
 }
 

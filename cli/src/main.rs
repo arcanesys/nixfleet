@@ -16,6 +16,7 @@ mod oplog;
 mod release;
 mod rollout;
 mod status;
+mod validate;
 
 #[derive(Parser)]
 #[command(name = "nixfleet", about = "NixFleet fleet management CLI", version)]
@@ -175,6 +176,10 @@ enum Commands {
         /// SSH target override (e.g. root@192.168.1.10)
         #[arg(long)]
         target: Option<String>,
+
+        /// Target is a Darwin (macOS) host
+        #[arg(long)]
+        darwin: bool,
     },
 
     /// Manage fleet hosts
@@ -201,11 +206,16 @@ enum Commands {
         action: ReleaseAction,
     },
 
-    /// Bootstrap the first admin API key (only works when no keys exist)
+    /// Bootstrap the first admin API key, or save an existing key
     Bootstrap {
-        /// Name for the admin key
+        /// Name for the admin key (used when creating a new key via the CP)
         #[arg(long, default_value = "admin")]
         name: String,
+
+        /// Save an existing API key instead of requesting a new one from the CP.
+        /// Use this on additional machines that share the same fleet.
+        #[arg(long = "save-key")]
+        save_key: Option<String>,
     },
 
     /// Initialize a .nixfleet.toml config file
@@ -639,6 +649,7 @@ async fn main() -> Result<()> {
             generation,
             ssh: _,
             target,
+            darwin,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
             rollback(
@@ -647,6 +658,7 @@ async fn main() -> Result<()> {
                 &host,
                 generation,
                 target.as_deref(),
+                darwin,
             )
             .await
         }
@@ -798,19 +810,29 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Bootstrap { name } => {
-            // Bootstrap does not require an API key, but does use mTLS
-            let http_client = client::build_client(&tls, "")?;
-            let result = bootstrap(&http_client, effective_cp_url, &name, json_output).await;
-            // Save API key to credentials file
-            if let Ok(Some(ref key_str)) = result {
-                if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
+        Commands::Bootstrap { name, save_key } => {
+            if let Some(key) = save_key {
+                // Save an existing key (no CP call needed)
+                if let Err(e) = config::save_api_key(effective_cp_url, &key) {
                     eprintln!("Warning: failed to save API key: {}", e);
                 } else {
-                    println!("Saved to {}", config::credentials_path().display());
+                    println!("API key saved to {}", config::credentials_path().display());
                 }
+                Ok(())
+            } else {
+                // Bootstrap: request a new key from the CP
+                let http_client = client::build_client(&tls, "")?;
+                let result =
+                    bootstrap(&http_client, effective_cp_url, &name, json_output).await;
+                if let Ok(Some(ref key_str)) = result {
+                    if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
+                        eprintln!("Warning: failed to save API key: {}", e);
+                    } else {
+                        println!("Saved to {}", config::credentials_path().display());
+                    }
+                }
+                result.map(|_| ())
             }
-            result.map(|_| ())
         }
         Commands::Init {
             control_plane_url,
@@ -845,13 +867,19 @@ async fn main() -> Result<()> {
 }
 
 async fn rollback(
-    _client: &reqwest::Client,
-    _cp_url: &str,
+    client: &reqwest::Client,
+    cp_url: &str,
     host: &str,
     generation: Option<String>,
     target: Option<&str>,
+    darwin: bool,
 ) -> Result<()> {
-    let default_dest = format!("root@{}", host);
+    let default_dest = if darwin {
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        format!("{}@{}", user, host)
+    } else {
+        format!("root@{}", host)
+    };
     let ssh_dest = target.unwrap_or(&default_dest);
 
     let store_path = match generation {
@@ -881,33 +909,81 @@ async fn rollback(
         }
     };
 
+    // Validate store path before interpolating into SSH commands.
+    validate::store_path(&store_path)?;
+
     println!("Rolling back {} to {}", host, store_path);
 
     // SSH rollback: switch to the specified profile on the target
-    let stderr = if display::passthrough_output() {
+    let stderr_cfg = if display::passthrough_output() {
         Stdio::inherit()
     } else {
         Stdio::piped()
     };
-    let switch_output = tokio::process::Command::new("ssh")
-        .args([
-            "-o",
-            "BatchMode=yes",
-            ssh_dest,
-            &format!("{}/bin/switch-to-configuration", store_path),
-            "switch",
-        ])
-        .stdout(Stdio::inherit())
-        .stderr(stderr)
-        .output()
-        .await
-        .context("SSH switch-to-configuration failed")?;
 
-    if !switch_output.status.success() {
-        let stderr = String::from_utf8_lossy(&switch_output.stderr);
-        bail!("Rollback failed on {}: {}", host, stderr);
+    if darwin {
+        // Darwin: profile update first, then activate
+        let profile_output = tokio::process::Command::new("ssh")
+            .args([
+                "-o", "BatchMode=yes", ssh_dest,
+                &format!("sudo /nix/var/nix/profiles/default/bin/nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
+            ])
+            .stdout(Stdio::inherit())
+            .stderr(stderr_cfg)
+            .output()
+            .await
+            .context("SSH profile update failed")?;
+        if !profile_output.status.success() {
+            bail!("nix-env --set failed on {}", host);
+        }
+
+        let stderr_cfg = if display::passthrough_output() {
+            Stdio::inherit()
+        } else {
+            Stdio::piped()
+        };
+        let activate_output = tokio::process::Command::new("ssh")
+            .args([
+                "-o", "BatchMode=yes", ssh_dest,
+                &format!("sudo {}/activate", store_path),
+            ])
+            .stdout(Stdio::inherit())
+            .stderr(stderr_cfg)
+            .output()
+            .await
+            .context("SSH activate failed")?;
+        if !activate_output.status.success() {
+            let stderr = String::from_utf8_lossy(&activate_output.stderr);
+            bail!("Rollback activate failed on {}: {}", host, stderr);
+        }
+    } else {
+        // NixOS: switch-to-configuration
+        let switch_output = tokio::process::Command::new("ssh")
+            .args([
+                "-o",
+                "BatchMode=yes",
+                ssh_dest,
+                &format!("{}/bin/switch-to-configuration", store_path),
+                "switch",
+            ])
+            .stdout(Stdio::inherit())
+            .stderr(stderr_cfg)
+            .output()
+            .await
+            .context("SSH switch-to-configuration failed")?;
+
+        if !switch_output.status.success() {
+            let stderr = String::from_utf8_lossy(&switch_output.stderr);
+            bail!("Rollback failed on {}: {}", host, stderr);
+        }
     }
+
     println!("Rollback complete on {}", host);
+
+    // Notify the CP so desired_generation tracks the rollback.
+    if let Err(e) = deploy::notify_generation(client, cp_url, host, &store_path).await {
+        tracing::debug!(host, error = %e, "could not notify CP of rollback (CP may be unavailable)");
+    }
 
     Ok(())
 }

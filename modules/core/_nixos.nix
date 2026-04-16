@@ -167,32 +167,5 @@ in {
     inetutils
   ];
 
-  # --- Claude Code managed policy (/etc/claude-code/) ---
-  environment.etc."claude-code/settings.json".text = builtins.toJSON {
-    permissions = {
-      deny = [
-        # Destructive operations
-        "Bash(rm -rf *)"
-        "Bash(rm -r *)"
-        "Bash(dd *)"
-        "Bash(mkfs *)"
-        "Bash(shred *)"
-        # Privilege escalation
-        "Bash(sudo *)"
-        "Bash(pkexec *)"
-        "Bash(doas *)"
-        "Bash(su *)"
-        # Dangerous git
-        "Bash(git push --force *)"
-        "Bash(git push -f *)"
-        "Bash(git reset --hard *)"
-        "Bash(git clean -fd *)"
-        # Nix store manipulation
-        "Bash(nix-store --delete *)"
-        "Bash(nix store delete *)"
-      ];
-    };
-  };
-
   system.stateVersion = lib.mkDefault "24.11";
 }

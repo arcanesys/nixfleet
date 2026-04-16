@@ -27,7 +27,7 @@ Fleet repos extend hostSpec with their own flags via plain NixOS modules (see [A
 
 ## Consequences
 
-- Host definitions are fully self-describing — every capability is visible as a flag
+- Host definitions are fully self-describing -- every capability is visible as a flag
 - No hidden behavior behind role names
 - Repetition across similar hosts mitigated by shared `let` bindings (plain Nix)
 - Zero framework concepts beyond "flags control what's enabled"

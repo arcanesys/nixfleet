@@ -15,20 +15,18 @@ use tracing::{error, info, warn};
 /// Maximum retries when a fired switch fails (poll timeout + bad exit status).
 const MAX_SWITCH_RETRIES: u32 = 3;
 
-/// Timeout for polling `/run/current-system` after firing a switch.
+/// Timeout for polling the current system path after firing a switch.
 const SWITCH_POLL_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Interval between polls of `/run/current-system`.
+/// Interval between polls of the current system path.
 const SWITCH_POLL_INTERVAL: Duration = Duration::from_secs(2);
-
-/// Path to the current system symlink.
-const CURRENT_SYSTEM_PATH: &str = "/run/current-system";
 
 pub mod comms;
 pub mod config;
 pub mod health;
 pub mod metrics;
 pub mod nix;
+pub mod platform;
 pub mod store;
 pub mod tls;
 pub mod types;
@@ -36,16 +34,6 @@ pub mod types;
 pub use config::Config;
 use health::HealthRunner;
 use store::{AsyncStore, Store};
-
-/// Read host uptime from /proc/uptime (Linux). Returns 0 on failure.
-fn read_uptime_seconds() -> u64 {
-    std::fs::read_to_string("/proc/uptime")
-        .ok()
-        .and_then(|s| s.split_whitespace().next().map(String::from))
-        .and_then(|s| s.parse::<f64>().ok())
-        .map(|f| f as u64)
-        .unwrap_or(0)
-}
 
 /// Outcome of a poll cycle — tells the main loop how to schedule the next tick.
 #[derive(Debug)]
@@ -71,6 +59,7 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
         control_plane = %config.control_plane_url,
         poll_interval = ?config.poll_interval,
         dry_run = config.dry_run,
+        version = env!("CARGO_PKG_VERSION"),
         "NixFleet agent starting"
     );
 
@@ -186,7 +175,7 @@ async fn run_health_report(client: &comms::Client, config: &Config, health_runne
         tags: config.tags.clone(),
         health: Some(health_report),
         agent_version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: read_uptime_seconds(),
+        uptime_seconds: platform::uptime_seconds(),
     };
     match client.post_report(&report).await {
         Ok(()) => info!("Health report sent"),
@@ -202,7 +191,7 @@ async fn run_health_report(client: &comms::Client, config: &Config, health_runne
 async fn fire_poll_switch(store_path: &str) -> anyhow::Result<bool> {
     nix::fire_switch(store_path).await?;
 
-    let path = std::path::Path::new(CURRENT_SYSTEM_PATH);
+    let path = std::path::Path::new(platform::CURRENT_SYSTEM_PATH);
     if nix::poll_generation(store_path, path, SWITCH_POLL_TIMEOUT, SWITCH_POLL_INTERVAL).await? {
         return Ok(true);
     }
@@ -313,6 +302,14 @@ async fn run_deploy_cycle(
         return PollOutcome::Success { poll_hint };
     }
 
+    // Check if another switch is already in progress (e.g. manual nixos-rebuild).
+    // If so, skip — the next poll cycle will see the updated generation.
+    if nix::is_switch_in_progress() {
+        info!("System switch already in progress, deferring to next poll");
+        metrics::record_state_transition("fetching", "idle");
+        return PollOutcome::Success { poll_hint };
+    }
+
     // Apply: fire switch-to-configuration in a detached transient service,
     // then poll /run/current-system until it matches the desired generation.
     // The agent may be killed mid-switch (self-switch); on restart the
@@ -410,7 +407,7 @@ async fn send_report(client: &comms::Client, config: &Config, success: bool, mes
         tags: config.tags.clone(),
         health: None,
         agent_version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: read_uptime_seconds(),
+        uptime_seconds: platform::uptime_seconds(),
     };
     match client.post_report(&report).await {
         Ok(()) => info!("Report sent"),

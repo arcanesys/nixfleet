@@ -30,7 +30,7 @@ SSH public keys and other managed files that should always be overwritten: use `
 
 ### networking.useDHCP priority
 
-Don't use `mkDefault` for `networking.useDHCP = false` in core — it conflicts with `hardware-configuration.nix`'s `mkDefault true` (same priority). Use plain value.
+Don't use `mkDefault` for `networking.useDHCP = false` in core -- it conflicts with `hardware-configuration.nix`'s `mkDefault true` (same priority). Use plain value.
 
 ## Rust Workspace
 

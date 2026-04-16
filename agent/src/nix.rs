@@ -3,6 +3,48 @@ use std::time::Duration;
 use tokio::process::Command;
 use tracing::info;
 
+#[cfg(target_os = "macos")]
+use std::os::unix::process::CommandExt;
+
+/// Check if a system switch is already in progress.
+///
+/// On Linux, probes the NixOS switch lock file (`/run/nixos/switch-to-configuration.lock`)
+/// with a non-blocking `flock`. If the lock is held, another `switch-to-configuration`
+/// (e.g. from `nixos-rebuild switch`) is already running — the agent should skip
+/// and let the next poll cycle pick up the result.
+///
+/// On Darwin, activation is synchronous and has no lock file, so this always returns false.
+#[cfg(target_os = "linux")]
+pub fn is_switch_in_progress() -> bool {
+    use std::fs::OpenOptions;
+    use std::os::unix::io::AsRawFd;
+
+    let file = match OpenOptions::new()
+        .read(true)
+        .open("/run/nixos/switch-to-configuration.lock")
+    {
+        Ok(f) => f,
+        Err(_) => return false, // Lock file doesn't exist — no switch in progress
+    };
+
+    let fd = file.as_raw_fd();
+    // SAFETY: fd is a valid open file descriptor. flock is safe to call.
+    let result = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+    if result == 0 {
+        // Acquired the lock — no one else holds it. Release immediately.
+        unsafe { libc::flock(fd, libc::LOCK_UN) };
+        false
+    } else {
+        // EWOULDBLOCK — another process holds the lock.
+        true
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn is_switch_in_progress() -> bool {
+    false
+}
+
 /// Maximum time any single `nix`/`nix-env` subprocess is allowed to run
 /// before we give up and return a timeout error. A hung nix command
 /// would otherwise block the agent's deploy cycle indefinitely.
@@ -57,13 +99,16 @@ async fn run_with_timeout(mut cmd: Command, label: &'static str) -> Result<std::
         .with_context(|| format!("failed to spawn {label}"))
 }
 
-/// Read the current system generation by resolving the `/run/current-system` symlink.
-/// Returns the full nix store path (e.g. `/nix/store/abc123...-nixos-system-web-01-25.05`).
+/// Read the current system generation by reading the system symlink.
+///
+/// `/run/current-system` is a single-level symlink on both NixOS and Darwin,
+/// so `read_link` is sufficient (no need for `canonicalize`).
 pub async fn current_generation() -> Result<String> {
-    let path = tokio::fs::read_link("/run/current-system")
+    let path = crate::platform::CURRENT_SYSTEM_PATH;
+    let target = tokio::fs::read_link(path)
         .await
-        .context("failed to readlink /run/current-system")?;
-    Ok(path.to_string_lossy().into_owned())
+        .with_context(|| format!("failed to readlink {path}"))?;
+    Ok(target.to_string_lossy().into_owned())
 }
 
 /// Fetch a closure from a binary cache into the local nix store.
@@ -122,6 +167,7 @@ fn parse_switch_status(output: &str) -> Option<bool> {
 ///
 /// Returns `Some(true)` if it completed successfully, `Some(false)` if
 /// it failed, or `None` if still running or not found.
+#[cfg(target_os = "linux")]
 pub async fn check_switch_exit_status() -> Result<Option<bool>> {
     let mut cmd = Command::new("systemctl");
     cmd.args([
@@ -131,44 +177,100 @@ pub async fn check_switch_exit_status() -> Result<Option<bool>> {
         "ActiveState,Result",
     ]);
     let output = run_with_timeout(cmd, "systemctl show nixfleet-switch").await?;
-
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(parse_switch_status(&stdout))
 }
 
-/// Fire switch-to-configuration in a detached transient systemd service.
+/// Check the exit status of the system switch.
 ///
-/// Spawns `systemd-run --unit=nixfleet-switch -- <switch-bin> switch`
-/// and returns as soon as the transient unit is queued. The switch runs
-/// asynchronously in `nixfleet-switch.service` — the agent does NOT
-/// wait for it to complete. This allows the agent to survive being
-/// killed by its own switch-to-configuration.
+/// Darwin: activation is detached (background process). We can't check
+/// its status directly. Return `None` (inconclusive) so the polling loop
+/// in `fire_poll_switch` waits for `/run/current-system` to update.
+/// If the agent gets killed by the activation, launchd restarts it and
+/// the next poll cycle sees the generation matches.
+#[cfg(target_os = "macos")]
+pub async fn check_switch_exit_status() -> Result<Option<bool>> {
+    Ok(None)
+}
+
+/// Fire system activation for a store path.
 ///
-/// Errors on spawn failure or if the transient unit cannot be created
-/// (e.g., a previous `nixfleet-switch.service` hasn't been cleaned up).
+/// Linux:  detached transient systemd unit (`systemd-run`)
+/// Darwin: direct activation (`<store_path>/activate` + profile update)
 pub async fn fire_switch(store_path: &str) -> Result<()> {
     validate_store_path(store_path)?;
-    let switch_bin = format!("{store_path}/bin/switch-to-configuration");
-    info!(switch_bin, "Firing switch-to-configuration (detached)");
 
-    let mut cmd = Command::new("systemd-run");
-    cmd.args(["--unit=nixfleet-switch", "--", &switch_bin, "switch"]);
-    let output = run_with_timeout(cmd, "systemd-run").await?;
+    #[cfg(target_os = "linux")]
+    {
+        let switch_bin = format!("{store_path}/bin/switch-to-configuration");
+        info!(switch_bin, "Firing switch-to-configuration (detached)");
 
-    if !output.status.success() {
-        let stderr = truncated_stderr(&output.stderr);
-        anyhow::bail!("systemd-run failed to queue switch: {stderr}");
+        let mut cmd = Command::new("systemd-run");
+        cmd.args(["--unit=nixfleet-switch", "--", &switch_bin, "switch"]);
+        let output = run_with_timeout(cmd, "systemd-run").await?;
+
+        if !output.status.success() {
+            let stderr = truncated_stderr(&output.stderr);
+            anyhow::bail!("systemd-run failed to queue switch: {stderr}");
+        }
+        info!("Switch queued as nixfleet-switch.service");
     }
-    info!("Switch queued as nixfleet-switch.service");
+
+    #[cfg(target_os = "macos")]
+    {
+        info!(store_path, "Firing Darwin activation (detached)");
+
+        // Spawn a fully detached child process for activation.
+        // The activate script may unload/reload the agent's launchd plist,
+        // killing this process mid-activation. The detached child continues
+        // the activation. Launchd's KeepAlive restarts the agent, which
+        // then sees the new generation.
+        //
+        // Uses Rust's Command::spawn (not .output()) so the child is fully
+        // independent. stdout/stderr redirected to a log file. nohup doesn't
+        // work in a launchd daemon context (no TTY).
+        let script = format!(
+            "nix-env -p {profile} --set {path} && {path}/activate",
+            profile = crate::platform::SYSTEM_PROFILE,
+            path = store_path,
+        );
+
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/var/log/nixfleet-activate.log")
+            .context("failed to open activation log")?;
+        let log_err = log_file.try_clone().context("failed to clone log file handle")?;
+
+        // SAFETY: pre_exec runs in the forked child before exec.
+        // setsid() creates a new session so the child survives when
+        // launchd kills the agent's process group during plist reload.
+        unsafe {
+            std::process::Command::new("sh")
+                .args(["-c", &script])
+                .stdout(log_file)
+                .stderr(log_err)
+                .stdin(std::process::Stdio::null())
+                .pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                })
+                .spawn()
+                .context("failed to spawn detached activation")?;
+        }
+
+        info!("Darwin activation spawned in background");
+    }
+
     Ok(())
 }
 
-/// Poll a symlink path until it resolves to the expected store path.
+/// Poll a symlink path until it points to the expected store path.
 ///
-/// Returns `Ok(true)` when the symlink target matches `expected`,
-/// `Ok(false)` when `timeout` expires without a match. The `path`
-/// parameter allows tests to use a temp directory instead of
-/// `/run/current-system`.
+/// Uses `read_link` since `/run/current-system` is a single-level symlink
+/// on both NixOS and Darwin.
 pub async fn poll_generation(
     expected: &str,
     path: &std::path::Path,
@@ -189,18 +291,14 @@ pub async fn poll_generation(
     }
 }
 
-/// Roll back to the previous system generation.
-///
-/// Finds the previous profile link and switches to it.
 pub async fn rollback() -> Result<()> {
     info!("Rolling back to previous generation");
 
-    // List system profiles to find the previous one
     let mut cmd = Command::new("nix-env");
     cmd.args([
         "--list-generations",
         "--profile",
-        "/nix/var/nix/profiles/system",
+        crate::platform::SYSTEM_PROFILE,
     ]);
     let output = run_with_timeout(cmd, "nix-env --list-generations").await?;
 
@@ -210,16 +308,12 @@ pub async fn rollback() -> Result<()> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Ignore blank/whitespace-only lines defensively — nix-env output is
-    // normally well-formed, but we don't want an empty trailing line to
-    // pass the `len() >= 2` gate and crash parsing below.
     let generations: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
 
     if generations.len() < 2 {
         anyhow::bail!("no previous generation to roll back to");
     }
 
-    // Parse the second-to-last generation number
     let prev_line = generations[generations.len() - 2];
     let gen_num: u64 = prev_line
         .split_whitespace()
@@ -228,26 +322,26 @@ pub async fn rollback() -> Result<()> {
         .parse()
         .with_context(|| format!("failed to parse generation number from line: {prev_line:?}"))?;
 
-    let prev_path = format!("/nix/var/nix/profiles/system-{gen_num}-link");
+    let prev_path = format!("{}-{gen_num}-link", crate::platform::SYSTEM_PROFILE);
     info!(prev_path, "Switching to previous generation");
 
-    // Resolve profile symlink to store path
     let store_path = tokio::fs::read_link(&prev_path)
         .await
         .context("failed to resolve profile symlink to store path")?;
     let store_path_str = store_path.to_string_lossy();
 
-    // Fire the rollback switch in a detached transient service
     fire_switch(&store_path_str).await?;
 
-    // Poll until the system switches to the previous generation
-    let path = std::path::Path::new("/run/current-system");
+    let path = std::path::Path::new(crate::platform::CURRENT_SYSTEM_PATH);
     let timeout = Duration::from_secs(300);
     let interval = Duration::from_secs(2);
     if poll_generation(&store_path_str, path, timeout, interval).await? {
         Ok(())
     } else {
-        anyhow::bail!("rollback timed out: /run/current-system did not match {store_path_str}")
+        anyhow::bail!(
+            "rollback timed out: {} did not match {store_path_str}",
+            crate::platform::CURRENT_SYSTEM_PATH
+        )
     }
 }
 
@@ -373,7 +467,7 @@ mod tests {
         tokio::time::pause();
         let dir = tempfile::tempdir().unwrap();
         let link = dir.path().join("current-system");
-        std::os::unix::fs::symlink("/nix/store/abc-wrong", &link).unwrap();
+        std::os::unix::fs::symlink("/nix/store/wrong-target", &link).unwrap();
 
         let matched = poll_generation(
             "/nix/store/abc-target",
@@ -408,7 +502,7 @@ mod tests {
         tokio::time::pause();
         let dir = tempfile::tempdir().unwrap();
         let link = dir.path().join("current-system");
-        std::os::unix::fs::symlink("/nix/store/abc-old", &link).unwrap();
+        std::os::unix::fs::symlink("/nix/store/old-system", &link).unwrap();
 
         let link_clone = link.clone();
         tokio::spawn(async move {

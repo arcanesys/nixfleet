@@ -15,10 +15,8 @@
     cfg = config.nixfleet.backup;
     types = lib.types;
 
-    excludeFlags = backend:
-      if backend == "restic"
-      then lib.concatMapStringsSep " " (p: "--exclude ${lib.escapeShellArg p}") cfg.exclude
-      else lib.concatMapStringsSep " " (p: "--exclude ${lib.escapeShellArg p}") cfg.exclude;
+    excludeFlags =
+      lib.concatMapStringsSep " " (p: "--exclude ${lib.escapeShellArg p}") cfg.exclude;
 
     resticBackupScript = pkgs.writeShellScript "nixfleet-backup-restic" ''
       set -euo pipefail
@@ -32,8 +30,8 @@
 
       # Backup
       ${pkgs.restic}/bin/restic backup \
-        --tag ${lib.escapeShellArg config.networking.hostName} \
-        ${excludeFlags "restic"} \
+        --tag ${lib.escapeShellArg config.hostSpec.hostName} \
+        ${excludeFlags} \
         ${lib.concatStringsSep " " (map lib.escapeShellArg cfg.paths)}
 
       # Prune
@@ -44,7 +42,7 @@
         --prune
     '';
 
-    borgArchiveName = "${config.networking.hostName}-{now:%Y-%m-%dT%H:%M:%S}";
+    borgArchiveName = "${config.hostSpec.hostName}-{now:%Y-%m-%dT%H:%M:%S}";
 
     borgBackupScript = pkgs.writeShellScript "nixfleet-backup-borg" ''
       set -euo pipefail
@@ -60,7 +58,7 @@
 
       # Backup
       ${pkgs.borgbackup}/bin/borg create \
-        ${excludeFlags "borgbackup"} \
+        ${excludeFlags} \
         "$BORG_REPO::${borgArchiveName}" \
         ${lib.concatStringsSep " " (map lib.escapeShellArg cfg.paths)}
 
@@ -246,7 +244,7 @@
             "${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 ${lib.escapeShellArg cfg.healthCheck.onSuccess} || true";
           statusCmd = ''
             cat > ${cfg.stateDirectory}/status.json <<STATUSEOF
-            {"lastRun": "$(date -Is)", "status": "success", "hostname": "${config.networking.hostName}"}
+            {"lastRun": "$(date -Is)", "status": "success", "hostname": "${config.hostSpec.hostName}"}
             STATUSEOF
           '';
         in

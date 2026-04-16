@@ -1,5 +1,5 @@
-# NixOS service module for the NixFleet fleet agent.
-# Auto-included by mkHost (disabled by default).
+# Darwin service module for the NixFleet fleet agent.
+# Auto-included by mkHost for Darwin hosts (disabled by default).
 {
   config,
   lib,
@@ -41,7 +41,7 @@ in {
       type = lib.types.nullOr lib.types.str;
       default = null;
       example = "https://cache.fleet.example.com";
-      description = "Binary cache URL for nix copy --from. Falls back to control plane default.";
+      description = "Binary cache URL for nix copy --from.";
     };
 
     dbPath = lib.mkOption {
@@ -59,29 +59,26 @@ in {
     allowInsecure = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Allow insecure HTTP connections to the control plane. Development only.";
+      description = "Allow insecure HTTP connections to the control plane.";
     };
 
     tls = {
       caCert = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        example = "/etc/nixfleet/fleet-ca.pem";
-        description = "Path to CA certificate PEM file for verifying the control plane. Trusted alongside system roots.";
+        description = "Path to CA certificate PEM for verifying the control plane.";
       };
 
       clientCert = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        example = "/run/secrets/agent-cert.pem";
-        description = "Path to client certificate PEM file for mTLS authentication.";
+        description = "Path to client certificate PEM file for mTLS.";
       };
 
       clientKey = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        example = "/run/secrets/agent-key.pem";
-        description = "Path to client private key PEM file for mTLS authentication.";
+        description = "Path to client private key PEM file for mTLS.";
       };
     };
 
@@ -89,12 +86,6 @@ in {
       type = lib.types.nullOr lib.types.port;
       default = null;
       description = "Port for agent Prometheus metrics. Null disables.";
-    };
-
-    metricsOpenFirewall = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open agent metrics port in the firewall.";
     };
 
     tags = lib.mkOption {
@@ -106,19 +97,19 @@ in {
     healthInterval = lib.mkOption {
       type = lib.types.int;
       default = 60;
-      description = "Seconds between continuous health reports to control plane.";
+      description = "Seconds between continuous health reports.";
     };
 
     healthChecks = {
-      systemd = lib.mkOption {
+      launchd = lib.mkOption {
         type = lib.types.listOf (lib.types.submodule {
-          options.units = lib.mkOption {
+          options.labels = lib.mkOption {
             type = lib.types.listOf lib.types.str;
-            description = "Systemd units that must be active.";
+            description = "Launchd service labels that must be running.";
           };
         });
         default = [];
-        description = "Systemd unit health checks.";
+        description = "Launchd service health checks.";
       };
 
       http = lib.mkOption {
@@ -127,11 +118,6 @@ in {
             url = lib.mkOption {
               type = lib.types.str;
               description = "URL to GET.";
-            };
-            interval = lib.mkOption {
-              type = lib.types.int;
-              default = 5;
-              description = "Check interval in seconds.";
             };
             timeout = lib.mkOption {
               type = lib.types.int;
@@ -160,11 +146,6 @@ in {
               type = lib.types.str;
               description = "Shell command (exit 0 = healthy).";
             };
-            interval = lib.mkOption {
-              type = lib.types.int;
-              default = 10;
-              description = "Check interval in seconds.";
-            };
             timeout = lib.mkOption {
               type = lib.types.int;
               default = 5;
@@ -179,49 +160,35 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    # Write health check config for the agent to read at runtime
     environment.etc."nixfleet/health-checks.json".text = builtins.toJSON {
-      systemd = cfg.healthChecks.systemd;
+      launchd = cfg.healthChecks.launchd;
       http = cfg.healthChecks.http;
       command = cfg.healthChecks.command;
     };
 
-    systemd.services.nixfleet-agent = {
-      description = "NixFleet Fleet Management Agent";
-      wantedBy = ["multi-user.target"];
-      after = ["network-online.target" "nix-daemon.service"];
-      wants = ["network-online.target"];
-      startLimitIntervalSec = 0;
+    # Ensure state directory exists before launchd tries to start the agent.
+    # nix-darwin uses preActivation/postActivation, not named scripts like NixOS.
+    system.activationScripts.preActivation.text = ''
+      mkdir -p /var/lib/nixfleet
+    '';
 
-      # Agent shells out to nix (copy, path-info) and switch-to-configuration
-      path = [config.nix.package pkgs.systemd];
-
-      environment =
-        {
-          # Nix writes its metadata cache (narinfo lookups, eval cache, etc.)
-          # to $XDG_CACHE_HOME (default: ~/.cache). Point it at the agent's
-          # StateDirectory so the cache persists on impermanent hosts instead
-          # of being wiped on every reboot.
-          XDG_CACHE_HOME = "/var/lib/nixfleet/.cache";
-        }
-        // lib.optionalAttrs (cfg.tags != []) {
-          NIXFLEET_TAGS = lib.concatStringsSep "," cfg.tags;
-        };
-
+    launchd.daemons.nixfleet-agent = {
       serviceConfig = {
-        Type = "simple";
-        ExecStart = lib.concatStringsSep " " (
+        Label = "com.nixfleet.agent";
+        ProgramArguments =
           [
             "${nixfleet-agent}/bin/nixfleet-agent"
             "--control-plane-url"
-            (lib.escapeShellArg cfg.controlPlaneUrl)
+            cfg.controlPlaneUrl
             "--machine-id"
-            (lib.escapeShellArg cfg.machineId)
+            cfg.machineId
             "--poll-interval"
             (toString cfg.pollInterval)
             "--retry-interval"
             (toString cfg.retryInterval)
             "--db-path"
-            (lib.escapeShellArg cfg.dbPath)
+            cfg.dbPath
             "--health-config"
             "/etc/nixfleet/health-checks.json"
             "--health-interval"
@@ -229,53 +196,42 @@ in {
           ]
           ++ lib.optionals (cfg.cacheUrl != null) [
             "--cache-url"
-            (lib.escapeShellArg cfg.cacheUrl)
+            cfg.cacheUrl
           ]
-          ++ lib.optionals cfg.dryRun [
-            "--dry-run"
-          ]
-          ++ lib.optionals cfg.allowInsecure [
-            "--allow-insecure"
-          ]
+          ++ lib.optionals cfg.dryRun ["--dry-run"]
+          ++ lib.optionals cfg.allowInsecure ["--allow-insecure"]
           ++ lib.optionals (cfg.tls.caCert != null) [
             "--ca-cert"
-            (lib.escapeShellArg cfg.tls.caCert)
+            cfg.tls.caCert
           ]
           ++ lib.optionals (cfg.tls.clientCert != null) [
             "--client-cert"
-            (lib.escapeShellArg cfg.tls.clientCert)
+            cfg.tls.clientCert
           ]
           ++ lib.optionals (cfg.tls.clientKey != null) [
             "--client-key"
-            (lib.escapeShellArg cfg.tls.clientKey)
+            cfg.tls.clientKey
           ]
           ++ lib.optionals (cfg.metricsPort != null) [
             "--metrics-port"
             (toString cfg.metricsPort)
-          ]
-        );
-        Restart = "always";
-        RestartSec = 30;
-        StateDirectory = "nixfleet";
-
-        # The agent is a privileged system manager: it runs
-        # switch-to-configuration which modifies /boot, /etc, /home, /root,
-        # bootloader, kernel, systemd units, etc. Sandboxing blocks these
-        # operations (subprocess inherits the agent's namespace).
-        # Threat model is equivalent to `sudo nixos-rebuild switch` as a
-        # daemon — no sandboxing applied.
-        NoNewPrivileges = true;
+          ];
+        KeepAlive = true;
+        RunAtLoad = true;
+        StandardOutPath = "/var/log/nixfleet-agent.log";
+        StandardErrorPath = "/var/log/nixfleet-agent.log";
+        WorkingDirectory = "/var/lib/nixfleet";
+        EnvironmentVariables =
+          {
+            XDG_CACHE_HOME = "/var/lib/nixfleet/.cache";
+            # Agent shells out to nix (copy, path-info) and nix-env.
+            # Launchd daemons have a minimal PATH — add nix paths explicitly.
+            PATH = "/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin:/usr/bin:/bin";
+          }
+          // lib.optionalAttrs (cfg.tags != []) {
+            NIXFLEET_TAGS = lib.concatStringsSep "," cfg.tags;
+          };
       };
     };
-
-    # Impermanence: persist agent state across reboots
-    environment.persistence."/persist".directories =
-      lib.mkIf
-      (config.hostSpec.isImpermanent or false)
-      ["/var/lib/nixfleet"];
-
-    # Open metrics port if requested
-    networking.firewall.allowedTCPPorts =
-      lib.mkIf (cfg.metricsPort != null && cfg.metricsOpenFirewall) [cfg.metricsPort];
   };
 }

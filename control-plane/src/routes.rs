@@ -258,6 +258,9 @@ pub async fn register_machine(
     Path(id): Path<String>,
     Json(req): Json<RegisterMachineRequest>,
 ) -> Result<(StatusCode, Json<RegisterMachineResponse>), (StatusCode, String)> {
+    if id.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "machine ID too long".to_string()));
+    }
     if !actor.has_role(&["admin"]) {
         return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
@@ -341,6 +344,9 @@ pub async fn update_lifecycle(
     Path(id): Path<String>,
     Json(req): Json<UpdateLifecycleRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "machine ID too long".to_string()));
+    }
     if !actor.has_role(&["admin"]) {
         return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
@@ -410,9 +416,13 @@ pub async fn bootstrap_api_key(
     State((_, db)): State<AppState>,
     Json(req): Json<BootstrapKeyRequest>,
 ) -> Result<Json<BootstrapKeyResponse>, (StatusCode, String)> {
-    if db
-        .has_api_keys()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+    if db.has_api_keys().map_err(|e| {
+        tracing::error!(error = %e, "failed to check existing API keys");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        )
+    })?
     {
         return Err((
             StatusCode::CONFLICT,
@@ -430,9 +440,10 @@ pub async fn bootstrap_api_key(
     };
 
     db.insert_api_key(&key_hash, name, "admin").map_err(|e| {
+        tracing::error!(error = %e, "failed to create bootstrap API key");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to create key: {e}"),
+            "failed to create key".to_string(),
         )
     })?;
 

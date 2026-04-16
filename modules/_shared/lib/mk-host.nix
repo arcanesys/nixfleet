@@ -21,6 +21,7 @@
 
   # Service modules (auto-included, disabled by default)
   agentModule = ../../scopes/nixfleet/_agent.nix;
+  agentDarwinModule = ../../scopes/nixfleet/_agent_darwin.nix;
   controlPlaneModule = ../../scopes/nixfleet/_control-plane.nix;
   cacheServerModule = ../../scopes/nixfleet/_cache-server.nix;
   cacheModule = ../../scopes/nixfleet/_cache.nix;
@@ -97,6 +98,7 @@ in
       {hostSpec.isDarwin = true;}
       coreDarwin
       baseScope.darwin
+      agentDarwinModule
     ];
 
     # Home-Manager modules
