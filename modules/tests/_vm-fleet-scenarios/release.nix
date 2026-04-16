@@ -17,6 +17,7 @@
 # seeded into the builder node's closure at nixosTest build time.
 {
   pkgs,
+  inputs,
   lib,
   mkTestNode,
   defaultTestSpec,
@@ -95,6 +96,7 @@
   nixfleetCli = pkgs.callPackage ../../../cli {};
 in
   pkgs.testers.nixosTest {
+    specialArgs = {inherit inputs;};
     name = "vm-fleet-release";
 
     nodes.cp = mkCpNode {inherit testCerts;};

@@ -3,8 +3,20 @@
 # No secrets, no agenix, no real hardware.
 # Fleet-specific hostSpec options (isDev, isGraphical, useHyprland, theme, etc.)
 # are NOT available here — those are declared by consuming fleets.
-{config, ...}: let
+#
+# Hosts compose via roles from `arcanesys/nixfleet-scopes`:
+# - server role: base + firewall + secrets + monitoring + user (wheel)
+# - workstation role: base + firewall + secrets + HM + backup + user (groups)
+# - endpoint role: base + secrets; no user (distro owns user model)
+# - microvm-guest role: base only; no firewall/user (host owns)
+{
+  config,
+  inputs,
+  ...
+}: let
   mkHost = config.flake.lib.mkHost;
+
+  scopes = inputs.nixfleet-scopes.scopes;
 
   # Shared organization defaults — just a let binding, no framework function.
   # Placeholder key for eval tests only. Fleet repos set real keys.
@@ -19,28 +31,28 @@
   };
 in {
   flake.nixosConfigurations = {
-    # web-01: default web server, impermanent root
+    # web-01: server, impermanent root
     web-01 = mkHost {
       hostName = "web-01";
       platform = "x86_64-linux";
       isVm = true;
-      hostSpec =
-        orgDefaults
-        // {
-          isImpermanent = true;
-        };
+      hostSpec = orgDefaults;
+      modules = [
+        scopes.roles.server
+        {nixfleet.impermanence.enable = true;}
+      ];
     };
 
-    # web-02: second web server, impermanent root
+    # web-02: second server, impermanent root
     web-02 = mkHost {
       hostName = "web-02";
       platform = "x86_64-linux";
       isVm = true;
-      hostSpec =
-        orgDefaults
-        // {
-          isImpermanent = true;
-        };
+      hostSpec = orgDefaults;
+      modules = [
+        scopes.roles.server
+        {nixfleet.impermanence.enable = true;}
+      ];
     };
 
     # dev-01: developer workstation, custom user
@@ -53,18 +65,19 @@ in {
         // {
           userName = "alice";
         };
+      modules = [
+        scopes.roles.workstation
+      ];
     };
 
-    # edge-01: minimal edge device
+    # edge-01: minimal edge device (no role — just mkHost mechanism).
+    # Represents a "bare" host: gets core/_nixos (nix settings, openssh,
+    # root key) but no scope opinions.
     edge-01 = mkHost {
       hostName = "edge-01";
       platform = "x86_64-linux";
       isVm = true;
-      hostSpec =
-        orgDefaults
-        // {
-          isMinimal = true;
-        };
+      hostSpec = orgDefaults;
     };
 
     # srv-01: production server
@@ -72,11 +85,10 @@ in {
       hostName = "srv-01";
       platform = "x86_64-linux";
       isVm = true;
-      hostSpec =
-        orgDefaults
-        // {
-          isServer = true;
-        };
+      hostSpec = orgDefaults;
+      modules = [
+        scopes.roles.server
+      ];
     };
 
     # agent-test: exercises agent with tags and health checks
@@ -86,6 +98,7 @@ in {
       isVm = true;
       hostSpec = orgDefaults;
       modules = [
+        scopes.roles.workstation
         {
           services.nixfleet-agent = {
             enable = true;
@@ -107,25 +120,21 @@ in {
       hostName = "secrets-test";
       platform = "x86_64-linux";
       isVm = true;
-      hostSpec =
-        orgDefaults
-        // {
-          isServer = true;
-        };
+      hostSpec = orgDefaults;
       modules = [
-        {
-          nixfleet.secrets.enable = true;
-        }
+        scopes.roles.server
       ];
     };
 
-    # infra-test: exercises backup + monitoring scopes
+    # infra-test: exercises backup + monitoring scopes on a workstation
     infra-test = mkHost {
       hostName = "infra-test";
       platform = "x86_64-linux";
       isVm = true;
       hostSpec = orgDefaults;
       modules = [
+        scopes.roles.workstation
+        scopes.monitoring
         {
           nixfleet.backup = {
             enable = true;
@@ -147,6 +156,7 @@ in {
       isVm = true;
       hostSpec = orgDefaults;
       modules = [
+        scopes.roles.server
         {
           services.nixfleet-cache-server = {
             enable = true;
@@ -169,6 +179,7 @@ in {
       isVm = true;
       hostSpec = orgDefaults;
       modules = [
+        scopes.roles.server
         {
           services.nixfleet-microvm-host = {
             enable = true;
@@ -184,6 +195,7 @@ in {
       isVm = true;
       hostSpec = orgDefaults;
       modules = [
+        scopes.roles.workstation
         {
           nixfleet.backup = {
             enable = true;

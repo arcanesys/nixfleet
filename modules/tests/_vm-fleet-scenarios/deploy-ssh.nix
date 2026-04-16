@@ -23,6 +23,7 @@
 # switch step actually ran end-to-end.
 {
   pkgs,
+  inputs,
   lib,
   mkTestNode,
   defaultTestSpec,
@@ -79,6 +80,7 @@
   nixfleetCli = pkgs.callPackage ../../../cli {};
 in
   pkgs.testers.nixosTest {
+    specialArgs = {inherit inputs;};
     name = "vm-fleet-deploy-ssh";
 
     nodes.operator = mkTestNode {

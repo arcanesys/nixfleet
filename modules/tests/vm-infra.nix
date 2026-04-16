@@ -15,11 +15,10 @@
 {inputs, ...}: {
   perSystem = {
     pkgs,
-    system,
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
+    helpers = import ./_lib/helpers.nix {inherit lib pkgs inputs;};
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
@@ -38,10 +37,13 @@
         hostName = "machine";
       };
   in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    # Gated out of flake.checks until testers.nixosTest gains
+    # specialArgs support (see Phase 3 of the scopes-extraction).
+    lib.optionalAttrs false {
       checks = {
         # --- vm-firewall: SSH rate limiting and drop logging ---
         vm-firewall = pkgs.testers.nixosTest {
+          specialArgs = {inherit inputs;};
           name = "vm-firewall";
           nodes.machine = mkSubsystemNode [];
           testScript = ''
@@ -60,6 +62,7 @@
 
         # --- vm-monitoring: node exporter responds on port ---
         vm-monitoring = pkgs.testers.nixosTest {
+          specialArgs = {inherit inputs;};
           name = "vm-monitoring";
           nodes.machine = mkSubsystemNode [
             {
@@ -85,6 +88,7 @@
 
         # --- vm-backup: timer registered and service skeleton exists ---
         vm-backup = pkgs.testers.nixosTest {
+          specialArgs = {inherit inputs;};
           name = "vm-backup";
           nodes.machine = mkSubsystemNode [
             ({pkgs, ...}: {
@@ -118,6 +122,7 @@
 
         # --- vm-secrets: host key generation on first boot ---
         vm-secrets = pkgs.testers.nixosTest {
+          specialArgs = {inherit inputs;};
           name = "vm-secrets";
           nodes.machine = mkSubsystemNode [
             {
@@ -164,6 +169,7 @@
           '';
         in
           pkgs.testers.nixosTest {
+            specialArgs = {inherit inputs;};
             name = "vm-cache-server";
 
             nodes.server = mkTestNode {
@@ -210,6 +216,7 @@
           repositoryPath = "/tmp/restic-test-repo";
         in
           pkgs.testers.nixosTest {
+            specialArgs = {inherit inputs;};
             name = "vm-backup-restic";
 
             nodes.machine = mkSubsystemNode [

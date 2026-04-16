@@ -5,21 +5,22 @@
 ## What is NixFleet?
 
 NixFleet is a framework for managing fleets of NixOS and macOS machines. It provides:
-- **`mkHost`** — single function that returns a standard `nixosSystem` or `darwinSystem`
-- **hostSpec** — extensible host configuration flags (fleet repos add their own)
-- **Core modules** — nix settings, boot, SSH hardening, networking, user management
-- **Disko templates** — reusable disk layout configurations
+- **`mkHost`** — single function that returns a standard `nixosSystem` or `darwinSystem`. Mechanism only — opinions come from consumer-imported modules.
+- **hostSpec** — identity-only host spec (hostName, userName, home, timeZone, locale, SSH keys, password files, networking). Fleet repos extend it with their own additions.
+- **Core modules** — nix settings, SSH hardening, identity pass-through (time / locale / hostName / xkb)
 - **Agent + Control Plane** — Rust-based fleet orchestration with staged rollouts, health checks, and automatic rollback
+- **Companion scopes** — [`arcanesys/nixfleet-scopes`](https://github.com/arcanesys/nixfleet-scopes) ships reusable `base` / `firewall` / `secrets` / `backup` / `monitoring` / `impermanence` / `home-manager` / `disko` scopes plus 4 generic roles (`server`, `workstation`, `endpoint`, `microvm-guest`). `nixos-hardware`, Sécurix-style distros, and per-fleet hardware bundles supply hardware modules.
 
 ## Quick Start
 
 ```nix
-# flake.nix — single machine, no ceremony
+# flake.nix — single machine
 {
   inputs.nixfleet.url = "github:your-org/nixfleet";
+  inputs.nixfleet-scopes.url = "github:arcanesys/nixfleet-scopes";
   inputs.nixpkgs.follows = "nixfleet/nixpkgs";
 
-  outputs = {nixfleet, ...}: {
+  outputs = {nixfleet, nixfleet-scopes, ...}@inputs: {
     nixosConfigurations.myhost = nixfleet.lib.mkHost {
       hostName = "myhost";
       platform = "x86_64-linux";
@@ -29,6 +30,7 @@ NixFleet is a framework for managing fleets of NixOS and macOS machines. It prov
         sshAuthorizedKeys = [ "ssh-ed25519 AAAA..." ];
       };
       modules = [
+        nixfleet-scopes.scopes.roles.workstation   # base + firewall + secrets + HM + backup + user
         ./hardware-configuration.nix
         ./disk-config.nix
       ];

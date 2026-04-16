@@ -1,5 +1,23 @@
-# Core NixOS module. Imported directly by mkHost.
-# Note: disko import is handled by mkHost (needs inputs in specialArgs).
+# Core NixOS module — framework mechanism only.
+#
+# Opinions (users, bootloader, programs, security, hardware) are gone:
+# - User creation lives in `arcanesys/nixfleet-scopes` roles
+#   (workstation / server) — consumers that want a primary user import
+#   the appropriate role.
+# - Bootloader config (systemd-boot, initrd modules, kernelPackages) is
+#   left to host-specific modules (hardware-configuration.nix, disk
+#   templates in nixfleet-scopes) where it belongs.
+# - `programs.{zsh,git,gnupg,dconf}`, `security.sudo`,
+#   `hardware.ledger` etc. are opinions and move downstream to fleet
+#   scopes / Home Manager.
+#
+# What stays here:
+# - nix settings (substituters, trusted keys, gc, experimental features)
+#   so every NixOS host gets the NixFleet cache wiring out of the box.
+# - openssh hardening (PermitRootLogin prohibit-password, password auth
+#   off) — universally applicable and required for remote deploys.
+# - Identity pass-through from hostSpec to NixOS options
+#   (hostName, timeZone, locale, keyMap, xkb).
 {
   config,
   pkgs,
@@ -7,7 +25,6 @@
   ...
 }: let
   hS = config.hostSpec;
-  ifTheyExist = groups: builtins.filter (group: builtins.hasAttr group config.users.groups) groups;
 in {
   # --- nixpkgs ---
   nixpkgs.config = {
@@ -21,12 +38,7 @@ in {
   nix = {
     nixPath = lib.mkDefault [];
     settings = {
-      allowed-users = ["${hS.userName}"];
-      trusted-users =
-        [
-          "@admin"
-        ]
-        ++ lib.optional (!hS.isServer) "${hS.userName}";
+      trusted-users = ["@admin"];
       substituters = [
         "https://nix-community.cachix.org"
         "https://cache.nixos.org"
@@ -48,124 +60,43 @@ in {
     };
   };
 
-  # --- boot ---
-  boot = {
-    loader = {
-      systemd-boot = {
-        enable = true;
-        configurationLimit = 42;
-      };
-      efi.canTouchEfiVariables = true;
-    };
-    initrd.availableKernelModules = [
-      "xhci_pci"
-      "ahci"
-      "nvme"
-      "usbhid"
-      "usb_storage"
-      "sd_mod"
-    ];
-    kernelPackages = pkgs.linuxPackages_latest;
-    kernelModules = ["uinput"];
-  };
-
-  # --- localization ---
-  time.timeZone = hS.timeZone;
-  i18n.defaultLocale = hS.locale;
-  console.keyMap = lib.mkDefault hS.keyboardLayout;
-
-  # --- networking ---
+  # --- identity passthrough from hostSpec ---
   networking = {
     hostName = hS.hostName;
     useDHCP = false;
-    networkmanager.enable = true;
-    firewall.enable = true;
     interfaces = lib.mkIf (hS.networking ? interface) {
       "${hS.networking.interface}".useDHCP = true;
     };
+    firewall.enable = lib.mkDefault true;
   };
 
-  # --- programs ---
-  programs = {
-    gnupg.agent = {
-      enable = true;
-      enableSSHSupport = true;
-    };
-    dconf.enable = true;
-    git.enable = true;
-    zsh = {
-      enable = true;
-      enableCompletion = false;
-    };
-  };
+  time.timeZone = hS.timeZone;
+  i18n.defaultLocale = hS.locale;
+  console.keyMap = lib.mkDefault hS.keyboardLayout;
+  services.xserver.xkb.layout = lib.mkDefault hS.keyboardLayout;
 
-  # --- security ---
-  security = {
-    polkit.enable = true;
-    sudo = {
-      enable = true;
-      extraRules = [
-        {
-          commands = [
-            {
-              command = "${pkgs.systemd}/bin/reboot";
-              options = ["NOPASSWD"];
-            }
-          ];
-          groups = ["wheel"];
-        }
-      ];
+  # --- openssh (hardened; universally applicable for fleet deploys) ---
+  services.openssh = {
+    enable = lib.mkDefault true;
+    settings = {
+      PermitRootLogin = lib.mkDefault "prohibit-password";
+      PasswordAuthentication = lib.mkDefault false;
+      KbdInteractiveAuthentication = lib.mkDefault false;
     };
   };
 
-  # --- user ---
-  users.users = {
-    ${hS.userName} = {
-      isNormalUser = true;
-      extraGroups = lib.flatten [
-        "wheel"
-        (ifTheyExist [
-          "audio"
-          "video"
-          "docker"
-          "git"
-          "networkmanager"
-        ])
-      ];
-      shell = pkgs.zsh;
-      openssh.authorizedKeys.keys = hS.sshAuthorizedKeys;
-      hashedPasswordFile = lib.mkIf (hS.hashedPasswordFile != null) hS.hashedPasswordFile;
-    };
-    root = {
-      openssh.authorizedKeys.keys = hS.sshAuthorizedKeys;
-      hashedPasswordFile = lib.mkIf (hS.rootHashedPasswordFile != null) hS.rootHashedPasswordFile;
-    };
+  # --- authorized_keys for root (identity-level access for deploys) ---
+  # Root still gets the hostSpec SSH keys because every remote deploy
+  # flow (nixos-rebuild --target-host, nixos-anywhere) needs a known
+  # path for root authentication. The primary user is created by a role.
+  users.users.root = {
+    openssh.authorizedKeys.keys = hS.sshAuthorizedKeys;
+    hashedPasswordFile = lib.mkIf (hS.rootHashedPasswordFile != null) hS.rootHashedPasswordFile;
   };
 
-  # --- services ---
-  services = {
-    openssh = {
-      enable = true;
-      settings = {
-        PermitRootLogin = "prohibit-password";
-        PasswordAuthentication = false;
-        KbdInteractiveAuthentication = false;
-      };
-    };
-    printing.enable = false;
-    xserver.xkb.layout = lib.mkDefault hS.keyboardLayout;
-  };
-
-  # --- hardware ---
-  hardware = {
-    ledger.enable = true;
-  };
-
-  # --- system packages ---
+  # --- minimal package set for remote-deploy ergonomics ---
   environment.systemPackages = with pkgs; [
     git
     inetutils
   ];
-
-  system.stateVersion = lib.mkDefault "24.11";
 }

@@ -1,4 +1,21 @@
-# Core Darwin module. Imported directly by mkHost.
+# Core Darwin module — framework mechanism only.
+#
+# Opinions stripped:
+# - `system.defaults.*` (trackpad / finder / dock behavior) — those are
+#   opinions; fleet repos set them under their own scopes.
+# - Dock management still exposes `options.local.dock` here because the
+#   *mechanism* (dockutil-driven declarative dock) is framework-level;
+#   fleet repos populate `local.dock.entries` under their own scopes.
+# - User creation for the primary user moves to
+#   `arcanesys/nixfleet-scopes` roles.
+#
+# What stays here:
+# - nix settings (substituters, trusted keys, experimental features)
+# - TouchID PAM (universally applicable convenience)
+# - dock option declaration + activation script (mechanism)
+# - `system.primaryUser` pass-through from hostSpec (Darwin-specific
+#   identity wiring that nix-darwin requires)
+# - `system.stateVersion` baseline (override per host)
 {
   config,
   pkgs,
@@ -9,7 +26,7 @@
   dockCfg = config.local.dock;
   inherit (pkgs) dockutil;
 in {
-  # --- dock option module ---
+  # --- dock option module (mechanism — fleet populates entries) ---
   options.local.dock = {
     enable = lib.mkOption {
       type = lib.types.bool;
@@ -84,20 +101,6 @@ in {
       '';
     };
 
-    # --- programs ---
-    programs.zsh = {
-      enable = true;
-      enableCompletion = false;
-    };
-
-    # --- user ---
-    users.users.${hS.userName} = {
-      name = "${hS.userName}";
-      home = "${hS.home}";
-      isHidden = false;
-      shell = pkgs.zsh;
-    };
-
     # --- sudo (TouchID) ---
     security.pam.services.sudo_local.touchIdAuth = true;
     environment = {
@@ -108,44 +111,14 @@ in {
       '';
     };
 
-    # --- system defaults ---
-    system = {
-      stateVersion = 4;
-      checks.verifyNixPath = false;
-      primaryUser = "${hS.userName}";
-      defaults = {
-        NSGlobalDomain = {
-          AppleShowAllExtensions = true;
-          ApplePressAndHoldEnabled = false;
-          KeyRepeat = 2;
-          InitialKeyRepeat = 15;
-          "com.apple.mouse.tapBehavior" = 1;
-          "com.apple.sound.beep.feedback" = 0;
-        };
-        dock = {
-          autohide = true;
-          show-recents = false;
-          launchanim = true;
-          orientation = "bottom";
-          tilesize = 48;
-        };
-        finder = {
-          AppleShowAllExtensions = true;
-          AppleShowAllFiles = true;
-          ShowPathbar = true;
-          _FXSortFoldersFirst = true;
-          _FXShowPosixPathInTitle = false;
-        };
-        trackpad = {
-          Clicking = true;
-          TrackpadThreeFingerDrag = true;
-        };
-      };
-    };
+    # --- identity pass-through ---
+    system.stateVersion = lib.mkDefault 4;
+    system.checks.verifyNixPath = false;
+    system.primaryUser = "${hS.userName}";
 
     hostSpec.isDarwin = true;
 
-    # --- dock management ---
+    # --- dock management (mechanism only; entries come from fleet) ---
     system.activationScripts.postActivation.text = lib.mkIf dockCfg.enable (
       let
         normalize = path:

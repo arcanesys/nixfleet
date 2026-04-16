@@ -27,6 +27,7 @@
 #      somehow inherited from prior state.
 {
   pkgs,
+  inputs,
   mkCpNode,
   mkAgentNode,
   testCerts,
@@ -34,6 +35,7 @@
   ...
 }:
 pkgs.testers.nixosTest {
+  specialArgs = {inherit inputs;};
   name = "vm-fleet-poll-retry";
 
   nodes.cp = mkCpNode {inherit testCerts;};
