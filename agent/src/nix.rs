@@ -3,6 +3,9 @@ use std::time::Duration;
 use tokio::process::Command;
 use tracing::info;
 
+#[cfg(target_os = "macos")]
+use std::os::unix::process::CommandExt;
+
 /// Check if a system switch is already in progress.
 ///
 /// On Linux, probes the NixOS switch lock file (`/run/nixos/switch-to-configuration.lock`)
