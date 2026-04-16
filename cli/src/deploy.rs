@@ -349,7 +349,7 @@ async fn run_inner(
                         // Notify the CP of the deployed store path so it
                         // tracks desired_generation and shows the machine
                         // in sync once the agent confirms.
-                        if let Err(e) = notify_deploy_on_cp(client, cp_url, host, store_path).await
+                        if let Err(e) = notify_generation(client, cp_url, host, store_path).await
                         {
                             tracing::debug!(host, error = %e, "could not notify CP of deploy (CP may be unavailable)");
                         }
@@ -382,10 +382,10 @@ async fn run_inner(
     Ok(())
 }
 
-/// Best-effort: notify the CP of a successful SSH deploy.
-/// Sets the machine's desired generation to the deployed store path so
-/// the CP shows the machine in sync once the agent confirms.
-async fn notify_deploy_on_cp(
+/// Best-effort: tell the CP that a machine is now at a given store path.
+/// Used after both SSH deploy and SSH rollback so the CP tracks the
+/// machine's desired generation and shows it in sync.
+pub async fn notify_generation(
     client: &reqwest::Client,
     cp_url: &str,
     machine_id: &str,

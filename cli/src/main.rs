@@ -866,8 +866,8 @@ async fn main() -> Result<()> {
 }
 
 async fn rollback(
-    _client: &reqwest::Client,
-    _cp_url: &str,
+    client: &reqwest::Client,
+    cp_url: &str,
     host: &str,
     generation: Option<String>,
     target: Option<&str>,
@@ -975,6 +975,11 @@ async fn rollback(
     }
 
     println!("Rollback complete on {}", host);
+
+    // Notify the CP so desired_generation tracks the rollback.
+    if let Err(e) = deploy::notify_generation(client, cp_url, host, &store_path).await {
+        tracing::debug!(host, error = %e, "could not notify CP of rollback (CP may be unavailable)");
+    }
 
     Ok(())
 }
