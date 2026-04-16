@@ -62,7 +62,7 @@ This prevents the race condition where both `nixos-rebuild switch` (manual) and 
 **Darwin:** `launchd.daemons.nixfleet-agent` — KeepAlive=true, RunAtLoad=true. Plist at `/Library/LaunchDaemons/com.nixfleet.agent.plist`.
 
 **Key differences:**
-- Launchd auto-restarts crashed daemons (KeepAlive) — no explicit restart config needed
+- Launchd auto-restarts crashed daemons (KeepAlive = true) — no explicit restart config needed
 - Logs go to `/var/log/nixfleet-agent.log` (StandardOutPath/StandardErrorPath) not journald
 - State directory (`/var/lib/nixfleet`) must be created via `preActivation` script, not systemd's `StateDirectory`
 - WorkingDirectory must exist before the daemon starts or launchd returns I/O error (exit 5)
