@@ -873,7 +873,12 @@ async fn rollback(
     target: Option<&str>,
     darwin: bool,
 ) -> Result<()> {
-    let default_dest = format!("root@{}", host);
+    let default_dest = if darwin {
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        format!("{}@{}", user, host)
+    } else {
+        format!("root@{}", host)
+    };
     let ssh_dest = target.unwrap_or(&default_dest);
 
     let store_path = match generation {
