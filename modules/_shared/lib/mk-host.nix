@@ -46,6 +46,11 @@ in
     # isDarwin must be in effectiveHostSpec so HM modules also see it
     # (the system-level {hostSpec.isDarwin = true;} only applies to the
     # Darwin system config, not to the separate HM module evaluation).
+    # NOTE: `enableHomeManager` and `customFilesystems` defaults below MUST
+    # mirror their `lib.mkOption` defaults in ../host-spec-module.nix. These
+    # values are read here at module-list construction time (before the NixOS
+    # module system evaluates the option), so the option default is not in
+    # scope. If the option default changes, update this block too.
     effectiveHostSpec =
       {
         inherit hostName;

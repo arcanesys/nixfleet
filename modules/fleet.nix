@@ -139,8 +139,10 @@ in {
             device = "/dev/vda1";
             fsType = "ext4";
           };
-          boot.loader.systemd-boot.enable = lib.mkForce true;
-          users.users.root.hashedPasswordFile = null;
+          # Plain assignment (not mkForce) — this exercises the bootloader
+          # mkDefault refactor in core/_nixos.nix. If core reverted to a bare
+          # assignment, this would conflict and fail the eval check.
+          boot.loader.systemd-boot.enable = true;
         })
       ];
     };
