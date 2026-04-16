@@ -89,6 +89,27 @@ nixfleet deploy [FLAGS]
 > bypassing the control plane entirely. Lifecycle state is not checked — a machine in
 > `maintenance` will still receive the deploy. Use `--ssh` as an emergency escape hatch
 > when the CP is unavailable, not as a routine deployment method.
+
+> **Darwin SSH deploy requirements:**
+> SSH deploy to Darwin hosts connects as `$USER@host` (not `root@` — macOS
+> disables root SSH login). This requires:
+>
+> 1. **Username match:** The operator's local username must exist on the
+>    Darwin target with SSH key access. Override with `--target user@host`
+>    for single-host deploys if usernames differ.
+> 2. **Passwordless sudo:** Activation requires root. The target must allow
+>    passwordless sudo for `nix-env` and the activation script:
+>    ```
+>    # nix-darwin: security.sudo.extraConfig
+>    s33d ALL=(root) NOPASSWD: /run/current-system/sw/bin/nix-env *
+>    s33d ALL=(root) NOPASSWD: /nix/store/*/activate
+>    ```
+> 3. **SSH key access:** The operator's SSH public key must be in the
+>    target user's authorized keys.
+>
+> For production mixed-fleet deploys, prefer the **CP rollout path** — the
+> agent runs as root (launchd daemon), pulls from cache, and activates
+> locally with no SSH user/sudo requirements.
 - **Rollout mode** (requires a release): Creates a rollout on the control plane with the specified strategy. Specify an existing release with `--release <ID>`, or use `--push-to <url>` / `--hook` / `--copy` to build + push + register implicitly in one command.
 - **Hook mode** (`--hook`): Uses `[cache.hook] push-cmd` from `.nixfleet.toml` to push closures (e.g., `attic push mycache {}`). Overrides `--push-to` and uses `[cache.hook] url` as the cache URL for agents. Flags `--hook-push-cmd` and `--hook-url` override the config values.
 - **Targeting:** Use `--tags <TAG>` or `--hosts <pattern>` to select machines. Both are intersected with the release's host list (machines not in the release are skipped with a warning).

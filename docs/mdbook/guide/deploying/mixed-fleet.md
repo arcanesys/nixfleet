@@ -102,3 +102,20 @@ Health check config uses `launchd` instead of `systemd`:
 Darwin hosts use `<store_path>/activate` + profile update instead of
 `switch-to-configuration switch`. The agent handles this automatically —
 no operator action needed beyond enabling the agent in the darwin configuration.
+
+## SSH Deploy vs CP Rollout
+
+For Darwin hosts, the **CP rollout path is recommended** — the agent runs
+as root via launchd, pulls closures from the binary cache, and activates
+locally. No SSH user configuration or sudo setup needed.
+
+The `--ssh` deploy path works for Darwin but has additional requirements
+compared to NixOS:
+
+- Connects as `$USER@host` (macOS disables root SSH login)
+- Requires the operator's username to exist on the target with SSH key access
+- Requires passwordless sudo for `nix-env` and `activate` on the target
+- Use `--target user@host` to override the username for single-host deploys
+
+See the [CLI reference](../reference/cli.md#deploy) for the full Darwin SSH
+deploy requirements.
