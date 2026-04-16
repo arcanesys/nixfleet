@@ -91,6 +91,8 @@ This prevents the race condition where both `nixos-rebuild switch` (manual) and 
 
 **Fix:** Write builders to `/etc/nix/machines` directly via `postActivation`, then set `builders = @/etc/nix/machines` in `/etc/nix/nix.custom.conf`. Restart the nix daemon after activation (`sudo launchctl kickstart -k system/systems.determinate.nix-daemon`).
 
+**Trusted users:** Determinate Nix defaults to `trusted-users = root` only. When the Darwin host acts as a remote builder (e.g. for NixOS hosts building Darwin closures), the SSH user must be in `trusted-users` or the daemon rejects input-addressed derivation builds with `"not privileged to build input-addressed derivations"`. Add `trusted-users = root <username>` to `nix.custom.conf`.
+
 ## Remote builder SSH
 
 The nix daemon runs as root on both platforms. For remote builders:
