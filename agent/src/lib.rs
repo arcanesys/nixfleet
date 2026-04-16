@@ -59,6 +59,7 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
         control_plane = %config.control_plane_url,
         poll_interval = ?config.poll_interval,
         dry_run = config.dry_run,
+        version = env!("CARGO_PKG_VERSION"),
         "NixFleet agent starting"
     );
 
