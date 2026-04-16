@@ -180,13 +180,14 @@ pub async fn check_switch_exit_status() -> Result<Option<bool>> {
 
 /// Check the exit status of the system switch.
 ///
-/// Darwin: activation via `fire_switch` is synchronous — if it returned Ok,
-/// the activation succeeded. The polling loop in `lib.rs::fire_poll_switch`
-/// calls this after a poll timeout; on Darwin it immediately confirms success
-/// so the retry loop exits on the first iteration.
+/// Darwin: activation is detached (background process). We can't check
+/// its status directly. Return `None` (inconclusive) so the polling loop
+/// in `fire_poll_switch` waits for `/run/current-system` to update.
+/// If the agent gets killed by the activation, launchd restarts it and
+/// the next poll cycle sees the generation matches.
 #[cfg(target_os = "macos")]
 pub async fn check_switch_exit_status() -> Result<Option<bool>> {
-    Ok(Some(true))
+    Ok(None)
 }
 
 /// Fire system activation for a store path.
@@ -214,28 +215,31 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        info!(store_path, "Activating Darwin system");
+        info!(store_path, "Firing Darwin activation (detached)");
 
-        // Step 1: update profile first (darwin-rebuild does profile before activate)
-        let mut cmd = Command::new("nix-env");
-        cmd.args(["-p", crate::platform::SYSTEM_PROFILE, "--set", store_path]);
-        let output = run_with_timeout(cmd, "nix-env --set profile").await?;
+        // Spawn a detached background process to do the activation.
+        // The activate script may unload/reload the agent's launchd plist,
+        // killing this process mid-activation. By detaching, the shell
+        // continues the activation even after the agent dies. Launchd's
+        // KeepAlive restarts the agent, which then sees the new generation.
+        //
+        // This mirrors the NixOS approach where systemd-run fires a
+        // detached transient unit so the agent survives self-switch.
+        let script = format!(
+            "nix-env -p {profile} --set {path} && {path}/activate",
+            profile = crate::platform::SYSTEM_PROFILE,
+            path = store_path,
+        );
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", &format!("nohup sh -c '{script}' > /var/log/nixfleet-activate.log 2>&1 &")]);
+        let output = run_with_timeout(cmd, "darwin activate (detached)").await?;
+
         if !output.status.success() {
             let stderr = truncated_stderr(&output.stderr);
-            anyhow::bail!("nix-env --set failed: {stderr}");
-        }
-        info!("Darwin profile updated");
-
-        // Step 2: activate (may read from the profile)
-        let activate = format!("{store_path}/activate");
-        let cmd = Command::new(&activate);
-        let output = run_with_timeout(cmd, "darwin activate").await?;
-        if !output.status.success() {
-            let stderr = truncated_stderr(&output.stderr);
-            anyhow::bail!("darwin activate failed: {stderr}");
+            anyhow::bail!("failed to spawn detached activation: {stderr}");
         }
 
-        info!("Darwin system activated");
+        info!("Darwin activation spawned in background");
     }
 
     Ok(())
