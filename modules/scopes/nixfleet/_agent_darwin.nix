@@ -173,6 +173,17 @@ in {
       mkdir -p /var/lib/nixfleet
     '';
 
+    # Force-restart the agent after every activation. nix-darwin's launchd
+    # management only reloads services whose plist changed. When the plist
+    # is unchanged (same agent binary + same config), the agent process
+    # can still be killed during activation (profile switch), and launchd's
+    # KeepAlive doesn't reliably restart it in the transient state. This
+    # ensures the agent is always running after activation completes.
+    system.activationScripts.postActivation.text = lib.mkAfter ''
+      echo "restarting nixfleet agent..." >&2
+      launchctl kickstart -k system/com.nixfleet.agent 2>/dev/null || true
+    '';
+
     launchd.daemons.nixfleet-agent = {
       serviceConfig = {
         Label = "com.nixfleet.agent";
