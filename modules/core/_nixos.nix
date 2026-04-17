@@ -88,16 +88,15 @@ in {
   };
 
   # --- authorized_keys for root (identity-level access for deploys) ---
-  # Root gets the primary operator's SSH keys so that every remote deploy
-  # flow (nixos-rebuild --target-host, nixos-anywhere) has a known path
-  # for root authentication. The primary user is created by the operators
-  # scope (nixfleet-scopes). When no operators scope is active (e.g. bare
-  # edge hosts), root falls back to no managed keys — the consuming fleet
-  # must wire them directly.
+  # Root gets keys from `nixfleet.operators.rootSshKeys` — an explicit list
+  # set by the fleet (typically seeded from admin operator keys via
+  # `nixfleet.operators._adminSshKeys` in nixfleet-scopes). When no
+  # operators scope is active (e.g. bare edge hosts), root falls back to
+  # no managed keys — the consuming fleet must wire them directly.
   users.users.root = {
     openssh.authorizedKeys.keys =
-      lib.mkIf (config ? nixfleet.operators._primary)
-      config.nixfleet.operators._primary.sshAuthorizedKeys;
+      lib.mkIf (config ? nixfleet.operators.rootSshKeys)
+      config.nixfleet.operators.rootSshKeys;
     hashedPasswordFile =
       lib.mkIf (hS.rootHashedPasswordFile != null)
       hS.rootHashedPasswordFile;
