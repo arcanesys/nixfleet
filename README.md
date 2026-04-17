@@ -16,7 +16,7 @@ NixFleet is a framework for managing fleets of NixOS and macOS machines. It prov
 ```nix
 # flake.nix — single machine
 {
-  inputs.nixfleet.url = "github:your-org/nixfleet";
+  inputs.nixfleet.url = "github:arcanesys/nixfleet";
   inputs.nixfleet-scopes.url = "github:arcanesys/nixfleet-scopes";
   inputs.nixpkgs.follows = "nixfleet/nixpkgs";
 
@@ -49,10 +49,10 @@ See `examples/` for more patterns, or use `nix flake init -t nixfleet#fleet` for
 
 ## Documentation
 
-Full documentation: [your-org.github.io/nixfleet](https://your-org.github.io/nixfleet/)
+Full documentation: [arcanesys.github.io/nixfleet](https://arcanesys.github.io/nixfleet/)
 
-- [Quick Start](https://your-org.github.io/nixfleet/guide/getting-started/quick-start.html) — first fleet in 15 minutes
-- [Deploying](https://your-org.github.io/nixfleet/guide/deploying/rollouts.html) — rollout strategies, health checks
+- [Quick Start](https://arcanesys.github.io/nixfleet/guide/getting-started/quick-start.html) — first fleet in 15 minutes
+- [Deploying](https://arcanesys.github.io/nixfleet/guide/deploying/rollouts.html) — rollout strategies, health checks
 - [ADRs](docs/adr/) — architecture decision records
 
 ## Layout
@@ -62,7 +62,7 @@ modules/
 ├── _shared/lib/       # Framework API: mkHost, mkVmApps
 ├── _shared/           # hostSpec options, disk templates
 ├── core/              # Core NixOS/Darwin modules
-├── scopes/            # Scope modules (base, impermanence, agent, control-plane)
+├── scopes/            # Service modules (agent, control-plane, cache, microvm) + impermanence
 ├── tests/             # Eval tests, VM tests, integration tests
 ├── apps.nix           # Flake apps (validate, VM helpers)
 ├── fleet.nix          # Test fleet for framework CI
@@ -75,15 +75,14 @@ examples/
 
 ## Scope Pattern
 
-mkHost auto-includes framework scopes. They self-activate based on hostSpec flags:
+mkHost auto-includes service modules and impermanence. They self-activate based on hostSpec flags or explicit `enable`:
 
 ```nix
 # isImpermanent = true -> impermanence scope activates (btrfs wipe, persistence paths)
-# isMinimal = true -> base scope skips optional packages
 # services.nixfleet-agent.enable = true -> agent service starts
 ```
 
-The framework includes infrastructure scopes for firewall hardening (nftables, SSH rate limiting), secrets wiring (backend-agnostic identity paths), backup scaffolding (systemd timers, health pings), and monitoring (Prometheus node exporter). The agent and control plane expose Prometheus metrics endpoints for fleet-wide observability.
+The framework includes **service modules** (agent, control plane, cache server, cache, microvm host) and **impermanence**. Infrastructure scopes (base, firewall, secrets, backup, monitoring, home-manager, disko) live in the companion repo [`nixfleet-scopes`](https://github.com/arcanesys/nixfleet-scopes) and are imported by consumers via roles or individual scope modules. The agent and control plane expose Prometheus metrics endpoints for fleet-wide observability.
 
 Fleet repos add their own scopes (dev tools, desktop environments, theming, etc.) as plain NixOS/HM modules.
 

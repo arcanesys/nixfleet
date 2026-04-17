@@ -28,16 +28,15 @@ NixFleet is a framework providing `mkHost` -- a single function that returns sta
 
 ```
 mkHost closure (binds framework inputs) ->
-  - hostSpec module (base options)
+  - hostSpec module (identity-only options)
   - disko + impermanence NixOS modules
   - core/_nixos.nix or core/_darwin.nix
-  - scopes/_base.nix, scopes/_impermanence.nix
-  - scopes/_firewall.nix (auto on !isMinimal)
-  - scopes/_secrets.nix, scopes/_backup.nix, scopes/_monitoring.nix (opt-in)
-  - services: _agent.nix, _control-plane.nix, _cache-server.nix, _cache.nix, _microvm-host.nix (disabled by default)
-  - home-manager (user config)
-  - user-provided modules
+  - scopes/nixfleet/_agent.nix (+ _agent_darwin.nix on Darwin)
+  - scopes/nixfleet/_control-plane.nix, _cache-server.nix, _cache.nix, _microvm-host.nix
+  - user-provided modules (including nixfleet-scopes roles, fleet profiles, hardware)
 ```
+
+Infrastructure scopes (base, firewall, secrets, backup, monitoring, home-manager, disko) and roles live in [nixfleet-scopes](https://github.com/arcanesys/nixfleet-scopes). Consumers import them via roles or individual scope modules.
 
 ## Scope Activation
 

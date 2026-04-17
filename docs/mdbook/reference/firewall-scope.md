@@ -1,5 +1,7 @@
 # Firewall Scope
 
+> This module is provided by [nixfleet-scopes](https://github.com/arcanesys/nixfleet-scopes). It is documented here as part of the NixFleet ecosystem reference.
+
 The firewall scope applies SSH rate limiting, connection drop logging, and the nftables backend to all non-minimal hosts. It has no user-configurable options.
 
 ## Activation

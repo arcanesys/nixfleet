@@ -97,5 +97,6 @@ For detailed documentation of agent states, health checks, and rollout strategie
 | `lanzaboote` | Secure Boot |
 | `treefmt-nix` | Multi-language formatting |
 | `microvm` | MicroVM support (microvm.nix) |
+| `nixfleet-scopes` | Companion: infrastructure scopes, roles, disk templates |
 
 Fleet repos add their own inputs as needed (e.g. `agenix` or `sops-nix` for secrets).

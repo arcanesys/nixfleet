@@ -1,5 +1,7 @@
 # Monitoring Options
 
+> This module is provided by [nixfleet-scopes](https://github.com/arcanesys/nixfleet-scopes). It is documented here as part of the NixFleet ecosystem reference.
+
 All options under `nixfleet.monitoring.nodeExporter`. The module is auto-included by mkHost and disabled by default. Enable with `nixfleet.monitoring.nodeExporter.enable = true`.
 
 ## Options

@@ -8,7 +8,7 @@
 #   sudo nixos-rebuild switch --flake .#myhost
 {
   inputs = {
-    nixfleet.url = "github:your-org/nixfleet";
+    nixfleet.url = "github:arcanesys/nixfleet";
     nixpkgs.follows = "nixfleet/nixpkgs";
   };
 
