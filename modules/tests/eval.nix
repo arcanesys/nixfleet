@@ -88,7 +88,8 @@
 
         # --- SSH authorized keys ---
         # Keys come from operators scope: primary operator -> user keys,
-        # primary operator -> root authorized_keys (via core/_nixos.nix).
+        # root authorized_keys sourced from nixfleet.operators.rootSshKeys
+        # (via core/_nixos.nix) — independent of operator accounts.
         eval-ssh-authorized = let
           cfg = nixosCfg "web-01";
           userName = cfg.hostSpec.userName;
@@ -100,7 +101,7 @@
             }
             {
               check = builtins.length cfg.users.users.root.openssh.authorizedKeys.keys > 0;
-              msg = "web-01 root should have SSH authorized keys from primary operator";
+              msg = "web-01 root should have SSH authorized keys from rootSshKeys";
             }
           ];
 
