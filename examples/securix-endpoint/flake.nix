@@ -32,7 +32,7 @@
   description = "Sécurix endpoint under NixFleet mkHost";
 
   inputs = {
-    nixfleet.url = "github:abstracts33d/nixfleet";
+    nixfleet.url = "github:arcanesys/nixfleet";
     nixfleet-scopes.url = "github:arcanesys/nixfleet-scopes";
     # TODO: revert to `github:arcanesys/securix` once the flake-wrapper
     # PR (arcanesys/securix#1) lands on main. Today the flake.nix only

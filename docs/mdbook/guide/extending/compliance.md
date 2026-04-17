@@ -1,10 +1,10 @@
 # Compliance
 
-[nixfleet-compliance](https://github.com/abstracts33d/nixfleet-compliance) provides regulatory compliance controls as NixOS modules. It works standalone or alongside nixfleet — when consumed via `mkHost` on an impermanent system, it automatically persists evidence across reboots.
+[nixfleet-compliance](https://github.com/arcanesys/nixfleet-compliance) provides regulatory compliance controls as NixOS modules. It works standalone or alongside nixfleet — when consumed via `mkHost` on an impermanent system, it automatically persists evidence across reboots.
 
 ```nix
 # Add to your fleet flake.nix inputs:
-inputs.compliance.url = "github:abstracts33d/nixfleet-compliance";
+inputs.compliance.url = "github:arcanesys/nixfleet-compliance";
 
 # In mkHost modules:
 modules = [
@@ -16,4 +16,4 @@ modules = [
 
 This enables 12 NIS2 controls covering all Article 21 requirements. Evidence is collected hourly and written to `/var/lib/nixfleet-compliance/evidence.json`.
 
-See the [nixfleet-compliance README](https://github.com/abstracts33d/nixfleet-compliance) for individual controls, framework options, and evidence format.
+See the [nixfleet-compliance README](https://github.com/arcanesys/nixfleet-compliance) for individual controls, framework options, and evidence format.

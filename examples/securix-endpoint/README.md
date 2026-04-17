@@ -1,6 +1,6 @@
 # `securix-endpoint` — Sécurix endpoint under NixFleet
 
-End-to-end example proving that [Sécurix](https://github.com/arcanesys/securix) (ANSSI-hardened NixOS distribution for government laptops) composes cleanly under [`nixfleet.lib.mkHost`](https://github.com/abstracts33d/nixfleet).
+End-to-end example proving that [Sécurix](https://github.com/arcanesys/securix) (ANSSI-hardened NixOS distribution for government laptops) composes cleanly under [`nixfleet.lib.mkHost`](https://github.com/arcanesys/nixfleet).
 
 ## Composition
 
@@ -82,6 +82,6 @@ Documents the integration hypothesis between NixFleet and Sécurix — showing t
 
 ## See also
 
-- [NixFleet](https://github.com/abstracts33d/nixfleet) — `mkHost` and framework services
+- [NixFleet](https://github.com/arcanesys/nixfleet) — `mkHost` and framework services
 - [`nixfleet-scopes`](https://github.com/arcanesys/nixfleet-scopes) — generic roles and infrastructure scopes
 - [Sécurix](https://github.com/arcanesys/securix) — ANSSI-hardened NixOS distribution
