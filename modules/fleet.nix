@@ -5,8 +5,8 @@
 # are NOT available here — those are declared by consuming fleets.
 #
 # Hosts compose via roles from `arcanesys/nixfleet-scopes`:
-# - server role: base + firewall + secrets + monitoring + user (wheel)
-# - workstation role: base + firewall + secrets + HM + backup + user (groups)
+# - server role: base + operators + firewall + secrets + monitoring + user (wheel)
+# - workstation role: base + operators + firewall + secrets + HM + backup + user (groups)
 # - endpoint role: base + secrets; no user (distro owns user model)
 # - microvm-guest role: base only; no firewall/user (host owns)
 {
@@ -19,15 +19,25 @@
   scopes = inputs.nixfleet-scopes.scopes;
 
   # Shared organization defaults — just a let binding, no framework function.
-  # Placeholder key for eval tests only. Fleet repos set real keys.
+  # userName and sshAuthorizedKeys are now owned by the operators scope.
   orgDefaults = {
-    userName = "deploy";
     timeZone = "UTC";
     locale = "en_US.UTF-8";
     keyboardLayout = "us";
-    sshAuthorizedKeys = [
-      "ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"
-    ];
+  };
+
+  # Shared operators module for hosts using the "deploy" primary user.
+  # Placeholder key for eval tests only. Fleet repos set real keys.
+  orgOperators = {
+    nixfleet.operators = {
+      primaryUser = "deploy";
+      users.deploy = {
+        isAdmin = true;
+        sshAuthorizedKeys = [
+          "ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"
+        ];
+      };
+    };
   };
 in {
   flake.nixosConfigurations = {
@@ -39,6 +49,7 @@ in {
       hostSpec = orgDefaults;
       modules = [
         scopes.roles.server
+        orgOperators
         {nixfleet.impermanence.enable = true;}
       ];
     };
@@ -51,33 +62,40 @@ in {
       hostSpec = orgDefaults;
       modules = [
         scopes.roles.server
+        orgOperators
         {nixfleet.impermanence.enable = true;}
       ];
     };
 
-    # dev-01: developer workstation, custom user
+    # dev-01: developer workstation, custom user (alice)
     dev-01 = mkHost {
       hostName = "dev-01";
       platform = "x86_64-linux";
       isVm = true;
-      hostSpec =
-        orgDefaults
-        // {
-          userName = "alice";
-        };
+      hostSpec = orgDefaults;
       modules = [
         scopes.roles.workstation
+        {
+          nixfleet.operators = {
+            primaryUser = "alice";
+            users.alice = {
+              isAdmin = true;
+              sshAuthorizedKeys = ["ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"];
+            };
+          };
+        }
       ];
     };
 
     # edge-01: minimal edge device (no role — just mkHost mechanism).
     # Represents a "bare" host: gets core/_nixos (nix settings, openssh,
-    # root key) but no scope opinions.
+    # root key) but no scope opinions. Operators scope not active here,
+    # so userName must be set explicitly.
     edge-01 = mkHost {
       hostName = "edge-01";
       platform = "x86_64-linux";
       isVm = true;
-      hostSpec = orgDefaults;
+      hostSpec = orgDefaults // {userName = "deploy";};
     };
 
     # srv-01: production server
@@ -88,6 +106,7 @@ in {
       hostSpec = orgDefaults;
       modules = [
         scopes.roles.server
+        orgOperators
       ];
     };
 
@@ -99,6 +118,7 @@ in {
       hostSpec = orgDefaults;
       modules = [
         scopes.roles.workstation
+        orgOperators
         {
           services.nixfleet-agent = {
             enable = true;
@@ -123,6 +143,7 @@ in {
       hostSpec = orgDefaults;
       modules = [
         scopes.roles.server
+        orgOperators
       ];
     };
 
@@ -134,6 +155,7 @@ in {
       hostSpec = orgDefaults;
       modules = [
         scopes.roles.workstation
+        orgOperators
         scopes.monitoring
         {
           nixfleet.backup = {
@@ -157,6 +179,7 @@ in {
       hostSpec = orgDefaults;
       modules = [
         scopes.roles.server
+        orgOperators
         {
           services.nixfleet-cache-server = {
             enable = true;
@@ -180,6 +203,7 @@ in {
       hostSpec = orgDefaults;
       modules = [
         scopes.roles.server
+        orgOperators
         {
           services.nixfleet-microvm-host = {
             enable = true;
@@ -196,6 +220,7 @@ in {
       hostSpec = orgDefaults;
       modules = [
         scopes.roles.workstation
+        orgOperators
         {
           nixfleet.backup = {
             enable = true;
@@ -212,10 +237,11 @@ in {
 
   flake.darwinConfigurations = {
     # darwin-agent-test: exercises agent with launchd on Darwin
+    # Darwin doesn't use the operators scope yet; userName is set explicitly.
     darwin-agent-test = mkHost {
       hostName = "darwin-agent-test";
       platform = "aarch64-darwin";
-      hostSpec = orgDefaults;
+      hostSpec = orgDefaults // {userName = "deploy";};
       modules = [
         {
           services.nixfleet-agent = {
