@@ -31,6 +31,7 @@
   orgOperators = {
     nixfleet.operators = {
       primaryUser = "deploy";
+      rootSshKeys = ["ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"];
       users.deploy = {
         isAdmin = true;
         sshAuthorizedKeys = [
@@ -78,6 +79,7 @@ in {
         {
           nixfleet.operators = {
             primaryUser = "alice";
+            rootSshKeys = ["ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"];
             users.alice = {
               isAdmin = true;
               sshAuthorizedKeys = ["ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"];

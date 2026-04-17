@@ -369,8 +369,8 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1776449277,
-        "narHash": "sha256-Uvx3VbjlnHfv0kawySGZRZJrHsw07loXBOcYC6r37rM=",
+        "lastModified": 1776455759,
+        "narHash": "sha256-ZUWfQTt6/FXZcpWGwLXXnkc8K6AwXQlo0uDO37Oidvk=",
         "path": "/home/s33d/dev/arcanesys/nixfleet-scopes",
         "type": "path"
       },
