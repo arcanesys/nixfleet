@@ -22,7 +22,11 @@
     };
     userName = lib.mkOption {
       type = lib.types.str;
-      description = "The username of the primary user";
+      default =
+        if config ? nixfleet.operators._primaryName
+        then config.nixfleet.operators._primaryName
+        else throw "hostSpec.userName: set explicitly or define nixfleet.operators";
+      description = "Primary user name. Auto-derived from nixfleet.operators.primaryUser when operators scope is active.";
     };
     home = lib.mkOption {
       type = lib.types.str;
@@ -58,16 +62,6 @@
     };
 
     # --- Access ---
-    sshAuthorizedKeys = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [];
-      description = "SSH public keys for authorized_keys (primary user and root).";
-    };
-    hashedPasswordFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = "Path to hashed password file for primary user. Null = no managed password.";
-    };
     rootHashedPasswordFile = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;

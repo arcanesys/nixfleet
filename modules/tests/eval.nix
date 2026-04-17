@@ -87,6 +87,8 @@
           ];
 
         # --- SSH authorized keys ---
+        # Keys come from operators scope: primary operator -> user keys,
+        # primary operator -> root authorized_keys (via core/_nixos.nix).
         eval-ssh-authorized = let
           cfg = nixosCfg "web-01";
           userName = cfg.hostSpec.userName;
@@ -94,23 +96,21 @@
           mkEvalCheck "ssh-authorized" [
             {
               check = builtins.length cfg.users.users.${userName}.openssh.authorizedKeys.keys > 0;
-              msg = "web-01 should have SSH authorized keys";
+              msg = "web-01 primary operator should have SSH authorized keys";
             }
             {
               check = builtins.length cfg.users.users.root.openssh.authorizedKeys.keys > 0;
-              msg = "web-01 root should have SSH authorized keys";
+              msg = "web-01 root should have SSH authorized keys from primary operator";
             }
           ];
 
         # --- Password file options exist ---
+        # hashedPasswordFile moved to operators scope; only rootHashedPasswordFile
+        # remains on hostSpec (root is not an operator).
         eval-password-files = let
           cfg = nixosCfg "web-01";
         in
           mkEvalCheck "password-files" [
-            {
-              check = cfg.hostSpec ? hashedPasswordFile;
-              msg = "hostSpec should have hashedPasswordFile option";
-            }
             {
               check = cfg.hostSpec ? rootHashedPasswordFile;
               msg = "hostSpec should have rootHashedPasswordFile option";
