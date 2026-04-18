@@ -33,7 +33,8 @@ pub async fn list(
 
     let resp = crate::client::check_response(resp).await?;
 
-    let mut rollouts: Vec<RolloutDetail> = resp.json().await.context("failed to parse rollout list")?;
+    let mut rollouts: Vec<RolloutDetail> =
+        resp.json().await.context("failed to parse rollout list")?;
 
     match sort_by {
         "status" => rollouts.sort_by(|a, b| a.status.to_string().cmp(&b.status.to_string())),
@@ -181,10 +182,7 @@ pub async fn wait_for_completion(
     let is_tty = console::Term::stderr().is_term();
     let pb = if is_tty {
         let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::with_template("{spinner} {msg}")
-                .unwrap(),
-        );
+        pb.set_style(ProgressStyle::with_template("{spinner} {msg}").unwrap());
         pb.enable_steady_tick(std::time::Duration::from_millis(120));
         Some(pb)
     } else {

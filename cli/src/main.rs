@@ -703,7 +703,11 @@ async fn main() -> Result<()> {
                 .await
             }
         }
-        Commands::Status { stale_threshold, watch, interval } => {
+        Commands::Status {
+            stale_threshold,
+            watch,
+            interval,
+        } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
             if watch {
                 let cp = effective_cp_url.to_string();
@@ -711,10 +715,9 @@ async fn main() -> Result<()> {
                 watch::run_loop(interval, json_output, || {
                     let cli = cli.clone();
                     let cp = cp.clone();
-                    async move {
-                        status::run(&cli, &cp, false, stale_threshold).await
-                    }
-                }).await
+                    async move { status::run(&cli, &cp, false, stale_threshold).await }
+                })
+                .await
             } else {
                 status::run(&http_client, effective_cp_url, json_output, stale_threshold).await
             }
@@ -767,7 +770,13 @@ async fn main() -> Result<()> {
                     )
                     .await
                 }
-                RolloutAction::Status { id, wait, wait_timeout, watch, interval } => {
+                RolloutAction::Status {
+                    id,
+                    wait,
+                    wait_timeout,
+                    watch,
+                    interval,
+                } => {
                     if watch {
                         let cp = effective_cp_url.to_string();
                         let cli = http_client.clone();
@@ -776,10 +785,9 @@ async fn main() -> Result<()> {
                             let cli = cli.clone();
                             let cp = cp.clone();
                             let rid = rid.clone();
-                            async move {
-                                rollout::status(&cli, &cp, &rid, false).await
-                            }
-                        }).await
+                            async move { rollout::status(&cli, &cp, &rid, false).await }
+                        })
+                        .await
                     } else {
                         rollout::status(&http_client, effective_cp_url, &id, json_output).await?;
                         if wait {
@@ -788,7 +796,13 @@ async fn main() -> Result<()> {
                             } else {
                                 Some(std::time::Duration::from_secs(wait_timeout))
                             };
-                            rollout::wait_for_completion(&http_client, effective_cp_url, &id, timeout).await?;
+                            rollout::wait_for_completion(
+                                &http_client,
+                                effective_cp_url,
+                                &id,
+                                timeout,
+                            )
+                            .await?;
                         }
                         Ok(())
                     }

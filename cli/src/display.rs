@@ -474,7 +474,10 @@ pub fn format_store_path_compact(path: &str, max_len: usize) -> String {
 
     let overhead = prefix.len() + suffix.len();
     if overhead >= max_len {
-        return format!("{}\u{2026}", &rest[..max_len.saturating_sub(1).min(rest.len())]);
+        return format!(
+            "{}\u{2026}",
+            &rest[..max_len.saturating_sub(1).min(rest.len())]
+        );
     }
 
     let middle_budget = max_len - overhead;
@@ -489,7 +492,9 @@ pub fn format_store_path_compact(path: &str, max_len: usize) -> String {
     let middle = if middle_source.len() <= middle_budget {
         middle_source.to_string()
     } else {
-        let src_budget = middle_budget.saturating_sub(ELLIPSIS_BYTES).min(middle_source.len());
+        let src_budget = middle_budget
+            .saturating_sub(ELLIPSIS_BYTES)
+            .min(middle_source.len());
         format!("{}\u{2026}", &middle_source[..src_budget])
     };
 
@@ -579,10 +584,20 @@ mod tests {
     fn compact_store_path_strips_prefix() {
         let path = "/nix/store/pvravprh0sf53g2ls9d1zpih943qdzzf-nixos-system-krach-20260418-1639_a2b0c1c0_neon-otter";
         let result = format_store_path_compact(path, 40);
-        assert!(!result.starts_with("/nix/store/"), "should strip prefix: {result}");
+        assert!(
+            !result.starts_with("/nix/store/"),
+            "should strip prefix: {result}"
+        );
         assert!(result.contains("pvra"), "should keep hash prefix: {result}");
-        assert!(result.contains("neon-otter"), "should keep release tag: {result}");
-        assert!(result.len() <= 40, "should fit in budget: {result} ({})", result.len());
+        assert!(
+            result.contains("neon-otter"),
+            "should keep release tag: {result}"
+        );
+        assert!(
+            result.len() <= 40,
+            "should fit in budget: {result} ({})",
+            result.len()
+        );
     }
 
     #[test]
@@ -602,7 +617,11 @@ mod tests {
         let path = "/nix/store/abc123def456ghi789jkl012mno345pqr678-nixos-system-web-01-25.05";
         let result = format_store_path_compact(path, 40);
         assert!(result.contains("abc1"), "should keep hash prefix: {result}");
-        assert!(result.len() <= 40, "should fit: {result} ({})", result.len());
+        assert!(
+            result.len() <= 40,
+            "should fit: {result} ({})",
+            result.len()
+        );
     }
 
     #[test]

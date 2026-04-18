@@ -780,7 +780,10 @@ pub async fn diff(
         for entry in &diff.changed {
             println!("  {}", style(format!("~ {}", entry.hostname)).yellow());
             println!("    {}", style(format!("- {}", entry.old_store_path)).red());
-            println!("    {}", style(format!("+ {}", entry.new_store_path)).green());
+            println!(
+                "    {}",
+                style(format!("+ {}", entry.new_store_path)).green()
+            );
         }
     }
     if !diff.unchanged.is_empty() {

@@ -13,7 +13,12 @@ fn is_stale(m: &MachineStatus, threshold_secs: i64) -> bool {
     }
 }
 
-pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool, stale_threshold: u64) -> Result<()> {
+pub async fn run(
+    client: &reqwest::Client,
+    cp_url: &str,
+    json: bool,
+    stale_threshold: u64,
+) -> Result<()> {
     let url = format!("{}/api/v1/machines", cp_url);
 
     let resp = client

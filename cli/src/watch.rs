@@ -3,11 +3,7 @@ use std::future::Future;
 
 /// Run a render function in a loop, clearing the screen between iterations.
 /// Exits cleanly on Ctrl+C.
-pub async fn run_loop<F, Fut>(
-    interval_secs: u64,
-    json: bool,
-    render: F,
-) -> Result<()>
+pub async fn run_loop<F, Fut>(interval_secs: u64, json: bool, render: F) -> Result<()>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<()>>,
