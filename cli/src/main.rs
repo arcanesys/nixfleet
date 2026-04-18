@@ -458,10 +458,19 @@ enum MachineAction {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // Handle shell completions before entering the async runtime.
+    // Completers use reqwest::blocking which panics inside tokio.
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
 
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime")?
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     let cli = Cli::parse();
     display::set_verbosity(cli.verbose);
 
