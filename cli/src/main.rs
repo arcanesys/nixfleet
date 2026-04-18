@@ -1,11 +1,12 @@
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::Path;
 use std::process::Stdio;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 mod client;
+mod completions;
 mod config;
 mod deploy;
 mod display;
@@ -303,6 +304,7 @@ enum RolloutAction {
     /// Show rollout detail with batch breakdown
     Status {
         /// Rollout ID
+        #[arg(add = completions::rollout_id_completer())]
         id: String,
 
         /// Wait for rollout to complete
@@ -325,18 +327,21 @@ enum RolloutAction {
     /// Resume a paused rollout
     Resume {
         /// Rollout ID
+        #[arg(add = completions::rollout_id_completer())]
         id: String,
     },
 
     /// Cancel a rollout
     Cancel {
         /// Rollout ID
+        #[arg(add = completions::rollout_id_completer())]
         id: String,
     },
 
     /// Delete a terminal rollout (completed, cancelled, or failed)
     Delete {
         /// Rollout ID
+        #[arg(add = completions::rollout_id_completer())]
         id: String,
     },
 }
@@ -391,14 +396,22 @@ enum ReleaseAction {
         host: Option<String>,
     },
     /// Show release details
-    Show { release_id: String },
+    Show {
+        #[arg(add = completions::release_id_completer())]
+        release_id: String,
+    },
     /// Diff two releases
     Diff {
+        #[arg(add = completions::release_id_completer())]
         release_id_a: String,
+        #[arg(add = completions::release_id_completer())]
         release_id_b: String,
     },
     /// Delete a release (only if no rollout references it)
-    Delete { release_id: String },
+    Delete {
+        #[arg(add = completions::release_id_completer())]
+        release_id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -413,6 +426,7 @@ enum MachineAction {
     /// Change machine lifecycle state
     SetLifecycle {
         /// Machine ID
+        #[arg(add = completions::machine_id_completer())]
         id: String,
         /// Target state (active, pending, provisioning, maintenance, decommissioned)
         state: String,
@@ -421,6 +435,7 @@ enum MachineAction {
     /// Clear a machine's desired generation
     ClearDesired {
         /// Machine ID
+        #[arg(add = completions::machine_id_completer())]
         id: String,
     },
 
@@ -445,6 +460,8 @@ enum MachineAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
+
     let cli = Cli::parse();
     display::set_verbosity(cli.verbose);
 
