@@ -202,8 +202,9 @@ pub async fn check_switch_exit_status() -> Result<Option<bool>> {
 /// `switch-to-configuration switch` activates the system but the profile
 /// stays at the old generation — on reboot, the old system boots.
 ///
-/// On Darwin, `fire_switch` already handles this inline (nix-env --set
-/// before activate). This function is only called on Linux.
+/// On Darwin, `fire_switch` handles this inline (nix-env --set before
+/// activate). Called explicitly on Linux in `fire_switch`, and on both
+/// platforms via `verify_profile` as a post-switch safety net.
 pub async fn set_profile(store_path: &str) -> Result<()> {
     validate_store_path(store_path)?;
     info!(store_path, "Setting system profile");

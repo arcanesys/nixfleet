@@ -74,15 +74,6 @@ pub async fn post_report(
         )
     })?;
 
-    // Persist runtime state so it survives CP restarts.
-    // This replaces the previous in-memory-only tracking of current_generation
-    // and last_seen, which was lost on every CP restart (Bug #1/#5).
-    let health_status = if report_success { "ok" } else { "error" };
-    crate::log_insert_err(
-        "machine_state",
-        db.upsert_machine_state(&id, &report.current_generation, health_status),
-    );
-
     // Persist health report if present. Serialization of a well-typed
     // Vec<HealthCheckResult> cannot realistically fail, but we still
     // propagate the error as a 500 rather than silently storing "".
@@ -144,6 +135,18 @@ pub async fn post_report(
             db.set_machine_lifecycle(&id, "active"),
         );
         tracing::info!(machine_id = %id, "Auto-activated on first report");
+    }
+
+    // Persist runtime state so it survives CP restarts.
+    // Placed after auto-register so the machine row exists before the upsert
+    // (first-report INSERT race: the machine must be in machines table first).
+    // Read current_generation from machine.last_report (report was moved above).
+    let health_status = if report_success { "ok" } else { "error" };
+    if let Some(ref last) = machine.last_report {
+        crate::log_insert_err(
+            "machine_state",
+            db.upsert_machine_state(&id, &last.current_generation, health_status),
+        );
     }
 
     let actor_id = format!("machine:{id}");

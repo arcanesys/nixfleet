@@ -75,6 +75,13 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
     // tokio worker thread to a Mutex acquire.
     let store = AsyncStore::new(store);
 
+    // SIGTERM handler — launchd (macOS) and systemd (Linux) send SIGTERM
+    // before SIGKILL. Registered before the TLS retry loop so SIGTERM
+    // during the retry window is buffered and fires cleanly when the main
+    // select loop starts (the sigterm.recv() branch fires immediately).
+    let mut sigterm = unix_signal(SignalKind::terminate())
+        .expect("failed to register SIGTERM handler");
+
     // Retry TLS client init with backoff. On Darwin, launchd starts the
     // agent at boot before agenix/sops have decrypted secrets to /run/.
     // The cert files don't exist yet, so Client::new fails. Rather than
@@ -128,12 +135,6 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
             config.retry_interval
         }
     });
-
-    // SIGTERM handler — launchd (macOS) and systemd (Linux) send SIGTERM
-    // before SIGKILL. Without this, the agent ignores SIGTERM and gets
-    // force-killed, which launchd classifies as EX_CONFIG (78).
-    let mut sigterm = unix_signal(SignalKind::terminate())
-        .expect("failed to register SIGTERM handler");
 
     // Main event loop — waits for one of: shutdown, health tick, poll tick.
     // Each branch runs to completion sequentially (no state machine inside select).
@@ -466,7 +467,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_build_interval_first_tick_not_immediate() {
+    async fn test_build_interval_matches_requested_period() {
         let period = Duration::from_secs(10);
         let interval = build_interval(period);
         assert_eq!(interval.period(), period);
