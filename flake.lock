@@ -369,16 +369,15 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1776527646,
+        "lastModified": 1776534144,
         "narHash": "sha256-Ez+g7GfM6jyrsJQMQzVy5deFFpDpbQ707eQsy3NFzQE=",
         "owner": "arcanesys",
         "repo": "nixfleet-scopes",
-        "rev": "9c9ac1cee1102b8f8a6fae4ef6be388870adace2",
+        "rev": "f546b35164dbccef5618c1e99ed248843c1c57bb",
         "type": "github"
       },
       "original": {
         "owner": "arcanesys",
-        "ref": "fix/darwin-nix-custom-conf",
         "repo": "nixfleet-scopes",
         "type": "github"
       }
