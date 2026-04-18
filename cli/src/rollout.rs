@@ -182,7 +182,12 @@ pub async fn wait_for_completion(
     let is_tty = console::Term::stderr().is_term();
     let pb = if is_tty {
         let pb = ProgressBar::new_spinner();
-        pb.set_style(ProgressStyle::with_template("{spinner} {msg}").unwrap());
+        pb.set_style(
+            ProgressStyle::with_template("{spinner} {prefix} {bar:30} {pos}/{len}  {msg}")
+                .unwrap()
+                .progress_chars("\u{2588}\u{2593}\u{2591}"),
+        );
+        pb.set_prefix("waiting");
         pb.enable_steady_tick(std::time::Duration::from_millis(120));
         Some(pb)
     } else {
@@ -234,18 +239,13 @@ pub async fn wait_for_completion(
             .map(|i| i + 1)
             .unwrap_or(0);
 
-        let msg = format!(
-            "Rollout {} \u{2014} batch {}/{} \u{2014} {}/{} healthy \u{2014} {}",
-            id,
-            current_batch,
-            rollout.batches.len(),
-            healthy_machines,
-            total_machines,
-            rollout.status,
-        );
-
         if let Some(ref pb) = pb {
-            pb.set_message(msg);
+            pb.set_length(rollout.batches.len() as u64);
+            pb.set_position(current_batch as u64);
+            pb.set_message(format!(
+                "{}/{} healthy \u{2014} {}",
+                healthy_machines, total_machines, rollout.status,
+            ));
         } else {
             tracing::info!(
                 batch = current_batch,
@@ -261,6 +261,15 @@ pub async fn wait_for_completion(
             if let Some(ref pb) = pb {
                 pb.finish_and_clear();
             }
+            tracing::info!(
+                batch = current_batch,
+                total_batches = rollout.batches.len(),
+                healthy = healthy_machines,
+                total = total_machines,
+                status = %rollout.status,
+                elapsed = ?started.elapsed(),
+                "rollout finished"
+            );
             println!(
                 "Rollout {} finished: {} ({} machines, {} batches)",
                 id,
