@@ -186,10 +186,11 @@ in {
                 echo ""
                 echo "=== Rust Package Builds (nix sandbox) ==="
                 prebuild_parallel \
-                  .#packages.${system}.nixfleet-workspace \
+                  .#checks.${system}.workspace-tests \
                   .#packages.${system}.nixfleet-agent \
                   .#packages.${system}.nixfleet-control-plane \
                   .#packages.${system}.nixfleet-cli
+                check "workspace-tests" nix build ".#checks.${system}.workspace-tests" --no-link
                 for pkg in nixfleet-agent nixfleet-control-plane nixfleet-cli; do
                   check "package: $pkg" \
                     nix build ".#packages.${system}.$pkg" --no-link
