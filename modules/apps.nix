@@ -186,7 +186,6 @@ in {
                 echo ""
                 echo "=== Rust Package Builds (nix sandbox) ==="
                 prebuild_parallel \
-                  .#packages.${system}.nixfleet-workspace \
                   .#packages.${system}.nixfleet-agent \
                   .#packages.${system}.nixfleet-control-plane \
                   .#packages.${system}.nixfleet-cli
