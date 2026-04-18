@@ -9,6 +9,7 @@ mod client;
 mod config;
 mod deploy;
 mod display;
+mod git;
 mod glob;
 mod host;
 mod machines;
@@ -67,6 +68,10 @@ enum Commands {
         /// Dry run: build closures and show what would happen, but don't push
         #[arg(long)]
         dry_run: bool,
+
+        /// Skip the dirty working tree check
+        #[arg(long)]
+        allow_dirty: bool,
 
         /// SSH fallback mode: copy closures and switch via SSH instead of control plane
         #[arg(long, help_heading = "SSH Mode")]
@@ -328,6 +333,9 @@ enum ReleaseAction {
         cache_url: Option<String>,
         #[arg(long)]
         dry_run: bool,
+        /// Skip the dirty working tree check
+        #[arg(long)]
+        allow_dirty: bool,
         /// Evaluate store paths without building (assumes closures in cache)
         #[arg(
             long,
@@ -485,6 +493,7 @@ async fn main() -> Result<()> {
         Commands::Deploy {
             hosts,
             dry_run,
+            allow_dirty,
             ssh,
             target,
             flake,
@@ -504,6 +513,17 @@ async fn main() -> Result<()> {
             cache_url,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
+
+            // Dirty tree guard: block non-SSH, non-dry-run deploys from uncommitted trees
+            if !ssh && !dry_run && !allow_dirty {
+                let flake_dir = std::path::Path::new(&flake);
+                let check_dir = if flake_dir.is_dir() {
+                    flake_dir.to_path_buf()
+                } else {
+                    std::env::current_dir().unwrap_or_default()
+                };
+                git::check_clean(&check_dir).await?;
+            }
 
             // --hook mode: use hook config for push-cmd and cache-url
             let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
@@ -696,6 +716,7 @@ async fn main() -> Result<()> {
             match action {
                 ReleaseAction::Create {
                     flake,
+                    allow_dirty,
                     hosts,
                     push_to,
                     hook,
@@ -727,6 +748,15 @@ async fn main() -> Result<()> {
                         let cu = cache_url.or_else(|| resolved.cache_url.clone());
                         (pt, None, cu)
                     };
+                    if !dry_run && !allow_dirty {
+                        let flake_dir = std::path::Path::new(&flake);
+                        let check_dir = if flake_dir.is_dir() {
+                            flake_dir.to_path_buf()
+                        } else {
+                            std::env::current_dir().unwrap_or_default()
+                        };
+                        git::check_clean(&check_dir).await?;
+                    }
                     let (_, mut oplog) = release::create(
                         &http_client,
                         effective_cp_url,
