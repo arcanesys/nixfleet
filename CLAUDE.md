@@ -105,16 +105,18 @@ The rollout executor verifies that each agent's `current_generation` matches the
 
 ## Control Plane API
 
+When `tls.clientCa` is set, **all** connections require a valid mTLS client certificate. Agent endpoints need only the cert; admin endpoints require both cert + API key (defense-in-depth). See [ADR-007](docs/adr/007-auth-route-split.md).
+
 ### API Endpoints
 
-#### Agent-facing (mTLS, no API key)
+#### Agent-facing (mTLS only)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/machines/{id}/desired-generation` | Poll for desired state |
 | POST | `/api/v1/machines/{id}/report` | Report deploy result + health |
 
-#### Admin (API key required, role-gated)
+#### Admin (mTLS + API key, role-gated)
 
 Roles: `admin` (full access), `deploy` (create releases/rollouts), `readonly` (read-only).
 
