@@ -239,13 +239,45 @@ pub async fn wait_for_completion(
             .map(|i| i + 1)
             .unwrap_or(0);
 
+        // Per-batch health for the active batch
+        let active_batch = rollout.batches.iter().find(|b| {
+            matches!(
+                b.status,
+                nixfleet_types::rollout::BatchStatus::Deploying
+                    | nixfleet_types::rollout::BatchStatus::WaitingHealth
+            )
+        });
+        let (batch_healthy, batch_total) = active_batch
+            .map(|b| {
+                let healthy = b
+                    .machine_health
+                    .values()
+                    .filter(|h| matches!(h, nixfleet_types::rollout::MachineHealthStatus::Healthy))
+                    .count();
+                (healthy, b.machine_ids.len())
+            })
+            .unwrap_or((0, 0));
+
         if let Some(ref pb) = pb {
             pb.set_length(rollout.batches.len() as u64);
             pb.set_position(current_batch as u64);
-            pb.set_message(format!(
-                "{}/{} healthy \u{2014} {}",
-                healthy_machines, total_machines, rollout.status,
-            ));
+            let msg = if rollout.batches.len() > 1 && current_batch > 0 {
+                format!(
+                    "batch {}: {}/{} healthy ({}/{} total) \u{2014} {}",
+                    current_batch,
+                    batch_healthy,
+                    batch_total,
+                    healthy_machines,
+                    total_machines,
+                    rollout.status,
+                )
+            } else {
+                format!(
+                    "{}/{} healthy \u{2014} {}",
+                    healthy_machines, total_machines, rollout.status,
+                )
+            };
+            pb.set_message(msg);
         } else {
             tracing::info!(
                 batch = current_batch,
