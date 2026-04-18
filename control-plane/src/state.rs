@@ -89,6 +89,27 @@ pub async fn hydrate_from_db(
         if let Some(lc) = MachineLifecycle::from_str_lc(&row.lifecycle) {
             machine.lifecycle = lc;
         }
+        // Restore runtime state from DB so the CP doesn't lose track
+        // of what each machine is running after a restart.
+        if let Some(ref gen) = row.current_generation {
+            machine.last_report = Some(Report {
+                machine_id: row.machine_id.clone(),
+                current_generation: gen.clone(),
+                success: row.health_status.as_deref() == Some("ok"),
+                message: "restored from db".to_string(),
+                timestamp: chrono::Utc::now(),
+                tags: vec![],
+                health: None,
+                agent_version: String::new(),
+                uptime_seconds: 0,
+            });
+        }
+        if let Some(ref last_seen) = row.last_seen {
+            if let Ok(ts) = chrono::NaiveDateTime::parse_from_str(last_seen, "%Y-%m-%d %H:%M:%S") {
+                machine.last_received =
+                    Some(chrono::DateTime::from_naive_utc_and_offset(ts, chrono::Utc));
+            }
+        }
     }
 
     // Load tags for each registered machine

@@ -74,6 +74,15 @@ pub async fn post_report(
         )
     })?;
 
+    // Persist runtime state so it survives CP restarts.
+    // This replaces the previous in-memory-only tracking of current_generation
+    // and last_seen, which was lost on every CP restart (Bug #1/#5).
+    let health_status = if report_success { "ok" } else { "error" };
+    crate::log_insert_err(
+        "machine_state",
+        db.upsert_machine_state(&id, &report.current_generation, health_status),
+    );
+
     // Persist health report if present. Serialization of a well-typed
     // Vec<HealthCheckResult> cannot realistically fail, but we still
     // propagate the error as a 500 rather than silently storing "".
