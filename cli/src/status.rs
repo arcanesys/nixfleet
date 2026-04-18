@@ -3,9 +3,6 @@ use nixfleet_types::MachineStatus;
 
 use crate::display;
 
-/// A machine is considered stale if its last report is older than this many seconds.
-const STALE_THRESHOLD_SECS: i64 = 300;
-
 fn is_stale(m: &MachineStatus, threshold_secs: i64) -> bool {
     match m.last_report {
         Some(last) => {
@@ -16,7 +13,7 @@ fn is_stale(m: &MachineStatus, threshold_secs: i64) -> bool {
     }
 }
 
-pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool) -> Result<()> {
+pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool, stale_threshold: u64) -> Result<()> {
     let url = format!("{}/api/v1/machines", cp_url);
 
     let resp = client
@@ -38,7 +35,7 @@ pub async fn run(client: &reqwest::Client, cp_url: &str, json: bool) -> Result<(
         return Ok(());
     }
 
-    let stale_threshold = STALE_THRESHOLD_SECS;
+    let stale_threshold = stale_threshold as i64;
 
     let rows: Vec<Vec<String>> = machines
         .iter()

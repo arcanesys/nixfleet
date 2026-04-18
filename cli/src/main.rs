@@ -17,6 +17,7 @@ mod oplog;
 mod release;
 mod rollout;
 mod status;
+mod watch;
 
 #[derive(Parser)]
 #[command(name = "nixfleet", about = "NixFleet fleet management CLI", version)]
@@ -161,7 +162,19 @@ enum Commands {
     },
 
     /// Show fleet status from the control plane
-    Status {},
+    Status {
+        /// Seconds without a report before a machine is marked stale (default: 600)
+        #[arg(long, default_value = "600")]
+        stale_threshold: u64,
+
+        /// Continuously refresh the display
+        #[arg(long)]
+        watch: bool,
+
+        /// Refresh interval in seconds (requires --watch)
+        #[arg(long, default_value = "2", requires = "watch")]
+        interval: u64,
+    },
 
     /// Rollback a host to a previous generation
     Rollback {
@@ -295,6 +308,14 @@ enum RolloutAction {
         /// Timeout in seconds for --wait (0 = wait forever, default: 300)
         #[arg(long, default_value = "300")]
         wait_timeout: u64,
+
+        /// Continuously refresh the display
+        #[arg(long, conflicts_with = "wait")]
+        watch: bool,
+
+        /// Refresh interval in seconds (requires --watch)
+        #[arg(long, default_value = "2", requires = "watch")]
+        interval: u64,
     },
 
     /// Resume a paused rollout
@@ -661,9 +682,21 @@ async fn main() -> Result<()> {
                 .await
             }
         }
-        Commands::Status {} => {
+        Commands::Status { stale_threshold, watch, interval } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
-            status::run(&http_client, effective_cp_url, json_output).await
+            if watch {
+                let cp = effective_cp_url.to_string();
+                let cli = http_client.clone();
+                watch::run_loop(interval, json_output, || {
+                    let cli = cli.clone();
+                    let cp = cp.clone();
+                    async move {
+                        status::run(&cli, &cp, false, stale_threshold).await
+                    }
+                }).await
+            } else {
+                status::run(&http_client, effective_cp_url, json_output, stale_threshold).await
+            }
         }
         Commands::Rollback {
             host,
@@ -712,17 +745,31 @@ async fn main() -> Result<()> {
                     )
                     .await
                 }
-                RolloutAction::Status { id, wait, wait_timeout } => {
-                    rollout::status(&http_client, effective_cp_url, &id, json_output).await?;
-                    if wait {
-                        let timeout = if wait_timeout == 0 {
-                            Some(std::time::Duration::ZERO)
-                        } else {
-                            Some(std::time::Duration::from_secs(wait_timeout))
-                        };
-                        rollout::wait_for_completion(&http_client, effective_cp_url, &id, timeout).await?;
+                RolloutAction::Status { id, wait, wait_timeout, watch, interval } => {
+                    if watch {
+                        let cp = effective_cp_url.to_string();
+                        let cli = http_client.clone();
+                        let rid = id.clone();
+                        watch::run_loop(interval, json_output, || {
+                            let cli = cli.clone();
+                            let cp = cp.clone();
+                            let rid = rid.clone();
+                            async move {
+                                rollout::status(&cli, &cp, &rid, false).await
+                            }
+                        }).await
+                    } else {
+                        rollout::status(&http_client, effective_cp_url, &id, json_output).await?;
+                        if wait {
+                            let timeout = if wait_timeout == 0 {
+                                Some(std::time::Duration::ZERO)
+                            } else {
+                                Some(std::time::Duration::from_secs(wait_timeout))
+                            };
+                            rollout::wait_for_completion(&http_client, effective_cp_url, &id, timeout).await?;
+                        }
+                        Ok(())
                     }
-                    Ok(())
                 }
                 RolloutAction::Resume { id } => {
                     rollout::resume(&http_client, effective_cp_url, &id).await
