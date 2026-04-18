@@ -337,6 +337,13 @@ async fn run_inner(
                         }
                     }
                 };
+                // Notify the CP of the target store path BEFORE switching
+                // so the agent (which restarts during switch) sees the
+                // correct desired generation on its first poll.
+                if let Err(e) = notify_generation(client, cp_url, host, store_path).await
+                {
+                    tracing::debug!(host, error = %e, "could not notify CP of deploy (CP may be unavailable)");
+                }
                 match deploy_via_ssh(
                     host,
                     store_path,
@@ -349,13 +356,6 @@ async fn run_inner(
                 {
                     Ok(()) => {
                         tracing::info!(host, "deployed");
-                        // Notify the CP of the deployed store path so it
-                        // tracks desired_generation and shows the machine
-                        // in sync once the agent confirms.
-                        if let Err(e) = notify_generation(client, cp_url, host, store_path).await
-                        {
-                            tracing::debug!(host, error = %e, "could not notify CP of deploy (CP may be unavailable)");
-                        }
                         success_count += 1;
                     }
                     Err(e) => {
