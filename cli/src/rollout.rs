@@ -203,6 +203,7 @@ pub async fn wait_for_completion(
 
         if !resp.status().is_success() {
             if let Some(ref pb) = pb {
+                pb.disable_steady_tick();
                 pb.finish_and_clear();
             }
             bail!(
@@ -291,6 +292,7 @@ pub async fn wait_for_completion(
 
         if !rollout.status.is_active() {
             if let Some(ref pb) = pb {
+                pb.disable_steady_tick();
                 pb.finish_and_clear();
             }
             tracing::info!(
@@ -317,6 +319,7 @@ pub async fn wait_for_completion(
 
         if !timeout.is_zero() && started.elapsed() >= timeout {
             if let Some(ref pb) = pb {
+                pb.disable_steady_tick();
                 pb.finish_and_clear();
             }
             bail!(
