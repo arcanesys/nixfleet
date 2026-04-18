@@ -47,7 +47,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     nixfleet-scopes = {
-      url = "github:arcanesys/nixfleet-scopes";
+      url = "github:arcanesys/nixfleet-scopes/fix/darwin-nix-custom-conf";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
