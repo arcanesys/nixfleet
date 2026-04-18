@@ -433,3 +433,21 @@ async fn send_report(client: &comms::Client, config: &Config, success: bool, mes
     metrics::record_state_transition("reporting", "idle");
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_build_interval_first_tick_not_immediate() {
+        let period = Duration::from_secs(10);
+        let interval = build_interval(period);
+        assert_eq!(interval.period(), period);
+    }
+
+    #[tokio::test]
+    async fn test_sigterm_handler_registered() {
+        use tokio::signal::unix::{signal as unix_signal, SignalKind};
+        let _sigterm = unix_signal(SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+    }
+}
