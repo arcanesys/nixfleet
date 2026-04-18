@@ -61,11 +61,15 @@ pub async fn run(
                 Some(_) => "outdated".to_string(),
                 None => "\u{2014}".to_string(),
             };
-            let current = display::format_store_path_compact(&m.current_generation, 40);
+            let current = if m.current_generation.is_empty() {
+                "\u{2014}".to_string()
+            } else {
+                display::format_store_path_compact(&m.current_generation, 50)
+            };
             let desired = m
                 .desired_generation
                 .as_deref()
-                .map(|d| display::format_store_path_compact(d, 40))
+                .map(|d| display::format_store_path_compact(d, 50))
                 .unwrap_or_else(|| "(none)".to_string());
             let last_seen = m
                 .last_report

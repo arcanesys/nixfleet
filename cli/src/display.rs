@@ -498,7 +498,8 @@ pub fn format_store_path_compact(path: &str, max_len: usize) -> String {
         format!("{}\u{2026}", &middle_source[..src_budget])
     };
 
-    format!("{prefix}{middle}{suffix}")
+    let result = format!("{prefix}{middle}{suffix}");
+    result.replace("\u{2026}\u{2026}", "\u{2026}")
 }
 
 // ---------------------------------------------------------------
