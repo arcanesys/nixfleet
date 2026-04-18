@@ -230,18 +230,34 @@ function _clap_dynamic_completer_nixfleet() {{
             local -a val_ids=()
             local -a val_labels=()
             local v
+            local idx=0
             for v in $vals; do
-                val_ids+=("${{v%%:*}}")
+                local id="${{v%%:*}}"
+                val_ids+=("$id")
                 if [[ "$v" == *:* ]]; then
-                    val_labels+=("${{v%%:*}}  -- ${{v#*:}}")
+                    val_labels+=("$(printf '%03d' $idx) ${{v#*:}}  $id")
                 else
-                    val_labels+=("${{v%%:*}}")
+                    val_labels+=("$(printf '%03d' $idx) $id")
+                fi
+                (( idx++ ))
+            done
+            compadd -V 1-values -l -d val_labels -a val_ids
+        fi
+        [[ -n $dirs ]] && compadd -V 2-dirs -a dirs
+        if [[ -n $opts ]]; then
+            local -a opt_ids=()
+            local -a opt_labels=()
+            local o
+            for o in $opts; do
+                opt_ids+=("${{o%%:*}}")
+                if [[ "$o" == *:* ]]; then
+                    opt_labels+=("${{o%%:*}}  -- ${{o#*:}}")
+                else
+                    opt_labels+=("${{o%%:*}}")
                 fi
             done
-            compadd -V values -d val_labels -a val_ids
+            compadd -V 3-options -l -d opt_labels -a opt_ids
         fi
-        [[ -n $dirs ]] && _describe 'dirs' dirs -S '/' -r '/'
-        [[ -n $opts ]] && _describe 'options' opts
     fi
 }}
 
