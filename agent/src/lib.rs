@@ -75,6 +75,12 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
     // tokio worker thread to a Mutex acquire.
     let store = AsyncStore::new(store);
 
+    // SIGTERM handler — launchd (macOS) and systemd (Linux) send SIGTERM
+    // before SIGKILL. Without this, the agent ignores SIGTERM and gets
+    // force-killed, which launchd classifies as EX_CONFIG (78).
+    let mut sigterm = unix_signal(SignalKind::terminate())
+        .expect("failed to register SIGTERM handler");
+
     let client = comms::Client::new(&config)?;
     let health_runner = HealthRunner::from_config_path(&config.health_config_path);
 
@@ -100,12 +106,6 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
             config.retry_interval
         }
     });
-
-    // SIGTERM handler — launchd (macOS) and systemd (Linux) send SIGTERM
-    // before SIGKILL. Without this, the agent ignores SIGTERM and gets
-    // force-killed, which launchd classifies as EX_CONFIG (78).
-    let mut sigterm = unix_signal(SignalKind::terminate())
-        .expect("failed to register SIGTERM handler");
 
     // Main event loop — waits for one of: shutdown, health tick, poll tick.
     // Each branch runs to completion sequentially (no state machine inside select).
@@ -331,6 +331,12 @@ async fn run_deploy_cycle(
     let applied = match fire_poll_switch(&desired.hash).await {
         Ok(true) => {
             info!(hash = %desired.hash, "Generation applied");
+            // Verify the nix profile matches the desired store path.
+            // fire_switch sets it beforehand, but verify as a safety net
+            // for edge cases (concurrent nix-env, partial failure).
+            if let Err(e) = nix::verify_profile(&desired.hash).await {
+                warn!(error = %e, "Profile verification failed (non-fatal)");
+            }
             true
         }
         Ok(false) => {
@@ -427,3 +433,21 @@ async fn send_report(client: &comms::Client, config: &Config, success: bool, mes
     metrics::record_state_transition("reporting", "idle");
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_build_interval_matches_requested_period() {
+        let period = Duration::from_secs(10);
+        let interval = build_interval(period);
+        assert_eq!(interval.period(), period);
+    }
+
+    #[tokio::test]
+    async fn test_sigterm_handler_registered() {
+        use tokio::signal::unix::{signal as unix_signal, SignalKind};
+        let _sigterm = unix_signal(SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+    }
+}

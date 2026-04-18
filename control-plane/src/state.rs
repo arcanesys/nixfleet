@@ -89,6 +89,29 @@ pub async fn hydrate_from_db(
         if let Some(lc) = MachineLifecycle::from_str_lc(&row.lifecycle) {
             machine.lifecycle = lc;
         }
+        // Parse last_seen first so we can use it in both the Report and last_received
+        let last_received = row.last_seen.as_ref().and_then(|last_seen| {
+            chrono::NaiveDateTime::parse_from_str(last_seen, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|ts| chrono::DateTime::from_naive_utc_and_offset(ts, chrono::Utc))
+        });
+
+        // Restore runtime state from DB so the CP doesn't lose track
+        // of what each machine is running after a restart.
+        if let Some(ref gen) = row.current_generation {
+            machine.last_report = Some(Report {
+                machine_id: row.machine_id.clone(),
+                current_generation: gen.clone(),
+                success: row.health_status.as_deref() == Some("ok"),
+                message: "restored from db".to_string(),
+                timestamp: last_received.unwrap_or_else(chrono::Utc::now),
+                tags: vec![],
+                health: None,
+                agent_version: String::new(),
+                uptime_seconds: 0,
+            });
+        }
+        machine.last_received = last_received;
     }
 
     // Load tags for each registered machine

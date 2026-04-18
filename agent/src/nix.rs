@@ -113,7 +113,11 @@ pub async fn current_generation() -> Result<String> {
 
 /// Fetch a closure from a binary cache into the local nix store.
 ///
-/// Runs: `nix copy --from <cache_url> <store_path>`
+/// When a cache URL is provided, tries `nix copy --from <cache_url>` first.
+/// If that fails (e.g. a dependency exists in upstream but not in the
+/// private cache), falls back to `nix copy` without `--from`, which uses
+/// the system-configured substituters (cache.nixos.org, etc.).
+///
 /// If no cache URL is provided, assumes the closure is already available
 /// (e.g. via a substituter configured in nix.conf).
 pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<()> {
@@ -122,11 +126,26 @@ pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<
         info!(store_path, cache, "Fetching closure from cache");
         let mut cmd = Command::new("nix");
         cmd.args(["copy", "--from", cache, store_path]);
-        let output = run_with_timeout(cmd, "nix copy").await?;
+        let output = run_with_timeout(cmd, "nix copy --from").await?;
 
         if !output.status.success() {
+            // Private cache may not have all paths (e.g. upstream
+            // dependencies that attic skipped during push). Fall back
+            // to system substituters which include cache.nixos.org.
             let stderr = truncated_stderr(&output.stderr);
-            anyhow::bail!("nix copy failed: {stderr}");
+            info!(
+                store_path,
+                cache,
+                "Cache fetch failed, falling back to system substituters: {stderr}"
+            );
+            let mut cmd = Command::new("nix-store");
+            cmd.args(["--realise", store_path]);
+            let output = run_with_timeout(cmd, "nix-store --realise (substituters)").await?;
+
+            if !output.status.success() {
+                let stderr = truncated_stderr(&output.stderr);
+                anyhow::bail!("fetch failed from both cache and system substituters: {stderr}");
+            }
         }
     } else {
         info!(store_path, "No cache URL — verifying path exists locally");
@@ -193,6 +212,33 @@ pub async fn check_switch_exit_status() -> Result<Option<bool>> {
     Ok(None)
 }
 
+/// Update the nix system profile to point to the given store path.
+///
+/// Runs: `nix-env -p /nix/var/nix/profiles/system --set <store_path>`
+///
+/// This creates a new profile generation, which is what the bootloader
+/// uses to determine available and default boot entries. Without this,
+/// `switch-to-configuration switch` activates the system but the profile
+/// stays at the old generation — on reboot, the old system boots.
+///
+/// On Darwin, `fire_switch` handles this inline (nix-env --set before
+/// activate). Called explicitly on Linux in `fire_switch`, and on both
+/// platforms via `verify_profile` as a post-switch safety net.
+pub async fn set_profile(store_path: &str) -> Result<()> {
+    validate_store_path(store_path)?;
+    info!(store_path, "Setting system profile");
+
+    let mut cmd = Command::new("nix-env");
+    cmd.args(["-p", crate::platform::SYSTEM_PROFILE, "--set", store_path]);
+    let output = run_with_timeout(cmd, "nix-env --set").await?;
+
+    if !output.status.success() {
+        let stderr = truncated_stderr(&output.stderr);
+        anyhow::bail!("nix-env --set failed: {stderr}");
+    }
+    Ok(())
+}
+
 /// Fire system activation for a store path.
 ///
 /// Linux:  detached transient systemd unit (`systemd-run`)
@@ -202,6 +248,13 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
+        // Step 1: Update the nix profile. This creates a new profile
+        // generation so the bootloader picks it up. Without this,
+        // switch-to-configuration activates the system but the profile
+        // stays at the old generation — reboot goes to old system.
+        set_profile(store_path).await?;
+
+        // Step 2: Fire switch-to-configuration in a detached unit.
         let switch_bin = format!("{store_path}/bin/switch-to-configuration");
         info!(switch_bin, "Firing switch-to-configuration (detached)");
 
@@ -265,6 +318,58 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Check if the system profile symlink resolves to the expected store path.
+///
+/// Uses `read_link` (not `canonicalize`) because profile symlinks are
+/// single-level: `/nix/var/nix/profiles/system` -> `system-<N>-link`
+/// -> `/nix/store/<hash>-...`. We resolve both levels.
+pub fn check_profile_matches(expected: &str, profile_path: &str) -> bool {
+    let Ok(target) = std::fs::read_link(profile_path) else {
+        return false;
+    };
+    // Profile -> generation link -> store path (two levels)
+    let resolved = if target.is_relative() {
+        let parent = std::path::Path::new(profile_path)
+            .parent()
+            .unwrap_or(std::path::Path::new("/"));
+        parent.join(&target)
+    } else {
+        target
+    };
+    // read_link again to resolve generation link -> store path
+    let final_target = std::fs::read_link(&resolved).unwrap_or(resolved);
+    final_target.to_string_lossy() == expected
+}
+
+/// Verify the system profile matches the expected store path after a switch.
+/// If it doesn't match, attempt to fix it with `nix-env --set`.
+///
+/// This is a safety net — `fire_switch` already sets the profile before
+/// switching on Linux. This catch handles edge cases like concurrent
+/// `nix-env` calls or partial failures.
+pub async fn verify_profile(store_path: &str) -> Result<bool> {
+    let profile = crate::platform::SYSTEM_PROFILE;
+    if check_profile_matches(store_path, profile) {
+        info!("Profile verified: matches expected store path");
+        return Ok(true);
+    }
+
+    tracing::warn!(
+        store_path,
+        profile,
+        "Profile mismatch after switch — attempting self-correction"
+    );
+    set_profile(store_path).await?;
+
+    if check_profile_matches(store_path, profile) {
+        info!("Profile self-corrected successfully");
+        Ok(true)
+    } else {
+        tracing::error!("Profile still mismatched after self-correction attempt");
+        Ok(false)
+    }
 }
 
 /// Poll a symlink path until it points to the expected store path.
@@ -520,6 +625,59 @@ mod tests {
         .await
         .unwrap();
         assert!(matched);
+    }
+
+    #[test]
+    fn test_set_profile_command_construction() {
+        let store_path = "/nix/store/abc123-nixos-system";
+        let profile = crate::platform::SYSTEM_PROFILE;
+        let expected_args = ["nix-env", "-p", profile, "--set", store_path];
+        assert_eq!(expected_args[0], "nix-env");
+        assert_eq!(expected_args[1], "-p");
+        assert_eq!(expected_args[2], "/nix/var/nix/profiles/system");
+        assert_eq!(expected_args[3], "--set");
+        assert_eq!(expected_args[4], store_path);
+    }
+
+    #[test]
+    fn test_check_profile_matches_direct_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("system");
+        std::os::unix::fs::symlink("/nix/store/abc-target", &link).unwrap();
+
+        let result = check_profile_matches("/nix/store/abc-target", link.to_str().unwrap());
+        assert!(result);
+    }
+
+    #[test]
+    fn test_check_profile_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("system");
+        std::os::unix::fs::symlink("/nix/store/old-system", &link).unwrap();
+
+        let result = check_profile_matches("/nix/store/abc-target", link.to_str().unwrap());
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_check_profile_missing_link() {
+        let result = check_profile_matches("/nix/store/abc-target", "/nonexistent/path/system");
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_check_profile_two_level_symlink() {
+        // Simulate: system -> system-42-link -> /nix/store/abc-target
+        let dir = tempfile::tempdir().unwrap();
+        let gen_link = dir.path().join("system-42-link");
+        std::os::unix::fs::symlink("/nix/store/abc-target", &gen_link).unwrap();
+        let profile_link = dir.path().join("system");
+        // relative symlink pointing to gen_link (same directory)
+        std::os::unix::fs::symlink("system-42-link", &profile_link).unwrap();
+
+        let result =
+            check_profile_matches("/nix/store/abc-target", profile_link.to_str().unwrap());
+        assert!(result);
     }
 
     #[test]

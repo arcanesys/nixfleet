@@ -187,46 +187,51 @@ in {
     launchd.daemons.nixfleet-agent = {
       serviceConfig = {
         Label = "com.nixfleet.agent";
-        ProgramArguments =
-          [
-            "${nixfleet-agent}/bin/nixfleet-agent"
-            "--control-plane-url"
-            cfg.controlPlaneUrl
-            "--machine-id"
-            cfg.machineId
-            "--poll-interval"
-            (toString cfg.pollInterval)
-            "--retry-interval"
-            (toString cfg.retryInterval)
-            "--db-path"
-            cfg.dbPath
-            "--health-config"
-            "/etc/nixfleet/health-checks.json"
-            "--health-interval"
-            (toString cfg.healthInterval)
-          ]
-          ++ lib.optionals (cfg.cacheUrl != null) [
-            "--cache-url"
-            cfg.cacheUrl
-          ]
-          ++ lib.optionals cfg.dryRun ["--dry-run"]
-          ++ lib.optionals cfg.allowInsecure ["--allow-insecure"]
-          ++ lib.optionals (cfg.tls.caCert != null) [
-            "--ca-cert"
-            cfg.tls.caCert
-          ]
-          ++ lib.optionals (cfg.tls.clientCert != null) [
-            "--client-cert"
-            cfg.tls.clientCert
-          ]
-          ++ lib.optionals (cfg.tls.clientKey != null) [
-            "--client-key"
-            cfg.tls.clientKey
-          ]
-          ++ lib.optionals (cfg.metricsPort != null) [
-            "--metrics-port"
-            (toString cfg.metricsPort)
-          ];
+        # Wrapped in sh -c with a 15s delay. At boot, launchd starts
+        # the agent before NTP syncs the clock and before agenix
+        # decrypts mTLS certs. The delay gives both time to complete.
+        # The exec replaces sh so launchd tracks the agent PID directly.
+        ProgramArguments = let
+          args = lib.concatStringsSep " " ([
+              "${nixfleet-agent}/bin/nixfleet-agent"
+              "--control-plane-url"
+              (lib.escapeShellArg cfg.controlPlaneUrl)
+              "--machine-id"
+              (lib.escapeShellArg cfg.machineId)
+              "--poll-interval"
+              (toString cfg.pollInterval)
+              "--retry-interval"
+              (toString cfg.retryInterval)
+              "--db-path"
+              (lib.escapeShellArg cfg.dbPath)
+              "--health-config"
+              "/etc/nixfleet/health-checks.json"
+              "--health-interval"
+              (toString cfg.healthInterval)
+            ]
+            ++ lib.optionals (cfg.cacheUrl != null) [
+              "--cache-url"
+              (lib.escapeShellArg cfg.cacheUrl)
+            ]
+            ++ lib.optionals cfg.dryRun ["--dry-run"]
+            ++ lib.optionals cfg.allowInsecure ["--allow-insecure"]
+            ++ lib.optionals (cfg.tls.caCert != null) [
+              "--ca-cert"
+              (lib.escapeShellArg cfg.tls.caCert)
+            ]
+            ++ lib.optionals (cfg.tls.clientCert != null) [
+              "--client-cert"
+              (lib.escapeShellArg cfg.tls.clientCert)
+            ]
+            ++ lib.optionals (cfg.tls.clientKey != null) [
+              "--client-key"
+              (lib.escapeShellArg cfg.tls.clientKey)
+            ]
+            ++ lib.optionals (cfg.metricsPort != null) [
+              "--metrics-port"
+              (toString cfg.metricsPort)
+            ]);
+        in ["/bin/sh" "-c" "sleep 15 && exec ${args}"];
         KeepAlive = true;
         RunAtLoad = true;
         ThrottleInterval = 10;

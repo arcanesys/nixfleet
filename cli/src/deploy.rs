@@ -112,6 +112,37 @@ async fn deploy_via_ssh(
     } else {
         tracing::info!(host, "switching NixOS configuration");
 
+        // Step 1: update profile so the bootloader picks up the new generation.
+        // Without this, switch-to-configuration activates the system but
+        // the profile stays at the old generation — reboot goes to old system.
+        let mut profile_cmd = tokio::process::Command::new("ssh");
+        profile_cmd.args([
+            "-o",
+            "BatchMode=yes",
+            ssh_target,
+            &format!("nix-env -p /nix/var/nix/profiles/system --set {}", store_path),
+        ]);
+        let profile_output = if display::passthrough_output() {
+            display::run_cmd_async_passthrough(&mut profile_cmd)
+                .await
+                .context(format!("SSH profile update failed for {}", host))?
+        } else {
+            display::run_cmd_async(&mut profile_cmd, window.as_deref_mut())
+                .await
+                .context(format!("SSH profile update failed for {}", host))?
+        };
+        oplog.log_output(
+            &format!("ssh nix-env --set {}", host),
+            Some(host),
+            &profile_output,
+            t.elapsed(),
+        );
+        if !profile_output.status.success() {
+            let stderr = String::from_utf8_lossy(&profile_output.stderr);
+            bail!("nix-env --set failed on {}: {}", host, stderr);
+        }
+
+        // Step 2: fire switch-to-configuration
         let mut switch_cmd = tokio::process::Command::new("ssh");
         switch_cmd.args([
             "-o",

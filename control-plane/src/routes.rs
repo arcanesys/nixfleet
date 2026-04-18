@@ -137,6 +137,18 @@ pub async fn post_report(
         tracing::info!(machine_id = %id, "Auto-activated on first report");
     }
 
+    // Persist runtime state so it survives CP restarts.
+    // Placed after auto-register so the machine row exists before the upsert
+    // (first-report INSERT race: the machine must be in machines table first).
+    // Read current_generation from machine.last_report (report was moved above).
+    let health_status = if report_success { "ok" } else { "error" };
+    if let Some(ref last) = machine.last_report {
+        crate::log_insert_err(
+            "machine_state",
+            db.upsert_machine_state(&id, &last.current_generation, health_status),
+        );
+    }
+
     let actor_id = format!("machine:{id}");
     let detail = if report_success { "success" } else { "failure" };
     log_insert_err(

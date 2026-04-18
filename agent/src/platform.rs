@@ -1,4 +1,4 @@
-/// Platform-specific constants and helpers.
+//! Platform-specific constants and helpers.
 
 /// Path to the symlink representing the current active system generation.
 ///

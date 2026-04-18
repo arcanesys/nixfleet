@@ -215,17 +215,64 @@ impl Db {
     /// List all registered machines.
     pub fn list_machines(&self) -> Result<Vec<MachineRow>> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT machine_id, lifecycle, registered_at FROM machines")?;
+        let mut stmt = conn.prepare(
+            "SELECT machine_id, lifecycle, registered_at, current_generation, last_seen, health_status FROM machines",
+        )?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(MachineRow {
                     machine_id: row.get(0)?,
                     lifecycle: row.get(1)?,
                     registered_at: row.get(2)?,
+                    current_generation: row.get(3)?,
+                    last_seen: row.get(4)?,
+                    health_status: row.get(5)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Update the runtime state for a machine (current generation, last seen timestamp, health status).
+    pub fn upsert_machine_state(
+        &self,
+        machine_id: &str,
+        current_generation: &str,
+        health_status: &str,
+    ) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE machines SET current_generation = ?2, last_seen = datetime('now'), health_status = ?3
+             WHERE machine_id = ?1",
+            rusqlite::params![machine_id, current_generation, health_status],
+        )
+        .context("failed to update machine state")?;
+        Ok(())
+    }
+
+    /// Get the full machine row (including runtime state) for a machine.
+    pub fn get_machine_state(&self, machine_id: &str) -> Result<Option<MachineRow>> {
+        let conn = self.conn()?;
+        let result = conn.query_row(
+            "SELECT machine_id, lifecycle, registered_at, current_generation, last_seen, health_status
+             FROM machines WHERE machine_id = ?1",
+            rusqlite::params![machine_id],
+            |row| {
+                Ok(MachineRow {
+                    machine_id: row.get(0)?,
+                    lifecycle: row.get(1)?,
+                    registered_at: row.get(2)?,
+                    current_generation: row.get(3)?,
+                    last_seen: row.get(4)?,
+                    health_status: row.get(5)?,
+                })
+            },
+        );
+        match result {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Insert an audit event.
@@ -954,6 +1001,9 @@ pub struct MachineRow {
     pub machine_id: String,
     pub lifecycle: String,
     pub registered_at: String,
+    pub current_generation: Option<String>,
+    pub last_seen: Option<String>,
+    pub health_status: Option<String>,
 }
 
 /// A rollout row as stored in SQLite.
@@ -1734,5 +1784,59 @@ mod tests {
         let (db, _dir) = make_db();
         let deleted = db.delete_rollout("r-nonexistent").unwrap();
         assert!(!deleted);
+    }
+
+    #[test]
+    fn test_upsert_machine_state() {
+        let (db, _dir) = make_db();
+        db.register_machine("web-01", "active").unwrap();
+        db.upsert_machine_state("web-01", "/nix/store/abc-system", "ok")
+            .unwrap();
+        let row = db.get_machine_state("web-01").unwrap().unwrap();
+        assert_eq!(
+            row.current_generation,
+            Some("/nix/store/abc-system".to_string())
+        );
+        assert!(row.last_seen.is_some());
+        assert_eq!(row.health_status, Some("ok".to_string()));
+    }
+
+    #[test]
+    fn test_upsert_machine_state_updates_existing() {
+        let (db, _dir) = make_db();
+        db.register_machine("web-01", "active").unwrap();
+        db.upsert_machine_state("web-01", "/nix/store/gen1", "ok")
+            .unwrap();
+        db.upsert_machine_state("web-01", "/nix/store/gen2", "error")
+            .unwrap();
+        let row = db.get_machine_state("web-01").unwrap().unwrap();
+        assert_eq!(
+            row.current_generation,
+            Some("/nix/store/gen2".to_string())
+        );
+        assert_eq!(row.health_status, Some("error".to_string()));
+    }
+
+    #[test]
+    fn test_get_machine_state_missing() {
+        let (db, _dir) = make_db();
+        let row = db.get_machine_state("nonexistent").unwrap();
+        assert!(row.is_none());
+    }
+
+    #[test]
+    fn test_list_machines_includes_runtime_state() {
+        let (db, _dir) = make_db();
+        db.register_machine("web-01", "active").unwrap();
+        db.upsert_machine_state("web-01", "/nix/store/abc", "ok")
+            .unwrap();
+        let machines = db.list_machines().unwrap();
+        assert_eq!(machines.len(), 1);
+        assert_eq!(
+            machines[0].current_generation,
+            Some("/nix/store/abc".to_string())
+        );
+        assert_eq!(machines[0].health_status, Some("ok".to_string()));
+        assert!(machines[0].last_seen.is_some());
     }
 }
