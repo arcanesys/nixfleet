@@ -1,6 +1,7 @@
 {
   lib,
   rustPlatform,
+  git,
 }:
 # Thin alias to the unified workspace derivation. Every callsite of
 # `pkgs.callPackage ../agent {}` (scopes/_agent.nix systemd package,
@@ -10,4 +11,4 @@
 # `$out/bin/nixfleet-agent`, which is what every caller expects.
 #
 # See `cargo-workspace.nix` at the repo root for the long-form rationale.
-import ../cargo-workspace.nix {inherit lib rustPlatform;}
+import ../cargo-workspace.nix {inherit lib rustPlatform git;}
