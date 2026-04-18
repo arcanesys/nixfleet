@@ -165,9 +165,24 @@ pub async fn wait_for_completion(
     id: &str,
     max_wait: Option<Duration>,
 ) -> Result<()> {
+    use indicatif::{ProgressBar, ProgressStyle};
+
     let url = format!("{}/api/v1/rollouts/{}", cp_url, id);
     let timeout = max_wait.unwrap_or(DEFAULT_WAIT_TIMEOUT);
     let started = Instant::now();
+
+    let is_tty = console::Term::stderr().is_term();
+    let pb = if is_tty {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{spinner} {msg}")
+                .unwrap(),
+        );
+        pb.enable_steady_tick(std::time::Duration::from_millis(120));
+        Some(pb)
+    } else {
+        None
+    };
 
     loop {
         let resp = client
@@ -177,6 +192,9 @@ pub async fn wait_for_completion(
             .context("failed to reach control plane")?;
 
         if !resp.status().is_success() {
+            if let Some(ref pb) = pb {
+                pb.finish_and_clear();
+            }
             bail!(
                 "Control plane returned {}: {}",
                 resp.status(),
@@ -211,16 +229,33 @@ pub async fn wait_for_completion(
             .map(|i| i + 1)
             .unwrap_or(0);
 
-        tracing::info!(
-            batch = current_batch,
-            total_batches = rollout.batches.len(),
-            healthy = healthy_machines,
-            total = total_machines,
-            status = %rollout.status,
-            "rollout progress"
+        let msg = format!(
+            "Rollout {} \u{2014} batch {}/{} \u{2014} {}/{} healthy \u{2014} {}",
+            id,
+            current_batch,
+            rollout.batches.len(),
+            healthy_machines,
+            total_machines,
+            rollout.status,
         );
 
+        if let Some(ref pb) = pb {
+            pb.set_message(msg);
+        } else {
+            tracing::info!(
+                batch = current_batch,
+                total_batches = rollout.batches.len(),
+                healthy = healthy_machines,
+                total = total_machines,
+                status = %rollout.status,
+                "rollout progress"
+            );
+        }
+
         if !rollout.status.is_active() {
+            if let Some(ref pb) = pb {
+                pb.finish_and_clear();
+            }
             println!(
                 "Rollout {} finished: {} ({} machines, {} batches)",
                 id,
@@ -235,6 +270,9 @@ pub async fn wait_for_completion(
         }
 
         if !timeout.is_zero() && started.elapsed() >= timeout {
+            if let Some(ref pb) = pb {
+                pb.finish_and_clear();
+            }
             bail!(
                 "Timed out after {}s waiting for rollout {} to finish (last status: {}). \
                  Re-run with --wait-timeout 0 to block indefinitely, or inspect with \
