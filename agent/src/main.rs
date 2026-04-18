@@ -81,7 +81,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     // Initialize structured JSON logging
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -111,5 +111,13 @@ async fn main() -> anyhow::Result<()> {
         metrics_port: cli.metrics_port,
     };
 
-    nixfleet_agent::run_loop(config).await
+    // Never exit non-zero. On Darwin, launchd treats exit code 78
+    // (EX_CONFIG) as "misconfigured, never restart" — permanently
+    // disabling the agent. By always exiting 0, KeepAlive + ThrottleInterval
+    // handle restarts reliably. Errors are logged, not swallowed.
+    // On Linux, systemd's Restart=always handles this regardless of exit
+    // code, so this is harmless there.
+    if let Err(e) = nixfleet_agent::run_loop(config).await {
+        tracing::error!(error = %e, "Agent exited with error, will be restarted by init system");
+    }
 }
