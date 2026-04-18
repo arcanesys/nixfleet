@@ -75,7 +75,35 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
     // tokio worker thread to a Mutex acquire.
     let store = AsyncStore::new(store);
 
-    let client = comms::Client::new(&config)?;
+    // Retry TLS client init with backoff. On Darwin, launchd starts the
+    // agent at boot before agenix/sops have decrypted secrets to /run/.
+    // The cert files don't exist yet, so Client::new fails. Rather than
+    // exiting (which puts launchd in a penalty box), we retry until the
+    // secrets appear. On Linux with systemd, the After= ordering usually
+    // prevents this, but the retry is harmless defense-in-depth.
+    let client = {
+        let max_attempts = 30; // 30 * 2s = 60s max wait
+        let retry_delay = Duration::from_secs(2);
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            match comms::Client::new(&config) {
+                Ok(c) => break c,
+                Err(e) => {
+                    if attempt >= max_attempts {
+                        return Err(e).context("TLS client init failed after retries — are cert files deployed?");
+                    }
+                    warn!(
+                        attempt,
+                        max_attempts,
+                        error = %e,
+                        "TLS client init failed, retrying (secrets may not be decrypted yet)"
+                    );
+                    tokio::time::sleep(retry_delay).await;
+                }
+            }
+        }
+    };
     let health_runner = HealthRunner::from_config_path(&config.health_config_path);
 
     let mut health_tick = build_interval(config.health_interval);
