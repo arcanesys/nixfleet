@@ -29,7 +29,7 @@
           testScript = ''
             machine.wait_for_unit("multi-user.target")
             machine.wait_for_unit("sshd")
-            machine.wait_for_unit("NetworkManager")
+            machine.wait_for_unit("network.target")
             machine.succeed("nft list ruleset | grep -q 'chain input'")
             machine.succeed("id testuser")
             machine.succeed("groups testuser | grep -q wheel")
