@@ -78,11 +78,22 @@ fn fetch_ids_blocking(endpoint: &str, id_field: &str, prefix: &str) -> Vec<Compl
         Err(_) => return vec![],
     };
 
-    items
+    // Sort newest first by created_at if available, then by ID descending.
+    // Use display_order so completions appear before --options.
+    let mut entries: Vec<(String, String)> = items
         .iter()
-        .filter_map(|item| item[id_field].as_str().map(|s| s.to_string()))
-        .filter(|id| id.starts_with(prefix))
-        .map(|id| CompletionCandidate::new(id))
+        .filter_map(|item| {
+            let id = item[id_field].as_str()?.to_string();
+            let created = item["created_at"].as_str().unwrap_or("").to_string();
+            Some((id, created))
+        })
+        .filter(|(id, _)| id.starts_with(prefix))
+        .collect();
+    entries.sort_by(|a, b| b.1.cmp(&a.1)); // newest first by created_at
+    entries
+        .into_iter()
+        .enumerate()
+        .map(|(i, (id, _))| CompletionCandidate::new(id).display_order(Some(i)))
         .collect()
 }
 
