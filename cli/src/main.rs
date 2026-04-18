@@ -294,6 +294,10 @@ enum RolloutAction {
         /// Filter by status (e.g. running, paused, completed)
         #[arg(long)]
         status: Option<String>,
+
+        /// Sort by: created (default, newest first), status, strategy
+        #[arg(long, default_value = "created")]
+        sort: String,
     },
 
     /// Show rollout detail with batch breakdown
@@ -736,11 +740,12 @@ async fn main() -> Result<()> {
         Commands::Rollout { action } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
             match action {
-                RolloutAction::List { status } => {
+                RolloutAction::List { status, sort } => {
                     rollout::list(
                         &http_client,
                         effective_cp_url,
                         status.as_deref(),
+                        &sort,
                         json_output,
                     )
                     .await

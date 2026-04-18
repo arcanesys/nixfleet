@@ -17,6 +17,7 @@ pub async fn list(
     client: &reqwest::Client,
     cp_url: &str,
     status_filter: Option<&str>,
+    sort_by: &str,
     json: bool,
 ) -> Result<()> {
     let mut url = format!("{}/api/v1/rollouts", cp_url);
@@ -32,7 +33,13 @@ pub async fn list(
 
     let resp = crate::client::check_response(resp).await?;
 
-    let rollouts: Vec<RolloutDetail> = resp.json().await.context("failed to parse rollout list")?;
+    let mut rollouts: Vec<RolloutDetail> = resp.json().await.context("failed to parse rollout list")?;
+
+    match sort_by {
+        "status" => rollouts.sort_by(|a, b| a.status.to_string().cmp(&b.status.to_string())),
+        "strategy" => rollouts.sort_by(|a, b| a.strategy.to_string().cmp(&b.strategy.to_string())),
+        _ => rollouts.sort_by(|a, b| b.created_at.cmp(&a.created_at)),
+    }
 
     if rollouts.is_empty() {
         if json {

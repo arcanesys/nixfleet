@@ -766,21 +766,21 @@ pub async fn diff(
     if !diff.added.is_empty() {
         println!("Added hosts:");
         for host in &diff.added {
-            println!("  {} {}", style("+").green(), host);
+            println!("  {}", style(format!("+ {}", host)).green());
         }
     }
     if !diff.removed.is_empty() {
         println!("Removed hosts:");
         for host in &diff.removed {
-            println!("  {} {}", style("-").red(), host);
+            println!("  {}", style(format!("- {}", host)).red());
         }
     }
     if !diff.changed.is_empty() {
         println!("Changed hosts:");
         for entry in &diff.changed {
-            println!("  {} {}", style("~").yellow(), entry.hostname);
-            println!("    old: {}", entry.old_store_path);
-            println!("    new: {}", entry.new_store_path);
+            println!("  {}", style(format!("~ {}", entry.hostname)).yellow());
+            println!("    {}", style(format!("- {}", entry.old_store_path)).red());
+            println!("    {}", style(format!("+ {}", entry.new_store_path)).green());
         }
     }
     if !diff.unchanged.is_empty() {
