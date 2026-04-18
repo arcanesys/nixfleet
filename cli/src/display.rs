@@ -444,6 +444,64 @@ pub fn truncate_store_path(path: &str, max_len: usize) -> String {
     format!("{}…", &path[..end.min(path.len())])
 }
 
+/// Format a store path compactly for the status table.
+/// Strips `/nix/store/`, keeps hash prefix (4 chars) + name with middle
+/// truncated, always preserving the release tag suffix.
+pub fn format_store_path_compact(path: &str, max_len: usize) -> String {
+    if path.is_empty() {
+        return path.to_string();
+    }
+
+    let rest = path.strip_prefix("/nix/store/").unwrap_or(path);
+
+    if rest.len() <= max_len {
+        return rest.to_string();
+    }
+
+    let (hash, name) = match rest.find('-') {
+        Some(pos) => (&rest[..pos.min(4)], &rest[pos + 1..]),
+        None => return truncate_store_path(path, max_len),
+    };
+
+    let tag = name.rsplit('_').next().unwrap_or("");
+
+    let prefix = format!("{hash}\u{2026}-");
+    let suffix = if tag.is_empty() || tag == name {
+        String::new()
+    } else {
+        format!("\u{2026}{tag}")
+    };
+
+    let overhead = prefix.len() + suffix.len();
+    if overhead >= max_len {
+        return format!(
+            "{}\u{2026}",
+            &rest[..max_len.saturating_sub(1).min(rest.len())]
+        );
+    }
+
+    let middle_budget = max_len - overhead;
+    let middle_source = if !tag.is_empty() && name.len() > tag.len() {
+        &name[..name.len() - tag.len() - 1]
+    } else {
+        name
+    };
+
+    // U+2026 (…) is 3 bytes; reserve space for it when truncating
+    const ELLIPSIS_BYTES: usize = 3;
+    let middle = if middle_source.len() <= middle_budget {
+        middle_source.to_string()
+    } else {
+        let src_budget = middle_budget
+            .saturating_sub(ELLIPSIS_BYTES)
+            .min(middle_source.len());
+        format!("{}\u{2026}", &middle_source[..src_budget])
+    };
+
+    let result = format!("{prefix}{middle}{suffix}");
+    result.replace("\u{2026}\u{2026}", "\u{2026}")
+}
+
 // ---------------------------------------------------------------
 // Status coloring
 // ---------------------------------------------------------------
@@ -455,10 +513,10 @@ pub fn color_status(s: &str) -> String {
         style(s).yellow()
     } else {
         match lower.as_str() {
-            "ok" | "completed" | "healthy" | "succeeded" | "active" => style(s).green(),
+            "ok" | "completed" | "healthy" | "succeeded" | "active" | "in_sync" => style(s).green(),
             "error" | "failed" | "unhealthy" => style(s).red(),
             "paused" | "pending" | "waiting_health" | "deploying" | "maintenance"
-            | "provisioning" => style(s).yellow(),
+            | "provisioning" | "outdated" => style(s).yellow(),
             _ => style(s).force_styling(false),
         }
     };
@@ -525,6 +583,50 @@ mod tests {
         let result = truncate_store_path(&long, 30);
         assert!(result.len() <= 30);
         assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn compact_store_path_strips_prefix() {
+        let path = "/nix/store/pvravprh0sf53g2ls9d1zpih943qdzzf-nixos-system-krach-20260418-1639_a2b0c1c0_neon-otter";
+        let result = format_store_path_compact(path, 40);
+        assert!(
+            !result.starts_with("/nix/store/"),
+            "should strip prefix: {result}"
+        );
+        assert!(result.contains("pvra"), "should keep hash prefix: {result}");
+        assert!(
+            result.contains("neon-otter"),
+            "should keep release tag: {result}"
+        );
+        assert!(
+            result.len() <= 40,
+            "should fit in budget: {result} ({})",
+            result.len()
+        );
+    }
+
+    #[test]
+    fn compact_store_path_short_unchanged() {
+        let path = "/nix/store/abc-foo";
+        let result = format_store_path_compact(path, 40);
+        assert_eq!(result, "abc-foo");
+    }
+
+    #[test]
+    fn compact_store_path_empty() {
+        assert_eq!(format_store_path_compact("", 40), "");
+    }
+
+    #[test]
+    fn compact_store_path_no_tag() {
+        let path = "/nix/store/abc123def456ghi789jkl012mno345pqr678-nixos-system-web-01-25.05";
+        let result = format_store_path_compact(path, 40);
+        assert!(result.contains("abc1"), "should keep hash prefix: {result}");
+        assert!(
+            result.len() <= 40,
+            "should fit: {result} ({})",
+            result.len()
+        );
     }
 
     #[test]

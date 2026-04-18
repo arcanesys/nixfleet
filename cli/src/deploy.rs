@@ -3,6 +3,7 @@ use nixfleet_types::rollout::{
     CreateRolloutRequest, CreateRolloutResponse, OnFailure, RolloutStrategy, RolloutTarget,
 };
 use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::display;
 use crate::glob::filter_hosts;
@@ -489,6 +490,7 @@ pub async fn deploy_rollout(
     health_timeout: u64,
     wait: bool,
     cache_url: Option<&str>,
+    wait_timeout: u64,
 ) -> Result<()> {
     let target = resolve_target(tags, hosts)?;
     let strategy = parse_strategy(strategy)?;
@@ -525,7 +527,12 @@ pub async fn deploy_rollout(
     );
 
     if wait {
-        crate::rollout::wait_for_completion(client, cp_url, &created.rollout_id, None).await?;
+        let timeout = if wait_timeout == 0 {
+            Some(Duration::ZERO)
+        } else {
+            Some(Duration::from_secs(wait_timeout))
+        };
+        crate::rollout::wait_for_completion(client, cp_url, &created.rollout_id, timeout).await?;
     }
 
     Ok(())

@@ -52,11 +52,20 @@ pub async fn run(
             } else {
                 state_str.to_string()
             };
-            let current = display::truncate_store_path(&m.current_generation, 36);
+            let sync = match &m.desired_generation {
+                Some(desired) if desired == &m.current_generation => "in_sync".to_string(),
+                Some(_) => "outdated".to_string(),
+                None => "\u{2014}".to_string(),
+            };
+            let current = if m.current_generation.is_empty() {
+                "\u{2014}".to_string()
+            } else {
+                display::format_store_path_compact(&m.current_generation, 50)
+            };
             let desired = m
                 .desired_generation
                 .as_deref()
-                .map(|d| display::truncate_store_path(d, 36))
+                .map(|d| display::format_store_path_compact(d, 50))
                 .unwrap_or_else(|| "(none)".to_string());
             let last_seen = m
                 .last_report
@@ -66,6 +75,7 @@ pub async fn run(
                 m.machine_id.clone(),
                 display::color_status(&state),
                 display::color_status(&m.lifecycle.to_string()),
+                display::color_status(&sync),
                 current,
                 desired,
                 last_seen,
@@ -79,6 +89,7 @@ pub async fn run(
             "HOST",
             "STATE",
             "LIFECYCLE",
+            "SYNC",
             "CURRENT",
             "DESIRED",
             "LAST SEEN",

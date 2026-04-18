@@ -1,14 +1,16 @@
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::Path;
 use std::process::Stdio;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 mod client;
+mod completions;
 mod config;
 mod deploy;
 mod display;
+mod git;
 mod glob;
 mod host;
 mod machines;
@@ -17,6 +19,7 @@ mod release;
 mod rollout;
 mod status;
 mod validate;
+mod watch;
 
 #[derive(Parser)]
 #[command(name = "nixfleet", about = "NixFleet fleet management CLI", version)]
@@ -69,6 +72,10 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
 
+        /// Skip the dirty working tree check
+        #[arg(long)]
+        allow_dirty: bool,
+
         /// SSH fallback mode: copy closures and switch via SSH instead of control plane
         #[arg(long, help_heading = "SSH Mode")]
         ssh: bool,
@@ -118,6 +125,10 @@ enum Commands {
         #[arg(long, help_heading = "Rollout")]
         wait: bool,
 
+        /// Timeout in seconds for --wait (0 = wait forever, default: 300)
+        #[arg(long, default_value = "300", help_heading = "Rollout")]
+        wait_timeout: u64,
+
         /// Release ID to deploy
         #[arg(long, help_heading = "Rollout")]
         release: Option<String>,
@@ -157,6 +168,14 @@ enum Commands {
         /// Seconds without a report before a machine is marked stale (default: 600)
         #[arg(long, default_value = "600")]
         stale_threshold: u64,
+
+        /// Continuously refresh the display
+        #[arg(long)]
+        watch: bool,
+
+        /// Refresh interval in seconds (requires --watch)
+        #[arg(long, default_value = "2", requires = "watch")]
+        interval: u64,
     },
 
     /// Rollback a host to a previous generation
@@ -216,6 +235,12 @@ enum Commands {
         /// Use this on additional machines that share the same fleet.
         #[arg(long = "save-key")]
         save_key: Option<String>,
+    },
+
+    /// Generate shell completion script
+    Completions {
+        /// Shell (zsh, bash, fish)
+        shell: String,
     },
 
     /// Initialize a .nixfleet.toml config file
@@ -286,29 +311,53 @@ enum RolloutAction {
         /// Filter by status (e.g. running, paused, completed)
         #[arg(long)]
         status: Option<String>,
+
+        /// Sort by: created (default, newest first), status, strategy
+        #[arg(long, default_value = "created")]
+        sort: String,
     },
 
     /// Show rollout detail with batch breakdown
     Status {
         /// Rollout ID
+        #[arg(add = completions::rollout_id_completer())]
         id: String,
+
+        /// Wait for rollout to complete
+        #[arg(long)]
+        wait: bool,
+
+        /// Timeout in seconds for --wait (0 = wait forever, default: 300)
+        #[arg(long, default_value = "300")]
+        wait_timeout: u64,
+
+        /// Continuously refresh the display
+        #[arg(long, conflicts_with = "wait")]
+        watch: bool,
+
+        /// Refresh interval in seconds (requires --watch)
+        #[arg(long, default_value = "2", requires = "watch")]
+        interval: u64,
     },
 
     /// Resume a paused rollout
     Resume {
         /// Rollout ID
+        #[arg(add = completions::rollout_id_completer())]
         id: String,
     },
 
     /// Cancel a rollout
     Cancel {
         /// Rollout ID
+        #[arg(add = completions::rollout_id_completer())]
         id: String,
     },
 
     /// Delete a terminal rollout (completed, cancelled, or failed)
     Delete {
         /// Rollout ID
+        #[arg(add = completions::rollout_id_completer())]
         id: String,
     },
 }
@@ -342,6 +391,9 @@ enum ReleaseAction {
         cache_url: Option<String>,
         #[arg(long)]
         dry_run: bool,
+        /// Skip the dirty working tree check
+        #[arg(long)]
+        allow_dirty: bool,
         /// Evaluate store paths without building (assumes closures in cache)
         #[arg(
             long,
@@ -360,14 +412,22 @@ enum ReleaseAction {
         host: Option<String>,
     },
     /// Show release details
-    Show { release_id: String },
+    Show {
+        #[arg(add = completions::release_id_completer())]
+        release_id: String,
+    },
     /// Diff two releases
     Diff {
+        #[arg(add = completions::release_id_completer())]
         release_id_a: String,
+        #[arg(add = completions::release_id_completer())]
         release_id_b: String,
     },
     /// Delete a release (only if no rollout references it)
-    Delete { release_id: String },
+    Delete {
+        #[arg(add = completions::release_id_completer())]
+        release_id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -382,6 +442,7 @@ enum MachineAction {
     /// Change machine lifecycle state
     SetLifecycle {
         /// Machine ID
+        #[arg(add = completions::machine_id_completer())]
         id: String,
         /// Target state (active, pending, provisioning, maintenance, decommissioned)
         state: String,
@@ -390,6 +451,7 @@ enum MachineAction {
     /// Clear a machine's desired generation
     ClearDesired {
         /// Machine ID
+        #[arg(add = completions::machine_id_completer())]
         id: String,
     },
 
@@ -412,8 +474,19 @@ enum MachineAction {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // Handle shell completions before entering the async runtime.
+    // Completers use reqwest::blocking which panics inside tokio.
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime")?
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     let cli = Cli::parse();
     display::set_verbosity(cli.verbose);
 
@@ -499,6 +572,7 @@ async fn main() -> Result<()> {
         Commands::Deploy {
             hosts,
             dry_run,
+            allow_dirty,
             ssh,
             target,
             flake,
@@ -509,6 +583,7 @@ async fn main() -> Result<()> {
             on_failure,
             health_timeout,
             wait,
+            wait_timeout,
             release,
             push_to,
             hook,
@@ -518,6 +593,17 @@ async fn main() -> Result<()> {
             cache_url,
         } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
+
+            // Dirty tree guard: block non-SSH, non-dry-run deploys from uncommitted trees
+            if !ssh && !dry_run && !allow_dirty {
+                let flake_dir = std::path::Path::new(&flake);
+                let check_dir = if flake_dir.is_dir() {
+                    flake_dir.to_path_buf()
+                } else {
+                    std::env::current_dir().unwrap_or_default()
+                };
+                git::check_clean(&check_dir).await?;
+            }
 
             // --hook mode: use hook config for push-cmd and cache-url
             let (effective_push_to, effective_push_hook, effective_cache_url) = if hook {
@@ -601,6 +687,7 @@ async fn main() -> Result<()> {
                         health_timeout,
                         wait,
                         effective_cache_url,
+                        wait_timeout,
                     )
                     .await;
 
@@ -636,13 +723,29 @@ async fn main() -> Result<()> {
                     health_timeout,
                     wait,
                     effective_cache_url,
+                    wait_timeout,
                 )
                 .await
             }
         }
-        Commands::Status { stale_threshold } => {
+        Commands::Status {
+            stale_threshold,
+            watch,
+            interval,
+        } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
-            status::run(&http_client, effective_cp_url, json_output, stale_threshold).await
+            if watch {
+                let cp = effective_cp_url.to_string();
+                let cli = http_client.clone();
+                watch::run_loop(interval, json_output, || {
+                    let cli = cli.clone();
+                    let cp = cp.clone();
+                    async move { status::run(&cli, &cp, false, stale_threshold).await }
+                })
+                .await
+            } else {
+                status::run(&http_client, effective_cp_url, json_output, stale_threshold).await
+            }
         }
         Commands::Rollback {
             host,
@@ -684,17 +787,52 @@ async fn main() -> Result<()> {
         Commands::Rollout { action } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
             match action {
-                RolloutAction::List { status } => {
+                RolloutAction::List { status, sort } => {
                     rollout::list(
                         &http_client,
                         effective_cp_url,
                         status.as_deref(),
+                        &sort,
                         json_output,
                     )
                     .await
                 }
-                RolloutAction::Status { id } => {
-                    rollout::status(&http_client, effective_cp_url, &id, json_output).await
+                RolloutAction::Status {
+                    id,
+                    wait,
+                    wait_timeout,
+                    watch,
+                    interval,
+                } => {
+                    if watch {
+                        let cp = effective_cp_url.to_string();
+                        let cli = http_client.clone();
+                        let rid = id.clone();
+                        watch::run_loop(interval, json_output, || {
+                            let cli = cli.clone();
+                            let cp = cp.clone();
+                            let rid = rid.clone();
+                            async move { rollout::status(&cli, &cp, &rid, false).await }
+                        })
+                        .await
+                    } else {
+                        rollout::status(&http_client, effective_cp_url, &id, json_output).await?;
+                        if wait {
+                            let timeout = if wait_timeout == 0 {
+                                Some(std::time::Duration::ZERO)
+                            } else {
+                                Some(std::time::Duration::from_secs(wait_timeout))
+                            };
+                            rollout::wait_for_completion(
+                                &http_client,
+                                effective_cp_url,
+                                &id,
+                                timeout,
+                            )
+                            .await?;
+                        }
+                        Ok(())
+                    }
                 }
                 RolloutAction::Resume { id } => {
                     rollout::resume(&http_client, effective_cp_url, &id).await
@@ -712,6 +850,7 @@ async fn main() -> Result<()> {
             match action {
                 ReleaseAction::Create {
                     flake,
+                    allow_dirty,
                     hosts,
                     push_to,
                     hook,
@@ -743,6 +882,15 @@ async fn main() -> Result<()> {
                         let cu = cache_url.or_else(|| resolved.cache_url.clone());
                         (pt, None, cu)
                     };
+                    if !dry_run && !allow_dirty {
+                        let flake_dir = std::path::Path::new(&flake);
+                        let check_dir = if flake_dir.is_dir() {
+                            flake_dir.to_path_buf()
+                        } else {
+                            std::env::current_dir().unwrap_or_default()
+                        };
+                        git::check_clean(&check_dir).await?;
+                    }
                     let (_, mut oplog) = release::create(
                         &http_client,
                         effective_cp_url,
@@ -822,8 +970,7 @@ async fn main() -> Result<()> {
             } else {
                 // Bootstrap: request a new key from the CP
                 let http_client = client::build_client(&tls, "")?;
-                let result =
-                    bootstrap(&http_client, effective_cp_url, &name, json_output).await;
+                let result = bootstrap(&http_client, effective_cp_url, &name, json_output).await;
                 if let Ok(Some(ref key_str)) = result {
                     if let Err(e) = config::save_api_key(effective_cp_url, key_str) {
                         eprintln!("Warning: failed to save API key: {}", e);
@@ -833,6 +980,10 @@ async fn main() -> Result<()> {
                 }
                 result.map(|_| ())
             }
+        }
+        Commands::Completions { shell } => {
+            completions::print_completion_script(&shell);
+            Ok(())
         }
         Commands::Init {
             control_plane_url,
@@ -944,7 +1095,9 @@ async fn rollback(
         };
         let activate_output = tokio::process::Command::new("ssh")
             .args([
-                "-o", "BatchMode=yes", ssh_dest,
+                "-o",
+                "BatchMode=yes",
+                ssh_dest,
                 &format!("sudo {}/activate", store_path),
             ])
             .stdout(Stdio::inherit())

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 /// Default upper bound on how long `deploy --wait` / `rollout status --wait`
 /// will block before aborting with a timeout error. Keeps CI jobs from
 /// hanging forever on a stuck rollout.
-const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(3600);
+const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Default poll cadence inside the wait loop. Low enough to feel
 /// interactive, high enough not to hammer the control plane.
@@ -17,6 +17,7 @@ pub async fn list(
     client: &reqwest::Client,
     cp_url: &str,
     status_filter: Option<&str>,
+    sort_by: &str,
     json: bool,
 ) -> Result<()> {
     let mut url = format!("{}/api/v1/rollouts", cp_url);
@@ -32,7 +33,14 @@ pub async fn list(
 
     let resp = crate::client::check_response(resp).await?;
 
-    let rollouts: Vec<RolloutDetail> = resp.json().await.context("failed to parse rollout list")?;
+    let mut rollouts: Vec<RolloutDetail> =
+        resp.json().await.context("failed to parse rollout list")?;
+
+    match sort_by {
+        "status" => rollouts.sort_by(|a, b| a.status.to_string().cmp(&b.status.to_string())),
+        "strategy" => rollouts.sort_by(|a, b| a.strategy.to_string().cmp(&b.strategy.to_string())),
+        _ => rollouts.sort_by(|a, b| b.created_at.cmp(&a.created_at)),
+    }
 
     if rollouts.is_empty() {
         if json {
@@ -165,9 +173,26 @@ pub async fn wait_for_completion(
     id: &str,
     max_wait: Option<Duration>,
 ) -> Result<()> {
+    use indicatif::{ProgressBar, ProgressStyle};
+
     let url = format!("{}/api/v1/rollouts/{}", cp_url, id);
     let timeout = max_wait.unwrap_or(DEFAULT_WAIT_TIMEOUT);
     let started = Instant::now();
+
+    let is_tty = console::Term::stderr().is_term();
+    let pb = if is_tty {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{spinner} {prefix} {bar:30} {pos}/{len}  {msg}")
+                .unwrap()
+                .progress_chars("\u{2588}\u{2593}\u{2591}"),
+        );
+        pb.set_prefix("waiting");
+        pb.enable_steady_tick(std::time::Duration::from_millis(120));
+        Some(pb)
+    } else {
+        None
+    };
 
     loop {
         let resp = client
@@ -177,6 +202,10 @@ pub async fn wait_for_completion(
             .context("failed to reach control plane")?;
 
         if !resp.status().is_success() {
+            if let Some(ref pb) = pb {
+                pb.disable_steady_tick();
+                pb.finish_and_clear();
+            }
             bail!(
                 "Control plane returned {}: {}",
                 resp.status(),
@@ -211,16 +240,70 @@ pub async fn wait_for_completion(
             .map(|i| i + 1)
             .unwrap_or(0);
 
-        tracing::info!(
-            batch = current_batch,
-            total_batches = rollout.batches.len(),
-            healthy = healthy_machines,
-            total = total_machines,
-            status = %rollout.status,
-            "rollout progress"
-        );
+        // Per-batch health for the active batch
+        let active_batch = rollout.batches.iter().find(|b| {
+            matches!(
+                b.status,
+                nixfleet_types::rollout::BatchStatus::Deploying
+                    | nixfleet_types::rollout::BatchStatus::WaitingHealth
+            )
+        });
+        let (batch_healthy, batch_total) = active_batch
+            .map(|b| {
+                let healthy = b
+                    .machine_health
+                    .values()
+                    .filter(|h| matches!(h, nixfleet_types::rollout::MachineHealthStatus::Healthy))
+                    .count();
+                (healthy, b.machine_ids.len())
+            })
+            .unwrap_or((0, 0));
+
+        if let Some(ref pb) = pb {
+            pb.set_length(rollout.batches.len() as u64);
+            pb.set_position(current_batch as u64);
+            let msg = if rollout.batches.len() > 1 && current_batch > 0 {
+                format!(
+                    "batch {}: {}/{} healthy ({}/{} total) \u{2014} {}",
+                    current_batch,
+                    batch_healthy,
+                    batch_total,
+                    healthy_machines,
+                    total_machines,
+                    rollout.status,
+                )
+            } else {
+                format!(
+                    "{}/{} healthy \u{2014} {}",
+                    healthy_machines, total_machines, rollout.status,
+                )
+            };
+            pb.set_message(msg);
+        } else {
+            tracing::info!(
+                batch = current_batch,
+                total_batches = rollout.batches.len(),
+                healthy = healthy_machines,
+                total = total_machines,
+                status = %rollout.status,
+                "rollout progress"
+            );
+        }
 
         if !rollout.status.is_active() {
+            if let Some(ref pb) = pb {
+                pb.disable_steady_tick();
+                pb.finish_and_clear();
+            }
+            tracing::info!(
+                batch = current_batch,
+                total_batches = rollout.batches.len(),
+                healthy = healthy_machines,
+                total = total_machines,
+                status = %rollout.status,
+                elapsed = ?started.elapsed(),
+                "rollout finished"
+            );
             println!(
                 "Rollout {} finished: {} ({} machines, {} batches)",
                 id,
@@ -235,6 +318,10 @@ pub async fn wait_for_completion(
         }
 
         if !timeout.is_zero() && started.elapsed() >= timeout {
+            if let Some(ref pb) = pb {
+                pb.disable_steady_tick();
+                pb.finish_and_clear();
+            }
             bail!(
                 "Timed out after {}s waiting for rollout {} to finish (last status: {}). \
                  Re-run with --wait-timeout 0 to block indefinitely, or inspect with \
