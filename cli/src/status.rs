@@ -3,14 +3,12 @@ use nixfleet_types::MachineStatus;
 
 use crate::display;
 
-fn is_stale(m: &MachineStatus, threshold_secs: i64) -> bool {
-    match m.last_report {
-        Some(last) => {
-            let age = chrono::Utc::now().signed_duration_since(last);
-            age.num_seconds() > threshold_secs
-        }
-        None => false,
-    }
+/// Check if a machine's last report exceeds the stale threshold.
+/// Returns false if the machine has never reported (seconds_since_last_report is None).
+fn is_stale(m: &MachineStatus, threshold: u64) -> bool {
+    m.seconds_since_last_report
+        .map(|s| s > threshold)
+        .unwrap_or(false)
 }
 
 pub async fn run(
@@ -39,8 +37,6 @@ pub async fn run(
         }
         return Ok(());
     }
-
-    let stale_threshold = stale_threshold as i64;
 
     let rows: Vec<Vec<String>> = machines
         .iter()
@@ -116,4 +112,45 @@ pub async fn run(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nixfleet_types::{MachineLifecycle, MachineStatus};
+
+    fn make_machine(system_state: &str, seconds_since: Option<u64>) -> MachineStatus {
+        MachineStatus {
+            machine_id: "web-01".to_string(),
+            current_generation: "/nix/store/abc".to_string(),
+            desired_generation: None,
+            agent_version: "0.1.0".to_string(),
+            system_state: system_state.to_string(),
+            uptime_seconds: 3600,
+            last_report: Some(chrono::Utc::now()),
+            lifecycle: MachineLifecycle::Active,
+            tags: vec![],
+            seconds_since_last_report: seconds_since,
+        }
+    }
+
+    #[test]
+    fn test_stale_annotation() {
+        let threshold: u64 = 600;
+
+        // Fresh machine — no stale annotation
+        assert!(!is_stale(&make_machine("ok", Some(300)), threshold));
+
+        // Stale machine
+        assert!(is_stale(&make_machine("ok", Some(900)), threshold));
+
+        // Never reported — not stale (already shows "?" / "never")
+        assert!(!is_stale(&make_machine("unknown", None), threshold));
+
+        // Error + stale
+        assert!(is_stale(&make_machine("error", Some(1200)), threshold));
+
+        // Exactly at threshold — not stale (> not >=)
+        assert!(!is_stale(&make_machine("ok", Some(600)), threshold));
+    }
 }

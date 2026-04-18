@@ -21,6 +21,9 @@ pub struct Config {
     pub dry_run: bool,
     /// Allow insecure HTTP connections (dev only).
     pub allow_insecure: bool,
+    /// Path to CA certificate PEM file for verifying the control plane's TLS cert.
+    /// When set, this CA is trusted in addition to system roots.
+    pub ca_cert: Option<String>,
     /// Path to client certificate PEM file (for mTLS).
     pub client_cert: Option<String>,
     /// Path to client private key PEM file (for mTLS).
@@ -59,12 +62,13 @@ mod tests {
         Config {
             control_plane_url: "https://fleet.example.com".to_string(),
             machine_id: "web-01".to_string(),
-            poll_interval: Duration::from_secs(300),
+            poll_interval: Duration::from_secs(60),
             retry_interval: Duration::from_secs(30),
             cache_url: None,
             db_path: "/var/lib/nixfleet/state.db".to_string(),
             dry_run: false,
             allow_insecure: false,
+            ca_cert: None,
             client_cert: None,
             client_key: None,
             health_config_path: "/etc/nixfleet/health-checks.json".to_string(),

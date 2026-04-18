@@ -10,6 +10,7 @@
 # and replace the testScript body with your steps.
 {
   pkgs,
+  inputs,
   mkCpNode,
   mkAgentNode,
   testCerts,
@@ -17,6 +18,7 @@
   ...
 }:
 pkgs.testers.nixosTest {
+  specialArgs = {inherit inputs;};
   name = "vm-fleet-tag-sync";
 
   nodes.cp = mkCpNode {inherit testCerts;};

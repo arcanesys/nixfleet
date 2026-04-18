@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use rustls::server::WebPkiClientVerifier;
 use rustls::ServerConfig;
-use std::fs;
-use std::io::BufReader;
+use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -16,23 +16,19 @@ pub fn build_server_config(
     key_path: &Path,
     client_ca_path: Option<&Path>,
 ) -> Result<ServerConfig> {
-    let cert_file = fs::File::open(cert_path)
-        .with_context(|| format!("failed to open cert: {}", cert_path.display()))?;
-    let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(cert_file))
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert_path)
+        .with_context(|| format!("failed to open cert: {}", cert_path.display()))?
         .collect::<std::result::Result<Vec<_>, _>>()
         .context("failed to parse server certificates")?;
 
-    let key_file = fs::File::open(key_path)
-        .with_context(|| format!("failed to open key: {}", key_path.display()))?;
-    let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))
-        .context("failed to read private key")?
-        .context("no private key found in file")?;
+    let key = PrivateKeyDer::from_pem_file(key_path)
+        .with_context(|| format!("failed to read private key: {}", key_path.display()))?;
 
     let builder = if let Some(ca_path) = client_ca_path {
-        let ca_file = fs::File::open(ca_path)
-            .with_context(|| format!("failed to open CA: {}", ca_path.display()))?;
         let mut root_store = rustls::RootCertStore::empty();
-        for cert in rustls_pemfile::certs(&mut BufReader::new(ca_file)) {
+        for cert in CertificateDer::pem_file_iter(ca_path)
+            .with_context(|| format!("failed to open CA: {}", ca_path.display()))?
+        {
             root_store.add(cert.context("failed to parse CA cert")?)?;
         }
         let verifier = WebPkiClientVerifier::builder(Arc::new(root_store))

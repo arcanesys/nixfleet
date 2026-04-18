@@ -15,6 +15,7 @@
 # exit code (the CP returns 409 Conflict once any API key exists).
 {
   pkgs,
+  inputs,
   mkTestNode,
   defaultTestSpec,
   mkCpNode,
@@ -26,6 +27,7 @@
   nixfleetCli = pkgs.callPackage ../../../cli {};
 in
   pkgs.testers.nixosTest {
+    specialArgs = {inherit inputs;};
     name = "vm-fleet-bootstrap";
 
     nodes.cp = mkCpNode {inherit testCerts;};

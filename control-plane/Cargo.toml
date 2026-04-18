@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "NixFleet control plane server"
 license = "AGPL-3.0-only"
-repository = "https://github.com/your-org/nixfleet"
-homepage = "https://github.com/your-org/nixfleet"
+repository = "https://github.com/arcanesys/nixfleet"
+homepage = "https://github.com/arcanesys/nixfleet"
 authors = ["nixfleet contributors"]
 
 [dependencies]
@@ -23,7 +23,6 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 rustls = "0.23"
-rustls-pemfile = "2"
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.9"

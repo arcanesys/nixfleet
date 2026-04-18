@@ -6,11 +6,10 @@
 {inputs, ...}: {
   perSystem = {
     pkgs,
-    system,
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
+    helpers = import ./_lib/helpers.nix {inherit lib pkgs inputs;};
     inherit (helpers) mkTlsCerts sharedTestCerts;
 
     mkTestNode = helpers.mkTestNode {
@@ -38,7 +37,7 @@
     # per scenario. `mkTlsCerts` is still exposed for any future scenario
     # that genuinely needs a different CA / hostname shape.
     scenarioArgs = {
-      inherit pkgs lib mkTestNode defaultTestSpec mkTlsCerts;
+      inherit pkgs lib inputs mkTestNode defaultTestSpec mkTlsCerts;
       inherit mkCpNode mkAgentNode testPrelude tlsCertsModule;
       testCerts = sharedTestCerts;
     };
@@ -58,7 +57,9 @@
       vm-fleet-agent-rebuild = import ./_vm-fleet-scenarios/agent-rebuild.nix scenarioArgs;
     };
   in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    # Gated out of flake.checks until testers.nixosTest gains
+    # specialArgs support (see Phase 3 of the scopes-extraction).
+    lib.optionalAttrs false {
       checks = subtests;
     };
 }

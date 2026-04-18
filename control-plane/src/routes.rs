@@ -95,7 +95,7 @@ pub async fn post_report(
     let mut fleet = state.write().await;
     let is_new = !fleet.machines.contains_key(&id);
     let machine = fleet.get_or_create(&id);
-    machine.last_seen = Some(report.timestamp);
+    machine.last_received = Some(chrono::Utc::now());
     machine.last_report = Some(report);
     machine.agent_version = machine
         .last_report
@@ -135,6 +135,18 @@ pub async fn post_report(
             db.set_machine_lifecycle(&id, "active"),
         );
         tracing::info!(machine_id = %id, "Auto-activated on first report");
+    }
+
+    // Persist runtime state so it survives CP restarts.
+    // Placed after auto-register so the machine row exists before the upsert
+    // (first-report INSERT race: the machine must be in machines table first).
+    // Read current_generation from machine.last_report (report was moved above).
+    let health_status = if report_success { "ok" } else { "error" };
+    if let Some(ref last) = machine.last_report {
+        crate::log_insert_err(
+            "machine_state",
+            db.upsert_machine_state(&id, &last.current_generation, health_status),
+        );
     }
 
     let actor_id = format!("machine:{id}");
@@ -207,6 +219,9 @@ pub async fn list_machines(
             last_report: m.last_report.as_ref().map(|r| r.timestamp),
             lifecycle: m.lifecycle.clone(),
             tags: m.tags.clone(),
+            seconds_since_last_report: m
+                .last_received
+                .map(|t| (chrono::Utc::now() - t).num_seconds().max(0) as u64),
         })
         .filter(|m| {
             if query.tag.is_empty() {
@@ -255,6 +270,9 @@ pub async fn register_machine(
     Path(id): Path<String>,
     Json(req): Json<RegisterMachineRequest>,
 ) -> Result<(StatusCode, Json<RegisterMachineResponse>), (StatusCode, String)> {
+    if id.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "machine ID too long".to_string()));
+    }
     if !actor.has_role(&["admin"]) {
         return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
@@ -338,6 +356,9 @@ pub async fn update_lifecycle(
     Path(id): Path<String>,
     Json(req): Json<UpdateLifecycleRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if id.len() > MAX_ID_LEN {
+        return Err((StatusCode::BAD_REQUEST, "machine ID too long".to_string()));
+    }
     if !actor.has_role(&["admin"]) {
         return Err((StatusCode::FORBIDDEN, "admin role required".to_string()));
     }
@@ -407,9 +428,13 @@ pub async fn bootstrap_api_key(
     State((_, db)): State<AppState>,
     Json(req): Json<BootstrapKeyRequest>,
 ) -> Result<Json<BootstrapKeyResponse>, (StatusCode, String)> {
-    if db
-        .has_api_keys()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")))?
+    if db.has_api_keys().map_err(|e| {
+        tracing::error!(error = %e, "failed to check existing API keys");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        )
+    })?
     {
         return Err((
             StatusCode::CONFLICT,
@@ -427,9 +452,10 @@ pub async fn bootstrap_api_key(
     };
 
     db.insert_api_key(&key_hash, name, "admin").map_err(|e| {
+        tracing::error!(error = %e, "failed to create bootstrap API key");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to create key: {e}"),
+            "failed to create key".to_string(),
         )
     })?;
 

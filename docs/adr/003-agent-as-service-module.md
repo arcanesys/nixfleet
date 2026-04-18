@@ -29,7 +29,7 @@ services.nixfleet-control-plane = {
 
 ## Consequences
 
-- Follows NixOS conventions — users expect `services.foo.enable`
+- Follows NixOS conventions -- users expect `services.foo.enable`
 - TLS certs and auth tokens wire naturally into secret management (agenix, sops, etc.)
 - Per-environment overrides work with standard NixOS semantics (`lib.mkForce`, per-host modules)
 - Fleet-wide defaults set in shared fleet modules; per-host overrides in host-specific modules

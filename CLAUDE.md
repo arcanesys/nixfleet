@@ -9,7 +9,7 @@ modules/
 ├── _shared/lib/       # Framework API: mkHost, mkVmApps
 ├── _shared/           # hostSpec options, disk templates
 ├── core/              # Core NixOS/Darwin modules (_nixos.nix, _darwin.nix)
-├── scopes/            # Scope modules (_base, _impermanence, _firewall, _secrets, _backup, _monitoring, nixfleet/_agent, nixfleet/_control-plane, nixfleet/_cache-server, nixfleet/_cache, nixfleet/_microvm-host)
+├── scopes/            # Scope modules: nixfleet/_agent, nixfleet/_agent_darwin, nixfleet/_control-plane, nixfleet/_cache-server, nixfleet/_cache, nixfleet/_microvm-host (infrastructure scopes moved to arcanesys/nixfleet-scopes)
 ├── tests/             # Eval tests, VM tests, integration tests
 ├── apps.nix           # Flake apps (validate, build-vm, start-vm, stop-vm, clean-vm, test-vm)
 ├── fleet.nix          # Framework test fleet
@@ -67,9 +67,11 @@ Full parameter reference, injected modules, exports: `docs/mdbook/reference/mkho
 
 Scopes are plain NixOS/HM modules auto-included by mkHost. They self-activate via `lib.mkIf` on hostSpec flags.
 
-**Automatic** (hostSpec-gated): `base` (`!isMinimal`), `impermanence` (`isImpermanent`), `firewall` (`!isMinimal`)
+**Automatic** (hostSpec-gated): `impermanence` (`isImpermanent`)
 
-**Opt-in** (explicit enable): `secrets`, `backup`, `monitoring`, `nixfleet-agent`, `nixfleet-control-plane`, `nixfleet-cache-server`, `nixfleet-cache`, `nixfleet-microvm-host`
+**Opt-in** (explicit enable): `nixfleet-agent`, `nixfleet-control-plane`, `nixfleet-cache-server`, `nixfleet-cache`, `nixfleet-microvm-host`
+
+Infrastructure scopes (`base`, `firewall`, `secrets`, `backup`, `monitoring`, `home-manager`, `disko`) are provided by [`arcanesys/nixfleet-scopes`](https://github.com/arcanesys/nixfleet-scopes) and imported by consumers via roles.
 
 Fleet repos add opinionated scopes (dev tools, desktop environments, theming) as plain NixOS/HM modules.
 
@@ -103,16 +105,18 @@ The rollout executor verifies that each agent's `current_generation` matches the
 
 ## Control Plane API
 
+When `tls.clientCa` is set, **all** connections require a valid mTLS client certificate. Agent endpoints need only the cert; admin endpoints require both cert + API key (defense-in-depth). See [ADR-007](docs/adr/007-auth-route-split.md).
+
 ### API Endpoints
 
-#### Agent-facing (mTLS, no API key)
+#### Agent-facing (mTLS only)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/machines/{id}/desired-generation` | Poll for desired state |
 | POST | `/api/v1/machines/{id}/report` | Report deploy result + health |
 
-#### Admin (API key required, role-gated)
+#### Admin (mTLS + API key, role-gated)
 
 Roles: `admin` (full access), `deploy` (create releases/rollouts), `readonly` (read-only).
 
@@ -179,8 +183,10 @@ Full testing guide: `docs/mdbook/testing/overview.md`
 
 | Repo | Content |
 |------|---------|
-| **nixfleet** (this repo) | Framework, Rust crates, tests, docs |
-| your fleet repo | Your org's fleet configuration consuming nixfleet |
+| **nixfleet** (this repo) | Framework: mkHost API, Rust crates (agent/CP/CLI), core modules, service scopes, tests, docs |
+| [nixfleet-scopes](https://github.com/arcanesys/nixfleet-scopes) | Infrastructure scopes (base, firewall, secrets, backup, monitoring, impermanence, HM, disko) and roles (server, workstation, endpoint, microvm-guest) |
+| [nixfleet-compliance](https://github.com/arcanesys/nixfleet-compliance) | Regulatory compliance controls (NIS2, DORA, ISO 27001) with evidence probes |
+| Your fleet repo | Your org's fleet configuration consuming the above |
 
 ## Architecture
 

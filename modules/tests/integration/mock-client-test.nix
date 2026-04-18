@@ -24,16 +24,14 @@
     keyboardLayout = "us";
   };
 
-  # Build test hosts
+  # Build test hosts — no role import, just mkHost mechanism.
+  # Represents a "bare" consumption pattern where the fleet doesn't
+  # opt into any nixfleet-scopes roles yet.
   mockHost = mkHost {
     hostName = "mock-host";
     platform = "x86_64-linux";
     isVm = true;
-    hostSpec =
-      mockDefaults
-      // {
-        isMinimal = true;
-      };
+    hostSpec = mockDefaults;
   };
 
   mockOverride = mkHost {
@@ -45,7 +43,6 @@
       // {
         userName = "override-user";
         timeZone = "Europe/London";
-        isMinimal = true;
       };
   };
 
@@ -64,8 +61,9 @@ in {
       (assert' (mockCfg.config.time.timeZone == "America/New_York") "timeZone from shared defaults reaches NixOS config")
       (assert' (mockCfg.config.i18n.defaultLocale == "en_US.UTF-8") "locale from shared defaults reaches NixOS config")
 
-      # 3. Framework scopes activate via hostSpec flags
-      (assert' (mockCfg.config.hostSpec.isMinimal == true) "isMinimal flag propagates")
+      # 3. Framework mechanism: mkHost produces a valid nixosSystem
+      # (isDarwin flag present as a platform marker)
+      (assert' (mockCfg.config.hostSpec.isDarwin == false) "isDarwin defaults to false on Linux")
 
       # 4. Host-level override of shared defaults (mkDefault priority)
       (assert' (overrideCfg.config.hostSpec.userName == "override-user") "host-level userName overrides shared default")

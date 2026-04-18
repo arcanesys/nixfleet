@@ -23,6 +23,15 @@ impl Client {
 
         let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
 
+        // Add custom CA certificate if configured (trusted alongside system roots)
+        if let Some(ca_path) = &config.ca_cert {
+            let ca_pem = std::fs::read(ca_path)
+                .with_context(|| format!("failed to read CA cert: {ca_path}"))?;
+            let ca = reqwest::Certificate::from_pem(&ca_pem)
+                .with_context(|| format!("failed to parse CA cert: {ca_path}"))?;
+            builder = builder.add_root_certificate(ca);
+        }
+
         // Load client certificate for mTLS if configured
         if let (Some(cert), Some(key)) = (&config.client_cert, &config.client_key) {
             let identity = crate::tls::load_client_identity(
@@ -120,12 +129,13 @@ mod tests {
         Config {
             control_plane_url: url.to_string(),
             machine_id: "web-01".to_string(),
-            poll_interval: Duration::from_secs(300),
+            poll_interval: Duration::from_secs(60),
             retry_interval: Duration::from_secs(30),
             cache_url: None,
             db_path: ":memory:".to_string(),
             dry_run: false,
             allow_insecure: true, // Tests use http://
+            ca_cert: None,
             client_cert: None,
             client_key: None,
             health_config_path: "/etc/nixfleet/health-checks.json".to_string(),

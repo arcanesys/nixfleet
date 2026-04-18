@@ -7,7 +7,7 @@
 
 Fleet repos consume NixFleet as a flake input. Both need nixpkgs, home-manager, disko, and other shared inputs. Two strategies exist: fleet repos pin their own versions independently, or fleet repos inherit NixFleet's pins via `follows`.
 
-Independent pins risk version skew — framework modules tested against one nixpkgs revision may break with a different one (option renames, module changes, package removals).
+Independent pins risk version skew -- framework modules tested against one nixpkgs revision may break with a different one (option renames, module changes, package removals).
 
 ## Decision
 
@@ -15,7 +15,7 @@ Fleet repos use `follows` to inherit NixFleet's dependency pins:
 
 ```nix
 {
-  inputs.nixfleet.url = "github:your-org/nixfleet";
+  inputs.nixfleet.url = "github:arcanesys/nixfleet";
   inputs.nixpkgs.follows = "nixfleet/nixpkgs";
   inputs.home-manager.follows = "nixfleet/home-manager";
   inputs.disko.follows = "nixfleet/disko";

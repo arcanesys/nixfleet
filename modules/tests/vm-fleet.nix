@@ -8,11 +8,10 @@
 {inputs, ...}: {
   perSystem = {
     pkgs,
-    system,
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
+    helpers = import ./_lib/helpers.nix {inherit lib pkgs inputs;};
 
     mkTestNode = helpers.mkTestNode {
       inherit inputs;
@@ -57,9 +56,12 @@
     # rationale.
     testCerts = helpers.sharedTestCerts;
   in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    # Gated out of flake.checks until testers.nixosTest gains
+    # specialArgs support (see Phase 3 of the scopes-extraction).
+    lib.optionalAttrs false {
       checks = {
         vm-fleet = pkgs.testers.nixosTest {
+          specialArgs = {inherit inputs;};
           name = "vm-fleet";
 
           nodes.cp = mkCpNode {inherit testCerts;};

@@ -1,5 +1,7 @@
 # Backup Options
 
+> This module is provided by [nixfleet-scopes](https://github.com/arcanesys/nixfleet-scopes). It is documented here as part of the NixFleet ecosystem reference.
+
 All options under `nixfleet.backup`. The module is auto-included by mkHost and disabled by default. Enable with `nixfleet.backup.enable = true`.
 
 The backup scope is backend-agnostic. It creates the systemd timer and service skeleton. Set `backend` to `"restic"` or `"borgbackup"` to use a built-in backend, or set `systemd.services.nixfleet-backup.serviceConfig.ExecStart` directly to use any other tool.

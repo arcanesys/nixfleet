@@ -28,11 +28,10 @@ in {
     # For consumers who don't want mkHost (just raw modules)
     nixosModules.nixfleet-core = ./core/_nixos.nix;
 
-    # Disko templates
-    diskoTemplates = {
-      btrfs = ./_shared/disk-templates/btrfs-disk.nix;
-      btrfs-impermanence = ./_shared/disk-templates/btrfs-impermanence-disk.nix;
-    };
+    # Disko templates are now provided by `arcanesys/nixfleet-scopes`:
+    #   inputs.nixfleet-scopes.scopes.disk-templates.{btrfs,btrfs-impermanence}
+    # Kept as a back-reference for consumers still using the old path.
+    diskoTemplates = inputs.nixfleet-scopes.scopes.disk-templates;
 
     # Flake templates — nix flake init -t nixfleet
     templates = {

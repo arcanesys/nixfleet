@@ -9,14 +9,25 @@
 use anyhow::Context;
 use std::time::Duration;
 use tokio::signal;
+use tokio::signal::unix::{signal as unix_signal, SignalKind};
 use tokio::time::{interval_at, Instant, Interval, MissedTickBehavior};
 use tracing::{error, info, warn};
+
+/// Maximum retries when a fired switch fails (poll timeout + bad exit status).
+const MAX_SWITCH_RETRIES: u32 = 3;
+
+/// Timeout for polling the current system path after firing a switch.
+const SWITCH_POLL_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Interval between polls of the current system path.
+const SWITCH_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 pub mod comms;
 pub mod config;
 pub mod health;
 pub mod metrics;
 pub mod nix;
+pub mod platform;
 pub mod store;
 pub mod tls;
 pub mod types;
@@ -24,16 +35,6 @@ pub mod types;
 pub use config::Config;
 use health::HealthRunner;
 use store::{AsyncStore, Store};
-
-/// Read host uptime from /proc/uptime (Linux). Returns 0 on failure.
-fn read_uptime_seconds() -> u64 {
-    std::fs::read_to_string("/proc/uptime")
-        .ok()
-        .and_then(|s| s.split_whitespace().next().map(String::from))
-        .and_then(|s| s.parse::<f64>().ok())
-        .map(|f| f as u64)
-        .unwrap_or(0)
-}
 
 /// Outcome of a poll cycle — tells the main loop how to schedule the next tick.
 #[derive(Debug)]
@@ -59,6 +60,7 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
         control_plane = %config.control_plane_url,
         poll_interval = ?config.poll_interval,
         dry_run = config.dry_run,
+        version = env!("CARGO_PKG_VERSION"),
         "NixFleet agent starting"
     );
 
@@ -72,6 +74,12 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
     // blocking SQLite work via spawn_blocking instead of pinning a
     // tokio worker thread to a Mutex acquire.
     let store = AsyncStore::new(store);
+
+    // SIGTERM handler — launchd (macOS) and systemd (Linux) send SIGTERM
+    // before SIGKILL. Without this, the agent ignores SIGTERM and gets
+    // force-killed, which launchd classifies as EX_CONFIG (78).
+    let mut sigterm = unix_signal(SignalKind::terminate())
+        .expect("failed to register SIGTERM handler");
 
     let client = comms::Client::new(&config)?;
     let health_runner = HealthRunner::from_config_path(&config.health_config_path);
@@ -104,7 +112,11 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
     loop {
         tokio::select! {
             _ = signal::ctrl_c() => {
-                info!("Received shutdown signal, exiting gracefully");
+                info!("Received SIGINT, exiting gracefully");
+                break;
+            }
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, exiting gracefully");
                 break;
             }
             _ = health_tick.tick() => {
@@ -174,12 +186,51 @@ async fn run_health_report(client: &comms::Client, config: &Config, health_runne
         tags: config.tags.clone(),
         health: Some(health_report),
         agent_version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: read_uptime_seconds(),
+        uptime_seconds: platform::uptime_seconds(),
     };
     match client.post_report(&report).await {
         Ok(()) => info!("Health report sent"),
         Err(e) => warn!("Failed to send health report: {e}"),
     }
+}
+
+/// Fire switch-to-configuration and poll until the generation matches.
+///
+/// Retries the entire fire+poll cycle up to `MAX_SWITCH_RETRIES` times
+/// if the switch unit exits with failure. Returns `Ok(true)` on success,
+/// `Ok(false)` if all retries exhausted or the switch outcome is unknown.
+async fn fire_poll_switch(store_path: &str) -> anyhow::Result<bool> {
+    nix::fire_switch(store_path).await?;
+
+    let path = std::path::Path::new(platform::CURRENT_SYSTEM_PATH);
+    if nix::poll_generation(store_path, path, SWITCH_POLL_TIMEOUT, SWITCH_POLL_INTERVAL).await? {
+        return Ok(true);
+    }
+
+    // Poll timed out — check transient unit status and retry if it failed.
+    for attempt in 1..=MAX_SWITCH_RETRIES {
+        match nix::check_switch_exit_status().await? {
+            Some(false) => {
+                warn!(
+                    attempt,
+                    max = MAX_SWITCH_RETRIES,
+                    "Switch unit failed, retrying"
+                );
+                nix::fire_switch(store_path).await?;
+                if nix::poll_generation(store_path, path, SWITCH_POLL_TIMEOUT, SWITCH_POLL_INTERVAL)
+                    .await?
+                {
+                    return Ok(true);
+                }
+            }
+            _ => {
+                // Still running, succeeded-but-mismatch, or unit not found.
+                warn!("Switch poll timed out, unit status inconclusive");
+                return Ok(false);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Run a full deploy cycle: check → fetch → apply → verify → report.
@@ -262,15 +313,47 @@ async fn run_deploy_cycle(
         return PollOutcome::Success { poll_hint };
     }
 
-    // Apply: switch-to-configuration.
-    metrics::record_state_transition("fetching", "applying");
-    if let Err(e) = nix::apply_generation(&desired.hash).await {
-        error!("Failed to apply generation: {e}");
-        metrics::record_state_transition("applying", "rolling_back");
-        rollback_and_report(client, config, store, &format!("apply failed: {e}")).await;
+    // Check if another switch is already in progress (e.g. manual nixos-rebuild).
+    // If so, skip — the next poll cycle will see the updated generation.
+    if nix::is_switch_in_progress() {
+        info!("System switch already in progress, deferring to next poll");
+        metrics::record_state_transition("fetching", "idle");
         return PollOutcome::Success { poll_hint };
     }
-    info!(hash = %desired.hash, "Generation applied");
+
+    // Apply: fire switch-to-configuration in a detached transient service,
+    // then poll /run/current-system until it matches the desired generation.
+    // The agent may be killed mid-switch (self-switch); on restart the
+    // initial deploy cycle re-enters this path and the poll succeeds.
+    metrics::record_state_transition("fetching", "applying");
+    send_report(client, config, true, "applying").await;
+
+    let applied = match fire_poll_switch(&desired.hash).await {
+        Ok(true) => {
+            info!(hash = %desired.hash, "Generation applied");
+            // Verify the nix profile matches the desired store path.
+            // fire_switch sets it beforehand, but verify as a safety net
+            // for edge cases (concurrent nix-env, partial failure).
+            if let Err(e) = nix::verify_profile(&desired.hash).await {
+                warn!(error = %e, "Profile verification failed (non-fatal)");
+            }
+            true
+        }
+        Ok(false) => {
+            error!("Failed to apply generation after retries");
+            false
+        }
+        Err(e) => {
+            error!("Fatal error during apply: {e}");
+            false
+        }
+    };
+
+    if !applied {
+        metrics::record_state_transition("applying", "rolling_back");
+        rollback_and_report(client, config, store, "switch timed out after retries").await;
+        return PollOutcome::Success { poll_hint };
+    }
 
     // Verify: run health checks after apply.
     metrics::record_state_transition("applying", "verifying");
@@ -341,11 +424,30 @@ async fn send_report(client: &comms::Client, config: &Config, success: bool, mes
         tags: config.tags.clone(),
         health: None,
         agent_version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: read_uptime_seconds(),
+        uptime_seconds: platform::uptime_seconds(),
     };
     match client.post_report(&report).await {
         Ok(()) => info!("Report sent"),
         Err(e) => warn!("Failed to send report: {e}"),
     }
     metrics::record_state_transition("reporting", "idle");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_build_interval_matches_requested_period() {
+        let period = Duration::from_secs(10);
+        let interval = build_interval(period);
+        assert_eq!(interval.period(), period);
+    }
+
+    #[tokio::test]
+    async fn test_sigterm_handler_registered() {
+        use tokio::signal::unix::{signal as unix_signal, SignalKind};
+        let _sigterm = unix_signal(SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+    }
 }

@@ -13,6 +13,7 @@
 //! | M9 | Agent report populates `agent_version` and `uptime_seconds` |
 //! | M10 | Maintenance machine excluded from rollout even when targeted by name |
 //! | M11 | `notify-deploy` sets desired generation in DB and fleet state |
+//! | M12 | `seconds_since_last_report` populated after agent report |
 //!
 //! Every scenario spins up a fresh in-process CP via `harness::spawn_cp`
 //! and drives it over real HTTP.
@@ -615,6 +616,42 @@ async fn m11_notify_deploy_sets_desired_generation() {
         db_gen.as_deref(),
         Some(store_path),
         "DB desired_generation must be set after notify-deploy"
+    );
+}
+
+/// M12 — `seconds_since_last_report` is populated after an agent report.
+///
+/// Verifies the CP sets `last_received` on report and computes
+/// `seconds_since_last_report` from its own clock in the list_machines
+/// response.
+#[tokio::test]
+async fn m12_seconds_since_last_report() {
+    let cp = harness::spawn_cp().await;
+
+    // Agent reports in.
+    harness::fake_agent_report(&cp, "m12-host", "/nix/store/m12-gen", true, "ok", &[]).await;
+
+    // Fetch inventory — seconds_since_last_report should be present and small.
+    let machines: Vec<MachineStatus> = cp
+        .admin
+        .get(format!("{}/api/v1/machines", cp.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let m = machines
+        .iter()
+        .find(|m| m.machine_id == "m12-host")
+        .expect("m12-host in inventory");
+
+    let seconds = m
+        .seconds_since_last_report
+        .expect("seconds_since_last_report must be Some after a report");
+    assert!(
+        seconds < 5,
+        "seconds_since_last_report should be < 5 (got {seconds})"
     );
 }
 

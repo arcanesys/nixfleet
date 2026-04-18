@@ -82,6 +82,22 @@ The `{}` placeholder is replaced with each store path. When combined with `--pus
 
 Fleet repos that want Attic can add it as their own flake input and configure it via plain NixOS modules.
 
+### Attic and upstream dependencies
+
+Attic is a **push-only** cache — it does not proxy upstream caches like `cache.nixos.org`. When you push a closure with `attic push`, Attic skips store paths that already exist in upstream caches to save bandwidth and storage. This means your private cache may not have every path needed to fetch a full closure.
+
+The agent handles this automatically: if `nix copy --from <cache_url>` fails (e.g. a dependency like `kmod` exists on `cache.nixos.org` but not in your Attic cache), it falls back to `nix-store --realise` which uses the system-configured substituters. Your custom-built paths are still served from LAN (Attic), while standard nixpkgs dependencies fall through to `cache.nixos.org`.
+
+**For air-gapped fleets** (no WAN access), you must push complete closures including all upstream dependencies. Use `nix copy --to` instead of `attic push` — it copies every path regardless of upstream availability:
+
+```sh
+# Push complete closure (all paths, no upstream skip)
+nix copy --to http://cache:8081/fleet /nix/store/...-nixos-system-...
+
+# Or via SSH to the cache host's store (harmonia serves it directly)
+nix copy --to ssh://root@cache /nix/store/...-nixos-system-...
+```
+
 ## See also
 
 - [Cache Options](../../reference/cache-options.md) — full option reference

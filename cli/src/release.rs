@@ -8,16 +8,25 @@ use nixfleet_types::release::{
 use reqwest::Client;
 use tokio::process::Command;
 
-/// Discover all nixosConfigurations host names from a flake.
-pub(crate) async fn discover_hosts(
+/// A discovered host with its flake configuration set.
+#[derive(Debug, Clone)]
+pub(crate) struct DiscoveredHost {
+    pub hostname: String,
+    /// "nixosConfigurations" or "darwinConfigurations"
+    pub config_set: String,
+}
+
+/// Discover host names from a single configuration set (e.g. "nixosConfigurations").
+async fn discover_config_set(
     flake: &str,
+    config_set: &str,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<Vec<String>> {
     let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
         "eval",
-        &format!("{}#nixosConfigurations", flake),
+        &format!("{}#{}", flake, config_set),
         "--apply",
         "builtins.attrNames",
         "--json",
@@ -34,7 +43,12 @@ pub(crate) async fn discover_hosts(
             .await
             .context("failed to run nix eval")?
     };
-    oplog.log_output("nix eval discover hosts", None, &output, t.elapsed());
+    oplog.log_output(
+        &format!("nix eval discover {} hosts", config_set),
+        None,
+        &output,
+        t.elapsed(),
+    );
     if !output.status.success() {
         anyhow::bail!(
             "nix eval failed: {}",
@@ -46,17 +60,62 @@ pub(crate) async fn discover_hosts(
     Ok(hosts)
 }
 
+/// Discover all hosts from nixosConfigurations and darwinConfigurations.
+pub(crate) async fn discover_hosts(
+    flake: &str,
+    oplog: &mut crate::oplog::OpLog,
+) -> Result<Vec<DiscoveredHost>> {
+    let mut hosts = Vec::new();
+
+    // NixOS hosts (optional — fleet may be Darwin-only)
+    match discover_config_set(flake, "nixosConfigurations", oplog).await {
+        Ok(nixos) => {
+            for h in nixos {
+                hosts.push(DiscoveredHost {
+                    hostname: h,
+                    config_set: "nixosConfigurations".into(),
+                });
+            }
+        }
+        Err(_) => {
+            tracing::debug!("no nixosConfigurations found");
+        }
+    }
+
+    // Darwin hosts (optional — fleet may be Linux-only)
+    match discover_config_set(flake, "darwinConfigurations", oplog).await {
+        Ok(darwin) => {
+            for h in darwin {
+                hosts.push(DiscoveredHost {
+                    hostname: h,
+                    config_set: "darwinConfigurations".into(),
+                });
+            }
+        }
+        Err(_) => {
+            tracing::debug!("no darwinConfigurations found");
+        }
+    }
+
+    if hosts.is_empty() {
+        anyhow::bail!("no nixosConfigurations or darwinConfigurations found in flake");
+    }
+
+    Ok(hosts)
+}
+
 /// Detect platform for a host.
-async fn detect_platform(
+pub(crate) async fn detect_platform(
     flake: &str,
     hostname: &str,
+    config_set: &str,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<String> {
     let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
         "eval",
-        &format!("{}#nixosConfigurations.{}.pkgs.system", flake, hostname),
+        &format!("{}#{}.{}.pkgs.system", flake, config_set, hostname),
         "--raw",
     ]);
     if display::quiet_subprocess() {
@@ -88,14 +147,19 @@ async fn detect_platform(
 }
 
 /// Detect tags for a host (best-effort).
-async fn detect_tags(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Vec<String> {
+async fn detect_tags(
+    flake: &str,
+    hostname: &str,
+    config_set: &str,
+    oplog: &mut crate::oplog::OpLog,
+) -> Vec<String> {
     let t = std::time::Instant::now();
     let mut cmd = Command::new("nix");
     cmd.args([
         "eval",
         &format!(
-            "{}#nixosConfigurations.{}.config.services.nixfleet-agent.tags",
-            flake, hostname
+            "{}#{}.{}.config.services.nixfleet-agent.tags",
+            flake, config_set, hostname
         ),
         "--json",
     ]);
@@ -129,6 +193,7 @@ async fn detect_tags(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLo
 pub(crate) async fn build_host(
     flake: &str,
     hostname: &str,
+    config_set: &str,
     window: Option<&mut display::RollingWindow>,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<String> {
@@ -138,8 +203,8 @@ pub(crate) async fn build_host(
     cmd.args([
         "build",
         &format!(
-            "{}#nixosConfigurations.{}.config.system.build.toplevel",
-            flake, hostname
+            "{}#{}.{}.config.system.build.toplevel",
+            flake, config_set, hostname
         ),
         "--print-out-paths",
         "--no-link",
@@ -173,11 +238,16 @@ pub(crate) async fn build_host(
 }
 
 /// Evaluate a host's store path without building.
-async fn eval_host(flake: &str, hostname: &str, oplog: &mut crate::oplog::OpLog) -> Result<String> {
+async fn eval_host(
+    flake: &str,
+    hostname: &str,
+    config_set: &str,
+    oplog: &mut crate::oplog::OpLog,
+) -> Result<String> {
     let t = std::time::Instant::now();
     let attr = format!(
-        "{}#nixosConfigurations.{}.config.system.build.toplevel.outPath",
-        flake, hostname
+        "{}#{}.{}.config.system.build.toplevel.outPath",
+        flake, config_set, hostname
     );
     let mut cmd = Command::new("nix");
     cmd.args(["eval", &attr, "--raw"]);
@@ -328,6 +398,17 @@ pub fn extract_ssh_host(url: &str) -> Option<String> {
         .map(|rest| rest.trim_end_matches('/').to_string())
 }
 
+/// Detect the Nix platform of the local machine.
+pub(crate) fn detect_local_nix_platform() -> &'static str {
+    match (std::env::consts::ARCH, std::env::consts::OS) {
+        ("x86_64", "linux") => "x86_64-linux",
+        ("aarch64", "linux") => "aarch64-linux",
+        ("aarch64", "macos") => "aarch64-darwin",
+        ("x86_64", "macos") => "x86_64-darwin",
+        _ => "unknown",
+    }
+}
+
 /// `nixfleet release create`
 // CRUD function arguments map directly to table columns; refactoring is busywork
 #[allow(clippy::too_many_arguments)]
@@ -347,14 +428,20 @@ pub async fn create(
 
     tracing::info!("discovering hosts");
     let all_hosts = discover_hosts(flake, &mut oplog).await?;
-    let hosts = filter_hosts(&all_hosts, host_patterns);
+    let all_hostnames: Vec<String> = all_hosts.iter().map(|h| h.hostname.clone()).collect();
+    let matched_names = filter_hosts(&all_hostnames, host_patterns);
+    let hosts: Vec<DiscoveredHost> = all_hosts
+        .into_iter()
+        .filter(|h| matched_names.contains(&h.hostname))
+        .collect();
     if hosts.is_empty() {
         oplog.finish(false, Some("no hosts match pattern"));
         anyhow::bail!("no hosts match pattern '{}'", host_patterns.join(","));
     }
+    let host_names: Vec<String> = hosts.iter().map(|h| h.hostname.clone()).collect();
     tracing::info!(count = hosts.len(), "found hosts");
 
-    oplog.log_start("release_create", flake, &hosts);
+    oplog.log_start("release_create", flake, &host_names);
 
     let result = create_inner(
         client, base_url, flake, &hosts, push_to, push_hook, copy, cache_url, dry_run, eval_only,
@@ -377,7 +464,7 @@ async fn create_inner(
     client: &Client,
     base_url: &str,
     flake: &str,
-    hosts: &[String],
+    hosts: &[DiscoveredHost],
     push_to: Option<&str>,
     push_hook: Option<&str>,
     copy: bool,
@@ -386,6 +473,8 @@ async fn create_inner(
     eval_only: bool,
     oplog: &mut crate::oplog::OpLog,
 ) -> Result<Option<String>> {
+    let local_nix_platform = detect_local_nix_platform();
+
     // Build all hosts
     let mut entries = Vec::new();
     {
@@ -395,18 +484,31 @@ async fn create_inner(
             None
         };
 
-        for hostname in hosts {
+        for host in hosts {
+            let hostname = &host.hostname;
+            let config_set = &host.config_set;
             if let Some(ref mut w) = window {
                 w.set_line_prefix(hostname);
             }
-            let platform = detect_platform(flake, hostname, oplog).await?;
-            let tags = detect_tags(flake, hostname, oplog).await;
+            let platform = detect_platform(flake, hostname, config_set, oplog).await?;
+            let tags = detect_tags(flake, hostname, config_set, oplog).await;
+
+            if !eval_only && platform != local_nix_platform {
+                tracing::info!(
+                    hostname,
+                    platform,
+                    local = local_nix_platform,
+                    "Cross-platform build — nix will delegate to a remote builder"
+                );
+            }
+
             let build_result = if eval_only {
-                eval_host(flake, hostname, oplog).await
+                eval_host(flake, hostname, config_set, oplog).await
             } else {
                 build_host(
                     flake,
                     hostname,
+                    config_set,
                     window.as_mut().and_then(|w| w.for_output()),
                     oplog,
                 )
@@ -414,12 +516,6 @@ async fn create_inner(
             };
             match build_result {
                 Ok(store_path) => {
-                    if platform.contains("darwin") {
-                        tracing::info!(
-                            hostname,
-                            "Darwin host — built and cached but not deployable via agent"
-                        );
-                    }
                     entries.push(ReleaseEntry {
                         hostname: hostname.clone(),
                         store_path,

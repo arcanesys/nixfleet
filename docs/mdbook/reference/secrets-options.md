@@ -1,5 +1,7 @@
 # Secrets Options
 
+> This module is provided by [nixfleet-scopes](https://github.com/arcanesys/nixfleet-scopes). It is documented here as part of the NixFleet ecosystem reference.
+
 All options under `nixfleet.secrets`. The module is auto-included by mkHost and disabled by default. Enable with `nixfleet.secrets.enable = true`.
 
 ## Options

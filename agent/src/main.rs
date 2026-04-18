@@ -20,7 +20,7 @@ struct Cli {
     machine_id: String,
 
     /// Poll interval in seconds (steady-state)
-    #[arg(long, default_value = "300", env = "NIXFLEET_POLL_INTERVAL")]
+    #[arg(long, default_value = "60", env = "NIXFLEET_POLL_INTERVAL")]
     poll_interval: u64,
 
     /// Retry interval in seconds after a failed poll
@@ -46,6 +46,10 @@ struct Cli {
     /// Allow insecure HTTP connections (dev only)
     #[arg(long, env = "NIXFLEET_ALLOW_INSECURE", default_value = "false")]
     allow_insecure: bool,
+
+    /// Path to CA certificate PEM file (trusted in addition to system roots)
+    #[arg(long, env = "NIXFLEET_CA_CERT")]
+    ca_cert: Option<String>,
 
     /// Path to client certificate PEM file (for mTLS)
     #[arg(long, env = "NIXFLEET_CLIENT_CERT")]
@@ -77,7 +81,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     // Initialize structured JSON logging
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -98,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
         db_path: cli.db_path,
         dry_run: cli.dry_run,
         allow_insecure: cli.allow_insecure,
+        ca_cert: cli.ca_cert,
         client_cert: cli.client_cert,
         client_key: cli.client_key,
         health_config_path: cli.health_config,
@@ -106,5 +111,13 @@ async fn main() -> anyhow::Result<()> {
         metrics_port: cli.metrics_port,
     };
 
-    nixfleet_agent::run_loop(config).await
+    // Never exit non-zero. On Darwin, launchd treats exit code 78
+    // (EX_CONFIG) as "misconfigured, never restart" — permanently
+    // disabling the agent. By always exiting 0, KeepAlive + ThrottleInterval
+    // handle restarts reliably. Errors are logged, not swallowed.
+    // On Linux, systemd's Restart=always handles this regardless of exit
+    // code, so this is harmless there.
+    if let Err(e) = nixfleet_agent::run_loop(config).await {
+        tracing::error!(error = %e, "Agent exited with error, will be restarted by init system");
+    }
 }

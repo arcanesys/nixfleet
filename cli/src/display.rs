@@ -509,12 +509,16 @@ pub fn format_store_path_compact(path: &str, max_len: usize) -> String {
 /// Color a status string for terminal display.
 pub fn color_status(s: &str) -> String {
     let lower = s.to_lowercase();
-    let styled = match lower.as_str() {
-        "ok" | "completed" | "healthy" | "succeeded" | "active" | "in_sync" => style(s).green(),
-        "error" | "failed" | "unhealthy" => style(s).red(),
-        "paused" | "pending" | "waiting_health" | "deploying" | "maintenance" | "provisioning"
-        | "outdated" => style(s).yellow(),
-        _ => style(s).force_styling(false),
+    let styled = if lower.contains("(stale)") {
+        style(s).yellow()
+    } else {
+        match lower.as_str() {
+            "ok" | "completed" | "healthy" | "succeeded" | "active" | "in_sync" => style(s).green(),
+            "error" | "failed" | "unhealthy" => style(s).red(),
+            "paused" | "pending" | "waiting_health" | "deploying" | "maintenance"
+            | "provisioning" | "outdated" => style(s).yellow(),
+            _ => style(s).force_styling(false),
+        }
     };
     styled.to_string()
 }

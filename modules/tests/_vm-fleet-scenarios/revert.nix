@@ -61,6 +61,7 @@
 #     first batch reach `succeeded`.
 {
   pkgs,
+  inputs,
   mkCpNode,
   mkAgentNode,
   testCerts,
@@ -83,6 +84,7 @@
     };
 in
   pkgs.testers.nixosTest {
+    specialArgs = {inherit inputs;};
     name = "vm-fleet-revert";
 
     nodes.cp = mkCpNode {inherit testCerts;};

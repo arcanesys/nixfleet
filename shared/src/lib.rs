@@ -166,6 +166,10 @@ pub struct MachineStatus {
     pub lifecycle: MachineLifecycle,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Seconds since the CP last received a report from this machine.
+    /// None if the machine has never reported.
+    #[serde(default)]
+    pub seconds_since_last_report: Option<u64>,
 }
 
 /// Audit event for compliance reporting.
@@ -261,6 +265,40 @@ mod tests {
                 from.can_transition_to(to)
             );
         }
+    }
+
+    #[test]
+    fn machine_status_seconds_since_last_report_default() {
+        // Field absent → defaults to None (backwards compat with older CPs)
+        let json = r#"{
+            "machine_id": "web-01",
+            "current_generation": "/nix/store/abc",
+            "desired_generation": null,
+            "agent_version": "0.1.0",
+            "system_state": "ok",
+            "uptime_seconds": 3600,
+            "last_report": null,
+            "lifecycle": "active",
+            "tags": []
+        }"#;
+        let status: MachineStatus = serde_json::from_str(json).unwrap();
+        assert!(status.seconds_since_last_report.is_none());
+
+        // Field present → deserializes correctly
+        let json_with = r#"{
+            "machine_id": "web-01",
+            "current_generation": "/nix/store/abc",
+            "desired_generation": null,
+            "agent_version": "0.1.0",
+            "system_state": "ok",
+            "uptime_seconds": 3600,
+            "last_report": null,
+            "lifecycle": "active",
+            "tags": [],
+            "seconds_since_last_report": 120
+        }"#;
+        let status2: MachineStatus = serde_json::from_str(json_with).unwrap();
+        assert_eq!(status2.seconds_since_last_report, Some(120));
     }
 
     /// from_str_lc must round-trip every variant + reject unknown.

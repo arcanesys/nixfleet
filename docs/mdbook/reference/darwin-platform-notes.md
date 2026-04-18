@@ -1,0 +1,165 @@
+# Darwin Platform Quirks
+
+Differences between NixOS and nix-darwin that affect nixfleet. This document captures non-obvious behaviors discovered during Darwin fleet integration.
+
+## networking.hostName is null
+
+**NixOS:** `config.networking.hostName` is always set (from the NixOS config).
+
+**Darwin:** `config.networking.hostName` is `null` by default. nix-darwin uses the system hostname but doesn't populate this option.
+
+**Fix:** Use `config.hostSpec.hostName` (set by mkHost) everywhere instead of `config.networking.hostName`. This works on both platforms.
+
+## Activation scripts API differs
+
+**NixOS:** `system.activationScripts.<name>.text = "..."` — arbitrary named scripts.
+
+**Darwin:** `system.activationScripts.preActivation.text` and `system.activationScripts.postActivation.text` — only two hooks, no arbitrary names.
+
+**Fix:** Use `preActivation` or `postActivation` on Darwin. When a module is shared between platforms, use `lib.mkMerge` with `lib.mkIf isDarwin` to conditionally define the Darwin-only option without breaking NixOS evaluation.
+
+## /run/current-system exists on Darwin
+
+**NixOS:** `/run/current-system` is a symlink to the active store path, created by `switch-to-configuration`.
+
+**Darwin:** `/run/current-system` also exists — created by the `activate` script (line: `ln -sfn "$(readlink -f "$systemConfig")" /run/current-system`). It's a direct symlink to the store path, same as NixOS.
+
+**Implication:** The agent can use `/run/current-system` on both platforms for generation detection. No platform-specific path needed.
+
+## /nix/var/nix/profiles/system is a two-level symlink
+
+**Both platforms:** `/nix/var/nix/profiles/system` → `system-N-link` → `/nix/store/<hash>-...-system-...`
+
+**Implication:** `read_link()` only resolves one level (returns `system-N-link`). Use `canonicalize()` to fully resolve, or use `/run/current-system` which is a single-level symlink on both platforms.
+
+## Activation mechanism
+
+**NixOS:** `<store_path>/bin/switch-to-configuration switch` — a Rust binary that manages systemd units, /etc, bootloader, etc. Uses `flock` on `/run/nixos/switch-to-configuration.lock`.
+
+**Darwin:** `<store_path>/activate` — a bash script (~900 lines) that manages launchd plists, /etc files, system defaults, user activation. No lock file.
+
+## Concurrent switch protection (NixOS)
+
+On NixOS, `switch-to-configuration` uses `flock` on `/run/nixos/switch-to-configuration.lock`. If the agent tries to fire a switch while `nixos-rebuild` (or another switch) is already running, the lock acquisition fails with "Could not acquire lock".
+
+The agent probes this lock with a non-blocking `flock` before firing. If the lock is held, the agent logs `"System switch already in progress, deferring to next poll"` and skips the switch. The next poll cycle picks up the result.
+
+This prevents the race condition where both `nixos-rebuild switch` (manual) and the agent's `systemd-run` switch try to run simultaneously. On Darwin, activation is synchronous and this check is not needed.
+
+**darwin-rebuild switch** does three things in order:
+1. `nix-env -p /nix/var/nix/profiles/system --set "$systemConfig"` (profile update)
+2. `$systemConfig/activate-user` (legacy user activation, if present)
+3. `$systemConfig/activate` (system activation)
+
+**Agent fire_switch order:** Profile update first, then activate. This matches `darwin-rebuild switch`.
+
+## Agent self-update (detached activation)
+
+**NixOS:** The agent fires `systemd-run --unit=nixfleet-switch` — a detached transient unit. The switch runs independently; if it restarts the agent's service, the agent survives because the switch is in a separate unit.
+
+**Darwin:** The activate script may unload/reload the agent's launchd plist (when the binary path in ProgramArguments changes). This kills the agent mid-activation. Without protection, the activation dies with the agent.
+
+**Fix:** The agent spawns activation in a separate process session via `setsid()`. The child process (`sh -c "nix-env --set ... && .../activate"`) runs in its own session, so when launchd kills the agent's process group during plist reload, the activation child survives and completes. Launchd's `KeepAlive` restarts the agent with the new binary, which sees the generation matches on its next poll.
+
+Key implementation details:
+- `std::process::Command::spawn()` (not `.output()`) — non-blocking, agent returns immediately
+- `pre_exec(|| { libc::setsid(); })` — new session so child survives parent's process group kill
+- `stdout`/`stderr` redirected to `/var/log/nixfleet-activate.log`
+- `stdin` set to `Stdio::null()`
+- `nohup` doesn't work in launchd daemon context (no TTY)
+- `check_switch_exit_status()` returns `None` (inconclusive) so the polling loop waits for `/run/current-system` to update
+
+**SSH deploy order:** Same — `nix-env --set` then `activate`. Not `switch-to-configuration`.
+
+## Launchd vs systemd for the agent
+
+**NixOS:** `systemd.services.nixfleet-agent` — Type=simple, Restart=always, RestartSec=30.
+
+**Darwin:** `launchd.daemons.nixfleet-agent` — KeepAlive=true, RunAtLoad=true. Plist at `/Library/LaunchDaemons/com.nixfleet.agent.plist`.
+
+**Key differences:**
+- Launchd auto-restarts crashed daemons (KeepAlive = true) — no explicit restart config needed
+- Logs go to `/var/log/nixfleet-agent.log` (StandardOutPath/StandardErrorPath) not journald
+- State directory (`/var/lib/nixfleet`) must be created via `preActivation` script, not systemd's `StateDirectory`
+- WorkingDirectory must exist before the daemon starts or launchd returns I/O error (exit 5)
+- **PATH must be set explicitly.** Launchd daemons inherit a minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`). The agent needs `nix`, `nix-env`, `nix-copy-closure` — set `EnvironmentVariables.PATH` to include `/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin`. On NixOS, `systemd.services.<name>.path` handles this.
+
+## Health checks: launchd vs systemd
+
+**NixOS:** `healthChecks.systemd` — checks `systemctl is-active <unit>`.
+
+**Darwin:** `healthChecks.launchd` — checks `launchctl list <label>`, verifies PID presence in output (loaded-but-stopped services return exit 0 without a PID line).
+
+**Fallback:** NixOS uses `systemctl is-system-running`. Darwin uses `launchctl list` (system responsive check).
+
+## Custom CA trust
+
+**NixOS:** `security.pki.certificateFiles` adds CAs to the system trust store. The agent's reqwest/rustls uses native roots, which includes these.
+
+**Darwin:** `security.pki.certificateFiles` doesn't exist in nix-darwin. The macOS keychain is the system trust store, managed by `security add-trusted-cert`.
+
+**Fix:** Added `--ca-cert` flag to the agent. Passes a PEM file as an additional root certificate to reqwest. Works on both platforms without touching the system trust store.
+
+## Determinate Nix on Darwin
+
+**Standard Nix:** nix-darwin manages `/etc/nix/nix.conf` and writes `/etc/nix/machines` for `nix.buildMachines`.
+
+**Determinate Nix:** Owns `/etc/nix/nix.conf` (`# do not modify! this file will be replaced!`). Uses `!include nix.custom.conf` for user settings. nix-darwin's `nix.buildMachines` evaluates correctly but has **no effect** — the generated nix.conf is overwritten by Determinate Nix.
+
+**Fix:** Write builders to `/etc/nix/machines` directly via `postActivation`, then set `builders = @/etc/nix/machines` in `/etc/nix/nix.custom.conf`. Restart the nix daemon after activation (`sudo launchctl kickstart -k system/systems.determinate.nix-daemon`).
+
+**Trusted users:** Determinate Nix defaults to `trusted-users = root` only. When the Darwin host acts as a remote builder (e.g. for NixOS hosts building Darwin closures), the SSH user must be in `trusted-users` or the daemon rejects input-addressed derivation builds with `"not privileged to build input-addressed derivations"`. Add `trusted-users = root <username>` to `nix.custom.conf`.
+
+## SSH deploy: user@host vs root@host
+
+**NixOS:** SSH deploy connects as `root@host`. Root has SSH keys via `openssh.authorizedKeys` and can run `switch-to-configuration` directly.
+
+**Darwin:** macOS disables root SSH login. SSH deploy connects as `$USER@host` (the operator's local username). This requires:
+- The username must exist on the target with SSH key access
+- Activation commands need `sudo` (`nix-env --set` and `activate`)
+- The `nix-env` full path must match the sudoers rule (`/nix/var/nix/profiles/default/bin/nix-env` on Determinate Nix)
+- Override with `--target user@host` for single-host deploys if usernames differ
+
+For multi-host deploys (`--hosts '*'`), the CLI auto-detects: `root@` for NixOS, `$USER@` for Darwin.
+
+## Sudo configuration
+
+**NixOS:** `security.sudo.extraRules` — structured option with `users`, `commands`, `options`.
+
+**Darwin:** `security.sudo.extraConfig` — raw sudoers text only. No structured `extraRules` option.
+
+**SSH deploy:** Darwin hosts need passwordless sudo for `nix-env` and `activate` since the SSH connection is as a regular user (root login disabled). Scope narrowly:
+
+    security.sudo.extraConfig = ''
+      s33d ALL=(root) NOPASSWD: /nix/var/nix/profiles/default/bin/nix-env *
+      s33d ALL=(root) NOPASSWD: /nix/store/*/activate
+    '';
+
+**nix-env path:** Determinate Nix installs to `/nix/var/nix/profiles/default/bin/`, not `/run/current-system/sw/bin/`. The sudoers rule and the CLI command must use the same full path.
+
+## environment.etc: .text vs .source
+
+**Both platforms:** `environment.etc."path".source = ./file` creates a symlink chain to the flake source in the nix store. This works when the machine builds locally (flake source is in the store). But when deployed via CP rollout, only the system closure is copied — the flake source store path isn't present, so the symlink is dangling.
+
+**Fix:** Use `environment.etc."path".text = builtins.readFile ./file` instead. This embeds the file content as a derivation in the system closure, which is always present regardless of deployment method.
+
+## Remote builder SSH
+
+The nix daemon runs as root on both platforms. For remote builders:
+- Root must have an SSH key that the builder accepts
+- The builder's host key must be in the system known_hosts (`/etc/ssh/ssh_known_hosts`)
+- On Darwin, the nix daemon restart is required to pick up new builder config (it reads nix.conf only at startup)
+
+## CLI paths on macOS
+
+| Purpose | Linux | macOS |
+|---------|-------|-------|
+| Config | `.nixfleet.toml` (CWD walk) | Same |
+| Credentials | `~/.config/nixfleet/credentials.toml` | `~/Library/Application Support/nixfleet/credentials.toml` |
+| Operation logs | `~/.local/state/nixfleet/logs/` | `~/Library/Logs/nixfleet/` |
+
+## Test sandbox differences
+
+**NixOS build sandbox:** `$HOME` writable, `XDG_CONFIG_HOME` respected by `dirs::config_dir()`.
+
+**Darwin build sandbox:** `$HOME=/homeless-shelter` (read-only). `dirs::config_dir()` ignores `XDG_CONFIG_HOME` and uses `~/Library/Application Support`. Tests that write to config dirs must set `HOME` to a temp dir.

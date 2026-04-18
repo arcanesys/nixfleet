@@ -9,7 +9,7 @@ All options under `services.nixfleet-agent`. The module is auto-included by mkHo
 | `enable` | `bool` | `false` | Enable the NixFleet fleet management agent. |
 | `controlPlaneUrl` | `str` | -- (required when enabled) | URL of the NixFleet control plane. Example: `"https://fleet.example.com"`. |
 | `machineId` | `str` | `config.networking.hostName` | Machine identifier reported to the control plane. |
-| `pollInterval` | `int` | `300` | Steady-state poll interval in seconds. The control plane may override this for individual cycles via a `poll_hint` field in the desired-generation response (set to `5` during active rollouts), letting the agent react to new deploys within seconds without reducing the steady-state polling rate. |
+| `pollInterval` | `int` | `60` | Steady-state poll interval in seconds. The control plane may override this for individual cycles via a `poll_hint` field in the desired-generation response (set to `5` during active rollouts), letting the agent react to new deploys within seconds without reducing the steady-state polling rate. |
 | `retryInterval` | `int` | `30` | Retry interval in seconds after a failed poll (network error, CP not ready, fetch failure, bootstrap race). Shorter than `pollInterval` so the agent recovers quickly from transient failures without flooding the CP. |
 | `cacheUrl` | `nullOr str` | `null` | Global binary cache URL for fetching closures. Resolution order: (1) per-generation `cache_url` from the release entry; (2) this option if set; (3) if neither is set, the agent verifies the store path exists locally via `nix path-info` — the path must be pre-pushed out-of-band. Example: `"http://cache:5000"`. |
 | `dbPath` | `str` | `"/var/lib/nixfleet/state.db"` | Path to the SQLite state database. |
