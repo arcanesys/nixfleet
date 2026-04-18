@@ -193,6 +193,32 @@ pub async fn check_switch_exit_status() -> Result<Option<bool>> {
     Ok(None)
 }
 
+/// Update the nix system profile to point to the given store path.
+///
+/// Runs: `nix-env -p /nix/var/nix/profiles/system --set <store_path>`
+///
+/// This creates a new profile generation, which is what the bootloader
+/// uses to determine available and default boot entries. Without this,
+/// `switch-to-configuration switch` activates the system but the profile
+/// stays at the old generation — on reboot, the old system boots.
+///
+/// On Darwin, `fire_switch` already handles this inline (nix-env --set
+/// before activate). This function is only called on Linux.
+pub async fn set_profile(store_path: &str) -> Result<()> {
+    validate_store_path(store_path)?;
+    info!(store_path, "Setting system profile");
+
+    let mut cmd = Command::new("nix-env");
+    cmd.args(["-p", crate::platform::SYSTEM_PROFILE, "--set", store_path]);
+    let output = run_with_timeout(cmd, "nix-env --set").await?;
+
+    if !output.status.success() {
+        let stderr = truncated_stderr(&output.stderr);
+        anyhow::bail!("nix-env --set failed: {stderr}");
+    }
+    Ok(())
+}
+
 /// Fire system activation for a store path.
 ///
 /// Linux:  detached transient systemd unit (`systemd-run`)
@@ -202,6 +228,13 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
+        // Step 1: Update the nix profile. This creates a new profile
+        // generation so the bootloader picks it up. Without this,
+        // switch-to-configuration activates the system but the profile
+        // stays at the old generation — reboot goes to old system.
+        set_profile(store_path).await?;
+
+        // Step 2: Fire switch-to-configuration in a detached unit.
         let switch_bin = format!("{store_path}/bin/switch-to-configuration");
         info!(switch_bin, "Firing switch-to-configuration (detached)");
 
@@ -520,6 +553,18 @@ mod tests {
         .await
         .unwrap();
         assert!(matched);
+    }
+
+    #[test]
+    fn test_set_profile_command_construction() {
+        let store_path = "/nix/store/abc123-nixos-system";
+        let profile = crate::platform::SYSTEM_PROFILE;
+        let expected_args = ["nix-env", "-p", profile, "--set", store_path];
+        assert_eq!(expected_args[0], "nix-env");
+        assert_eq!(expected_args[1], "-p");
+        assert_eq!(expected_args[2], "/nix/var/nix/profiles/system");
+        assert_eq!(expected_args[3], "--set");
+        assert_eq!(expected_args[4], store_path);
     }
 
     #[test]
