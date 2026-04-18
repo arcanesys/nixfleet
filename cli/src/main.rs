@@ -227,6 +227,12 @@ enum Commands {
         name: String,
     },
 
+    /// Generate shell completion script
+    Completions {
+        /// Shell (zsh, bash, fish)
+        shell: String,
+    },
+
     /// Initialize a .nixfleet.toml config file
     Init {
         /// Control plane URL
@@ -953,6 +959,10 @@ async fn async_main() -> Result<()> {
                 }
             }
             result.map(|_| ())
+        }
+        Commands::Completions { shell } => {
+            completions::print_completion_script(&shell);
+            Ok(())
         }
         Commands::Init {
             control_plane_url,

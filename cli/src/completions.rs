@@ -78,10 +78,8 @@ fn fetch_ids_blocking(endpoint: &str, id_field: &str, prefix: &str) -> Vec<Compl
         Err(_) => return vec![],
     };
 
-    // Sort newest first by created_at, limit to 15 most recent.
-    // Zsh sorts completions alphabetically regardless of order provided,
-    // so we can't control display order — but limiting to recent entries
-    // keeps the list useful.
+    // Sort newest first by created_at. Show date as help text in the
+    // completion menu so the user can identify entries.
     let mut entries: Vec<(String, String)> = items
         .iter()
         .filter_map(|item| {
@@ -92,10 +90,13 @@ fn fetch_ids_blocking(endpoint: &str, id_field: &str, prefix: &str) -> Vec<Compl
         .filter(|(id, _)| id.starts_with(prefix))
         .collect();
     entries.sort_by(|a, b| b.1.cmp(&a.1));
-    entries.truncate(15);
     entries
         .into_iter()
-        .map(|(id, _)| CompletionCandidate::new(id))
+        .map(|(id, created)| {
+            // Truncate datetime to date+time (drop seconds/tz)
+            let short_date = created.get(..16).unwrap_or(&created);
+            CompletionCandidate::new(id).help(Some(short_date.to_string().into()))
+        })
         .collect()
 }
 
@@ -177,6 +178,69 @@ fn resolve_cp_config() -> ResolvedCompletionConfig {
         client_cert,
         client_key,
         ca_cert,
+    }
+}
+
+/// Print a shell completion script. For zsh, outputs a patched version
+/// that uses `_describe -V` (unsorted) so completions preserve our
+/// newest-first ordering instead of being sorted alphabetically.
+pub fn print_completion_script(shell: &str) {
+    let bin = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "nixfleet".to_string());
+
+    match shell {
+        "zsh" => {
+            // Patched zsh script: uses _describe -V for unsorted groups
+            print!(
+                r#"#compdef nixfleet
+function _clap_dynamic_completer_nixfleet() {{
+    local _CLAP_COMPLETE_INDEX=$(expr $CURRENT - 1)
+    local _CLAP_IFS=$'\n'
+
+    local completions=("${{(@f)$( \
+        _CLAP_IFS="$_CLAP_IFS" \
+        _CLAP_COMPLETE_INDEX="$_CLAP_COMPLETE_INDEX" \
+        COMPLETE="zsh" \
+        {bin} -- "${{words[@]}}" 2>/dev/null \
+    )}}")
+
+    if [[ -n $completions ]]; then
+        local -a dirs=()
+        local -a other=()
+        local completion
+        for completion in $completions; do
+            local value="${{completion%%:*}}"
+            if [[ "$value" == */ ]]; then
+                local dir_no_slash="${{value%/}}"
+                if [[ "$completion" == *:* ]]; then
+                    local desc="${{completion#*:}}"
+                    dirs+=("$dir_no_slash:$desc")
+                else
+                    dirs+=("$dir_no_slash")
+                fi
+            else
+                other+=("$completion")
+            fi
+        done
+        [[ -n $dirs ]] && _describe -V 'dirs' dirs -S '/' -r '/'
+        [[ -n $other ]] && _describe -V 'values' other
+    fi
+}}
+
+compdef _clap_dynamic_completer_nixfleet nixfleet
+"#,
+                bin = bin
+            );
+        }
+        _ => {
+            // For bash/fish, use clap_complete's built-in generator
+            eprintln!(
+                "For {shell}, use: eval \"$(COMPLETE={shell} {bin})\"",
+                shell = shell,
+                bin = bin
+            );
+        }
     }
 }
 
