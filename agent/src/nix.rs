@@ -113,7 +113,11 @@ pub async fn current_generation() -> Result<String> {
 
 /// Fetch a closure from a binary cache into the local nix store.
 ///
-/// Runs: `nix copy --from <cache_url> <store_path>`
+/// When a cache URL is provided, tries `nix copy --from <cache_url>` first.
+/// If that fails (e.g. a dependency exists in upstream but not in the
+/// private cache), falls back to `nix copy` without `--from`, which uses
+/// the system-configured substituters (cache.nixos.org, etc.).
+///
 /// If no cache URL is provided, assumes the closure is already available
 /// (e.g. via a substituter configured in nix.conf).
 pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<()> {
@@ -122,11 +126,26 @@ pub async fn fetch_closure(store_path: &str, cache_url: Option<&str>) -> Result<
         info!(store_path, cache, "Fetching closure from cache");
         let mut cmd = Command::new("nix");
         cmd.args(["copy", "--from", cache, store_path]);
-        let output = run_with_timeout(cmd, "nix copy").await?;
+        let output = run_with_timeout(cmd, "nix copy --from").await?;
 
         if !output.status.success() {
+            // Private cache may not have all paths (e.g. upstream
+            // dependencies that attic skipped during push). Fall back
+            // to system substituters which include cache.nixos.org.
             let stderr = truncated_stderr(&output.stderr);
-            anyhow::bail!("nix copy failed: {stderr}");
+            info!(
+                store_path,
+                cache,
+                "Cache fetch failed, falling back to system substituters: {stderr}"
+            );
+            let mut cmd = Command::new("nix-store");
+            cmd.args(["--realise", store_path]);
+            let output = run_with_timeout(cmd, "nix-store --realise (substituters)").await?;
+
+            if !output.status.success() {
+                let stderr = truncated_stderr(&output.stderr);
+                anyhow::bail!("fetch failed from both cache and system substituters: {stderr}");
+            }
         }
     } else {
         info!(store_path, "No cache URL — verifying path exists locally");
