@@ -300,6 +300,58 @@ pub async fn fire_switch(store_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Check if the system profile symlink resolves to the expected store path.
+///
+/// Uses `read_link` (not `canonicalize`) because profile symlinks are
+/// single-level: `/nix/var/nix/profiles/system` -> `system-<N>-link`
+/// -> `/nix/store/<hash>-...`. We resolve both levels.
+pub fn check_profile_matches(expected: &str, profile_path: &str) -> bool {
+    let Ok(target) = std::fs::read_link(profile_path) else {
+        return false;
+    };
+    // Profile -> generation link -> store path (two levels)
+    let resolved = if target.is_relative() {
+        let parent = std::path::Path::new(profile_path)
+            .parent()
+            .unwrap_or(std::path::Path::new("/"));
+        parent.join(&target)
+    } else {
+        target
+    };
+    // read_link again to resolve generation link -> store path
+    let final_target = std::fs::read_link(&resolved).unwrap_or(resolved);
+    final_target.to_string_lossy() == expected
+}
+
+/// Verify the system profile matches the expected store path after a switch.
+/// If it doesn't match, attempt to fix it with `nix-env --set`.
+///
+/// This is a safety net — `fire_switch` already sets the profile before
+/// switching on Linux. This catch handles edge cases like concurrent
+/// `nix-env` calls or partial failures.
+pub async fn verify_profile(store_path: &str) -> Result<bool> {
+    let profile = crate::platform::SYSTEM_PROFILE;
+    if check_profile_matches(store_path, profile) {
+        info!("Profile verified: matches expected store path");
+        return Ok(true);
+    }
+
+    tracing::warn!(
+        store_path,
+        profile,
+        "Profile mismatch after switch — attempting self-correction"
+    );
+    set_profile(store_path).await?;
+
+    if check_profile_matches(store_path, profile) {
+        info!("Profile self-corrected successfully");
+        Ok(true)
+    } else {
+        tracing::error!("Profile still mismatched after self-correction attempt");
+        Ok(false)
+    }
+}
+
 /// Poll a symlink path until it points to the expected store path.
 ///
 /// Uses `read_link` since `/run/current-system` is a single-level symlink
@@ -565,6 +617,47 @@ mod tests {
         assert_eq!(expected_args[2], "/nix/var/nix/profiles/system");
         assert_eq!(expected_args[3], "--set");
         assert_eq!(expected_args[4], store_path);
+    }
+
+    #[test]
+    fn test_check_profile_matches_direct_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("system");
+        std::os::unix::fs::symlink("/nix/store/abc-target", &link).unwrap();
+
+        let result = check_profile_matches("/nix/store/abc-target", link.to_str().unwrap());
+        assert!(result);
+    }
+
+    #[test]
+    fn test_check_profile_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("system");
+        std::os::unix::fs::symlink("/nix/store/old-system", &link).unwrap();
+
+        let result = check_profile_matches("/nix/store/abc-target", link.to_str().unwrap());
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_check_profile_missing_link() {
+        let result = check_profile_matches("/nix/store/abc-target", "/nonexistent/path/system");
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_check_profile_two_level_symlink() {
+        // Simulate: system -> system-42-link -> /nix/store/abc-target
+        let dir = tempfile::tempdir().unwrap();
+        let gen_link = dir.path().join("system-42-link");
+        std::os::unix::fs::symlink("/nix/store/abc-target", &gen_link).unwrap();
+        let profile_link = dir.path().join("system");
+        // relative symlink pointing to gen_link (same directory)
+        std::os::unix::fs::symlink("system-42-link", &profile_link).unwrap();
+
+        let result =
+            check_profile_matches("/nix/store/abc-target", profile_link.to_str().unwrap());
+        assert!(result);
     }
 
     #[test]

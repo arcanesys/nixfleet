@@ -331,6 +331,12 @@ async fn run_deploy_cycle(
     let applied = match fire_poll_switch(&desired.hash).await {
         Ok(true) => {
             info!(hash = %desired.hash, "Generation applied");
+            // Verify the nix profile matches the desired store path.
+            // fire_switch sets it beforehand, but verify as a safety net
+            // for edge cases (concurrent nix-env, partial failure).
+            if let Err(e) = nix::verify_profile(&desired.hash).await {
+                warn!(error = %e, "Profile verification failed (non-fatal)");
+            }
             true
         }
         Ok(false) => {
