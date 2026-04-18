@@ -207,7 +207,8 @@ function _clap_dynamic_completer_nixfleet() {{
 
     if [[ -n $completions ]]; then
         local -a dirs=()
-        local -a other=()
+        local -a vals=()
+        local -a opts=()
         local completion
         for completion in $completions; do
             local value="${{completion%%:*}}"
@@ -219,12 +220,28 @@ function _clap_dynamic_completer_nixfleet() {{
                 else
                     dirs+=("$dir_no_slash")
                 fi
+            elif [[ "$value" == -* ]]; then
+                opts+=("$completion")
             else
-                other+=("$completion")
+                vals+=("$completion")
             fi
         done
-        [[ -n $dirs ]] && _describe -V 'dirs' dirs -S '/' -r '/'
-        [[ -n $other ]] && _describe -V 'values' other
+        if [[ -n $vals ]]; then
+            local -a val_ids=()
+            local -a val_labels=()
+            local v
+            for v in $vals; do
+                val_ids+=("${{v%%:*}}")
+                if [[ "$v" == *:* ]]; then
+                    val_labels+=("${{v%%:*}}  -- ${{v#*:}}")
+                else
+                    val_labels+=("${{v%%:*}}")
+                fi
+            done
+            compadd -V values -d val_labels -a val_ids
+        fi
+        [[ -n $dirs ]] && _describe 'dirs' dirs -S '/' -r '/'
+        [[ -n $opts ]] && _describe 'options' opts
     fi
 }}
 
