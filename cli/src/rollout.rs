@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 /// Default upper bound on how long `deploy --wait` / `rollout status --wait`
 /// will block before aborting with a timeout error. Keeps CI jobs from
 /// hanging forever on a stuck rollout.
-const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(3600);
+const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Default poll cadence inside the wait loop. Low enough to feel
 /// interactive, high enough not to hammer the control plane.

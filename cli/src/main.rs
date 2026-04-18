@@ -122,6 +122,10 @@ enum Commands {
         #[arg(long, help_heading = "Rollout")]
         wait: bool,
 
+        /// Timeout in seconds for --wait (0 = wait forever, default: 300)
+        #[arg(long, default_value = "300", help_heading = "Rollout")]
+        wait_timeout: u64,
+
         /// Release ID to deploy
         #[arg(long, help_heading = "Rollout")]
         release: Option<String>,
@@ -283,6 +287,14 @@ enum RolloutAction {
     Status {
         /// Rollout ID
         id: String,
+
+        /// Wait for rollout to complete
+        #[arg(long)]
+        wait: bool,
+
+        /// Timeout in seconds for --wait (0 = wait forever, default: 300)
+        #[arg(long, default_value = "300")]
+        wait_timeout: u64,
     },
 
     /// Resume a paused rollout
@@ -504,6 +516,7 @@ async fn main() -> Result<()> {
             on_failure,
             health_timeout,
             wait,
+            wait_timeout,
             release,
             push_to,
             hook,
@@ -607,6 +620,7 @@ async fn main() -> Result<()> {
                         health_timeout,
                         wait,
                         effective_cache_url,
+                        wait_timeout,
                     )
                     .await;
 
@@ -642,6 +656,7 @@ async fn main() -> Result<()> {
                     health_timeout,
                     wait,
                     effective_cache_url,
+                    wait_timeout,
                 )
                 .await
             }
@@ -697,8 +712,17 @@ async fn main() -> Result<()> {
                     )
                     .await
                 }
-                RolloutAction::Status { id } => {
-                    rollout::status(&http_client, effective_cp_url, &id, json_output).await
+                RolloutAction::Status { id, wait, wait_timeout } => {
+                    rollout::status(&http_client, effective_cp_url, &id, json_output).await?;
+                    if wait {
+                        let timeout = if wait_timeout == 0 {
+                            Some(std::time::Duration::ZERO)
+                        } else {
+                            Some(std::time::Duration::from_secs(wait_timeout))
+                        };
+                        rollout::wait_for_completion(&http_client, effective_cp_url, &id, timeout).await?;
+                    }
+                    Ok(())
                 }
                 RolloutAction::Resume { id } => {
                     rollout::resume(&http_client, effective_cp_url, &id).await
