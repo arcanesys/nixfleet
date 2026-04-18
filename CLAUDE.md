@@ -53,6 +53,9 @@ nixos-anywhere --flake .#hostname root@ip       # fresh install
 sudo nixos-rebuild switch --flake .#hostname    # local rebuild
 nixos-rebuild switch --flake .#hostname --target-host root@ip  # remote rebuild
 darwin-rebuild switch --flake .#hostname        # macOS rebuild
+
+# Shell completions (zsh — add to .zshrc)
+eval "$(nixfleet completions zsh)"
 ```
 
 VM apps reference: `docs/mdbook/reference/apps.md`

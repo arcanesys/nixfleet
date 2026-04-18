@@ -96,6 +96,19 @@ The agent + control plane provide fleet-wide deployment orchestration:
 - **Rollout strategies** — canary, staged, all-at-once with automatic pause/revert
 - **Adaptive polling** — agents react to new rollouts within seconds via `poll_hint` from the control plane
 - **CLI** — `nixfleet deploy --push-to ssh://root@cache --tags production --strategy canary --wait` (builds, pushes to cache, registers a release, triggers a rollout)
+- **Shell completions** — dynamic tab completion for rollout/release/machine IDs with dates, queried live from the control plane
+
+### Shell Completions
+
+```sh
+# Zsh (recommended — add to .zshrc)
+eval "$(nixfleet completions zsh)"
+
+# Bash
+eval "$(COMPLETE=bash nixfleet)"
+```
+
+Completions include subcommands, flags, and dynamic values (rollout IDs, release IDs, machine IDs) fetched from the control plane. If the CP is unreachable, completions degrade gracefully to static-only.
 
 ## Deployment
 
