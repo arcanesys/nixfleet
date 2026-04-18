@@ -9,6 +9,7 @@
 use anyhow::Context;
 use std::time::Duration;
 use tokio::signal;
+use tokio::signal::unix::{signal as unix_signal, SignalKind};
 use tokio::time::{interval_at, Instant, Interval, MissedTickBehavior};
 use tracing::{error, info, warn};
 
@@ -100,12 +101,22 @@ pub async fn run_loop(config: Config) -> anyhow::Result<()> {
         }
     });
 
+    // SIGTERM handler — launchd (macOS) and systemd (Linux) send SIGTERM
+    // before SIGKILL. Without this, the agent ignores SIGTERM and gets
+    // force-killed, which launchd classifies as EX_CONFIG (78).
+    let mut sigterm = unix_signal(SignalKind::terminate())
+        .expect("failed to register SIGTERM handler");
+
     // Main event loop — waits for one of: shutdown, health tick, poll tick.
     // Each branch runs to completion sequentially (no state machine inside select).
     loop {
         tokio::select! {
             _ = signal::ctrl_c() => {
-                info!("Received shutdown signal, exiting gracefully");
+                info!("Received SIGINT, exiting gracefully");
+                break;
+            }
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, exiting gracefully");
                 break;
             }
             _ = health_tick.tick() => {

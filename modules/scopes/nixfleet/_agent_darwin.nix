@@ -229,6 +229,8 @@ in {
           ];
         KeepAlive = true;
         RunAtLoad = true;
+        ThrottleInterval = 10;
+        ExitTimeOut = 10;
         StandardOutPath = "/var/log/nixfleet-agent.log";
         StandardErrorPath = "/var/log/nixfleet-agent.log";
         WorkingDirectory = "/var/lib/nixfleet";
