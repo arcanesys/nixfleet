@@ -78,8 +78,10 @@ fn fetch_ids_blocking(endpoint: &str, id_field: &str, prefix: &str) -> Vec<Compl
         Err(_) => return vec![],
     };
 
-    // Sort newest first by created_at if available, then by ID descending.
-    // Use display_order so completions appear before --options.
+    // Sort newest first by created_at, limit to 15 most recent.
+    // Zsh sorts completions alphabetically regardless of order provided,
+    // so we can't control display order — but limiting to recent entries
+    // keeps the list useful.
     let mut entries: Vec<(String, String)> = items
         .iter()
         .filter_map(|item| {
@@ -89,11 +91,11 @@ fn fetch_ids_blocking(endpoint: &str, id_field: &str, prefix: &str) -> Vec<Compl
         })
         .filter(|(id, _)| id.starts_with(prefix))
         .collect();
-    entries.sort_by(|a, b| b.1.cmp(&a.1)); // newest first by created_at
+    entries.sort_by(|a, b| b.1.cmp(&a.1));
+    entries.truncate(15);
     entries
         .into_iter()
-        .enumerate()
-        .map(|(i, (id, _))| CompletionCandidate::new(id).display_order(Some(i)))
+        .map(|(id, _)| CompletionCandidate::new(id))
         .collect()
 }
 
