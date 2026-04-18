@@ -16,12 +16,12 @@
   perSystem = {
     pkgs,
     lib,
+    system,
     ...
   }: let
     helpers = import ./_lib/helpers.nix {inherit lib pkgs inputs;};
 
     mkTestNode = helpers.mkTestNode {
-      inherit inputs;
       hostSpecModule = ../_shared/host-spec-module.nix;
     };
 
@@ -37,13 +37,12 @@
         hostName = "machine";
       };
   in
-    # Gated out of flake.checks until testers.nixosTest gains
-    # specialArgs support (see Phase 3 of the scopes-extraction).
-    lib.optionalAttrs false {
+    # x86_64-linux only (VM tests require KVM)
+    lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
         # --- vm-firewall: SSH rate limiting and drop logging ---
-        vm-firewall = pkgs.testers.nixosTest {
-          specialArgs = {inherit inputs;};
+        vm-firewall = pkgs.testers.runNixOSTest {
+          node.specialArgs = {inherit inputs;};
           name = "vm-firewall";
           nodes.machine = mkSubsystemNode [];
           testScript = ''
@@ -61,8 +60,8 @@
         };
 
         # --- vm-monitoring: node exporter responds on port ---
-        vm-monitoring = pkgs.testers.nixosTest {
-          specialArgs = {inherit inputs;};
+        vm-monitoring = pkgs.testers.runNixOSTest {
+          node.specialArgs = {inherit inputs;};
           name = "vm-monitoring";
           nodes.machine = mkSubsystemNode [
             {
@@ -87,8 +86,8 @@
         };
 
         # --- vm-backup: timer registered and service skeleton exists ---
-        vm-backup = pkgs.testers.nixosTest {
-          specialArgs = {inherit inputs;};
+        vm-backup = pkgs.testers.runNixOSTest {
+          node.specialArgs = {inherit inputs;};
           name = "vm-backup";
           nodes.machine = mkSubsystemNode [
             ({pkgs, ...}: {
@@ -121,8 +120,8 @@
         };
 
         # --- vm-secrets: host key generation on first boot ---
-        vm-secrets = pkgs.testers.nixosTest {
-          specialArgs = {inherit inputs;};
+        vm-secrets = pkgs.testers.runNixOSTest {
+          node.specialArgs = {inherit inputs;};
           name = "vm-secrets";
           nodes.machine = mkSubsystemNode [
             {
@@ -168,8 +167,8 @@
             chmod 0444 $out/signing.secret
           '';
         in
-          pkgs.testers.nixosTest {
-            specialArgs = {inherit inputs;};
+          pkgs.testers.runNixOSTest {
+            node.specialArgs = {inherit inputs;};
             name = "vm-cache-server";
 
             nodes.server = mkTestNode {
@@ -215,8 +214,8 @@
           passwordFile = pkgs.writeText "restic-test-password" "test-password";
           repositoryPath = "/tmp/restic-test-repo";
         in
-          pkgs.testers.nixosTest {
-            specialArgs = {inherit inputs;};
+          pkgs.testers.runNixOSTest {
+            node.specialArgs = {inherit inputs;};
             name = "vm-backup-restic";
 
             nodes.machine = mkSubsystemNode [

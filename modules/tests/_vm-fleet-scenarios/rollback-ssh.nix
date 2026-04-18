@@ -82,8 +82,8 @@
 
   nixfleetCli = pkgs.callPackage ../../../cli {};
 in
-  pkgs.testers.nixosTest {
-    specialArgs = {inherit inputs;};
+  pkgs.testers.runNixOSTest {
+    node.specialArgs = {inherit inputs;};
     name = "vm-fleet-rollback-ssh";
 
     nodes.operator = mkTestNode {

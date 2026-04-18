@@ -79,8 +79,8 @@
 
   nixfleetCli = pkgs.callPackage ../../../cli {};
 in
-  pkgs.testers.nixosTest {
-    specialArgs = {inherit inputs;};
+  pkgs.testers.runNixOSTest {
+    node.specialArgs = {inherit inputs;};
     name = "vm-fleet-deploy-ssh";
 
     nodes.operator = mkTestNode {

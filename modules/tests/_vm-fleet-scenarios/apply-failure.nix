@@ -40,8 +40,8 @@
   testPrelude,
   ...
 }:
-pkgs.testers.nixosTest {
-  specialArgs = {inherit inputs;};
+pkgs.testers.runNixOSTest {
+  node.specialArgs = {inherit inputs;};
   name = "vm-fleet-apply-failure";
 
   nodes.cp = mkCpNode {inherit testCerts;};

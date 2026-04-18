@@ -1,5 +1,5 @@
 # Per-scenario VM tests. Each subtest is an independently buildable
-# `testers.nixosTest` so a failure in one does not mask another.
+# `testers.runNixOSTest` so a failure in one does not mask another.
 #
 # Run any subtest with:
 #   nix build .#checks.x86_64-linux.vm-fleet-<name> --no-link
@@ -7,13 +7,13 @@
   perSystem = {
     pkgs,
     lib,
+    system,
     ...
   }: let
     helpers = import ./_lib/helpers.nix {inherit lib pkgs inputs;};
     inherit (helpers) mkTlsCerts sharedTestCerts;
 
     mkTestNode = helpers.mkTestNode {
-      inherit inputs;
       hostSpecModule = ../_shared/host-spec-module.nix;
     };
 
@@ -57,9 +57,7 @@
       vm-fleet-agent-rebuild = import ./_vm-fleet-scenarios/agent-rebuild.nix scenarioArgs;
     };
   in
-    # Gated out of flake.checks until testers.nixosTest gains
-    # specialArgs support (see Phase 3 of the scopes-extraction).
-    lib.optionalAttrs false {
+    lib.optionalAttrs (system == "x86_64-linux") {
       checks = subtests;
     };
 }

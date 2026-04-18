@@ -83,8 +83,8 @@
       healthChecks.command = [failFlagHealthCheck];
     };
 in
-  pkgs.testers.nixosTest {
-    specialArgs = {inherit inputs;};
+  pkgs.testers.runNixOSTest {
+    node.specialArgs = {inherit inputs;};
     name = "vm-fleet-revert";
 
     nodes.cp = mkCpNode {inherit testCerts;};

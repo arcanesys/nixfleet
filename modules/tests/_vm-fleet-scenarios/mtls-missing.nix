@@ -21,8 +21,8 @@
   testCerts,
   ...
 }:
-pkgs.testers.nixosTest {
-  specialArgs = {inherit inputs;};
+pkgs.testers.runNixOSTest {
+  node.specialArgs = {inherit inputs;};
   name = "vm-fleet-mtls-missing";
 
   nodes.cp = mkCpNode {inherit testCerts;};
@@ -69,7 +69,7 @@ pkgs.testers.nixosTest {
     # We use `--fail-with-body` so curl still returns non-zero on any
     # non-2xx, and `-v` so the TLS diagnostics land in stderr. The
     # capture goes through `2>&1` piped into a file because
-    # testers.nixosTest runs each command in its own shell.
+    # testers.runNixOSTest runs each command in its own shell.
     # ------------------------------------------------------------------
     health_stderr = unauth.fail(
         "curl -v --cacert /etc/nixfleet-tls/ca.pem "

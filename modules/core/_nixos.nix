@@ -27,7 +27,7 @@
   hS = config.hostSpec;
 in {
   # --- nixpkgs ---
-  nixpkgs.config = {
+  nixpkgs.config = lib.mkDefault {
     allowUnfree = true;
     allowBroken = false;
     allowInsecure = false;
