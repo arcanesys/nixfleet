@@ -369,10 +369,12 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1776455759,
-        "narHash": "sha256-ZUWfQTt6/FXZcpWGwLXXnkc8K6AwXQlo0uDO37Oidvk=",
-        "path": "/home/s33d/dev/arcanesys/nixfleet-scopes",
-        "type": "path"
+        "lastModified": 1776503026,
+        "narHash": "sha256-SbR+sF0FhV+MF/AoYlcBmXesunCdENyP5JB2m09Bc68=",
+        "owner": "arcanesys",
+        "repo": "nixfleet-scopes",
+        "rev": "96b8b4bea1020da99e7371bdb8c7fffd6cab3724",
+        "type": "github"
       },
       "original": {
         "owner": "arcanesys",
