@@ -71,24 +71,28 @@ If a disk already exists, the install is skipped unless `--rebuild` is specified
 
 ## start-vm
 
-Start an installed VM as a headless daemon. Linux and macOS.
+Start an installed VM. Runs headless by default; use `--display` for graphical output. Linux and macOS.
 
 ```sh
 nix run .#start-vm -- -h web-02
+nix run .#start-vm -- -h web-02 --display spice --ram 4096
 nix run .#start-vm -- --all
 ```
 
 Boots from the existing disk created by `build-vm`. SSH is forwarded to a per-host port (auto-assigned by sorted nixosConfigurations index, base 2201).
+
+When `--display` is `spice` or `gtk`, the VM runs in the foreground (no daemonize). Closing the viewer window stops the VM. SPICE mode provides clipboard sharing via the SPICE agent.
 
 ### Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-h <HOST>` | string | -- | Host to start |
-| `--all` | bool | -- | Start all installed VMs |
+| `--all` | bool | -- | Start all installed VMs (headless only) |
 | `--ssh-port <N>` | string | auto | Override SSH port |
 | `--ram <MB>` | string | `1024` | RAM in MB |
 | `--cpus <N>` | string | `2` | CPU count |
+| `--display <MODE>` | string | `none` | Display: `none` (headless), `spice` (SPICE viewer), `gtk` (native window) |
 
 ---
 
