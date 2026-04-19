@@ -1,7 +1,7 @@
 # Example: a Sécurix-hardened endpoint under NixFleet `mkHost`.
 #
 # Three-layer composition:
-#   (1) Generic role  — `nixfleet-scopes.scopes.roles.endpoint`
+#   (1) Generic role  — `nixfleet.scopes.roles.endpoint`
 #   (2) Distro        — `securix.nixosModules.securix-base` (bundled deps)
 #                        + hardware SKU module
 #   (3) Host-specific — operators, securix.self metadata, overrides
@@ -18,7 +18,6 @@
 
   inputs = {
     nixfleet.url = "github:arcanesys/nixfleet";
-    nixfleet-scopes.follows = "nixfleet/nixfleet-scopes";
     # TODO: revert to github:arcanesys/securix once feat/flake-cleanup merges
     securix.url = "github:arcanesys/securix/feat/flake-cleanup";
     nixpkgs.follows = "nixfleet/nixpkgs";
@@ -47,8 +46,8 @@
           keyboardLayout = "fr";
         };
         modules = [
-          # (1) Generic role from nixfleet-scopes
-          inputs.nixfleet-scopes.scopes.roles.endpoint
+          # (1) Generic role
+          inputs.nixfleet.scopes.roles.endpoint
 
           # (2) Distro modules from Sécurix (deps bundled in securix-base)
           inputs.securix.nixosModules.securix-base
