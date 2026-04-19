@@ -93,7 +93,7 @@
     ];
   };
 
-  nixfleetCli = pkgs.callPackage ../../../cli {};
+  nixfleetCli = pkgs.callPackage ../../../crates/cli {inherit inputs;};
 in
   pkgs.testers.runNixOSTest {
     node.specialArgs = {inherit inputs;};

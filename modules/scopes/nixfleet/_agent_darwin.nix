@@ -2,12 +2,13 @@
 # Auto-included by mkHost for Darwin hosts (disabled by default).
 {
   config,
+  inputs,
   lib,
   pkgs,
   ...
 }: let
   cfg = config.services.nixfleet-agent;
-  nixfleet-agent = pkgs.callPackage ../../../agent {};
+  nixfleet-agent = pkgs.callPackage ../../../crates/agent {inherit inputs;};
 in {
   options.services.nixfleet-agent = {
     enable = lib.mkEnableOption "NixFleet fleet management agent";
