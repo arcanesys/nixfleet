@@ -417,6 +417,7 @@ pub async fn create(
     base_url: &str,
     flake: &str,
     host_patterns: &[String],
+    tags: &[String],
     push_to: Option<&str>,
     push_hook: Option<&str>,
     copy: bool,
@@ -430,12 +431,33 @@ pub async fn create(
     let all_hosts = discover_hosts(flake, &mut oplog).await?;
     let all_hostnames: Vec<String> = all_hosts.iter().map(|h| h.hostname.clone()).collect();
     let matched_names = filter_hosts(&all_hostnames, host_patterns);
-    let hosts: Vec<DiscoveredHost> = all_hosts
+    let mut hosts: Vec<DiscoveredHost> = all_hosts
         .into_iter()
         .filter(|h| matched_names.contains(&h.hostname))
         .collect();
+
+    // When --tags is provided, further filter hosts by their configured tags
+    if !tags.is_empty() {
+        let mut tagged_hosts = Vec::new();
+        for host in &hosts {
+            let host_tags =
+                detect_tags(flake, &host.hostname, &host.config_set, &mut oplog).await;
+            if tags.iter().any(|t| host_tags.contains(t)) {
+                tagged_hosts.push(host.clone());
+            }
+        }
+        hosts = tagged_hosts;
+    }
+
     if hosts.is_empty() {
         oplog.finish(false, Some("no hosts match pattern"));
+        if !tags.is_empty() {
+            anyhow::bail!(
+                "no hosts match pattern '{}' with tags '{}'",
+                host_patterns.join(","),
+                tags.join(",")
+            );
+        }
         anyhow::bail!("no hosts match pattern '{}'", host_patterns.join(","));
     }
     let host_names: Vec<String> = hosts.iter().map(|h| h.hostname.clone()).collect();
