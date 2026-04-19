@@ -28,9 +28,11 @@ in {
     # For consumers who don't want mkHost (just raw modules)
     nixosModules.nixfleet-core = ./core/_nixos.nix;
 
-    # Disko templates are now provided by `arcanesys/nixfleet-scopes`:
-    #   inputs.nixfleet-scopes.scopes.disk-templates.{btrfs,btrfs-impermanence}
-    # Kept as a back-reference for consumers still using the old path.
+    # Re-export nixfleet-scopes so consumers don't need a separate input.
+    # Usage: inputs.nixfleet.scopes.roles.endpoint
+    scopes = inputs.nixfleet-scopes.scopes;
+
+    # Legacy alias (use scopes.disk-templates instead)
     diskoTemplates = inputs.nixfleet-scopes.scopes.disk-templates;
 
     # Flake templates — nix flake init -t nixfleet

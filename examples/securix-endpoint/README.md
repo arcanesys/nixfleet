@@ -47,6 +47,37 @@ nix build .#nixosConfigurations.lab-endpoint.config.system.build.toplevel
 nixos-anywhere --flake .#lab-endpoint root@<ip>
 ```
 
+## VM testing
+
+Test the endpoint in a graphical QEMU VM with SPICE display.
+
+**Before first use:** replace the placeholder SSH key with your own public key:
+
+```sh
+sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|g' flake.nix host.nix
+```
+
+Then build and start the VM:
+
+```sh
+nix run .#build-vm -- -h lab-endpoint --ssh-port 2250 --disk-size 30G   # install via ISO + nixos-anywhere
+nix run .#start-vm -- -h lab-endpoint --display gtk --ram 4096           # boot with GTK window
+```
+
+KDE Plasma needs at least 30G disk and 4G RAM. Use `--ssh-port` to avoid conflicts with other running VMs.
+
+A GTK window opens with the VM display. The VM runs in the foreground — closing the window stops the VM. SSH is also available on the assigned port. Login: `operator` / `changeme`.
+
+Other VM commands:
+
+```sh
+nix run .#stop-vm -- -h lab-endpoint           # stop the VM
+nix run .#clean-vm -- -h lab-endpoint          # delete disk and state
+nix run .#build-vm -- -h lab-endpoint --rebuild --ssh-port 2250 --disk-size 30G  # wipe and reinstall
+```
+
+See the [apps reference](../../docs/mdbook/reference/apps.md) for all flags.
+
 ## Extending
 
 To adapt this example for a real endpoint:
