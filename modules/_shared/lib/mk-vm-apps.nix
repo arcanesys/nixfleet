@@ -80,7 +80,7 @@
     else "${pkgs.OVMF.fd}/FV/OVMF.fd";
 
   basePkgs = with pkgs; [qemu coreutils openssh nix git];
-  spicePkgs = with pkgs; [spice-gtk];
+  spicePkgs = with pkgs; [virt-viewer];
 
   sharedHelpers = ''
     GREEN='\033[1;32m'
@@ -194,7 +194,7 @@
       DAEMONIZE_ARGS="-daemonize"
       case "''${DISPLAY_MODE:-none}" in
         spice)
-          DISPLAY_ARGS="-display spice-app -device virtio-vga -chardev spicevmc,id=vdagent,debug=0,name=vdagent -device virtio-serial-pci -device vdagent,chardev=vdagent,name=com.redhat.spice.0"
+          DISPLAY_ARGS="-display spice-app -device virtio-vga -device virtio-serial-pci -chardev spicevmc,id=vdagent,debug=0,name=vdagent -device virtserialport,chardev=vdagent,name=com.redhat.spice.0"
           DAEMONIZE_ARGS=""
           ;;
         gtk)

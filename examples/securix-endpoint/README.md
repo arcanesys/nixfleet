@@ -54,19 +54,29 @@ Test the endpoint in a graphical QEMU VM with SPICE display.
 **Before first use:** replace the placeholder SSH key with your own public key:
 
 ```sh
-sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|' flake.nix
+sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|g' flake.nix
 ```
 
 Then build and start the VM:
 
 ```sh
-nix run .#build-vm -- -h lab-endpoint                              # install via ISO + nixos-anywhere
-nix run .#start-vm -- -h lab-endpoint --display spice --ram 4096   # boot with SPICE viewer
+nix run .#build-vm -- -h lab-endpoint --ssh-port 2250 --disk-size 30G   # install via ISO + nixos-anywhere
+nix run .#start-vm -- -h lab-endpoint --display spice --ram 4096        # boot with SPICE viewer
 ```
 
-The SPICE viewer opens automatically. The VM runs in the foreground — closing the viewer stops the VM. SSH is available on the auto-assigned port (check build output).
+KDE Plasma needs at least 30G disk and 4G RAM. Use `--ssh-port` to avoid conflicts with other running VMs.
 
-Other VM commands: `stop-vm`, `clean-vm`, `test-vm`. See the [apps reference](../../docs/mdbook/reference/apps.md).
+The SPICE viewer opens automatically. The VM runs in the foreground — closing the viewer stops the VM. SSH is also available on the assigned port. Login: `operator` / `changeme`.
+
+Other VM commands:
+
+```sh
+nix run .#stop-vm -- -h lab-endpoint           # stop the VM
+nix run .#clean-vm -- -h lab-endpoint          # delete disk and state
+nix run .#build-vm -- -h lab-endpoint --rebuild --ssh-port 2250 --disk-size 30G  # wipe and reinstall
+```
+
+See the [apps reference](../../docs/mdbook/reference/apps.md) for all flags.
 
 ## Extending
 

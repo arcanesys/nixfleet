@@ -12,13 +12,13 @@
 #          nix run .#start-vm -- -h lab-endpoint --display spice --ram 4096
 #
 # Before booting: replace the placeholder SSH key with your own public key:
-#   sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|' flake.nix
+#   sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|g' flake.nix
 {
   description = "Sécurix endpoint under NixFleet mkHost";
 
   inputs = {
     nixfleet.url = "github:arcanesys/nixfleet";
-    nixfleet-scopes.url = "github:arcanesys/nixfleet-scopes";
+    nixfleet-scopes.follows = "nixfleet/nixfleet-scopes";
     # TODO: revert to github:arcanesys/securix once feat/flake-cleanup merges
     securix.url = "github:arcanesys/securix/feat/flake-cleanup";
     nixpkgs.follows = "nixfleet/nixpkgs";
@@ -55,15 +55,29 @@
           inputs.securix.nixosModules.securix-hardware.t14g6
 
           # (3) Host-specific
-          ({lib, ...}: {
+          ({
+            lib,
+            pkgs,
+            ...
+          }: {
             # Operators — declarative user inventory
             nixfleet.operators = {
               primaryUser = "operator";
+              rootSshKeys = [
+                "ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"
+              ];
               users.operator = {
-                isAdmin = false;
+                isAdmin = true;
                 homeManager.enable = false;
+                sshAuthorizedKeys = [
+                  "ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"
+                ];
               };
             };
+
+            # Resolve shell conflict: operators scope and securix both set it
+            # TODO: remove after arcanesys/nixfleet-scopes#7 merges
+            users.users.operator.shell = lib.mkForce pkgs.zsh;
 
             # Sécurix identity metadata
             securix.self = {
@@ -81,17 +95,44 @@
               };
             };
 
+            securix.graphical-interface.enable = true;
             securix.graphical-interface.variant = lib.mkDefault "kde";
 
-            # Override lanzaboote for VM testing (securix defaults to Secure
-            # Boot via mkDefault — clean override, no mkOverride needed).
+            # Password for graphical login (SDDM) — "changeme"
+            users.users.operator.hashedPassword = lib.mkForce "$6$gkBTmLDGP5NIkZpw$wgSG8D29EA1MfR6S27ypVq2ahAN9js3Fvsz.8auDlDlzR/P2mgsABIAicWMKf9JcT1p9VISXPkrfdvNg/VHDp1";
+
+            # VM overrides — disable Secure Boot and LUKS (no TPM/passphrase in QEMU)
             boot.lanzaboote.enable = false;
             boot.loader.systemd-boot.enable = true;
-
-            # Minimal VM filesystem (replace with disko for real deploys)
-            fileSystems."/" = {
-              device = "/dev/vda1";
-              fsType = "ext4";
+            boot.initrd.availableKernelModules = ["virtio_pci" "virtio_blk" "virtio_scsi"];
+            securix.filesystems.enable = false;
+            disko.devices.disk.main = {
+              device = "/dev/vda";
+              type = "disk";
+              content = {
+                type = "gpt";
+                partitions = {
+                  ESP = {
+                    end = "512M";
+                    type = "EF00";
+                    content = {
+                      type = "filesystem";
+                      format = "vfat";
+                      mountpoint = "/boot";
+                      mountOptions = ["umask=0077"];
+                    };
+                  };
+                  root = {
+                    size = "100%";
+                    content = {
+                      type = "filesystem";
+                      format = "ext4";
+                      mountpoint = "/";
+                      extraArgs = ["-L" "nixos"];
+                    };
+                  };
+                };
+              };
             };
 
             system.stateVersion = "24.11";
