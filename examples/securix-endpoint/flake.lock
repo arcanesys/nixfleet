@@ -613,11 +613,11 @@
         "treefmt-nix": "treefmt-nix_2"
       },
       "locked": {
-        "lastModified": 1776605891,
-        "narHash": "sha256-RL4F15zKuMycamr8wJfCt76D2DYbi5IkkAiZ6F+kWFg=",
+        "lastModified": 1776606777,
+        "narHash": "sha256-keng4dNN/xcb25fckEmEbb13Itm7HU8LylGqti+BvKU=",
         "owner": "arcanesys",
         "repo": "nixfleet",
-        "rev": "00d677547063d636d73995fefbdabf58dec97c50",
+        "rev": "6751741800369344cb4b8f77df4aebbba10e123d",
         "type": "github"
       },
       "original": {
