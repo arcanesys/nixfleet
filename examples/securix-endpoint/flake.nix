@@ -9,7 +9,7 @@
 # Build:   nix build .#nixosConfigurations.lab-endpoint.config.system.build.toplevel
 # Deploy:  nixos-anywhere --flake .#lab-endpoint root@<ip>
 # VM test: nix run .#build-vm -- -h lab-endpoint
-#          nix run .#start-vm -- -h lab-endpoint --display spice --ram 4096
+#          nix run .#start-vm -- -h lab-endpoint --display gtk --ram 4096
 #
 # Before booting: replace the placeholder SSH key with your own public key:
 #   sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|g' flake.nix

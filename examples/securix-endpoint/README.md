@@ -61,12 +61,12 @@ Then build and start the VM:
 
 ```sh
 nix run .#build-vm -- -h lab-endpoint --ssh-port 2250 --disk-size 30G   # install via ISO + nixos-anywhere
-nix run .#start-vm -- -h lab-endpoint --display spice --ram 4096        # boot with SPICE viewer
+nix run .#start-vm -- -h lab-endpoint --display gtk --ram 4096           # boot with GTK window
 ```
 
 KDE Plasma needs at least 30G disk and 4G RAM. Use `--ssh-port` to avoid conflicts with other running VMs.
 
-The SPICE viewer opens automatically. The VM runs in the foreground — closing the viewer stops the VM. SSH is also available on the assigned port. Login: `operator` / `changeme`.
+A GTK window opens with the VM display. The VM runs in the foreground — closing the window stops the VM. SSH is also available on the assigned port. Login: `operator` / `changeme`.
 
 Other VM commands:
 

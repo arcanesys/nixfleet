@@ -75,7 +75,7 @@ Start an installed VM. Runs headless by default; use `--display` for graphical o
 
 ```sh
 nix run .#start-vm -- -h web-02
-nix run .#start-vm -- -h web-02 --display spice --ram 4096
+nix run .#start-vm -- -h web-02 --display gtk --ram 4096
 nix run .#start-vm -- --all
 ```
 
