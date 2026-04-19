@@ -2,12 +2,13 @@
 # Auto-included by mkHost (disabled by default).
 {
   config,
+  inputs,
   lib,
   pkgs,
   ...
 }: let
   cfg = config.services.nixfleet-control-plane;
-  nixfleet-control-plane = pkgs.callPackage ../../../control-plane {};
+  nixfleet-control-plane = pkgs.callPackage ../../../crates/control-plane {inherit inputs;};
 in {
   options.services.nixfleet-control-plane = {
     enable = lib.mkEnableOption "NixFleet control plane server";
