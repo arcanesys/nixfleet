@@ -55,11 +55,7 @@
           inputs.securix.nixosModules.securix-hardware.t14g6
 
           # (3) Host-specific
-          ({
-            lib,
-            pkgs,
-            ...
-          }: {
+          ({lib, ...}: {
             # Operators — declarative user inventory
             nixfleet.operators = {
               primaryUser = "operator";
@@ -74,10 +70,6 @@
                 ];
               };
             };
-
-            # Resolve shell conflict: operators scope and securix both set it
-            # TODO: remove after arcanesys/nixfleet-scopes#7 merges
-            users.users.operator.shell = lib.mkForce pkgs.zsh;
 
             # Sécurix identity metadata
             securix.self = {
