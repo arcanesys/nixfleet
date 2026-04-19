@@ -14,6 +14,7 @@
 {
   lib,
   pkgs,
+  inputs ? null,
 }: let
   # Core (still nixfleet-local)
   coreNixos = ../../core/_nixos.nix;
@@ -430,11 +431,12 @@ in {
         ++ extraModules;
     };
 
-  # Build a nixosTest-compatible node config with stubbed secrets and known passwords.
-  # Returns a NixOS module (attrset) — nixosTest handles calling nixosSystem.
+  # Build a runNixOSTest-compatible node config with stubbed secrets and known passwords.
+  # Returns a NixOS module (attrset) — runNixOSTest handles calling nixosSystem.
+  #
+  # `inputs` comes from the helpers.nix closure (passed at import time).
   #
   # Parameters:
-  #   inputs          — flake inputs (needs home-manager, nixpkgs, disko, impermanence)
   #   nixosModules    — additional deferred NixOS modules (e.g. agent/CP)
   #   hmModules       — additional deferred HM modules
   #   hmLinuxModules  — Linux-only HM modules (default [])
@@ -442,7 +444,6 @@ in {
   #   hostSpecValues  — hostSpec attrset for this test node
   #   extraModules    — additional NixOS modules (default [])
   mkTestNode = {
-    inputs,
     nixosModules ? [],
     hmModules ? [],
     hmLinuxModules ? [],
@@ -475,26 +476,16 @@ in {
         {
           # --- Test user with known password ---
           users.users.${hostSpecValues.userName} = {
+            isNormalUser = true;
+            group = hostSpecValues.userName;
             hashedPasswordFile = lib.mkForce null;
             password = lib.mkForce "test";
           };
+          users.groups.${hostSpecValues.userName} = {};
           users.users.root = {
             hashedPasswordFile = lib.mkForce null;
             password = lib.mkForce "test";
           };
-
-          # --- Handle nixpkgs for test nodes ---
-          nixpkgs.pkgs = lib.mkForce (import inputs.nixpkgs {
-            system = "x86_64-linux";
-            config = {
-              allowUnfree = true;
-              allowBroken = false;
-              allowInsecure = false;
-              allowUnsupportedSystem = true;
-            };
-          });
-          nixpkgs.config = lib.mkForce {};
-          nixpkgs.hostPlatform = lib.mkForce "x86_64-linux";
 
           # --- HM config for the test user ---
           home-manager = {
@@ -510,7 +501,7 @@ in {
               home = {
                 stateVersion = "24.11";
                 username = hostSpecValues.userName;
-                homeDirectory = "/home/${hostSpecValues.userName}";
+                homeDirectory = lib.mkForce "/home/${hostSpecValues.userName}";
                 enableNixpkgsReleaseCheck = false;
               };
               systemd.user.startServices = "sd-switch";

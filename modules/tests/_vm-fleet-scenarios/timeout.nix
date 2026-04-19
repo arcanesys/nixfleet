@@ -45,8 +45,8 @@
   # but the release registration endpoint still wants a store path.
   web01Closure = pkgs.writeTextDir "share/nixfleet-timeout-web-01" "timeout test web-01";
 in
-  pkgs.testers.nixosTest {
-    specialArgs = {inherit inputs;};
+  pkgs.testers.runNixOSTest {
+    node.specialArgs = {inherit inputs;};
     name = "vm-fleet-timeout";
 
     nodes.cp = mkCpNode {inherit testCerts;};

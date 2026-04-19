@@ -53,8 +53,13 @@ in
       case "$cmd" in
         eval)
           # nix eval <flake>#nixosConfigurations --apply builtins.attrNames --json
+          # nix eval <flake>#darwinConfigurations --apply builtins.attrNames --json
           if printf '%s\n' "$@" | grep -q 'attrNames'; then
-            printf '%s\n' '${hostnamesJson}'
+            if printf '%s\n' "$@" | grep -q 'darwinConfigurations'; then
+              printf '%s\n' '[]'
+            else
+              printf '%s\n' '${hostnamesJson}'
+            fi
             exit 0
           fi
 

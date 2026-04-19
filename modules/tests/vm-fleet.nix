@@ -9,12 +9,12 @@
   perSystem = {
     pkgs,
     lib,
+    system,
     ...
   }: let
     helpers = import ./_lib/helpers.nix {inherit lib pkgs inputs;};
 
     mkTestNode = helpers.mkTestNode {
-      inherit inputs;
       hostSpecModule = ../_shared/host-spec-module.nix;
     };
     defaultTestSpec = helpers.defaultTestSpec;
@@ -56,12 +56,11 @@
     # rationale.
     testCerts = helpers.sharedTestCerts;
   in
-    # Gated out of flake.checks until testers.nixosTest gains
-    # specialArgs support (see Phase 3 of the scopes-extraction).
-    lib.optionalAttrs false {
+    # Gated to x86_64-linux: NixOS VM tests only run on Linux.
+    lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
-        vm-fleet = pkgs.testers.nixosTest {
-          specialArgs = {inherit inputs;};
+        vm-fleet = pkgs.testers.runNixOSTest {
+          node.specialArgs = {inherit inputs;};
           name = "vm-fleet";
 
           nodes.cp = mkCpNode {inherit testCerts;};
