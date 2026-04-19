@@ -2,8 +2,8 @@
 
 Future work that cannot be closed inside this repository.
 
-## External dependencies
+## Internal
 
-- [ ] **Cosmetic:** Generation count fix in compliance probes (count
-  the active system as generation 1, not 0). Lives in the
-  `nixfleet-compliance` repository, not this one.
+- [ ] **Release GC.** Releases accumulate in the CP database.
+  Health report GC exists (`cleanup_old_health_reports`), but old
+  releases are never pruned. See ADR-008.
