@@ -8,6 +8,8 @@
 #
 # Build:   nix build .#nixosConfigurations.lab-endpoint.config.system.build.toplevel
 # Deploy:  nixos-anywhere --flake .#lab-endpoint root@<ip>
+# VM test: nix run .#build-vm -- -h lab-endpoint
+#          nix run .#start-vm -- -h lab-endpoint --display spice --ram 4096
 {
   description = "Sécurix endpoint under NixFleet mkHost";
 
@@ -23,6 +25,7 @@
     nixfleet,
     nixfleet-scopes,
     securix,
+    nixpkgs,
     ...
   }: {
     nixosConfigurations.lab-endpoint = nixfleet.lib.mkHost {
@@ -85,5 +88,7 @@
         })
       ];
     };
+
+    apps.x86_64-linux = nixfleet.lib.mkVmApps {pkgs = nixpkgs.legacyPackages.x86_64-linux;};
   };
 }
