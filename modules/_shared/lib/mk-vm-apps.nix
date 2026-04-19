@@ -337,7 +337,7 @@ in
     '';
 
     # ── start-vm ──
-    "start-vm" = mkScript "start-vm" "Start an installed VM as a headless daemon" ''
+    "start-vm" = mkScript "start-vm" "Start an installed VM (headless or graphical)" ''
       set -euo pipefail
       export PATH="${lib.makeBinPath basePkgs}:$PATH"
 
