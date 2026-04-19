@@ -15,7 +15,6 @@
 {
   lib,
   craneLib,
-  pkgs,
 }: let
   # Full workspace source — used for deps and tests.
   workspaceSrc = lib.fileset.toSource {
@@ -105,7 +104,6 @@
     pname = "nixfleet-workspace-tests";
     version = "0.1.0";
     cargoExtraArgs = "--workspace --locked";
-    nativeBuildInputs = [pkgs.git];
   };
 in {
   packages = {inherit nixfleet-agent nixfleet-control-plane nixfleet-cli;};

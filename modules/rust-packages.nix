@@ -5,7 +5,7 @@
     ...
   }: let
     craneLib = inputs.crane.mkLib pkgs;
-    workspace = import ../crane-workspace.nix {inherit lib craneLib pkgs;};
+    workspace = import ../crane-workspace.nix {inherit lib craneLib;};
   in {
     inherit (workspace) packages checks;
 

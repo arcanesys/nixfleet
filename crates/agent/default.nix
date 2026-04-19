@@ -6,7 +6,7 @@
   inputs,
 }:
 (import ../../crane-workspace.nix {
-  inherit lib pkgs;
+  inherit lib;
   craneLib = inputs.crane.mkLib pkgs;
 })
 .packages
