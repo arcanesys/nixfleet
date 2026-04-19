@@ -613,11 +613,11 @@
         "treefmt-nix": "treefmt-nix_2"
       },
       "locked": {
-        "lastModified": 1776586897,
-        "narHash": "sha256-bGpgyBDiLc0K4veWzwt9P+jUiEOSSjHnGAbqwrHtQmE=",
+        "lastModified": 1776596609,
+        "narHash": "sha256-/rv7DzuUPjOF6rm0rgGWsqOQm+XuhLP3QAnGaJoopgY=",
         "owner": "arcanesys",
         "repo": "nixfleet",
-        "rev": "0ce774cef40f8a54e1d9cefedcbc8f30d19db226",
+        "rev": "932f5706e814371b29485e8359a8ab8e644acad3",
         "type": "github"
       },
       "original": {
@@ -639,11 +639,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1776534144,
-        "narHash": "sha256-Ez+g7GfM6jyrsJQMQzVy5deFFpDpbQ707eQsy3NFzQE=",
+        "lastModified": 1776595857,
+        "narHash": "sha256-+sl+/p43U7nLVd0Hr6wG9hik1n4BnDXYWnB0ET+ey84=",
         "owner": "arcanesys",
         "repo": "nixfleet-scopes",
-        "rev": "f546b35164dbccef5618c1e99ed248843c1c57bb",
+        "rev": "a13671752ab951849588fb9b5fb0443f32ac1282",
         "type": "github"
       },
       "original": {
@@ -917,10 +917,6 @@
           "flake-parts"
         ],
         "nixfleet": "nixfleet",
-        "nixfleet-scopes": [
-          "nixfleet",
-          "nixfleet-scopes"
-        ],
         "nixpkgs": [
           "nixfleet",
           "nixpkgs"
