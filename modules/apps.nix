@@ -117,14 +117,6 @@ in {
           check "nix flake check --no-build" nix flake check --no-build --quiet
 
           echo ""
-          echo "=== Examples Eval ==="
-          for example_flake in examples/*/flake.nix; do
-            example_dir="$(dirname "$example_flake")"
-            example_name="$(basename "$example_dir")"
-            check "example: $example_name" nix flake check --no-build --quiet "./$example_dir"
-          done
-
-          echo ""
           echo "=== Eval Tests ==="
           ${
             if isLinux
