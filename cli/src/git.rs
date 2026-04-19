@@ -40,6 +40,8 @@ mod tests {
         tokio::process::Command::new("git")
             .args(&full_args)
             .env("GIT_CEILING_DIRECTORIES", &ceiling)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
             .output()
             .await
             .unwrap()
