@@ -134,12 +134,23 @@ darwin-rebuild switch --flake .#hostname
 ## Virtual Machines
 
 ```sh
-nix run .#build-vm -- -h web-02              # install VM (ISO + nixos-anywhere)
-nix run .#build-vm -- --all                  # install all hosts
-nix run .#start-vm -- -h web-02              # start VM as headless daemon
-nix run .#stop-vm -- -h web-02               # stop VM daemon
-nix run .#clean-vm -- -h web-02              # delete VM disk + state
-nix run .#test-vm -- -h web-02               # end-to-end VM test cycle
+# install VM (ISO + nixos-anywhere)
+nix run .#build-vm -- -h web-02
+
+# install all hosts
+nix run .#build-vm -- --all
+
+# start VM (headless by default, or --display gtk for graphical)
+nix run .#start-vm -- -h web-02
+
+# stop VM
+nix run .#stop-vm -- -h web-02
+
+# delete VM disk + state
+nix run .#clean-vm -- -h web-02
+
+# end-to-end VM test cycle
+nix run .#test-vm -- -h web-02
 ```
 
 Fleet repos wire these via `nixfleet.lib.mkVmApps { inherit pkgs; }`.
@@ -147,9 +158,14 @@ Fleet repos wire these via `nixfleet.lib.mkVmApps { inherit pkgs; }`.
 ## Development
 
 ```sh
-nix develop                        # dev shell (cargo, clippy, rustfmt, rust-analyzer)
-nix fmt                            # format (alejandra + rustfmt + shfmt)
-nix run .#validate -- --all        # run the whole test suite (format, eval, hosts, VM, Rust, clippy, package builds)
+# dev shell (cargo, clippy, rustfmt, rust-analyzer)
+nix develop
+
+# format (alejandra + rustfmt + shfmt)
+nix fmt
+
+# run the whole test suite (format, eval, hosts, VM, Rust, clippy, package builds)
+nix run .#validate -- --all
 ```
 
 `nix run .#validate -- --all` is the single entry point — prefer it over
