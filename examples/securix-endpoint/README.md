@@ -72,7 +72,7 @@ nix run .#start-vm -- -h lab-endpoint --display gtk --ram 4096 --ssh-port 2250
 
 Use `--ssh-port` to avoid conflicts with other running VMs. A GTK window opens with the VM display. The VM runs in the foreground — closing the window stops the VM. SSH is also available on the assigned port.
 
-Login: `operator` / `changeme`.
+> **Login:** user `operator`, password `changeme`
 
 Other VM commands:
 
