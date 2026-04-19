@@ -558,8 +558,8 @@ async fn create_inner(
         }
     }
 
-    // Distribute
-    if !eval_only {
+    // Distribute (skip when dry-run — build is enough to show the manifest)
+    if !eval_only && !dry_run {
         if let Some(push_url) = push_to {
             let mut pushed: std::collections::HashSet<String> = std::collections::HashSet::new();
             let unique_count = entries

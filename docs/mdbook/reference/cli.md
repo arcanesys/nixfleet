@@ -161,7 +161,7 @@ nixfleet release create [FLAGS]
 | `--copy` | bool | `false` | Push closures directly to each target host via `nix-copy-closure` (no binary cache) |
 | `--cache-url <URL>` | string | -- | Override the cache URL recorded in the release (defaults to `--push-to` URL, or config file) |
 | `--eval-only` | bool | `false` | Evaluate `config.system.build.toplevel.outPath` without building. Assumes closures are already in the cache (e.g., CI-built). Incompatible with `--push-to`, `--hook`, `--copy` |
-| `--dry-run` | bool | `false` | Build and show the manifest without registering |
+| `--dry-run` | bool | `false` | Build and show the manifest without pushing or registering |
 | `--allow-dirty` | bool | `false` | Skip the dirty working tree check |
 
 Output prints the release ID, host count, and per-host store paths. Use the ID with `nixfleet deploy --release <ID>`.
