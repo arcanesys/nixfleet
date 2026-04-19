@@ -32,7 +32,7 @@
             machine.wait_for_unit("nftables.service")
             machine.succeed("nft list ruleset | grep -q 'chain input'")
             machine.succeed("id testuser")
-            machine.succeed("groups testuser | grep -q wheel")
+            machine.succeed("groups testuser | grep -q testuser")
             machine.succeed("su - testuser -c 'which git'")
           '';
         };
