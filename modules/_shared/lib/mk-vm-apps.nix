@@ -80,6 +80,7 @@
     else "${pkgs.OVMF.fd}/FV/OVMF.fd";
 
   basePkgs = with pkgs; [qemu coreutils openssh nix git];
+  spicePkgs = with pkgs; [spice-gtk];
 
   sharedHelpers = ''
     GREEN='\033[1;32m'
@@ -186,6 +187,28 @@
         mac_suffix=$(printf "%02x" "$((HOST_INDEX + 1))")
         VLAN_ARGS="-netdev socket,id=vlan0,mcast=230.0.0.1:''${VLAN_PORT},localaddr=127.0.0.1 -device virtio-net-pci,netdev=vlan0,mac=52:54:00:12:34:''${mac_suffix}"
       fi
+    }
+
+    compute_display_args() {
+      DISPLAY_ARGS=""
+      DAEMONIZE_ARGS="-daemonize"
+      case "''${DISPLAY_MODE:-none}" in
+        spice)
+          DISPLAY_ARGS="-display spice-app -device virtio-vga -chardev spicevmc,id=vdagent,debug=0,name=vdagent -device virtio-serial-pci -device vdagent,chardev=vdagent,name=com.redhat.spice.0"
+          DAEMONIZE_ARGS=""
+          ;;
+        gtk)
+          DISPLAY_ARGS="-display gtk -device virtio-vga"
+          DAEMONIZE_ARGS=""
+          ;;
+        none)
+          DISPLAY_ARGS="-display none -serial null"
+          ;;
+        *)
+          echo -e "''${RED}Unknown display mode: ''$DISPLAY_MODE (use: none, spice, gtk)''${NC}" >&2
+          exit 1
+          ;;
+      esac
     }
   '';
 in
@@ -326,6 +349,7 @@ in
       RAM=1024
       CPUS=2
       VLAN_PORT=""
+      DISPLAY_MODE="none"
 
       while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -335,9 +359,17 @@ in
           --ram) RAM="$2"; shift 2 ;;
           --cpus) CPUS="$2"; shift 2 ;;
           --vlan) VLAN_PORT="$2"; shift 2 ;;
+          --display) DISPLAY_MODE="$2"; shift 2 ;;
           *) echo "Unknown argument: $1" >&2; exit 1 ;;
         esac
       done
+
+      [[ "''$DISPLAY_MODE" == "spice" ]] && export PATH="${lib.makeBinPath spicePkgs}:''$PATH"
+
+      if [[ ''$ALL -eq 1 && "''$DISPLAY_MODE" != "none" ]]; then
+        echo -e "''${RED}--display requires -h HOST (not --all)''${NC}" >&2
+        exit 1
+      fi
 
       [[ $ALL -eq 0 && -z "$HOST" ]] && echo -e "''${RED}Specify -h HOST or --all''${NC}" && exit 1
 
@@ -345,6 +377,7 @@ in
         local host="$1"
         assign_port "$host"
         compute_vlan_args
+        compute_display_args
         local disk="''$VM_DIR/$host.qcow2"
         local pidfile="''$VM_DIR/$host.pid"
 
@@ -366,11 +399,15 @@ in
           -drive file="$disk",format=qcow2,if=virtio \
           -nic user,model=virtio-net-pci,hostfwd=tcp::''$SSH_PORT-:22 \
           ''$VLAN_ARGS \
-          -display none -serial null \
+          ''$DISPLAY_ARGS \
           -bios ${qemuFirmware} \
-          -daemonize -pidfile "$pidfile"
+          ''$DAEMONIZE_ARGS -pidfile "$pidfile"
 
-        echo -e "''${GREEN}[$host] Started on port ''$SSH_PORT — ssh -p ''$SSH_PORT root@localhost''${NC}"
+        if [ -n "''$DAEMONIZE_ARGS" ]; then
+          echo -e "''${GREEN}[$host] Started on port ''$SSH_PORT — ssh -p ''$SSH_PORT root@localhost''${NC}"
+        else
+          echo -e "''${GREEN}[$host] Running in foreground (port ''$SSH_PORT) — close the viewer to stop''${NC}"
+        fi
       }
 
       if [[ $ALL -eq 1 ]]; then
