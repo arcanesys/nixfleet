@@ -26,6 +26,21 @@
     },
     "crane": {
       "locked": {
+        "lastModified": 1776533550,
+        "narHash": "sha256-8mTHsQ8cB0jGlXE4WWKqpQFQPM/VotDnr2uzfrOGNKI=",
+        "owner": "ipetkov",
+        "repo": "crane",
+        "rev": "e24d86e91348e3d44014974fa24c9a22cfd663b5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ipetkov",
+        "repo": "crane",
+        "type": "github"
+      }
+    },
+    "crane_2": {
+      "locked": {
         "lastModified": 1765145449,
         "narHash": "sha256-aBVHGWWRzSpfL++LubA0CwOOQ64WNLegrYHwsVuVN7A=",
         "owner": "ipetkov",
@@ -39,7 +54,7 @@
         "type": "github"
       }
     },
-    "crane_2": {
+    "crane_3": {
       "locked": {
         "lastModified": 1731098351,
         "narHash": "sha256-HQkYvKvaLQqNa10KEFGgWHfMAbWBfFp+4cAgkut+NNE=",
@@ -586,7 +601,7 @@
     },
     "lanzaboote": {
       "inputs": {
-        "crane": "crane",
+        "crane": "crane_2",
         "nixpkgs": [
           "nixfleet",
           "nixpkgs"
@@ -611,7 +626,7 @@
     },
     "lanzaboote_2": {
       "inputs": {
-        "crane": "crane_2",
+        "crane": "crane_3",
         "flake-compat": "flake-compat_2",
         "flake-parts": "flake-parts_4",
         "nixpkgs": [
@@ -683,6 +698,7 @@
     },
     "nixfleet": {
       "inputs": {
+        "crane": "crane",
         "darwin": "darwin",
         "disko": "disko",
         "flake-parts": "flake-parts",
@@ -698,15 +714,15 @@
         "treefmt-nix": "treefmt-nix_2"
       },
       "locked": {
-        "lastModified": 1776374419,
-        "narHash": "sha256-IQniG8iZy7UU1glVd723INxjUUNOjzZi/PG36nm+RwI=",
-        "owner": "abstracts33d",
+        "lastModified": 1776586897,
+        "narHash": "sha256-bGpgyBDiLc0K4veWzwt9P+jUiEOSSjHnGAbqwrHtQmE=",
+        "owner": "arcanesys",
         "repo": "nixfleet",
-        "rev": "f7d34c16b1696b6960bb62b146326d1846cd9929",
+        "rev": "0ce774cef40f8a54e1d9cefedcbc8f30d19db226",
         "type": "github"
       },
       "original": {
-        "owner": "abstracts33d",
+        "owner": "arcanesys",
         "repo": "nixfleet",
         "type": "github"
       }
@@ -724,11 +740,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1776372355,
-        "narHash": "sha256-3FcCQRT9LIkm3VF4ZM0YVR+ICQYCGRKLQyGKPCqBHH4=",
+        "lastModified": 1776534144,
+        "narHash": "sha256-Ez+g7GfM6jyrsJQMQzVy5deFFpDpbQ707eQsy3NFzQE=",
         "owner": "arcanesys",
         "repo": "nixfleet-scopes",
-        "rev": "a4fe89b5f39e7810af2f95c438c7e909b8798180",
+        "rev": "f546b35164dbccef5618c1e99ed248843c1c57bb",
         "type": "github"
       },
       "original": {
@@ -747,11 +763,11 @@
         "treefmt-nix": "treefmt-nix_3"
       },
       "locked": {
-        "lastModified": 1776372355,
-        "narHash": "sha256-3FcCQRT9LIkm3VF4ZM0YVR+ICQYCGRKLQyGKPCqBHH4=",
+        "lastModified": 1776534144,
+        "narHash": "sha256-Ez+g7GfM6jyrsJQMQzVy5deFFpDpbQ707eQsy3NFzQE=",
         "owner": "arcanesys",
         "repo": "nixfleet-scopes",
-        "rev": "a4fe89b5f39e7810af2f95c438c7e909b8798180",
+        "rev": "f546b35164dbccef5618c1e99ed248843c1c57bb",
         "type": "github"
       },
       "original": {
@@ -1067,6 +1083,10 @@
     },
     "root": {
       "inputs": {
+        "flake-parts": [
+          "nixfleet",
+          "flake-parts"
+        ],
         "nixfleet": "nixfleet",
         "nixfleet-scopes": "nixfleet-scopes_2",
         "nixpkgs": [
@@ -1130,16 +1150,16 @@
         "nixpkgs": "nixpkgs_5"
       },
       "locked": {
-        "lastModified": 1776341648,
-        "narHash": "sha256-N8ZpT388mnuFpfi7ltn0v8bKPFShnApItbiRdEzysBA=",
+        "lastModified": 1776451797,
+        "narHash": "sha256-F0NvEEmYyEBQaD1vtc9VguDoJTsiNe+xWn2i9iF4hP8=",
         "owner": "arcanesys",
         "repo": "securix",
-        "rev": "4c7db24720f90a168f8a3ae3b7d886f790413ef0",
+        "rev": "a2f856eb39b1f3b012b0c8b18c695e34210133f5",
         "type": "github"
       },
       "original": {
         "owner": "arcanesys",
-        "ref": "feat/flake-wrapper",
+        "ref": "feat/flake-cleanup",
         "repo": "securix",
         "type": "github"
       }
