@@ -54,7 +54,7 @@ Test the endpoint in a graphical QEMU VM with SPICE display.
 **Before first use:** replace the placeholder SSH key with your own public key:
 
 ```sh
-sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|g' flake.nix
+sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|g' flake.nix host.nix
 ```
 
 Then build and start the VM:

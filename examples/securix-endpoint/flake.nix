@@ -12,7 +12,7 @@
 #          nix run .#start-vm -- -h lab-endpoint --display gtk --ram 4096
 #
 # Before booting: replace the placeholder SSH key with your own public key:
-#   sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|g' flake.nix
+#   sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|g' flake.nix host.nix
 {
   description = "Sécurix endpoint under NixFleet mkHost";
 
@@ -55,80 +55,10 @@
           inputs.securix.nixosModules.securix-hardware.t14g6
 
           # (3) Host-specific
-          ({lib, ...}: {
-            # Operators — declarative user inventory
-            nixfleet.operators = {
-              primaryUser = "operator";
-              rootSshKeys = [
-                "ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"
-              ];
-              users.operator = {
-                isAdmin = true;
-                homeManager.enable = false;
-                sshAuthorizedKeys = [
-                  "ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn"
-                ];
-              };
-            };
+          ./host.nix
 
-            # Sécurix identity metadata
-            securix.self = {
-              mainDisk = "/dev/vda";
-              edition = "pilot";
-              user = {
-                email = "operator@example.gouv.fr";
-                username = "operator";
-              };
-              machine = {
-                serialNumber = "PILOT0001";
-                inventoryId = 1;
-                hardwareSKU = "t14g6";
-                users = [];
-              };
-            };
-
-            securix.graphical-interface.enable = true;
-            securix.graphical-interface.variant = lib.mkDefault "kde";
-
-            # Password for graphical login (SDDM) — "changeme"
-            users.users.operator.hashedPassword = lib.mkForce "$6$gkBTmLDGP5NIkZpw$wgSG8D29EA1MfR6S27ypVq2ahAN9js3Fvsz.8auDlDlzR/P2mgsABIAicWMKf9JcT1p9VISXPkrfdvNg/VHDp1";
-
-            # VM overrides — disable Secure Boot and LUKS (no TPM/passphrase in QEMU)
-            boot.lanzaboote.enable = false;
-            boot.loader.systemd-boot.enable = true;
-            boot.initrd.availableKernelModules = ["virtio_pci" "virtio_blk" "virtio_scsi"];
-            securix.filesystems.enable = false;
-            disko.devices.disk.main = {
-              device = "/dev/vda";
-              type = "disk";
-              content = {
-                type = "gpt";
-                partitions = {
-                  ESP = {
-                    end = "512M";
-                    type = "EF00";
-                    content = {
-                      type = "filesystem";
-                      format = "vfat";
-                      mountpoint = "/boot";
-                      mountOptions = ["umask=0077"];
-                    };
-                  };
-                  root = {
-                    size = "100%";
-                    content = {
-                      type = "filesystem";
-                      format = "ext4";
-                      mountpoint = "/";
-                      extraArgs = ["-L" "nixos"];
-                    };
-                  };
-                };
-              };
-            };
-
-            system.stateVersion = "24.11";
-          })
+          # (4) VM overrides (omit for real hardware)
+          ./vm-overrides.nix
         ];
       };
 
