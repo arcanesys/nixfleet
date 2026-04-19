@@ -1,7 +1,6 @@
 {
   lib,
   rustPlatform,
-  git,
 }:
 # Single workspace build that produces every NixFleet binary in one
 # `cargo build` + `cargo test` pass, sharing sandbox test work across
@@ -32,9 +31,6 @@ rustPlatform.buildRustPackage {
     ];
   };
   cargoLock.lockFile = ./Cargo.lock;
-
-  # git is needed by cli/src/git.rs tests that shell out to `git init`/`git status`
-  nativeBuildInputs = [git];
 
   # No `cargoBuildFlags` — build the whole workspace in one invocation.
   # No `cargoTestFlags` — `cargo test` at the workspace root runs every
