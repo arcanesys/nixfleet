@@ -26,5 +26,20 @@
       program = "${workspace.packages.nixfleet-cli}/bin/nixfleet";
       meta.description = "NixFleet fleet management CLI";
     };
+
+    devShells.default = craneLib.devShell {
+      checks = workspace.checks;
+      packages = with pkgs; [
+        cargo-nextest
+        rust-analyzer
+        git
+        age
+        bashInteractive
+      ];
+      shellHook = ''
+        export EDITOR=vim
+        git config core.hooksPath .githooks 2>/dev/null || true
+      '';
+    };
   };
 }

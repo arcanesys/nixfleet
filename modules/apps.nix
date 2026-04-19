@@ -13,25 +13,7 @@ in {
       meta.description = description;
     };
   in {
-    devShells.default = pkgs.mkShell {
-      nativeBuildInputs = with pkgs; [
-        bashInteractive
-        git
-        age
-
-        # Rust toolchain
-        cargo
-        rustc
-        clippy
-        rustfmt
-        rust-analyzer
-        cargo-nextest
-      ];
-      shellHook = ''
-        export EDITOR=vim
-        git config core.hooksPath .githooks 2>/dev/null || true
-      '';
-    };
+    # devShell is defined in agent-package.nix (crane-based)
 
     # Deployment is now standard: nixos-anywhere, nixos-rebuild, darwin-rebuild.
     # Removed: install, build-switch, docs, launch-vm, rollback, spawn-qemu, spawn-utm (ADR-004).
