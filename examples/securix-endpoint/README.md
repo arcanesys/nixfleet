@@ -79,12 +79,6 @@ Other VM commands:
 ```sh
 # stop a running VM
 nix run .#stop-vm -- -h lab-endpoint
-
-# delete disk and state
-nix run .#clean-vm -- -h lab-endpoint
-
-# wipe and reinstall from scratch
-nix run .#build-vm -- -h lab-endpoint --rebuild --ssh-port 2250 --disk-size 30G
 ```
 
 See the [apps reference](../../docs/mdbook/reference/apps.md) for all flags.
