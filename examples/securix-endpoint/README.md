@@ -49,7 +49,7 @@ nixos-anywhere --flake .#lab-endpoint root@<ip>
 
 ## VM testing
 
-Test the endpoint in a graphical QEMU VM with SPICE display.
+Test the endpoint in a graphical QEMU VM with GTK display.
 
 **Before first use:** replace the placeholder SSH key with your own public key:
 
@@ -57,23 +57,34 @@ Test the endpoint in a graphical QEMU VM with SPICE display.
 sed -i 's|ssh-ed25519 NixfleetDemoKeyReplaceWithYourOwn|'"$(cat ~/.ssh/id_ed25519.pub)"'|g' flake.nix host.nix
 ```
 
-Then build and start the VM:
+Then clean any previous state, build, and start:
 
 ```sh
-nix run .#build-vm -- -h lab-endpoint --ssh-port 2250 --disk-size 30G   # install via ISO + nixos-anywhere
-nix run .#start-vm -- -h lab-endpoint --display gtk --ram 4096           # boot with GTK window
+# clean previous VM state (safe to run on first use)
+nix run .#clean-vm -- -h lab-endpoint
+
+# install via ISO + nixos-anywhere (30G disk, KDE needs space)
+nix run .#build-vm -- -h lab-endpoint --ssh-port 2250 --disk-size 30G
+
+# boot with GTK window (4G RAM minimum for KDE Plasma)
+nix run .#start-vm -- -h lab-endpoint --display gtk --ram 4096 --ssh-port 2250
 ```
 
-KDE Plasma needs at least 30G disk and 4G RAM. Use `--ssh-port` to avoid conflicts with other running VMs.
+Use `--ssh-port` to avoid conflicts with other running VMs. A GTK window opens with the VM display. The VM runs in the foreground — closing the window stops the VM. SSH is also available on the assigned port.
 
-A GTK window opens with the VM display. The VM runs in the foreground — closing the window stops the VM. SSH is also available on the assigned port. Login: `operator` / `changeme`.
+Login: `operator` / `changeme`.
 
 Other VM commands:
 
 ```sh
-nix run .#stop-vm -- -h lab-endpoint           # stop the VM
-nix run .#clean-vm -- -h lab-endpoint          # delete disk and state
-nix run .#build-vm -- -h lab-endpoint --rebuild --ssh-port 2250 --disk-size 30G  # wipe and reinstall
+# stop a running VM
+nix run .#stop-vm -- -h lab-endpoint
+
+# delete disk and state
+nix run .#clean-vm -- -h lab-endpoint
+
+# wipe and reinstall from scratch
+nix run .#build-vm -- -h lab-endpoint --rebuild --ssh-port 2250 --disk-size 30G
 ```
 
 See the [apps reference](../../docs/mdbook/reference/apps.md) for all flags.
