@@ -17,10 +17,9 @@ NixFleet is a framework for managing fleets of NixOS and macOS machines. It prov
 # flake.nix — single machine
 {
   inputs.nixfleet.url = "github:arcanesys/nixfleet";
-  inputs.nixfleet-scopes.url = "github:arcanesys/nixfleet-scopes";
   inputs.nixpkgs.follows = "nixfleet/nixpkgs";
 
-  outputs = {nixfleet, nixfleet-scopes, ...}@inputs: {
+  outputs = {nixfleet, ...}@inputs: {
     nixosConfigurations.myhost = nixfleet.lib.mkHost {
       hostName = "myhost";
       platform = "x86_64-linux";
@@ -30,7 +29,8 @@ NixFleet is a framework for managing fleets of NixOS and macOS machines. It prov
         sshAuthorizedKeys = [ "ssh-ed25519 AAAA..." ];
       };
       modules = [
-        nixfleet-scopes.scopes.roles.workstation   # base + firewall + secrets + HM + backup + user
+        # base + firewall + secrets + HM + backup + user
+        nixfleet.scopes.roles.workstation
         ./hardware-configuration.nix
         ./disk-config.nix
       ];
@@ -41,8 +41,11 @@ NixFleet is a framework for managing fleets of NixOS and macOS machines. It prov
 
 Deploy:
 ```sh
-nixos-anywhere --flake .#myhost root@192.168.1.50   # fresh install
-sudo nixos-rebuild switch --flake .#myhost           # rebuild
+# fresh install (formats disks via disko)
+nixos-anywhere --flake .#myhost root@192.168.1.50
+
+# rebuild
+sudo nixos-rebuild switch --flake .#myhost
 ```
 
 See `examples/` for more patterns, or use `nix flake init -t nixfleet#fleet` for a multi-host template.
@@ -115,10 +118,17 @@ Completions include subcommands, flags, and dynamic values (rollout IDs, release
 Standard NixOS tooling — no custom scripts:
 
 ```sh
-nixos-anywhere --flake .#hostname root@ip              # fresh install (formats disks via disko)
-sudo nixos-rebuild switch --flake .#hostname            # local rebuild
-nixos-rebuild switch --flake .#hostname --target-host root@ip  # remote rebuild
-darwin-rebuild switch --flake .#hostname                # macOS
+# fresh install (formats disks via disko)
+nixos-anywhere --flake .#hostname root@ip
+
+# local rebuild
+sudo nixos-rebuild switch --flake .#hostname
+
+# remote rebuild
+nixos-rebuild switch --flake .#hostname --target-host root@ip
+
+# macOS
+darwin-rebuild switch --flake .#hostname
 ```
 
 ## Virtual Machines
