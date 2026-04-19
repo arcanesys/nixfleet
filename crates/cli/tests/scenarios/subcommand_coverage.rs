@@ -337,6 +337,53 @@ async fn machines_list_json_output_is_valid() {
 }
 
 // =====================================================================
+// machines list --watch + --json — clap rejects the combination
+// =====================================================================
+
+#[tokio::test]
+async fn machines_list_watch_rejects_json() {
+    let _guard = cli_lock().await;
+    let server = cp_mock().await;
+
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "--control-plane-url",
+            &server.uri(),
+            "--api-key",
+            "test-key",
+            "--json",
+            "machines",
+            "list",
+            "--watch",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("incompatible"));
+}
+
+// =====================================================================
+// machines list --interval requires --watch
+// =====================================================================
+
+#[tokio::test]
+async fn machines_list_interval_requires_watch() {
+    let _guard = cli_lock().await;
+
+    Command::cargo_bin("nixfleet")
+        .unwrap()
+        .args([
+            "machines",
+            "list",
+            "--interval",
+            "5",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("watch"));
+}
+
+// =====================================================================
 // machines register — POST /api/v1/machines/{id}/register
 // =====================================================================
 

@@ -437,6 +437,12 @@ enum MachineAction {
         /// Filter by tags (comma-separated or repeatable)
         #[arg(long, value_delimiter = ',', value_name = "TAG")]
         tags: Vec<String>,
+        /// Watch mode: refresh the list on an interval
+        #[arg(long)]
+        watch: bool,
+        /// Refresh interval in seconds (requires --watch)
+        #[arg(long, default_value = "2", requires = "watch")]
+        interval: u64,
     },
 
     /// Change machine lifecycle state
@@ -651,6 +657,7 @@ async fn async_main() -> Result<()> {
                         effective_cp_url,
                         &flake,
                         &hosts,
+                        &tags,
                         effective_push_to,
                         effective_push_hook,
                         copy,
@@ -896,6 +903,7 @@ async fn async_main() -> Result<()> {
                         effective_cp_url,
                         &flake,
                         &hosts,
+                        &[],
                         effective_push_to.as_deref(),
                         effective_push_hook,
                         copy,
@@ -941,8 +949,21 @@ async fn async_main() -> Result<()> {
         Commands::Machines { action } => {
             let http_client = client::build_client(&tls, effective_api_key)?;
             match action {
-                MachineAction::List { tags } => {
-                    machines::list(&http_client, effective_cp_url, &tags, json_output).await
+                MachineAction::List { tags, watch, interval } => {
+                    if watch {
+                        let cp = effective_cp_url.to_string();
+                        let cli = http_client.clone();
+                        let tags = tags.clone();
+                        watch::run_loop(interval, json_output, || {
+                            let cli = cli.clone();
+                            let cp = cp.clone();
+                            let tags = tags.clone();
+                            async move { machines::list(&cli, &cp, &tags, false).await }
+                        })
+                        .await
+                    } else {
+                        machines::list(&http_client, effective_cp_url, &tags, json_output).await
+                    }
                 }
                 MachineAction::SetLifecycle { id, state } => {
                     machines::set_lifecycle(&http_client, effective_cp_url, &id, &state).await

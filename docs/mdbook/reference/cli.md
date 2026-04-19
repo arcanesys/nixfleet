@@ -68,7 +68,7 @@ nixfleet deploy [FLAGS]
 | `--hook-url <URL>` | string | -- | Override hook cache URL for agents to pull from. Requires `--hook` |
 | `--copy` | bool | `false` | Build all hosts, push to each target via `nix-copy-closure` (no binary cache needed), and register a release implicitly |
 | `--hosts <PATTERN>` | string (comma-separated or repeatable) | `*` | Host glob patterns. In SSH mode: hosts to deploy. In rollout mode: target machines directly (alternative to `--tags`) |
-| `--tags <TAG>` | string (comma-separated or repeatable) | -- | Target machines by tag (rollout mode) |
+| `--tags <TAG>` | string (comma-separated or repeatable) | -- | Target machines by tag — filters both the release build and rollout targeting (only hosts with a matching `services.nixfleet-agent.tags` value are built) |
 | `--dry-run` | bool | `false` | Build closures and show plan, do not push or register |
 | `--ssh` | bool | `false` | SSH fallback mode: build locally, copy via SSH, run `switch-to-configuration` (no CP needed) |
 | `--target <SSH>` | string | -- | SSH target override (e.g., `root@192.168.1.10`). Only valid with `--ssh` and a single host. |
@@ -76,9 +76,10 @@ nixfleet deploy [FLAGS]
 | `--strategy <STRATEGY>` | string | `all-at-once` | Rollout strategy: `canary`, `staged`, `all-at-once` |
 | `--batch-size <SIZES>` | string (comma-separated) | -- | Batch sizes (e.g., `1,25%,100%`) |
 | `--failure-threshold <N>` | string | `0` | Max unhealthy machines per batch before pausing/reverting. Accepts absolute count or percentage (e.g. `30%`) |
-| `--on-failure <ACTION>` | string | `pause` | Action on failure: `pause` or `revert` |
+| `--on-failure <ACTION>` | string | `pause` | Action on batch failure: `pause` (stop and wait for `rollout resume`) or `revert` (roll back to previous generation) |
 | `--health-timeout <SECS>` | u64 | `300` | Seconds to wait for health reports per batch |
 | `--wait` | bool | `false` | Stream rollout progress to stdout |
+| `--wait-timeout <SECS>` | u64 | `300` | Timeout in seconds for `--wait` (0 = wait forever) |
 | `--cache-url <URL>` | string | -- | Binary cache URL for agents to fetch closures from (overrides the release's cache_url) |
 
 **Modes:**
@@ -134,6 +135,8 @@ nixfleet init [FLAGS]
 | `--push-to <URL>` | string | -- | Default push destination for `release create` |
 | `--hook-url <URL>` | string | -- | Hook mode cache URL (e.g., `http://cache:8081/mycache` for Attic) |
 | `--hook-push-cmd <CMD>` | string | -- | Hook mode push command (`{}` = store path, e.g., `attic push mycache {}`) |
+| `--strategy <STRATEGY>` | string | -- | Default deploy strategy (`canary`, `staged`, `all-at-once`) |
+| `--on-failure <ACTION>` | string | -- | Default deploy failure action (`pause`, `revert`) |
 
 After `init`, run `nixfleet bootstrap` to create and auto-save the first admin API key.
 
@@ -157,8 +160,9 @@ nixfleet release create [FLAGS]
 | `--hook-url <URL>` | string | -- | Override hook cache URL. Requires `--hook` |
 | `--copy` | bool | `false` | Push closures directly to each target host via `nix-copy-closure` (no binary cache) |
 | `--cache-url <URL>` | string | -- | Override the cache URL recorded in the release (defaults to `--push-to` URL, or config file) |
-| `--eval-only` | bool | `false` | Evaluate `config.system.build.toplevel.outPath` without building. Assumes closures are already in the cache (e.g., CI-built). Useful for cross-platform fleets where the operator cannot build non-native closures locally. |
+| `--eval-only` | bool | `false` | Evaluate `config.system.build.toplevel.outPath` without building. Assumes closures are already in the cache (e.g., CI-built). Incompatible with `--push-to`, `--hook`, `--copy` |
 | `--dry-run` | bool | `false` | Build and show the manifest without registering |
+| `--allow-dirty` | bool | `false` | Skip the dirty working tree check |
 
 Output prints the release ID, host count, and per-host store paths. Use the ID with `nixfleet deploy --release <ID>`.
 
@@ -231,8 +235,14 @@ Exit codes:
 Show fleet status from the control plane.
 
 ```sh
-nixfleet status
+nixfleet status [FLAGS]
 ```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--stale-threshold <SECS>` | u64 | `600` | Seconds without a report before a machine is marked stale |
+| `--watch` | bool | `false` | Continuously refresh the display (clears screen, Ctrl+C to exit). Incompatible with `--json` |
+| `--interval <SECS>` | u64 | `2` | Refresh interval in seconds (requires `--watch`) |
 
 Outputs a table of all machines. Pass `--json` (global flag) for structured JSON output.
 
@@ -249,12 +259,11 @@ nixfleet rollback --host <HOST> --ssh [FLAGS]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--host <HOST>` | string | -- (required) | Target host name |
-| `--ssh` | bool | `false` | **Required.** SSH mode |
 | `--generation <PATH>` | string | -- | Store path to roll back to (default: previous generation from `system-1-link`) |
 | `--target` | string | — | SSH target override (e.g. `root@192.168.1.10`) |
 | `--darwin` | bool | `false` | Target is a Darwin (macOS) host — uses `$USER@host`, `sudo activate` instead of `switch-to-configuration` |
 
-Running without `--ssh` exits with an error. For CP-driven rollback, use `--on-failure revert` on rollouts, or deploy an older release. After a successful rollback, the CP is notified (best-effort) so `nixfleet status` shows the machine in sync.
+Rollback always operates via SSH. The `--ssh` flag is accepted for backwards compatibility but hidden from `--help`. For CP-driven rollback, use `--on-failure revert` on rollouts, or deploy an older release. After a successful rollback, the CP is notified (best-effort) so `nixfleet status` shows the machine in sync.
 
 **Darwin rollback:** Use `--darwin` for macOS hosts. This runs `nix-env --set` + `activate` instead of `switch-to-configuration`:
 
@@ -293,6 +302,7 @@ nixfleet rollout list [FLAGS]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--status <STATUS>` | string | -- | Filter by status (e.g., `running`, `paused`, `completed`) |
+| `--sort <FIELD>` | string | `created` | Sort by: `created` (newest first), `status`, `strategy` |
 
 ---
 
@@ -301,12 +311,16 @@ nixfleet rollout list [FLAGS]
 Show rollout detail with batch breakdown.
 
 ```sh
-nixfleet rollout status <ID>
+nixfleet rollout status <ID> [FLAGS]
 ```
 
-| Argument | Type | Description |
-|----------|------|-------------|
-| `<ID>` | string | Rollout ID |
+| Argument/Flag | Type | Default | Description |
+|---------------|------|---------|-------------|
+| `<ID>` | string | -- | Rollout ID |
+| `--wait` | bool | `false` | Block until rollout reaches a terminal state, printing progress |
+| `--wait-timeout <SECS>` | u64 | `300` | Timeout in seconds for `--wait` (0 = wait forever) |
+| `--watch` | bool | `false` | Continuously refresh the display (clears screen, Ctrl+C to exit). Incompatible with `--wait` and `--json` |
+| `--interval <SECS>` | u64 | `2` | Refresh interval in seconds (requires `--watch`) |
 
 ---
 
@@ -373,6 +387,33 @@ nixfleet bootstrap --save-key nfk-abc123...
 
 ---
 
+## completions
+
+Generate a shell completion script.
+
+```sh
+nixfleet completions <SHELL>
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `<SHELL>` | string | Target shell: `zsh`, `bash`, or `fish` |
+
+Source the output in your shell profile:
+
+```sh
+# zsh
+nixfleet completions zsh > ~/.zsh/completions/_nixfleet
+
+# bash
+nixfleet completions bash > /etc/bash_completion.d/nixfleet
+
+# fish
+nixfleet completions fish > ~/.config/fish/completions/nixfleet.fish
+```
+
+---
+
 ## machines register
 
 Register a machine with the control plane (admin endpoint).
@@ -401,6 +442,8 @@ nixfleet machines list [FLAGS]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--tags <TAG>` | string (comma-separated or repeatable) | -- | Filter by tags (machines matching any listed tag are shown) |
+| `--watch` | bool | `false` | Refresh the list on an interval (clears screen, Ctrl+C to exit). Incompatible with `--json` |
+| `--interval <SECS>` | u64 | `2` | Refresh interval in seconds (requires `--watch`) |
 
 ---
 
