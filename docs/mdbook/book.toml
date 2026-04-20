@@ -1,0 +1,11 @@
+[book]
+title = "NixFleet Documentation"
+authors = ["nixfleet contributors"]
+language = "en"
+src = "."
+
+[build]
+build-dir = "../../result-docs"
+
+[output.html]
+git-repository-url = "https://github.com/arcanesys/nixfleet"
