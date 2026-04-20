@@ -1,0 +1,11 @@
+result
+result-*
+.idea/
+target/
+.claude/
+.mcp.json
+.worktrees/
+CLAUDE.md
+TODO.md
+.direnv/
+*.local.bak
