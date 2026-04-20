@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pre-push: eval tests + cargo test (fast, ~15s)
+# Full validate (host builds) runs in CI, not here
+#
+# `--no-cache` is deliberate: see the rationale in .githooks/pre-commit.
+# Short version: treefmt's per-inode cache can hide drift that CI's
+# empty cache surfaces, producing the "passed locally, failed in CI"
+# class of Format check regression.
+echo "=== Checking formatting ==="
+nix fmt -- --no-cache --fail-on-change || {
+  echo "Formatting issues. Run: nix fmt -- --no-cache"
+  exit 1
+}
+
+echo "=== Eval tests ==="
+for check in eval-hostspec-defaults eval-ssh-hardening eval-username-override eval-locale-timezone eval-ssh-authorized eval-password-files; do
+  nix build ".#checks.x86_64-linux.$check" --no-link 2>/dev/null || {
+    echo "Eval test $check failed."
+    exit 1
+  }
+done
+
+echo "=== Rust workspace tests ==="
+if [[ -f Cargo.toml ]]; then
+  nix develop --command cargo nextest run --workspace 2>&1 || {
+    echo "Rust tests failed."
+    exit 1
+  }
+fi
+
+echo "All pre-push checks passed."

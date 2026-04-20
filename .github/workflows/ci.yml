@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    name: Format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: nix fmt -- --ci
+
+  # Full builds (nix run .#validate) require access to inputs.secrets (private SSH repo).
+  # Until a deploy key is configured, we run eval tests only - no builds, no secrets needed.
+  validate:
+    name: Validate (eval tests)
+    needs: format
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: Run eval tests
+        run: |
+          # Build only eval-* checks (no VM tests, no Darwin configs)
+          # nix flake check evaluates all outputs including Darwin which fails on Linux runners
+          for check in $(nix flake show --json 2>/dev/null | jq -r '.checks."x86_64-linux" | keys[] | select(startswith("eval"))'); do
+            echo "::group::$check"
+            nix build ".#checks.x86_64-linux.$check" --no-link
+            echo "::endgroup::"
+          done
+        env:
+          NIX_CONFIG: "warn-dirty = false"

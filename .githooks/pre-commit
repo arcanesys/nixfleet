@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pre-commit: format check ONLY (fast, ~2s)
+# Heavy checks (eval tests, cargo test) run on pre-push
+#
+# `--no-cache` is deliberate: treefmt caches "file already processed"
+# per inode, and a previous local fmt pass can leave the cache in a
+# state where a subsequent dirty-tree `nix fmt` reports "0 changed"
+# while CI (which starts with an empty cache) re-normalises the file
+# and fails with "unexpected changes detected". Using --no-cache here
+# matches the CI invocation exactly and catches drift before push.
+echo "=== Checking formatting ==="
+nix fmt -- --no-cache --fail-on-change || {
+  echo "Formatting issues. Run: nix fmt -- --no-cache"
+  exit 1
+}
+
+echo "All pre-commit checks passed."
