@@ -613,11 +613,11 @@
         "treefmt-nix": "treefmt-nix_2"
       },
       "locked": {
-        "lastModified": 1776606777,
-        "narHash": "sha256-keng4dNN/xcb25fckEmEbb13Itm7HU8LylGqti+BvKU=",
+        "lastModified": 1776714388,
+        "narHash": "sha256-z292hmnH/0ZTXbE+shmQOoRYk+N185fAlN8H35jLP5o=",
         "owner": "arcanesys",
         "repo": "nixfleet",
-        "rev": "6751741800369344cb4b8f77df4aebbba10e123d",
+        "rev": "ec235d70216e515b6643623b61456d0bd615d834",
         "type": "github"
       },
       "original": {
@@ -639,11 +639,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1776599976,
-        "narHash": "sha256-s0iYLrY6aZEwpQPyBuAFgxQEYsFp9/gbWpet1dyzU78=",
+        "lastModified": 1776710071,
+        "narHash": "sha256-Pm6vu+OXaUKBSRGa9watTzdwfo+kGSpDTa+nytTo7J8=",
         "owner": "arcanesys",
         "repo": "nixfleet-scopes",
-        "rev": "dd68c720b0e6e361266c1081c9353ebd89e81c9a",
+        "rev": "b945e6cc652a63dc28b86fe13dce7765b7736b7c",
         "type": "github"
       },
       "original": {
