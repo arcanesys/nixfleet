@@ -18,7 +18,7 @@
 
   inputs = {
     nixfleet.url = "github:arcanesys/nixfleet";
-    securix.url = "github:arcanesys/securix";
+    securix.url = "github:arcanesys/securix/feat/flake-cleanup";
     nixpkgs.follows = "nixfleet/nixpkgs";
     flake-parts.follows = "nixfleet/flake-parts";
   };
