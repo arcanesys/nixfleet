@@ -20,9 +20,6 @@
         userName = "alice";
         timeZone = "US/Eastern";
         locale = "en_US.UTF-8";
-        sshAuthorizedKeys = [
-          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..."
-        ];
       };
       modules = [
         ./hardware-configuration.nix
