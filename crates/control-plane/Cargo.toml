@@ -1,0 +1,51 @@
+[package]
+name = "nixfleet-control-plane"
+version = "0.1.0"
+edition = "2021"
+description = "NixFleet control plane server"
+license = "AGPL-3.0-only"
+repository = "https://github.com/arcanesys/nixfleet"
+homepage = "https://github.com/arcanesys/nixfleet"
+authors = ["nixfleet contributors"]
+
+[dependencies]
+nixfleet-types = { path = "../shared" }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+refinery = { version = "0.8", features = ["rusqlite"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+rustls = "0.23"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.9"
+uuid = { version = "1", features = ["v4"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
+# CN validation in auth_cn - pure-Rust x509 parser, no native deps.
+x509-parser = "0.16"
+# Direct imports needed by the auth_cn::MtlsAcceptor wrapper.
+tokio-rustls = "0.26"
+tower-service = "0.3"
+rustls-pki-types = "1"
+http = "1"
+
+[dev-dependencies]
+tempfile = "3"
+nixfleet-types = { path = "../shared" }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+sha2 = "0.10"
+hex = "0.4"
+# CN validation tests synthesize a self-signed cert with a known CN
+# to drive the auth_cn middleware end-to-end via tower::oneshot.
+rcgen = "0.13"
+tower = { version = "0.5", features = ["util"] }
