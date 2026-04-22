@@ -1,5 +1,9 @@
 # NixFleet
 
+[![CI](https://github.com/arcanesys/nixfleet/actions/workflows/ci.yml/badge.svg)](https://github.com/arcanesys/nixfleet/actions/workflows/ci.yml)
+[![License: MIT/AGPL](https://img.shields.io/badge/license-MIT%2FAGPL-blue)](LICENSE-MIT)
+[![v0.1.0](https://img.shields.io/github/v/tag/arcanesys/nixfleet?label=version)](https://github.com/arcanesys/nixfleet/releases/tag/v0.1.0)
+
 Declarative NixOS fleet management with reproducible deployments, cryptographic security, and compliance automation.
 
 ## Why NixFleet
