@@ -10,6 +10,13 @@ set -euo pipefail
 # while CI (which starts with an empty cache) re-normalises the file
 # and fails with "unexpected changes detected". Using --no-cache here
 # matches the CI invocation exactly and catches drift before push.
+echo "=== Checking for real SSH keys ==="
+if git diff --cached | grep '^+' | grep -v '^+++' | grep -qE 'ssh-(ed25519|rsa) AAAA[A-Za-z0-9+/]{40,}'; then
+  echo "BLOCKED: real SSH public key detected in staged files."
+  echo "Revert with: git checkout -- <file>"
+  exit 1
+fi
+
 echo "=== Checking formatting ==="
 nix fmt -- --no-cache --fail-on-change || {
   echo "Formatting issues. Run: nix fmt -- --no-cache"
