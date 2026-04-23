@@ -6,6 +6,8 @@
 
 Declarative NixOS fleet management with reproducible deployments, cryptographic security, and compliance automation.
 
+![NixFleet Demo](docs/assets/nixfleet-demo.gif)
+
 ## Why NixFleet
 
 Infrastructure teams face four converging crises:
