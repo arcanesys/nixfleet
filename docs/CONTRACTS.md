@@ -26,15 +26,16 @@ Streams referenced:
 | **Schema** | v1 — shape defined in RFC-0001 §4.1 |
 | **Canonicalization** | JCS (RFC 8785), see §IV |
 | **Signature** | CI release key (see §II #1) |
-| **Metadata** | `meta.signedAt` (RFC 3339), `meta.ciCommit`, `meta.schemaVersion` |
+| **Metadata** | `meta.signedAt` (RFC 3339), `meta.ciCommit`, `meta.schemaVersion`, `meta.signatureAlgorithm` (`"ed25519"` \| `"ecdsa-p256"`; optional, defaults to `"ed25519"`) |
 
-**Evolution discipline.** Within v1, fields may be added; consumers MUST ignore unknown fields. Removing or changing the meaning of a field requires `schemaVersion: 2` and a migration window.
+**Evolution discipline.** Within v1, fields may be added; consumers MUST ignore unknown fields. Removing or changing the meaning of a field requires `schemaVersion: 2` and a migration window. `meta.signatureAlgorithm` was added after the initial `schemaVersion: 1` draft — artifacts without the field MUST be interpreted as `"ed25519"` for backward compatibility.
 
 **Consumer MUST verify before use:**
 1. JCS bytes match the canonicalized payload.
-2. Signature verifies against the pinned `nixfleet.trust.ciReleaseKey`.
-3. `(now − meta.signedAt) ≤ channel.freshnessWindow`.
-4. `meta.schemaVersion` is within the consumer's accepted range.
+2. `meta.signatureAlgorithm` (default `"ed25519"`) matches the algorithm of the pinned `nixfleet.trust.ciReleaseKey`.
+3. Signature verifies against the pinned `nixfleet.trust.ciReleaseKey` using the declared algorithm.
+4. `(now − meta.signedAt) ≤ channel.freshnessWindow`.
+5. `meta.schemaVersion` is within the consumer's accepted range.
 
 ### 2. Wire protocol (agent ↔ control plane)
 
@@ -103,12 +104,29 @@ Four keys. Everything else is derived. For each: **who holds the private key, wh
 | **Private** | HSM / TPM-backed keyslot on M70q (Stream A) |
 | **Public (declared)** | `nixfleet.trust.ciReleaseKey` in `fleet.nix` (Stream B) |
 | **Verified by** | CP (on `fleet.resolved` load), optionally agents |
-| **Algorithm** | ed25519 |
+| **Algorithm** | `ed25519` **or** `ecdsa-p256` — declared alongside the public key; the signature's algorithm (§I #1 `meta.signatureAlgorithm`) must match |
 | **Rotation grace** | `nixfleet.trust.ciReleaseKey.previous` valid for 30 days after rotation |
 
+**Algorithm rationale.** ed25519 is the preferred default for HSMs, YubiKeys, cloud KMS, and software-held keys. ECDSA P-256 exists as a second-class citizen because commodity TPM2 hardware (Intel PTT, AMD fTPM, most discrete TPMs) exposes RSA + NIST P-256 but not the ed25519 curve (TPM2_ECC_CURVE_ED25519 = 0x0040 is rare). Both algorithms produce 64-byte signatures and have comparable security margins (~128-bit). Producers (Stream A's CI) pick one at install time based on hardware; the trust-root declaration tells consumers which verifier to use.
+
+**Public-key encoding.**
+- `ed25519` — raw 32-byte public key, base64-encoded in `fleet.nix` (matches the format used by `ssh-keygen`, agenix, minisign).
+- `ecdsa-p256` — uncompressed point, 64 bytes (`X ‖ Y`, no `0x04` prefix), base64-encoded. Consumers convert to SEC1 / DER SPKI at verify time.
+
+The declaration shape:
+
+```nix
+nixfleet.trust.ciReleaseKey = {
+  algorithm = "ecdsa-p256";  # or "ed25519"
+  public    = "<base64 of raw bytes>";
+};
+```
+
+**Signature encoding.** Raw 64 bytes for both algorithms — `R ‖ S` for ECDSA, standard `R ‖ S` for ed25519. No DER wrapping, no PGP armour. Put next to the canonical payload as `fleet.resolved.json.sig`.
+
 **Rotation procedure.**
-1. Generate new keypair in HSM (Stream A).
-2. Commit: set `ciReleaseKey = <new>`, `ciReleaseKey.previous = <old>` in `fleet.nix`.
+1. Generate new keypair (Stream A) — may differ in algorithm from the outgoing one.
+2. Commit: set `ciReleaseKey = <new>`, `ciReleaseKey.previous = <old>` in `fleet.nix`. Consumers that pin both must accept signatures under either algorithm during the overlap.
 3. CI starts signing with new key on next build.
 4. After 30 days, remove `previous` from `fleet.nix`; old-key-signed artifacts rejected.
 
@@ -198,7 +216,7 @@ The control plane's SQLite database exists to cache operational state. Every col
 
 | Contract | Current version | Evolution |
 |---|---|---|
-| `fleet.resolved.json` | `schemaVersion: 1` | Additive within v1; bump for breaking changes |
+| `fleet.resolved.json` | `schemaVersion: 1` | Additive within v1; bump for breaking changes. `meta.signatureAlgorithm` added in v1 — optional, defaults to `"ed25519"` when absent. |
 | Wire protocol | v1 (header) | Additive within major; dual-support during migration |
 | Probe descriptor per framework | `<framework>/v1` per framework | New string for new shape; old shape kept during migration |
 | Probe output | Tracked with the control | Same as descriptor |
