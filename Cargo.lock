@@ -1703,6 +1703,7 @@ name = "nixfleet-reconciler"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64",
  "chrono",
  "ed25519-dalek",
  "nixfleet-canonicalize",

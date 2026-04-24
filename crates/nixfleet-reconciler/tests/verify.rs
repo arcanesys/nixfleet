@@ -1,8 +1,11 @@
 //! Step 0 — signature verification + freshness window.
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_canonicalize::canonicalize;
+use nixfleet_proto::TrustedPubkey;
 use nixfleet_reconciler::{verify_artifact, VerifyError};
 use rand::rngs::OsRng;
 use rand::TryRngCore;
@@ -20,19 +23,19 @@ fn fresh_signing_key() -> SigningKey {
     SigningKey::from_bytes(&seed)
 }
 
+fn trust_root_for(signing_key: &SigningKey) -> TrustedPubkey {
+    TrustedPubkey {
+        algorithm: "ed25519".to_string(),
+        public: BASE64_STANDARD.encode(signing_key.verifying_key().as_bytes()),
+    }
+}
+
 /// Build a signed fleet.resolved artifact from JSON source.
 ///
-/// Returns (signed_bytes, signature, pubkey, signed_at).
-fn sign_artifact(
-    json: &str,
-) -> (
-    Vec<u8>,
-    [u8; 64],
-    ed25519_dalek::VerifyingKey,
-    DateTime<Utc>,
-) {
+/// Returns (signed_bytes, signature, trust_root, signed_at).
+fn sign_artifact(json: &str) -> (Vec<u8>, [u8; 64], TrustedPubkey, DateTime<Utc>) {
     let signing_key = fresh_signing_key();
-    let pubkey = signing_key.verifying_key();
+    let trust = trust_root_for(&signing_key);
 
     let value: serde_json::Value = serde_json::from_str(json).expect("parse");
     let signed_at: DateTime<Utc> = value["meta"]["signedAt"]
@@ -45,7 +48,7 @@ fn sign_artifact(
     let canonical = canonicalize(&reserialized).expect("canonicalize");
     let sig = signing_key.sign(canonical.as_bytes()).to_bytes();
 
-    (canonical.into_bytes(), sig, pubkey, signed_at)
+    (canonical.into_bytes(), sig, trust, signed_at)
 }
 
 const FIXTURE_SIGNED: &str =
@@ -53,11 +56,11 @@ const FIXTURE_SIGNED: &str =
 
 #[test]
 fn verify_ok_returns_fleet() {
-    let (bytes, sig, pubkey, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let (bytes, sig, trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let result = verify_artifact(&bytes, &sig, &pubkey, now, window);
+    let result = verify_artifact(&bytes, &sig, std::slice::from_ref(&trust), now, window);
 
     let fleet = result.expect("verify_ok");
     assert_eq!(fleet.schema_version, 1);
@@ -66,33 +69,33 @@ fn verify_ok_returns_fleet() {
 
 #[test]
 fn verify_bad_signature() {
-    let (bytes, mut sig, pubkey, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let (bytes, mut sig, trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
     sig[0] ^= 0xFF;
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let err = verify_artifact(&bytes, &sig, &pubkey, now, window).unwrap_err();
+    let err = verify_artifact(&bytes, &sig, std::slice::from_ref(&trust), now, window).unwrap_err();
     assert!(matches!(err, VerifyError::BadSignature));
 }
 
 #[test]
 fn verify_stale() {
-    let (bytes, sig, pubkey, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let (bytes, sig, trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
     let now = signed_at + ChronoDuration::hours(4);
     let window = Duration::from_secs(3 * 3600);
 
-    let err = verify_artifact(&bytes, &sig, &pubkey, now, window).unwrap_err();
+    let err = verify_artifact(&bytes, &sig, std::slice::from_ref(&trust), now, window).unwrap_err();
     assert!(matches!(err, VerifyError::Stale { .. }));
 }
 
 #[test]
 fn verify_at_exact_window_boundary_is_fresh() {
-    let (bytes, sig, pubkey, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let (bytes, sig, trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
     let window_secs: u64 = 3 * 3600;
     let now = signed_at + ChronoDuration::seconds(window_secs as i64);
     let window = Duration::from_secs(window_secs);
 
-    let result = verify_artifact(&bytes, &sig, &pubkey, now, window);
+    let result = verify_artifact(&bytes, &sig, std::slice::from_ref(&trust), now, window);
     assert!(
         result.is_ok(),
         "age == window must be treated as fresh: {result:?}"
@@ -104,14 +107,21 @@ fn verify_unsigned() {
     let json = include_str!("../../nixfleet-proto/tests/fixtures/every-nullable.json");
 
     let signing_key = fresh_signing_key();
-    let pubkey = signing_key.verifying_key();
+    let trust = trust_root_for(&signing_key);
     let canonical = canonicalize(json).expect("canonicalize");
     let sig = signing_key.sign(canonical.as_bytes()).to_bytes();
 
     let now = Utc::now();
     let window = Duration::from_secs(3 * 3600);
 
-    let err = verify_artifact(canonical.as_bytes(), &sig, &pubkey, now, window).unwrap_err();
+    let err = verify_artifact(
+        canonical.as_bytes(),
+        &sig,
+        std::slice::from_ref(&trust),
+        now,
+        window,
+    )
+    .unwrap_err();
     assert!(matches!(err, VerifyError::NotSigned));
 }
 
@@ -121,7 +131,7 @@ fn verify_rejects_malleable_signature() {
     // verify_strict rejects any s >= L. We construct a malleable sig by
     // adding L to the scalar component — ed25519-dalek 2's verify_strict
     // catches this; the weaker verify would accept it.
-    let (bytes, sig, pubkey, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let (bytes, sig, trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
 
     // L (little-endian 32 bytes) = 2^252 + 27742317777372353535851937790883648493
     const L_LE: [u8; 32] = [
@@ -130,9 +140,6 @@ fn verify_rejects_malleable_signature() {
         0x00, 0x10,
     ];
 
-    // Add L to s (the low 32 bytes of the 64-byte sig). If s + L overflows
-    // the 32-byte field, fall back to the plain bit-flip malleability test
-    // (non-canonical R encoding also triggers strict rejection).
     let mut malleable = sig;
     let mut carry: u16 = 0;
     for i in 0..32 {
@@ -144,7 +151,13 @@ fn verify_rejects_malleable_signature() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let result = verify_artifact(&bytes, &malleable, &pubkey, now, window);
+    let result = verify_artifact(
+        &bytes,
+        &malleable,
+        std::slice::from_ref(&trust),
+        now,
+        window,
+    );
     assert!(
         matches!(result, Err(VerifyError::BadSignature)),
         "verify_strict must reject malleable s >= L: got {result:?}"
@@ -158,7 +171,7 @@ fn verify_unsupported_schema() {
     let json = value.to_string();
 
     let signing_key = fresh_signing_key();
-    let pubkey = signing_key.verifying_key();
+    let trust = trust_root_for(&signing_key);
     let canonical = canonicalize(&json).expect("canonicalize");
     let sig = signing_key.sign(canonical.as_bytes()).to_bytes();
 
@@ -166,25 +179,38 @@ fn verify_unsupported_schema() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let err = verify_artifact(canonical.as_bytes(), &sig, &pubkey, now, window).unwrap_err();
+    let err = verify_artifact(
+        canonical.as_bytes(),
+        &sig,
+        std::slice::from_ref(&trust),
+        now,
+        window,
+    )
+    .unwrap_err();
     assert!(matches!(err, VerifyError::SchemaVersionUnsupported(2)));
 }
 
 #[test]
 fn verify_malformed_json() {
     let signing_key = fresh_signing_key();
-    let pubkey = signing_key.verifying_key();
+    let trust = trust_root_for(&signing_key);
     let bytes = b"{not json";
     let sig = [0u8; 64];
 
-    let err =
-        verify_artifact(bytes, &sig, &pubkey, Utc::now(), Duration::from_secs(60)).unwrap_err();
+    let err = verify_artifact(
+        bytes,
+        &sig,
+        std::slice::from_ref(&trust),
+        Utc::now(),
+        Duration::from_secs(60),
+    )
+    .unwrap_err();
     assert!(matches!(err, VerifyError::Parse(_)));
 }
 
 #[test]
 fn verify_tampered_payload() {
-    let (bytes, sig, pubkey, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let (bytes, sig, trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
     let mut tampered = bytes.clone();
     if let Some(byte) = tampered.iter_mut().find(|b| **b == b'"') {
         *byte = b'_';
@@ -192,9 +218,113 @@ fn verify_tampered_payload() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let err = verify_artifact(&tampered, &sig, &pubkey, now, window).unwrap_err();
+    let err =
+        verify_artifact(&tampered, &sig, std::slice::from_ref(&trust), now, window).unwrap_err();
     assert!(
         matches!(err, VerifyError::Parse(_) | VerifyError::BadSignature),
         "got {err:?}"
     );
+}
+
+// ---- New tests exercising the trust-root architecture -----------------
+
+#[test]
+fn verify_with_empty_trust_roots_errors() {
+    let (bytes, sig, _trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    let err = verify_artifact(&bytes, &sig, &[], now, window).unwrap_err();
+    assert!(matches!(err, VerifyError::NoTrustRoots));
+}
+
+#[test]
+fn verify_rotation_with_two_keys_tries_each_in_order() {
+    // Simulate a rotation grace window: old key is declared first, new
+    // key is declared second. The signature was produced by the new key.
+    // Verifier tries the old key (fails) then the new key (succeeds).
+    let old_key = fresh_signing_key();
+    let new_key = fresh_signing_key();
+    let trust_roots = vec![trust_root_for(&old_key), trust_root_for(&new_key)];
+
+    let value: serde_json::Value = serde_json::from_str(FIXTURE_SIGNED).unwrap();
+    let signed_at: DateTime<Utc> = value["meta"]["signedAt"].as_str().unwrap().parse().unwrap();
+    let canonical = canonicalize(&value.to_string()).unwrap();
+    let sig = new_key.sign(canonical.as_bytes()).to_bytes();
+
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    let result = verify_artifact(canonical.as_bytes(), &sig, &trust_roots, now, window);
+    assert!(
+        result.is_ok(),
+        "rotation-order list must accept the second key: {result:?}"
+    );
+}
+
+#[test]
+fn verify_rejects_when_only_unknown_algorithm_declared() {
+    // Operator declares a trust root with a future algorithm this binary
+    // doesn't know about. Verifier rejects with UnsupportedAlgorithm —
+    // NOT BadSignature — so ops logs are actionable.
+    let (bytes, sig, _trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let future_only = vec![TrustedPubkey {
+        algorithm: "p256".to_string(),
+        public: "somebase64value==".to_string(),
+    }];
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    let err = verify_artifact(&bytes, &sig, &future_only, now, window).unwrap_err();
+    match err {
+        VerifyError::UnsupportedAlgorithm { algorithm } => {
+            assert_eq!(algorithm, "p256");
+        }
+        other => panic!("expected UnsupportedAlgorithm, got {other:?}"),
+    }
+}
+
+#[test]
+fn verify_skips_unknown_algorithm_when_known_also_present() {
+    // Mixed declaration: an unknown-to-this-binary algorithm is listed
+    // alongside the ed25519 key that actually signed. Verifier skips the
+    // unknown entry, matches the known one, returns Ok. This is the
+    // forward-compat path for a rolling upgrade where some operators
+    // have a newer Nix declaration but an older verifier binary.
+    let (bytes, sig, ed_trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let mixed = vec![
+        TrustedPubkey {
+            algorithm: "p256".to_string(),
+            public: "somebase64value==".to_string(),
+        },
+        ed_trust,
+    ];
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    let result = verify_artifact(&bytes, &sig, &mixed, now, window);
+    assert!(
+        result.is_ok(),
+        "mixed-algorithm list with one known key must verify: {result:?}"
+    );
+}
+
+#[test]
+fn verify_rejects_malformed_pubkey_encoding() {
+    let (bytes, sig, _trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let bad_key = vec![TrustedPubkey {
+        algorithm: "ed25519".to_string(),
+        public: "!!! not base64 !!!".to_string(),
+    }];
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    // Malformed key doesn't verify → fall through to BadSignature. Operators
+    // see "no key verified" rather than a per-key decode error. If the
+    // opposite behavior is desired (surface decode errors loudly), a future
+    // PR can change verify_ed25519 to propagate BadPubkeyEncoding; this test
+    // pins the current "skip on decode failure" behavior so the change is
+    // deliberate.
+    let err = verify_artifact(&bytes, &sig, &bad_key, now, window).unwrap_err();
+    assert!(matches!(err, VerifyError::BadSignature));
 }
