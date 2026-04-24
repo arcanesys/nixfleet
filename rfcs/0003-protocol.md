@@ -1,8 +1,9 @@
 # RFC-0003: Agent ↔ control-plane protocol
 
-**Status.** Draft.
+**Status.** Draft — end-state for Phase 3+. No wire is implemented yet.
 **Depends on.** RFC-0001, RFC-0002, nixfleet #2 (magic rollback).
 **Scope.** Wire protocol between agent and control plane. Identity, endpoints, polling, versioning, security properties. Does not cover control-plane-internal APIs.
+**Implementation status (2026-04-25).** No agent ↔ CP wire is implemented. The Phase 2 reconciler runner (RFC-0002 §0; PR #36) reads observed state from a hand-written `observed.json` file on disk; agents and check-in endpoints land in Phase 3 alongside this protocol. The identity model, endpoints, polling cadence, and TLS posture below are the forward plan, not the current contract. The `crates/nixfleet-agent` crate exists as a v0.2 skeleton (PR #29) only — no functional body, no network IO.
 
 ## 1. Design goals
 

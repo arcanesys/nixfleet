@@ -1,8 +1,9 @@
 # RFC-0002: Rollout execution engine
 
-**Status.** Draft.
+**Status.** Partial — Phase 2 (read-only) shipped 2026-04-25. Full execution engine (state transitions, dispatch, rollback hooks) is Phase 4+.
 **Depends on.** RFC-0001 (`fleet.nix` schema), nixfleet #2 (magic rollback), nixfleet #4 (compliance gates).
 **Scope.** The decision procedure that turns `fleet.resolved` + observed fleet state into wave-by-wave reconciliation actions. Does not cover *how* actions reach hosts — that's RFC-0003.
+**Implementation status (2026-04-25).** A read-only reconciler runner ships in `crates/nixfleet-control-plane` and runs on the M70q (lab) as a systemd timer (PR #36). Each tick reads `releases/fleet.resolved.json` + a hand-written `observed.json`, calls `verify_artifact` (§4 step 0), calls `reconcile()` (§4 steps 1–6), and emits the action plan as JSON lines on the journal. **Actions are never executed in Phase 2** — the reconciler runs against operator-supplied observed state to validate the decision procedure. Dispatch, the per-host state machine (§3.2), `ConfirmWindow`, soak timers, and the `onHealthFailure` branches all land in Phase 4+ when activation is wired. Phase 3 replaces the file-backed `observed.json` with a SQLite projection updated by agent check-ins.
 
 ## 1. Motivation
 
