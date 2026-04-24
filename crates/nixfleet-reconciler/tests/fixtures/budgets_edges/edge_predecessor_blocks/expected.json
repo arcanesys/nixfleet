@@ -1,0 +1,4 @@
+[
+  { "action": "skip", "host": "h1", "reason": "edge predecessor h2 incomplete" },
+  { "action": "dispatch_host", "rollout": "stable@r2", "host": "h2", "target_ref": "r2" }
+]

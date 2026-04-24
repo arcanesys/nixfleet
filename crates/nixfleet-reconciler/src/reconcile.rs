@@ -89,6 +89,29 @@ pub fn reconcile(
                         });
                         continue;
                     }
+                    // §4.1 edge predecessor check.
+                    let incomplete = fleet.edges.iter().find_map(|e| {
+                        if e.before != *host {
+                            return None;
+                        }
+                        let s = rollout
+                            .host_states
+                            .get(&e.after)
+                            .map(String::as_str)
+                            .unwrap_or("Queued");
+                        if matches!(s, "Soaked" | "Converged") {
+                            None
+                        } else {
+                            Some(e.after.clone())
+                        }
+                    });
+                    if let Some(predecessor) = incomplete {
+                        actions.push(Action::Skip {
+                            host: host.clone(),
+                            reason: format!("edge predecessor {predecessor} incomplete"),
+                        });
+                        continue;
+                    }
                     if let Some((in_flight, max)) = budget_max(host) {
                         if in_flight >= max {
                             actions.push(Action::Skip {
