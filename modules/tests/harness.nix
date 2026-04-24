@@ -16,11 +16,30 @@
     pkgs,
     lib,
     system,
+    config,
     ...
   }: let
-    harness = import ../../tests/harness {inherit lib pkgs inputs;};
+    # Pull the canonicalize package from the crane workspace (same
+    # perSystem, declared in `modules/rust-packages.nix`). The harness
+    # entry point needs it to bake the signed fixture at build time.
+    nixfleet-canonicalize = config.packages.nixfleet-canonicalize or null;
+    harness = import ../../tests/harness {
+      inherit lib pkgs inputs nixfleet-canonicalize;
+    };
   in
     lib.optionalAttrs (system == "x86_64-linux") {
-      checks = harness;
+      checks =
+        {
+          fleet-harness-smoke = harness.fleet-harness-smoke;
+        }
+        # Only register the signed-fixture check when the canonicalize
+        # package is available for this system (x86_64-linux only today;
+        # other systems skip it silently).
+        // lib.optionalAttrs (nixfleet-canonicalize != null) {
+          # Phase 2 PR(a) signed-fixture derivation. Byte-stability
+          # regression guard; rebuild failure signals non-determinism in
+          # mkFleet, canonicalize, or the keygen helper.
+          phase-2-signed-fixture = harness.signedFixture;
+        };
     };
 }

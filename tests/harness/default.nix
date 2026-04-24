@@ -15,6 +15,11 @@
   lib,
   pkgs,
   inputs,
+  # `nixfleet-canonicalize` is built by the workspace crane pipeline
+  # (see `crane-workspace.nix`) and wired in by `modules/tests/harness.nix`.
+  # Default to `null` so this file still evaluates from callers that don't
+  # pass it — fixture-dependent attrs will throw on access.
+  nixfleet-canonicalize ? null,
 }: let
   harnessLib = import ./lib.nix {inherit lib pkgs inputs;};
 
@@ -30,10 +35,31 @@
     testCerts = sharedCerts;
     resolvedJsonPath = ./fixtures/fleet-resolved.json;
   };
+
+  # Phase 2 PR(a): signed-fixture derivation. Consumed by the
+  # (future) `signed-roundtrip` scenario and by
+  # `crates/nixfleet-verify-artifact`. See ./fixtures/signed/README.md.
+  signedFixture =
+    if nixfleet-canonicalize == null
+    then
+      throw ''
+        tests/harness: signedFixture requires `nixfleet-canonicalize` to be
+        passed in. Wire it via `modules/tests/harness.nix` or call sites
+        that have the flake's `packages.<system>.nixfleet-canonicalize`.
+      ''
+    else
+      import ./fixtures/signed {
+        inherit lib pkgs nixfleet-canonicalize;
+      };
 in {
   # Target shape per issue #5: `checks.<system>.fleet-N`. For the scaffold
   # we only ship N=2 (smoke). Extension: import additional scenario files
   # here with different agent counts, or parameterise smoke.nix to accept
   # `agentCount` and expose fleet-5, fleet-10 wrappers.
   fleet-harness-smoke = import ./scenarios/smoke.nix scenarioArgs;
+
+  # Signed-fixture derivation exposed as a harness attribute. Registered
+  # as a flake check (`phase-2-signed-fixture`) in `modules/tests/harness.nix`
+  # so byte-stability regressions surface on every CI run.
+  inherit signedFixture;
 }
