@@ -25,3 +25,14 @@ fn canonicalize_is_idempotent() {
     let twice = canonicalize(&once).expect("canonicalize canonical form");
     assert_eq!(once, twice, "canonical form must be a fixed point");
 }
+
+#[test]
+fn reordering_input_does_not_change_canonical_output() {
+    let reordered = r#"{"schemaVersion":1,"a":{"x":[3,1,2],"z":null,"y":true},"b":2}"#;
+    let original = canonicalize(GOLDEN_INPUT).expect("canonicalize original");
+    let shuffled = canonicalize(reordered).expect("canonicalize shuffled");
+    assert_eq!(
+        original, shuffled,
+        "canonical output must be invariant under input key ordering"
+    );
+}
