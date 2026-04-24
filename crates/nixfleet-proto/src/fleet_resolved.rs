@@ -147,4 +147,18 @@ pub struct Meta {
     pub signed_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub ci_commit: Option<String>,
+
+    // `signatureAlgorithm` per CONTRACTS.md §I / §II (added by #18).
+    // Optional on the wire: absent ≡ "ed25519" (backward-compat default).
+    // Explicit strings round-trip as themselves. Unlike other Option
+    // fields in this crate, this one uses `skip_serializing_if` — the
+    // absent/default distinction is load-bearing for backward compat
+    // with pre-#18 fleet.resolved artifacts that never emitted this
+    // field at all.
+    #[serde(
+        default,
+        rename = "signatureAlgorithm",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub signature_algorithm: Option<String>,
 }
