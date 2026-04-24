@@ -41,6 +41,13 @@
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
+      # The harness scenario greps the host-VM journal for
+      # microvm@<agent>.service, which only surfaces lines that reach
+      # the guest's /dev/console. systemd units log to journald by
+      # default, so without explicit forwarding the guest's journal
+      # stays invisible from the host. journal+console routes both.
+      StandardOutput = "journal+console";
+      StandardError = "journal+console";
       # The `harness-agent-ok` marker is what the scenario greps on.
       # Emit it only when both the curl and the jq parse succeed.
       ExecStart = pkgs.writeShellScript "harness-agent-fetch" ''
@@ -55,18 +62,27 @@
         trap 'rm -f "$resp"' EXIT
 
         echo "harness-agent: fetching $url (via ${controlPlaneHost})" >&2
-        curl -sf \
+        if ! curl -sfS \
           --cacert /etc/nixfleet-harness/ca.pem \
           --cert /etc/nixfleet-harness/${agentHostName}-cert.pem \
           --key /etc/nixfleet-harness/${agentHostName}-key.pem \
           --resolve "cp:${toString controlPlanePort}:${controlPlaneHost}" \
           --connect-timeout 30 \
           --max-time 60 \
-          "$url" > "$resp"
+          "$url" > "$resp" 2>&1; then
+          echo "harness-agent-FAIL: curl exited non-zero" >&2
+          exit 1
+        fi
 
         signed_at=$(jq -r '.meta.signedAt // "null"' < "$resp")
         algo=$(jq -r '.meta.signatureAlgorithm // "null"' < "$resp")
-        echo "harness-agent-ok: signedAt=$signed_at signatureAlgorithm=$algo" >&2
+
+        # Belt-and-suspenders: also write directly to /dev/console so
+        # the marker reaches the host journal even if journald forwarding
+        # is ever disabled in the guest.
+        msg="harness-agent-ok: signedAt=$signed_at signatureAlgorithm=$algo"
+        echo "$msg" >&2
+        echo "$msg" > /dev/console || true
 
         # TODO(5): invoke Stream C's p256 verify step here once the meta
         # signature block is populated. For the scaffold we just log.
