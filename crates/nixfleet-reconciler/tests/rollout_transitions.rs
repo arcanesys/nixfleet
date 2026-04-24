@@ -20,3 +20,15 @@ fn wave_active_to_soaking() {
     let (actual, expected) = common::run("rollout/wave_active_to_soaking");
     common::assert_matches(&actual, &expected);
 }
+
+#[test]
+fn wave_soaking_to_promoted() {
+    let (actual, expected) = common::run("rollout/wave_soaking_to_promoted");
+    common::assert_matches(&actual, &expected);
+}
+
+#[test]
+fn all_waves_converged() {
+    let (actual, expected) = common::run("rollout/all_waves_converged");
+    common::assert_matches(&actual, &expected);
+}
