@@ -69,6 +69,21 @@ pub fn reconcile(
                     wave_all_soaked = false;
                 }
                 "Soaked" | "Converged" => {}
+                "Failed" => {
+                    wave_all_soaked = false;
+                    if let Some(chan) = fleet.channels.get(&rollout.channel) {
+                        if let Some(policy) = fleet.rollout_policies.get(&chan.rollout_policy) {
+                            let reason = format!(
+                                "host {} failed (policy: {})",
+                                host, policy.on_health_failure
+                            );
+                            actions.push(Action::HaltRollout {
+                                rollout: rollout.id.clone(),
+                                reason,
+                            });
+                        }
+                    }
+                }
                 _ => {}
             }
         }

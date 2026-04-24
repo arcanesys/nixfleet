@@ -32,3 +32,15 @@ fn all_waves_converged() {
     let (actual, expected) = common::run("rollout/all_waves_converged");
     common::assert_matches(&actual, &expected);
 }
+
+#[test]
+fn onfailure_rollback_and_halt() {
+    let (actual, expected) = common::run("rollout/onfailure_rollback_and_halt");
+    common::assert_matches(&actual, &expected);
+}
+
+#[test]
+fn onfailure_halt() {
+    let (actual, expected) = common::run("rollout/onfailure_halt");
+    common::assert_matches(&actual, &expected);
+}

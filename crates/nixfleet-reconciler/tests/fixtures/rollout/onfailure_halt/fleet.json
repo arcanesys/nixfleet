@@ -1,0 +1,11 @@
+{
+  "channels": { "stable": { "compliance": { "frameworks": [], "strict": true }, "freshnessWindow": 180, "reconcileIntervalMinutes": 30, "rolloutPolicy": "p1", "signingIntervalMinutes": 60 } },
+  "disruptionBudgets": [], "edges": [],
+  "hosts": {
+    "h1": { "channel": "stable", "closureHash": null, "pubkey": null, "system": "x86_64-linux", "tags": [] }
+  },
+  "meta": { "ciCommit": "abc", "schemaVersion": 1, "signedAt": "2026-04-24T09:55:00Z" },
+  "rolloutPolicies": { "p1": { "healthGate": {}, "onHealthFailure": "halt", "strategy": "all-at-once", "waves": [{ "selector": { "all": true, "channel": null, "hosts": [], "tags": [], "tagsAny": [] }, "soakMinutes": 0 }] } },
+  "schemaVersion": 1,
+  "waves": { "stable": [{ "hosts": ["h1"], "soakMinutes": 0 }] }
+}
