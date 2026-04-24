@@ -106,7 +106,7 @@ Fleet repos add their own inputs as needed (e.g. `agenix` or `sops-nix` for secr
 
 ## Design Decisions
 
-Key architectural decisions are documented in [Architecture Decision Records](adr/).
+Key architectural decisions are documented in [Architecture Decision Records](../adr/).
 
 Summary of foundational decisions:
 
