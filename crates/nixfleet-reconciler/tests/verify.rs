@@ -55,3 +55,88 @@ fn verify_ok_returns_fleet() {
     assert_eq!(fleet.schema_version, 1);
     assert!(fleet.hosts.contains_key("h1"));
 }
+
+#[test]
+fn verify_bad_signature() {
+    let (bytes, mut sig, pubkey, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    sig[0] ^= 0xFF;
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    let err = verify_artifact(&bytes, &sig, &pubkey, now, window).unwrap_err();
+    assert!(matches!(err, VerifyError::BadSignature));
+}
+
+#[test]
+fn verify_stale() {
+    let (bytes, sig, pubkey, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let now = signed_at + ChronoDuration::hours(4);
+    let window = Duration::from_secs(3 * 3600);
+
+    let err = verify_artifact(&bytes, &sig, &pubkey, now, window).unwrap_err();
+    assert!(matches!(err, VerifyError::Stale { signed_at: Some(_), .. }));
+}
+
+#[test]
+fn verify_unsigned() {
+    let json = include_str!("../../nixfleet-proto/tests/fixtures/every-nullable.json");
+
+    let signing_key = fresh_signing_key();
+    let pubkey = signing_key.verifying_key();
+    let canonical = canonicalize(json).expect("canonicalize");
+    let sig = signing_key.sign(canonical.as_bytes()).to_bytes();
+
+    let now = Utc::now();
+    let window = Duration::from_secs(3 * 3600);
+
+    let err = verify_artifact(canonical.as_bytes(), &sig, &pubkey, now, window).unwrap_err();
+    assert!(matches!(err, VerifyError::Stale { signed_at: None, .. }));
+}
+
+#[test]
+fn verify_unsupported_schema() {
+    let mut value: serde_json::Value = serde_json::from_str(FIXTURE_SIGNED).unwrap();
+    value["schemaVersion"] = serde_json::json!(2);
+    let json = value.to_string();
+
+    let signing_key = fresh_signing_key();
+    let pubkey = signing_key.verifying_key();
+    let canonical = canonicalize(&json).expect("canonicalize");
+    let sig = signing_key.sign(canonical.as_bytes()).to_bytes();
+
+    let signed_at: DateTime<Utc> = value["meta"]["signedAt"].as_str().unwrap().parse().unwrap();
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    let err = verify_artifact(canonical.as_bytes(), &sig, &pubkey, now, window).unwrap_err();
+    assert!(matches!(err, VerifyError::SchemaVersionUnsupported(2)));
+}
+
+#[test]
+fn verify_malformed_json() {
+    let signing_key = fresh_signing_key();
+    let pubkey = signing_key.verifying_key();
+    let bytes = b"{not json";
+    let sig = [0u8; 64];
+
+    let err = verify_artifact(bytes, &sig, &pubkey, Utc::now(), Duration::from_secs(60))
+        .unwrap_err();
+    assert!(matches!(err, VerifyError::Parse(_)));
+}
+
+#[test]
+fn verify_tampered_payload() {
+    let (bytes, sig, pubkey, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let mut tampered = bytes.clone();
+    if let Some(byte) = tampered.iter_mut().find(|b| **b == b'"') {
+        *byte = b'_';
+    }
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    let err = verify_artifact(&tampered, &sig, &pubkey, now, window).unwrap_err();
+    assert!(
+        matches!(err, VerifyError::Parse(_) | VerifyError::BadSignature),
+        "got {err:?}"
+    );
+}
