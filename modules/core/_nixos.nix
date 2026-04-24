@@ -26,6 +26,8 @@
 }: let
   hS = config.hostSpec;
 in {
+  imports = [../_trust.nix];
+
   # --- nixpkgs ---
   nixpkgs.config = lib.mkDefault {
     allowUnfree = true;
