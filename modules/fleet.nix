@@ -134,6 +134,29 @@ in {
       ];
     };
 
+    # cp-test: exercises the v0.2 control plane scope module, mirroring
+    # agent-test's role. Pinned ciReleaseKey so trust.json materialises
+    # with a non-null current slot for the eval assertions.
+    cp-test = mkHost {
+      hostName = "cp-test";
+      platform = "x86_64-linux";
+      isVm = true;
+      hostSpec = orgDefaults;
+      modules = [
+        scopes.roles.server
+        orgOperators
+        {
+          services.nixfleet-control-plane = {
+            enable = true;
+          };
+          nixfleet.trust.ciReleaseKey.current = {
+            algorithm = "ed25519";
+            public = "AAAA"; # eval-fixture placeholder; real hosts pin real keys
+          };
+        }
+      ];
+    };
+
     # secrets-test: exercises secrets scope on a server (host key only)
     secrets-test = mkHost {
       hostName = "secrets-test";

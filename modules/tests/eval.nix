@@ -154,7 +154,23 @@
 
         # Agent tags / health-checks / metrics-port eval checks retired
         # alongside the v0.1 agent module (#29). v0.2 agent options are
-        # tested via modules/tests/_agent-v2-trust.nix (added by Task 1.9).
+        # tested via modules/tests/_agent-v2-trust.nix.
+
+        # --- v0.2 agent: trust.json + ExecStart flags (Task 1.9) ---
+        eval-nixfleet-agent-v2-trust = mkEvalCheck "nixfleet-agent-v2-trust" (
+          import ./_agent-v2-trust.nix {
+            inherit lib;
+            cfg = nixosCfg "agent-test";
+          }
+        );
+
+        # --- v0.2 control plane: trust.json + ExecStart flags (Task 1.9) ---
+        eval-nixfleet-cp-v2-trust = mkEvalCheck "nixfleet-cp-v2-trust" (
+          import ./_cp-v2-trust.nix {
+            inherit lib;
+            cfg = nixosCfg "cp-test";
+          }
+        );
 
         # --- Secrets: resolved paths on server (host key only) ---
         eval-secrets-server = let
