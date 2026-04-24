@@ -44,6 +44,36 @@ pub fn reconcile(
             }
         };
 
+        // In-flight count across all rollouts for this budget's host set.
+        let count_in_flight = |budget_hosts: &[String]| -> u32 {
+            observed
+                .active_rollouts
+                .iter()
+                .map(|r| {
+                    r.host_states
+                        .iter()
+                        .filter(|(h, st)| {
+                            budget_hosts.iter().any(|b| b == *h)
+                                && matches!(
+                                    st.as_str(),
+                                    "Dispatched" | "Activating" | "ConfirmWindow" | "Healthy"
+                                )
+                        })
+                        .count() as u32
+                })
+                .sum()
+        };
+
+        // For a given host, the tightest max_in_flight across all budgets it matches.
+        let budget_max = |host: &str| -> Option<(u32, u32)> {
+            fleet
+                .disruption_budgets
+                .iter()
+                .filter(|b| b.hosts.iter().any(|bh| bh == host))
+                .filter_map(|b| b.max_in_flight.map(|m| (count_in_flight(&b.hosts), m)))
+                .min_by_key(|(_, max)| *max)
+        };
+
         let mut wave_all_soaked = true;
 
         for host in &wave.hosts {
@@ -58,6 +88,15 @@ pub fn reconcile(
                             reason: "offline".into(),
                         });
                         continue;
+                    }
+                    if let Some((in_flight, max)) = budget_max(host) {
+                        if in_flight >= max {
+                            actions.push(Action::Skip {
+                                host: host.clone(),
+                                reason: format!("disruption budget ({in_flight}/{max} in flight)"),
+                            });
+                            continue;
+                        }
                     }
                     actions.push(Action::DispatchHost {
                         rollout: rollout.id.clone(),

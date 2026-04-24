@@ -1,0 +1,3 @@
+[
+  { "action": "skip", "host": "h2", "reason": "disruption budget (1/1 in flight)" }
+]

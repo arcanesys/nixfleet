@@ -1,0 +1,20 @@
+{
+  "channelRefs": { "stable": "r2", "edge": "r2" },
+  "lastRolledRefs": { "stable": "r1", "edge": "r1" },
+  "hostState": {
+    "h1": { "online": true, "currentGeneration": "gen-r1" },
+    "h2": { "online": true, "currentGeneration": "gen-r1" }
+  },
+  "activeRollouts": [
+    {
+      "id": "stable@r2", "channel": "stable", "targetRef": "r2",
+      "state": "Executing", "currentWave": 0,
+      "hostStates": { "h1": "Dispatched" }
+    },
+    {
+      "id": "edge@r2", "channel": "edge", "targetRef": "r2",
+      "state": "Executing", "currentWave": 0,
+      "hostStates": { "h2": "Queued" }
+    }
+  ]
+}
