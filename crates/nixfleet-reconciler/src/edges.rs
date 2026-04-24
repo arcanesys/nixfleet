@@ -48,6 +48,7 @@ mod tests {
                 schema_version: 1,
                 signed_at: None,
                 ci_commit: None,
+                signature_algorithm: None,
             },
         }
     }

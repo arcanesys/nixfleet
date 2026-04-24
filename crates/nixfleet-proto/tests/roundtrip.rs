@@ -72,6 +72,48 @@ fn stream_b_empty_selector_parses_and_canonicalizes() {
 }
 
 #[test]
+fn meta_signature_algorithm_none_round_trips_as_absent() {
+    // Per #18's §I/§II amendment: `meta.signatureAlgorithm` is OPTIONAL
+    // with default "ed25519" on the consumer side. The canonical way to
+    // encode "use the default" is ABSENT (not `null`). Explicit algorithm
+    // strings round-trip as themselves.
+    let input = load("every-nullable.json");
+    let parsed: FleetResolved = serde_json::from_str(&input).expect("parse");
+    assert!(
+        parsed.meta.signature_algorithm.is_none(),
+        "every-nullable fixture has no signatureAlgorithm, parses as None"
+    );
+
+    let reserialized = serde_json::to_string(&parsed).expect("serialize");
+    assert!(
+        !reserialized.contains("signatureAlgorithm"),
+        "None must not emit the field: {reserialized}"
+    );
+}
+
+#[test]
+fn meta_signature_algorithm_some_round_trips_as_explicit_string() {
+    // Inject signatureAlgorithm: "ecdsa-p256" into a fixture; parse;
+    // assert Some; re-serialize; assert the explicit string is present.
+    let input = load("signed-artifact.json");
+    let mut value: serde_json::Value = serde_json::from_str(&input).unwrap();
+    value["meta"]["signatureAlgorithm"] = serde_json::json!("ecdsa-p256");
+
+    let parsed: FleetResolved =
+        serde_json::from_str(&value.to_string()).expect("parse with signatureAlgorithm");
+    assert_eq!(
+        parsed.meta.signature_algorithm.as_deref(),
+        Some("ecdsa-p256")
+    );
+
+    let reserialized = serde_json::to_string(&parsed).expect("serialize");
+    assert!(
+        reserialized.contains(r#""signatureAlgorithm":"ecdsa-p256""#),
+        "Some(\"ecdsa-p256\") must round-trip as explicit string: {reserialized}"
+    );
+}
+
+#[test]
 fn unknown_fields_at_any_level_are_ignored() {
     let input = load("every-nullable.json");
     let mut value: serde_json::Value = serde_json::from_str(&input).unwrap();

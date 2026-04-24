@@ -269,7 +269,7 @@ fn verify_rejects_when_only_unknown_algorithm_declared() {
     // NOT BadSignature — so ops logs are actionable.
     let (bytes, sig, _trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
     let future_only = vec![TrustedPubkey {
-        algorithm: "p256".to_string(),
+        algorithm: "dilithium3".to_string(),
         public: "somebase64value==".to_string(),
     }];
     let now = signed_at + ChronoDuration::minutes(30);
@@ -278,7 +278,7 @@ fn verify_rejects_when_only_unknown_algorithm_declared() {
     let err = verify_artifact(&bytes, &sig, &future_only, now, window).unwrap_err();
     match err {
         VerifyError::UnsupportedAlgorithm { algorithm } => {
-            assert_eq!(algorithm, "p256");
+            assert_eq!(algorithm, "dilithium3");
         }
         other => panic!("expected UnsupportedAlgorithm, got {other:?}"),
     }
@@ -306,6 +306,137 @@ fn verify_skips_unknown_algorithm_when_known_also_present() {
     assert!(
         result.is_ok(),
         "mixed-algorithm list with one known key must verify: {result:?}"
+    );
+}
+
+// ---- ECDSA P-256 (#18 signature-algorithm agility) -------------------
+
+/// P-256 curve order `n`, big-endian. Used to construct high-s twin
+/// signatures for malleability rejection tests.
+const P256_N_BE: [u8; 32] = [
+    0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51,
+];
+
+/// Compute `minuend - subtrahend` on 32-byte big-endian scalars
+/// (used when minuend > subtrahend; no modular reduction).
+fn be_sub_32(minuend: &[u8; 32], subtrahend: &[u8; 32]) -> [u8; 32] {
+    let mut result = [0u8; 32];
+    let mut borrow: i32 = 0;
+    for i in (0..32).rev() {
+        let v = minuend[i] as i32 - subtrahend[i] as i32 - borrow;
+        if v < 0 {
+            result[i] = (v + 256) as u8;
+            borrow = 1;
+        } else {
+            result[i] = v as u8;
+            borrow = 0;
+        }
+    }
+    result
+}
+
+/// Sign `canonical_bytes` with a freshly-generated p256 key. Returns
+/// (signature 64-byte R||S, trust root carrying 64-byte X||Y public).
+fn sign_p256(canonical_bytes: &[u8]) -> ([u8; 64], TrustedPubkey) {
+    use p256::ecdsa::signature::Signer;
+    use p256::ecdsa::{Signature, SigningKey};
+
+    let mut seed = [0u8; 32];
+    OsRng.try_fill_bytes(&mut seed).expect("OS CSPRNG");
+    let signing_key = SigningKey::from_slice(&seed).expect("derive p256 key from 32 bytes");
+    let verifying_key = signing_key.verifying_key();
+
+    let sig: Signature = signing_key.sign(canonical_bytes);
+    // The p256 crate's signer does not guarantee low-s output. Normalize
+    // here so the helper always returns a canonical (low-s) signature —
+    // matches what any well-behaved production signer would do before
+    // writing the detached `.sig` file.
+    let sig = sig.normalize_s().unwrap_or(sig);
+    let sig_bytes: [u8; 64] = sig.to_bytes().into();
+
+    // Encode public key as 64-byte X||Y (no 0x04 tag) per CONTRACTS.md §II #1.
+    let tagged = verifying_key.to_encoded_point(false);
+    let tagged_bytes = tagged.as_bytes();
+    assert_eq!(
+        tagged_bytes.len(),
+        65,
+        "uncompressed SEC1 point is 65 bytes"
+    );
+    assert_eq!(tagged_bytes[0], 0x04, "SEC1 uncompressed tag");
+    let public_bytes: &[u8] = &tagged_bytes[1..];
+    let public_b64 = BASE64_STANDARD.encode(public_bytes);
+
+    let trust = TrustedPubkey {
+        algorithm: "ecdsa-p256".to_string(),
+        public: public_b64,
+    };
+    (sig_bytes, trust)
+}
+
+#[test]
+fn verify_p256_ok() {
+    let value: serde_json::Value = serde_json::from_str(FIXTURE_SIGNED).unwrap();
+    let signed_at: DateTime<Utc> = value["meta"]["signedAt"].as_str().unwrap().parse().unwrap();
+    let canonical = canonicalize(&value.to_string()).unwrap();
+
+    let (sig, trust) = sign_p256(canonical.as_bytes());
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    let result = verify_artifact(canonical.as_bytes(), &sig, &[trust], now, window);
+    assert!(result.is_ok(), "verify_p256_ok: {result:?}");
+}
+
+#[test]
+fn verify_p256_rejects_high_s() {
+    // Canonical p256 signatures have s <= n/2. The twin (r, n-s) is
+    // mathematically valid but rejected as malleable (ECDSA
+    // malleability on Weierstrass curves).
+    let value: serde_json::Value = serde_json::from_str(FIXTURE_SIGNED).unwrap();
+    let signed_at: DateTime<Utc> = value["meta"]["signedAt"].as_str().unwrap().parse().unwrap();
+    let canonical = canonicalize(&value.to_string()).unwrap();
+
+    let (sig, trust) = sign_p256(canonical.as_bytes());
+
+    let mut malleable = sig;
+    let s_be: [u8; 32] = sig[32..64].try_into().unwrap();
+    let s_high = be_sub_32(&P256_N_BE, &s_be);
+    malleable[32..64].copy_from_slice(&s_high);
+
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    let result = verify_artifact(canonical.as_bytes(), &malleable, &[trust], now, window);
+    assert!(
+        matches!(result, Err(VerifyError::BadSignature)),
+        "high-s must be rejected for malleability: got {result:?}"
+    );
+}
+
+#[test]
+fn verify_rotation_cross_algorithm() {
+    // Cross-algorithm rotation grace: current = p256, previous = ed25519
+    // (or vice versa). p256-signed artifact verifies via the first
+    // matching entry in the list; ed25519 doesn't interfere.
+    let value: serde_json::Value = serde_json::from_str(FIXTURE_SIGNED).unwrap();
+    let signed_at: DateTime<Utc> = value["meta"]["signedAt"].as_str().unwrap().parse().unwrap();
+    let canonical = canonicalize(&value.to_string()).unwrap();
+
+    let (p256_sig, p256_trust) = sign_p256(canonical.as_bytes());
+
+    // An unrelated ed25519 "previous" trust root.
+    let previous_ed25519_key = fresh_signing_key();
+    let ed_trust = trust_root_for(&previous_ed25519_key);
+
+    let trusted = vec![p256_trust, ed_trust];
+    let now = signed_at + ChronoDuration::minutes(30);
+    let window = Duration::from_secs(3 * 3600);
+
+    let result = verify_artifact(canonical.as_bytes(), &p256_sig, &trusted, now, window);
+    assert!(
+        result.is_ok(),
+        "p256 current + ed25519 previous — p256 sig must verify via first entry: {result:?}"
     );
 }
 
