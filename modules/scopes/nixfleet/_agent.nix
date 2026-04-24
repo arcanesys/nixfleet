@@ -27,17 +27,9 @@
   # is required per docs/trust-root-flow.md §7.4 — binaries refuse to
   # start on unknown versions.
   #
-  # atticCacheKey is a plain string (attic-native format "attic:<host>:
-  # <base64>") per CONTRACTS.md §II #2 / trust-root-flow.md §3.4. Only
-  # the `.current` slot is emitted; `.previous` / `.rejectBefore` have
-  # no proto representation for attic yet. orgRootKey is a full KeySlot.
-  trustConfig = {
-    schemaVersion = 1;
-    ciReleaseKey = config.nixfleet.trust.ciReleaseKey;
-    atticCacheKey = config.nixfleet.trust.atticCacheKey.current;
-    orgRootKey = config.nixfleet.trust.orgRootKey;
-  };
-
+  # Shared trust.json payload — see ./_trust-json.nix for shape rationale
+  # and the orgRootKey ed25519 promotion that matches proto::TrustConfig.
+  trustConfig = import ./_trust-json.nix {trust = config.nixfleet.trust;};
   trustJson = pkgs.writers.writeJSON "trust.json" trustConfig;
 in {
   options.services.nixfleet-agent = {

@@ -16,15 +16,9 @@
   cfg = config.services.nixfleet-control-plane;
   nixfleet-control-plane = inputs.self.packages.${pkgs.system}.nixfleet-control-plane;
 
-  # Same shape as the agent's trust.json (see _agent.nix comment).
-  # schemaVersion = 1 is required per docs/trust-root-flow.md §7.4.
-  trustConfig = {
-    schemaVersion = 1;
-    ciReleaseKey = config.nixfleet.trust.ciReleaseKey;
-    atticCacheKey = config.nixfleet.trust.atticCacheKey.current;
-    orgRootKey = config.nixfleet.trust.orgRootKey;
-  };
-
+  # Shared trust.json payload — see ./_trust-json.nix for shape rationale
+  # and the orgRootKey ed25519 promotion that matches proto::TrustConfig.
+  trustConfig = import ./_trust-json.nix {trust = config.nixfleet.trust;};
   trustJson = pkgs.writers.writeJSON "trust.json" trustConfig;
 in {
   options.services.nixfleet-control-plane = {

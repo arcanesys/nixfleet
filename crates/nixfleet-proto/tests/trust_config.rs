@@ -72,3 +72,36 @@ fn trust_config_rejects_missing_schema_version() {
     let err = serde_json::from_str::<TrustConfig>(json).unwrap_err();
     assert!(err.to_string().contains("schemaVersion"), "got: {err}");
 }
+
+/// Exercises the exact JSON shape the Nix scope modules emit when an
+/// operator pins an org root key. `modules/_trust.nix` stores the key
+/// as a bare string; `modules/scopes/nixfleet/_trust-json.nix` promotes
+/// it into the `{algorithm: "ed25519", public: <str>}` struct proto
+/// expects (CONTRACTS §II #3 — org root key is always ed25519).
+///
+/// Without the promotion, binaries would fail to deserialize trust.json
+/// on any host that sets orgRootKey. Pins the emission shape against
+/// regression.
+#[test]
+fn trust_config_parses_populated_org_root_key_matching_nix_emission() {
+    let json = r#"{
+        "schemaVersion": 1,
+        "ciReleaseKey": {
+            "current": { "algorithm": "ed25519", "public": "AAAA" },
+            "previous": null,
+            "rejectBefore": null
+        },
+        "atticCacheKey": null,
+        "orgRootKey": {
+            "current": { "algorithm": "ed25519", "public": "BBBB" },
+            "previous": null,
+            "rejectBefore": null
+        }
+    }"#;
+    let cfg: TrustConfig = serde_json::from_str(json).unwrap();
+    let org = cfg.org_root_key.as_ref().expect("orgRootKey set");
+    let current = org.current.as_ref().expect("current pinned");
+    assert_eq!(current.algorithm, "ed25519");
+    assert_eq!(current.public, "BBBB");
+    assert!(org.previous.is_none());
+}
