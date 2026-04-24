@@ -60,7 +60,14 @@ fn verify_ok_returns_fleet() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let result = verify_artifact(&bytes, &sig, std::slice::from_ref(&trust), now, window);
+    let result = verify_artifact(
+        &bytes,
+        &sig,
+        std::slice::from_ref(&trust),
+        now,
+        window,
+        None,
+    );
 
     let fleet = result.expect("verify_ok");
     assert_eq!(fleet.schema_version, 1);
@@ -74,7 +81,15 @@ fn verify_bad_signature() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let err = verify_artifact(&bytes, &sig, std::slice::from_ref(&trust), now, window).unwrap_err();
+    let err = verify_artifact(
+        &bytes,
+        &sig,
+        std::slice::from_ref(&trust),
+        now,
+        window,
+        None,
+    )
+    .unwrap_err();
     assert!(matches!(err, VerifyError::BadSignature));
 }
 
@@ -84,7 +99,15 @@ fn verify_stale() {
     let now = signed_at + ChronoDuration::hours(4);
     let window = Duration::from_secs(3 * 3600);
 
-    let err = verify_artifact(&bytes, &sig, std::slice::from_ref(&trust), now, window).unwrap_err();
+    let err = verify_artifact(
+        &bytes,
+        &sig,
+        std::slice::from_ref(&trust),
+        now,
+        window,
+        None,
+    )
+    .unwrap_err();
     assert!(matches!(err, VerifyError::Stale { .. }));
 }
 
@@ -95,7 +118,14 @@ fn verify_at_exact_window_boundary_is_fresh() {
     let now = signed_at + ChronoDuration::seconds(window_secs as i64);
     let window = Duration::from_secs(window_secs);
 
-    let result = verify_artifact(&bytes, &sig, std::slice::from_ref(&trust), now, window);
+    let result = verify_artifact(
+        &bytes,
+        &sig,
+        std::slice::from_ref(&trust),
+        now,
+        window,
+        None,
+    );
     assert!(
         result.is_ok(),
         "age == window must be treated as fresh: {result:?}"
@@ -120,6 +150,7 @@ fn verify_unsigned() {
         std::slice::from_ref(&trust),
         now,
         window,
+        None,
     )
     .unwrap_err();
     assert!(matches!(err, VerifyError::NotSigned));
@@ -157,6 +188,7 @@ fn verify_rejects_malleable_signature() {
         std::slice::from_ref(&trust),
         now,
         window,
+        None,
     );
     assert!(
         matches!(result, Err(VerifyError::BadSignature)),
@@ -185,6 +217,7 @@ fn verify_unsupported_schema() {
         std::slice::from_ref(&trust),
         now,
         window,
+        None,
     )
     .unwrap_err();
     assert!(matches!(err, VerifyError::SchemaVersionUnsupported(2)));
@@ -203,6 +236,7 @@ fn verify_malformed_json() {
         std::slice::from_ref(&trust),
         Utc::now(),
         Duration::from_secs(60),
+        None,
     )
     .unwrap_err();
     assert!(matches!(err, VerifyError::Parse(_)));
@@ -218,8 +252,15 @@ fn verify_tampered_payload() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let err =
-        verify_artifact(&tampered, &sig, std::slice::from_ref(&trust), now, window).unwrap_err();
+    let err = verify_artifact(
+        &tampered,
+        &sig,
+        std::slice::from_ref(&trust),
+        now,
+        window,
+        None,
+    )
+    .unwrap_err();
     assert!(
         matches!(err, VerifyError::Parse(_) | VerifyError::BadSignature),
         "got {err:?}"
@@ -234,7 +275,7 @@ fn verify_with_empty_trust_roots_errors() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let err = verify_artifact(&bytes, &sig, &[], now, window).unwrap_err();
+    let err = verify_artifact(&bytes, &sig, &[], now, window, None).unwrap_err();
     assert!(matches!(err, VerifyError::NoTrustRoots));
 }
 
@@ -255,7 +296,7 @@ fn verify_rotation_with_two_keys_tries_each_in_order() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let result = verify_artifact(canonical.as_bytes(), &sig, &trust_roots, now, window);
+    let result = verify_artifact(canonical.as_bytes(), &sig, &trust_roots, now, window, None);
     assert!(
         result.is_ok(),
         "rotation-order list must accept the second key: {result:?}"
@@ -275,7 +316,7 @@ fn verify_rejects_when_only_unknown_algorithm_declared() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let err = verify_artifact(&bytes, &sig, &future_only, now, window).unwrap_err();
+    let err = verify_artifact(&bytes, &sig, &future_only, now, window, None).unwrap_err();
     match err {
         VerifyError::UnsupportedAlgorithm { algorithm } => {
             assert_eq!(algorithm, "dilithium3");
@@ -302,7 +343,7 @@ fn verify_skips_unknown_algorithm_when_known_also_present() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let result = verify_artifact(&bytes, &sig, &mixed, now, window);
+    let result = verify_artifact(&bytes, &sig, &mixed, now, window, None);
     assert!(
         result.is_ok(),
         "mixed-algorithm list with one known key must verify: {result:?}"
@@ -384,7 +425,7 @@ fn verify_p256_ok() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let result = verify_artifact(canonical.as_bytes(), &sig, &[trust], now, window);
+    let result = verify_artifact(canonical.as_bytes(), &sig, &[trust], now, window, None);
     assert!(result.is_ok(), "verify_p256_ok: {result:?}");
 }
 
@@ -407,7 +448,14 @@ fn verify_p256_rejects_high_s() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let result = verify_artifact(canonical.as_bytes(), &malleable, &[trust], now, window);
+    let result = verify_artifact(
+        canonical.as_bytes(),
+        &malleable,
+        &[trust],
+        now,
+        window,
+        None,
+    );
     assert!(
         matches!(result, Err(VerifyError::BadSignature)),
         "high-s must be rejected for malleability: got {result:?}"
@@ -433,7 +481,7 @@ fn verify_rotation_cross_algorithm() {
     let now = signed_at + ChronoDuration::minutes(30);
     let window = Duration::from_secs(3 * 3600);
 
-    let result = verify_artifact(canonical.as_bytes(), &p256_sig, &trusted, now, window);
+    let result = verify_artifact(canonical.as_bytes(), &p256_sig, &trusted, now, window, None);
     assert!(
         result.is_ok(),
         "p256 current + ed25519 previous — p256 sig must verify via first entry: {result:?}"
@@ -456,6 +504,74 @@ fn verify_rejects_malformed_pubkey_encoding() {
     // PR can change verify_ed25519 to propagate BadPubkeyEncoding; this test
     // pins the current "skip on decode failure" behavior so the change is
     // deliberate.
-    let err = verify_artifact(&bytes, &sig, &bad_key, now, window).unwrap_err();
+    let err = verify_artifact(&bytes, &sig, &bad_key, now, window, None).unwrap_err();
     assert!(matches!(err, VerifyError::BadSignature));
+}
+
+// ---- reject_before compromise switch (CONTRACTS.md §II #1, trust-root §7.2) -----
+
+#[test]
+fn rejects_artifact_older_than_reject_before() {
+    let (bytes, sig, trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let freshness = Duration::from_secs(86_400);
+    let reject_before = signed_at + ChronoDuration::seconds(60);
+    let now = signed_at + ChronoDuration::seconds(10);
+
+    let err = verify_artifact(
+        &bytes,
+        &sig,
+        std::slice::from_ref(&trust),
+        now,
+        freshness,
+        Some(reject_before),
+    )
+    .unwrap_err();
+
+    match err {
+        VerifyError::RejectedBeforeTimestamp {
+            signed_at: got_signed_at,
+            reject_before: got_rb,
+        } => {
+            assert_eq!(got_signed_at, signed_at);
+            assert_eq!(got_rb, reject_before);
+        }
+        other => panic!("expected RejectedBeforeTimestamp, got: {other:?}"),
+    }
+}
+
+#[test]
+fn accepts_artifact_signed_at_after_reject_before() {
+    let (bytes, sig, trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let freshness = Duration::from_secs(86_400);
+    // reject_before older than the artifact — the artifact stays valid.
+    let reject_before = signed_at - ChronoDuration::seconds(60);
+    let now = signed_at + ChronoDuration::seconds(10);
+
+    let fleet = verify_artifact(
+        &bytes,
+        &sig,
+        std::slice::from_ref(&trust),
+        now,
+        freshness,
+        Some(reject_before),
+    )
+    .expect("accepts artifact signed after rejectBefore");
+    assert_eq!(fleet.schema_version, 1);
+}
+
+#[test]
+fn reject_before_none_disables_the_gate() {
+    let (bytes, sig, trust, _signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let freshness = Duration::from_secs(86_400);
+    let now = Utc::now();
+
+    let _fleet = verify_artifact(
+        &bytes,
+        &sig,
+        std::slice::from_ref(&trust),
+        now,
+        freshness,
+        None,
+    )
+    .expect("None means gate disabled");
 }
