@@ -1,0 +1,3 @@
+[
+  { "action": "converge_rollout", "rollout": "stable@r2" }
+]
