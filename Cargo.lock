@@ -1609,6 +1609,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nixfleet-proto"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "nixfleet-canonicalize",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nixfleet-types"
 version = "0.1.0"
 dependencies = [
