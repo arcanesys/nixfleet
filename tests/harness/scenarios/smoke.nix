@@ -20,6 +20,7 @@
   harnessLib,
   testCerts,
   resolvedJsonPath,
+  ...
 }: let
   cpModule = harnessLib.mkCpNode {
     inherit testCerts resolvedJsonPath;
