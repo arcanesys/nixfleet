@@ -134,6 +134,77 @@
     };
   };
 
+  # Tarjan-free cycle detection using iterative DFS marking.
+  # Edges: { after = "a"; before = "b"; } means a must finish before b starts.
+  # So we walk "after → before" edges.
+  hasCycle = edges: let
+    adj =
+      lib.foldl' (
+        acc: e: let
+          current = acc.${e.after} or [];
+        in
+          acc // {${e.after} = current ++ [e.before];}
+      ) {}
+      edges;
+    nodes = lib.unique (map (e: e.after) edges ++ map (e: e.before) edges);
+    visit = node: path: visited:
+      if builtins.elem node path
+      then {
+        cycle = true;
+        path = path ++ [node];
+        visited = visited;
+      }
+      else if builtins.elem node visited
+      then {
+        cycle = false;
+        path = path;
+        visited = visited;
+      }
+      else let
+        children = adj.${node} or [];
+        walk = c: acc:
+          if acc.cycle
+          then acc
+          else let
+            r = visit c (path ++ [node]) acc.visited;
+          in
+            if r.cycle
+            then r
+            else {
+              cycle = false;
+              path = acc.path;
+              visited = r.visited ++ [c];
+            };
+        result =
+          lib.foldl' (a: c: walk c a) {
+            cycle = false;
+            path = [];
+            visited = visited;
+          }
+          children;
+      in
+        if result.cycle
+        then result
+        else {
+          cycle = false;
+          path = [];
+          visited = result.visited ++ [node];
+        };
+    scan = nodes:
+      lib.foldl' (
+        acc: n:
+          if acc.cycle
+          then acc
+          else visit n [] acc.visited
+      ) {
+        cycle = false;
+        path = [];
+        visited = [];
+      }
+      nodes;
+  in
+    (scan nodes).cycle;
+
   # --- Selector resolution: selector × hosts → [host-name] ---
   resolveSelector = sel: hosts: let
     names = lib.attrNames hosts;
@@ -204,7 +275,9 @@
       )
       (lib.attrNames cfg.channels);
 
-    errs = hostChannelErrors ++ channelPolicyErrors ++ edgeErrors ++ configurationErrors ++ complianceErrors;
+    cycleErrors = lib.optional (hasCycle cfg.edges) "edges form a cycle; the DAG invariant is violated";
+
+    errs = hostChannelErrors ++ channelPolicyErrors ++ edgeErrors ++ configurationErrors ++ complianceErrors ++ cycleErrors;
   in
     if errs == []
     then true
