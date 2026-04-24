@@ -126,6 +126,7 @@ Dynamic tab completion for rollout/release/machine IDs, queried live from the co
 | `examples/standalone-host/` | Single machine in its own repo |
 | `examples/batch-hosts/` | 50+ identical machines from a template |
 | `examples/client-fleet/` | Multi-host fleet with flake-parts |
+| `examples/fleet-homelab/` | Declarative fleet via `lib.mkFleet` — run `nix eval .#fleet.resolved --json` to inspect the resolved artifact |
 | `examples/securix-endpoint/` | Hardened ANSSI BP-028 distro composition with Securix |
 
 ## Documentation
