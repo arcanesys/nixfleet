@@ -14,8 +14,9 @@
 
 ## 2. Identity model
 
-- **Agent identity = mTLS client certificate.** CN carries `hostname`, SANs carry declared host attributes (channel, tags — redundant with fleet.resolved, used only for sanity checking).
-- **Cert issuance.** On enrollment (nixfleet #9), agent generates ed25519 keypair, sends CSR with a one-shot bootstrap token. Control plane issues cert with 30-day validity.
+- **Host key = SSH host ed25519 key.** Machine-lifetime key already present on every NixOS host (`/etc/ssh/ssh_host_ed25519_key`). Signs probe outputs (RFC-0002 §5.3), decrypts agenix secrets, anchors the agent's cryptographic identity. Not transmitted to the control plane; only its public half is declared in `fleet.nix`.
+- **Agent identity = mTLS client certificate, derived from the host key.** At enrollment (nixfleet #9), the agent generates the CSR using the SSH host key as the signing key; the public key in the cert is the host's SSH public key. CN = `hostname`, SANs carry declared host attributes (channel, tags — redundant with fleet.resolved, used only for sanity checking). This binding means compromising the mTLS cert and compromising the host key are the same event; short-lived certs bound the exposure of that event.
+- **Cert issuance.** Agent sends the CSR + a one-shot bootstrap token (signed by the org root key, scoped to `expectedHostname` + `expectedPubkeyFingerprint`). Control plane verifies both, issues cert with 30-day validity. A mismatch between the CSR's public key and the token's `expectedPubkeyFingerprint` aborts enrollment.
 - **Cert rotation.** Agent requests renewal at 50% of remaining validity. Old cert valid until expiry; overlap prevents downtime.
 - **Cert revocation.** Control plane maintains a small revocation set (hostname → notBefore timestamp). Agents with certs issued before `notBefore` for their hostname are rejected. Simpler than CRLs; works because cert lifetime is short.
 - **No shared credentials.** No API keys, no HMAC secrets, no bearer tokens. mTLS end to end.
@@ -157,7 +158,8 @@ Out of scope for this RFC in detail. Summary:
 - **Passive network observer.** TLS 1.3 — sees only traffic shape.
 - **Active on-path attacker without a cert.** mTLS fails the handshake; no data exposed.
 - **Compromised non-target agent.** Cert only authorizes its own hostname; cannot request targets for other hosts, cannot submit reports for other hosts. Control plane enforces `cert.CN == request.hostname` on every endpoint.
-- **Compromised control plane.** Cannot learn secrets (zero-knowledge, nixfleet #6). Can serve wrong closure hash → but the hash is self-verifying against Nix store signatures, so a host fetching from an honest cache will fail verification.
+- **Compromised control plane — closure forgery.** Cannot learn secrets (zero-knowledge, nixfleet #6). Can serve a different closure hash as target → agent fetches from attic, verifies attic's ed25519 signature against the pinned attic public key (ARCHITECTURE.md §4), refuses unsigned or foreign-signed closures.
+- **Compromised control plane — stale-closure replay.** A compromised CP cannot forge closures but could point hosts at an older-but-still-validly-signed closure to block security fixes. Mitigation: every check-in response references a CI-signed `fleet.resolved` revision; the agent fetches that artifact (directly from cache or via the CP) and refuses any target whose backing `fleet.resolved.meta.signedAt` is older than `channel.freshnessWindow` (default 24h). The freshness window is itself inside the signed artifact, so a compromised CP cannot widen it.
 - **Replay.** Confirm requests include `bootId`; the control plane rejects a confirm whose `bootId` doesn't match the expected new boot.
 
 **Not defended against (explicit):**
@@ -175,9 +177,12 @@ Out of scope for this RFC in detail. Summary:
 ## 9. Open questions
 
 1. **Per-host pinning for debugging.** Should operators be able to pin a host to a specific generation outside normal rollouts ("don't touch this, I'm debugging")? Leaning yes, via a `freeze` flag in fleet.nix or a control-plane-side override — but this is declarative-intent-breaking, so needs careful design.
-2. **Closure signing.** Should the control plane sign its `target` responses to make them non-repudiable (attacker can't swap targets even by compromising TLS)? Probably overkill given TLS + store hash self-verification. Reject v1, revisit if threat model changes.
-3. **Streaming vs polling.** SSE or long-polling for the checkin endpoint would reduce latency for event-driven rollouts (no need to wait for next poll). Deferred to v2; pure polling is simpler to reason about and adequate for nixfleet's target fleet sizes.
-4. **Multi-control-plane.** Agents talking to a quorum of CPs for HA. Out of scope for v1; single control plane with standard HA (pacemaker, k8s statefulset) is the expected deployment.
+2. **Streaming vs polling.** SSE or long-polling for the checkin endpoint would reduce latency for event-driven rollouts (no need to wait for next poll). Deferred to v2; pure polling is simpler to reason about and adequate for nixfleet's target fleet sizes.
+3. **Multi-control-plane.** Agents talking to a quorum of CPs for HA. Out of scope for v1; single control plane with standard HA (pacemaker, k8s statefulset) is the expected deployment.
+
+### Resolved in v0.2
+
+- **Closure signing** (was: should CP sign `target` responses?). Resolved: closures are signed by attic (not the control plane), `fleet.resolved` is signed by CI, both verified by the agent. CP `target` responses are not independently signed — they carry references (closure hash, `fleet.resolved` revision) that the agent verifies against their respective signing roots. See ARCHITECTURE.md §4 and §7 "stale-closure replay" above.
 
 ---
 

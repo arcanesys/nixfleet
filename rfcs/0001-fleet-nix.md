@@ -173,6 +173,18 @@ Shape:
 - Edges form a DAG (no cycles).
 - Disruption budgets are satisfiable given fleet size (warn if `maxInFlight = 1` on a 100-host budget will take forever).
 
+### 4.3 Signed artifact contract
+
+`fleet.resolved.json` is a trust-boundary artifact (see ARCHITECTURE.md §4). CI produces and signs it with the CI release key; every consumer verifies before use.
+
+- **Signing.** CI writes `fleet.resolved.json` + `fleet.resolved.sig` to the channel's storage. The signature covers the full canonicalized JSON plus a `signedAt` RFC 3339 timestamp (embedded as `meta.signedAt` in the artifact).
+- **Verification — control plane.** On every fetch, verifies the signature against the pinned CI release public key. Signature mismatch or unknown key → refuse to reconcile the channel; emit an alert.
+- **Verification — agents (optional path).** An agent that fetches `fleet.resolved` directly (rather than receiving targets from the control plane) performs the same verification. Enables the trust-minimized bootstrap in RFC-0003 §4.
+- **Key pinning.** The CI release public key is committed to the flake (`nixfleet.trust.ciReleaseKey`) and embedded in every built closure. Key rotation is a new commit + a grace window during which both keys verify.
+- **Freshness.** Downstream consumers (RFC-0003 §7) enforce `now − meta.signedAt ≤ channel.freshnessWindow` to defend against stale-closure replay by a compromised control plane.
+
+Canonicalization uses a stable, spec-defined encoding (JCS or deterministic CBOR — final choice tracked as an open question below) so that signatures produced by Nix evaluation are byte-identical to what verifiers reconstruct.
+
 ## 5. Composition
 
 Two flakes can merge fleets:
@@ -198,6 +210,7 @@ Conflicts (same host name, same channel definition with different values) fail e
 1. **Cross-host references.** Should an edge be able to say `{ after = <selector>; before = <selector>; }`, or only named hosts? Pro: expressive. Con: cycle detection across selectors is O(n²) and harder to reason about. Lean: named-host only in v1; revisit.
 2. **Per-host policy overrides.** Should a host be able to override its channel's rollout policy for itself? Pro: one-off quirky hosts. Con: erodes the channel abstraction. Lean: no in v1; force a new channel if you need it.
 3. **Schema version negotiation.** If a control plane is older than the fleet's `schemaVersion`, should it refuse or degrade? Lean: refuse, log the exact incompatibility, operator upgrades one side.
+4. **Canonicalization format for `fleet.resolved.json`.** JCS (RFC 8785) is JSON-native but finicky around numbers; deterministic CBOR is stricter and smaller. Lean: JCS in v1 (debuggability wins over wire size at this fleet scale); revisit if signature drift becomes a practical issue.
 
 ## 8. Migration path from current state
 
