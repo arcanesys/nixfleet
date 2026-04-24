@@ -125,6 +125,10 @@ Add to `crates/nixfleet-proto`:
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrustConfig {
+    /// Contract version of this file. Bumped only on breaking schema
+    /// changes; binaries refuse to start on unknown versions (see §7.5).
+    pub schema_version: u32,
+
     pub ci_release_key: KeySlot,
     #[serde(default)]
     pub attic_cache_key: Option<AtticKeySlot>,
@@ -139,22 +143,22 @@ pub struct KeySlot {
     pub current: Option<TrustedPubkey>,      // TrustedPubkey already exists (PR #20)
     #[serde(default)]
     pub previous: Option<TrustedPubkey>,
+    /// Compromise switch (§7.2): artifacts with `signedAt < rejectBefore`
+    /// are refused regardless of which key signed them — applies to both
+    /// `current` and `previous` slots.
     #[serde(default)]
     pub reject_before: Option<DateTime<Utc>>,
 }
 
 impl KeySlot {
     /// Returns the active key list for `now` — used as the `&[TrustedPubkey]`
-    /// slice passed to `verify_artifact`.
-    pub fn active_keys(&self, now: DateTime<Utc>) -> Vec<TrustedPubkey> {
+    /// slice passed to `verify_artifact`. `rejectBefore` is not enforced
+    /// here; that check happens inside `verify_artifact` against the
+    /// artifact's `signedAt` (see §3.5 and §7.2).
+    pub fn active_keys(&self) -> Vec<TrustedPubkey> {
         let mut keys = Vec::new();
         if let Some(k) = &self.current { keys.push(k.clone()); }
-        if let Some(k) = &self.previous {
-            // Check rejectBefore doesn't eliminate previous too.
-            if self.reject_before.is_none_or(|rb| now >= rb) {
-                keys.push(k.clone());
-            }
-        }
+        if let Some(k) = &self.previous { keys.push(k.clone()); }
         keys
     }
 }
@@ -167,17 +171,19 @@ impl KeySlot {
 In the CP's reconciler tick handler (new Phase 2 code):
 
 ```rust
-let ci_keys = trust_config.ci_release_key.active_keys(now);
+let ci_slot = &trust_config.ci_release_key;
+let ci_keys = ci_slot.active_keys();
 let verified = reconciler::verify_artifact(
     fleet_resolved_bytes,
     signature_bytes,
     &ci_keys,
     now,
-    freshness_window,  // from fleet.resolved itself, per RFC-0002 §4 step 0
+    freshness_window,           // from fleet.resolved, per RFC-0002 §4 step 0
+    ci_slot.reject_before,      // compromise switch, §7.2
 )?;
 ```
 
-Fail closed: any `VerifyError` variant aborts the reconcile tick. CP logs the failure; subsequent ticks retry (artifact may change, rotation may land, freshness may reset).
+Fail closed: any `VerifyError` variant aborts the reconcile tick. CP logs the failure; subsequent ticks retry (artifact may change, rotation may land, freshness may reset). `verify_artifact` gains a new `RejectedBeforeTimestamp { signed_at, reject_before }` variant, distinct from `Stale` — semantic difference is operator-declared incident response vs routine expiry.
 
 ## 4. `fleet.resolved.json` distribution
 
@@ -235,13 +241,38 @@ Operator rotates to a new ed25519 key:
 
 Cross-algorithm rotation is supported end-to-end — Stream C's `verify_artifact` already iterates the slice and matches on each entry's `algorithm` tag (PR #20).
 
-## 7. Open questions (decide in the implementation PR)
+## 7. Decisions (locked for the implementation PR)
 
-1. **Hot reload vs restart.** CP rereads `trust.json` on every tick, or only on SIGHUP, or only on restart? Tradeoff: freshness vs syscall churn.
-2. **`rejectBefore` semantics.** Applies to `current` + `previous` both, or only `previous`? Current text assumes both.
-3. **File atomicity.** NixOS `environment.etc` uses `nix-store`-linked files — atomic swap on activation. Non-NixOS deployment would need `rename(2)` dance. Out of scope for this cycle.
-4. **Size of trust.json.** Bounded by the declaration — 3 KeySlots × (current + previous + rejectBefore) ≈ 2 KB. Negligible.
-5. **Trust config contract versioning.** The CP should refuse to start if `trust.json` schema version doesn't match what the binary expects. Add a top-level `schemaVersion: 1` field; bump on breaking changes.
+### 7.1 Reload model
+
+**Decision: restart-only.** CP has no SIGHUP handler and no file-watcher. Trust rotation requires a service restart, which `nixos-rebuild switch` triggers for free when `/etc/nixfleet/cp/trust.json` content changes.
+
+Rationale. Rotation is rare (30-day grace per CONTRACTS §II #1) and a 5–10s CP bounce under a 24h freshness window is irrelevant. File-watching code is a real failure surface we do not need to build speculatively. Agents' check-ins during the restart retry per RFC-0003 §8 offline grace — zero behavioral impact.
+
+### 7.2 `rejectBefore` semantics
+
+**Decision: applies to both `current` and `previous`.** Any artifact whose `meta.signedAt < rejectBefore` is refused regardless of which key signed it.
+
+Rationale. CONTRACTS §II #1 "Compromise response" reads "all artifacts signed before that are refused regardless of key." Making it current-only would re-purpose it as rotation-window control, which `.previous` grace already covers. `rejectBefore` is the compromise-incident switch; it belongs at slot level, not per-key.
+
+Implementation lives in `verify_artifact` (not in `KeySlot::active_keys`) so the error path can distinguish `RejectedBeforeTimestamp { signed_at, reject_before }` from routine `Stale`.
+
+### 7.3 File atomicity
+
+**Decision: NixOS atomic swap is sufficient for v0.2.** `environment.etc` routes through `nix-store`-linked files; the swap at activation time is atomic at the VFS layer.
+
+Non-NixOS deployments would need a `rename(2)` dance in the write path. That is deferred — nixfleet does not target non-NixOS operator hosts in v0.2.
+
+### 7.4 Trust config `schemaVersion`
+
+**Decision: required `schemaVersion: 1` at the top level.** CP and agent binaries validate on startup; unknown version → refuse to start with an actionable error.
+
+Rationale. Matches CONTRACTS §V's per-contract versioning pattern. Fail-fast beats silent misinterpretation. The cost is one `u32`.
+
+Evolution rule:
+- Adding optional fields stays at `schemaVersion: 1` (serde-default handles absence).
+- Removing fields, changing meaning of existing fields, or changing the required/optional posture of a field → bump to `schemaVersion: 2` with a dual-read migration window (binary accepts both during the window).
+- `rejectBefore` is operator-managed data, not a schema concern — changing its value does not require a version bump.
 
 ## 8. Summary
 
