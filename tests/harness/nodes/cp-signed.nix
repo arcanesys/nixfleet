@@ -6,17 +6,20 @@
 #   GET /canonical.json      -> application/json
 #   GET /canonical.json.sig  -> application/octet-stream (raw 64 bytes)
 #
-# Unlike the unsigned stub in `cp.nix`, this responder streams the file
-# body with `cat` instead of slurping through `$(...)` — the signature
-# is binary and contains null bytes, which shell command substitution
-# mangles on every implementation except bash 5+.
+# Implementation: Python stdlib `http.server` wrapped in `ssl`. An
+# earlier shell-over-socat implementation truncated binary responses:
+# even with request draining and `exec cat`, the socat EXEC pipeline
+# consistently delivered 54 of the signature's 64 bytes to the client,
+# though socat's own `-v` log confirmed the full 64 bytes had been
+# forwarded. The exact mangling point was never identified; the fix
+# was to stop debugging shell and ship a binary-safe server.
 #
 # TODO: retire this module when `services.nixfleet-control-plane`
 # gains the artifact-serve endpoint. The wire shape (two paths, mTLS,
 # path-routed) is the real CP's contract.
 {
-  lib,
   pkgs,
+  lib,
   testCerts,
   signedFixture,
   ...
@@ -32,47 +35,66 @@
   networking.firewall.allowedTCPPorts = [8443];
 
   systemd.services.harness-cp = let
-    responder = pkgs.writeShellScript "harness-cp-signed-responder" ''
-      set -eu
-      export PATH=${lib.makeBinPath [pkgs.coreutils]}:$PATH
+    server = pkgs.writers.writePython3 "harness-cp-signed-server" {} ''
+      import ssl
+      import sys
+      from http.server import BaseHTTPRequestHandler, HTTPServer
 
-      # First line is "METHOD PATH VERSION\r". Drop the trailing CR.
-      IFS=' ' read -r _method path _version
-      path="''${path%$(printf '\r')}"
+      BASE = "/etc/nixfleet-harness/signed"
+      ROUTES = {
+          "/canonical.json": (f"{BASE}/canonical.json", "application/json"),
+          "/canonical.json.sig": (f"{BASE}/canonical.json.sig", "application/octet-stream"),
+      }
 
-      dir=/etc/nixfleet-harness/signed
-      case "$path" in
-        /canonical.json)     file="$dir/canonical.json";     ct="application/json" ;;
-        /canonical.json.sig) file="$dir/canonical.json.sig"; ct="application/octet-stream" ;;
-        *)
-          printf 'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'
-          exit 0
-          ;;
-      esac
 
-      len=$(stat -c %s "$file")
-      printf 'HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n' "$ct" "$len"
-      cat "$file"
-    '';
-    socatOpts = lib.concatStringsSep "," [
-      "OPENSSL-LISTEN:8443"
-      "reuseaddr"
-      "fork"
-      "cert=/etc/nixfleet-harness/cp-cert.pem"
-      "key=/etc/nixfleet-harness/cp-key.pem"
-      "cafile=/etc/nixfleet-harness/ca.pem"
-      "verify=1"
-    ];
-    launcher = pkgs.writeShellScript "harness-cp-signed-launcher" ''
-      exec ${pkgs.socat}/bin/socat -v "${socatOpts}" "EXEC:${responder}"
+      class Handler(BaseHTTPRequestHandler):
+          protocol_version = "HTTP/1.1"
+
+          def do_GET(self):
+              entry = ROUTES.get(self.path)
+              if entry is None:
+                  self.send_response(404)
+                  self.send_header("Content-Length", "0")
+                  self.send_header("Connection", "close")
+                  self.end_headers()
+                  return
+              path, ctype = entry
+              with open(path, "rb") as f:
+                  data = f.read()
+              self.send_response(200)
+              self.send_header("Content-Type", ctype)
+              self.send_header("Content-Length", str(len(data)))
+              self.send_header("Connection", "close")
+              self.end_headers()
+              self.wfile.write(data)
+
+          def log_message(self, fmt, *args):
+              sys.stderr.write("harness-cp: " + (fmt % args) + "\n")
+
+
+      def main():
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          ctx.load_cert_chain(
+              certfile="/etc/nixfleet-harness/cp-cert.pem",
+              keyfile="/etc/nixfleet-harness/cp-key.pem",
+          )
+          ctx.load_verify_locations(cafile="/etc/nixfleet-harness/ca.pem")
+          ctx.verify_mode = ssl.CERT_REQUIRED
+
+          httpd = HTTPServer(("0.0.0.0", 8443), Handler)
+          httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+          httpd.serve_forever()
+
+
+      main()
     '';
   in {
-    description = "Nixfleet harness CP stub (serves signed fixture — canonical.json + .sig)";
+    description = "Nixfleet harness CP stub (serves signed fixture — canonical.json + .sig, Python mTLS)";
     wantedBy = ["multi-user.target"];
     after = ["network.target"];
     serviceConfig = {
       Type = "simple";
-      ExecStart = "${launcher}";
+      ExecStart = "${server}";
       Restart = "on-failure";
       RestartSec = 2;
     };
