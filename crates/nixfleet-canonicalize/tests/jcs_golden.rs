@@ -36,3 +36,9 @@ fn reordering_input_does_not_change_canonical_output() {
         "canonical output must be invariant under input key ordering"
     );
 }
+
+#[test]
+fn invalid_json_is_rejected() {
+    let result = canonicalize("{not json");
+    assert!(result.is_err(), "invalid JSON must be rejected");
+}
