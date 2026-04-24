@@ -22,3 +22,10 @@
 //! Fields that are only present in some artifacts (e.g. `meta` on
 //! a signed vs unsigned fixture) are handled at the domain level,
 //! not the serde level.
+
+pub mod fleet_resolved;
+
+pub use fleet_resolved::{
+    Channel, Compliance, ComplianceProbes, DisruptionBudget, Edge, FleetResolved, HealthGate, Host,
+    Meta, PolicyWave, RolloutPolicy, Selector, SystemdFailedUnits, Wave,
+};
