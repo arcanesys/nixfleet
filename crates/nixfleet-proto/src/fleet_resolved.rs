@@ -41,9 +41,29 @@ pub struct Host {
 pub struct Channel {
     pub rollout_policy: String,
     pub reconcile_interval_minutes: u32,
+    /// Minutes a signed `fleet.resolved` is accepted by consumers after
+    /// `meta.signedAt`. Matches `lib/mkFleet.nix`'s declarative unit (the
+    /// sibling `*_interval_minutes` fields make this pattern explicit
+    /// there; the name here predates that convention and is kept for
+    /// wire-compat — convert via [`Channel::freshness_window_duration`]).
+    ///
+    /// `lib/mkFleet.nix` enforces `freshness_window ≥ 2 × signing_interval_minutes`
+    /// at eval time, so a value of `0` cannot reach the wire.
     pub freshness_window: u32,
     pub signing_interval_minutes: u32,
     pub compliance: Compliance,
+}
+
+impl Channel {
+    /// Returns `freshness_window` as a [`std::time::Duration`].
+    ///
+    /// The underlying field carries MINUTES (see the field doc); passing
+    /// it directly to `Duration::from_secs` would silently shrink the
+    /// window by 60×. Call this helper at the seam between proto and any
+    /// `Duration`-consuming API (`verify_artifact`, tick handlers, …).
+    pub fn freshness_window_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.freshness_window as u64 * 60)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

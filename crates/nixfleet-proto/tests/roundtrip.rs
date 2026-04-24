@@ -128,3 +128,25 @@ fn unknown_fields_at_any_level_are_ignored() {
     assert_eq!(parsed.schema_version, 1);
     assert_eq!(parsed.hosts.len(), 1);
 }
+
+#[test]
+fn channel_freshness_window_duration_converts_minutes_to_seconds() {
+    // Unit landmine: `freshness_window` is declared in MINUTES by
+    // `lib/mkFleet.nix` but the field name has no `_minutes` suffix.
+    // The helper converts via u64 * 60 so callers cannot accidentally
+    // pass the raw u32 into `Duration::from_secs` and shrink the
+    // window 60×. The `every-nullable.json` and `signed-artifact.json`
+    // fixtures both use `freshnessWindow: 180`, so 180 min → 10_800 s.
+    use std::time::Duration;
+    let input = load("every-nullable.json");
+    let parsed: FleetResolved = serde_json::from_str(&input).expect("parse every-nullable.json");
+    let stable = parsed
+        .channels
+        .get("stable")
+        .expect("every-nullable fixture has a `stable` channel");
+    assert_eq!(stable.freshness_window, 180);
+    assert_eq!(
+        stable.freshness_window_duration(),
+        Duration::from_secs(10_800)
+    );
+}

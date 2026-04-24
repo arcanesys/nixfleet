@@ -27,6 +27,7 @@
 //! `VerifyError::UnsupportedAlgorithm` at verify time, where they can
 //! be logged with the algorithm name for operator visibility.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// A trust root: algorithm + public key material.
@@ -47,3 +48,81 @@ pub struct TrustedPubkey {
     /// and happens inside the verifier.
     pub public: String,
 }
+
+/// Trust configuration loaded from `/etc/nixfleet/{cp,agent}/trust.json`.
+///
+/// Shape authoritative per [`docs/trust-root-flow.md §3.4`][flow]. Materialised
+/// by the NixOS scope modules from `config.nixfleet.trust`, consumed by CP
+/// and agent binaries at startup.
+///
+/// Reload model: restart-only (§7.1). No SIGHUP, no inotify.
+///
+/// [flow]: ../../../docs/trust-root-flow.md
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrustConfig {
+    /// Required. Bumped only on breaking schema changes; binaries refuse
+    /// to start on unknown versions (§7.4). The wire-protocol schema for
+    /// `fleet.resolved` is separate (see `fleet_resolved::Meta`).
+    pub schema_version: u32,
+
+    pub ci_release_key: KeySlot,
+
+    #[serde(default)]
+    pub attic_cache_key: Option<AtticKeySlot>,
+
+    #[serde(default)]
+    pub org_root_key: Option<KeySlot>,
+}
+
+impl TrustConfig {
+    /// The only `schemaVersion` value this crate parses. Binaries match on
+    /// this after deserialisation and refuse unknown versions.
+    pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+}
+
+/// A single trust-root slot with current/previous rotation grace.
+///
+/// `reject_before` is the compromise switch — artifacts whose `signedAt`
+/// is older than this timestamp are refused regardless of which key
+/// signed them (§7.2). Enforcement lives in `verify_artifact`, not here.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeySlot {
+    #[serde(default)]
+    pub current: Option<TrustedPubkey>,
+
+    #[serde(default)]
+    pub previous: Option<TrustedPubkey>,
+
+    #[serde(default)]
+    pub reject_before: Option<DateTime<Utc>>,
+}
+
+impl KeySlot {
+    /// Returns the active key list for this slot. Both `current` and
+    /// `previous` are returned unconditionally when present.
+    ///
+    /// Signature per coordinator's context update: no `now` parameter;
+    /// `reject_before` filtering happens inside `verify_artifact`.
+    pub fn active_keys(&self) -> Vec<TrustedPubkey> {
+        let mut keys = Vec::with_capacity(2);
+        if let Some(k) = &self.current {
+            keys.push(k.clone());
+        }
+        if let Some(k) = &self.previous {
+            keys.push(k.clone());
+        }
+        keys
+    }
+}
+
+/// Attic cache key in the attic-native string format `"attic:<host>:<base64>"`.
+///
+/// Typed as an opaque newtype because Stream B's `modules/_trust.nix`
+/// currently keeps the attic key flat (CONTRACTS.md §II #2 has not yet
+/// been migrated to the `{algorithm, public}` shape that §II #1 uses).
+/// Migrates to `KeySlot<AtticPubkey>` when §II #2 gains that treatment.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct AtticKeySlot(pub String);
