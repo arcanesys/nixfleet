@@ -2,29 +2,60 @@
 #
 # Helpers for the microvm.nix-based fleet simulation harness (issue #5).
 #
-# This module is DIFFERENT from modules/tests/_lib/helpers.nix: that file
-# builds full-closure nixosTest nodes for the v0.1 agent/CP. This file
-# builds lightweight microVM guests (cloud-hypervisor/qemu) that share the
+# Builds lightweight microVM guests (cloud-hypervisor/qemu) that share the
 # host's /nix/store over virtiofs, for cheap fleet-scale scenarios.
 #
 # Public attrs:
 #   mkCpHostModule - NixOS module for the host VM that runs the CP stub
 #   mkAgentNode    - build an agent microVM NixOS module (curls CP at boot)
 #   mkFleetScenario- wrap CP-on-host + N agent microVMs into a runNixOSTest
-#   mkHarnessCerts - thin wrapper over mkTlsCerts with the harness hostname set
+#   mkHarnessCerts - builds a fleet CA + CP server cert + one client cert per hostname
 #
-# TODO(5): once v0.2 agent/CP skeletons (`crates/agent`, `crates/control-plane`)
-# exist, swap the minimal systemd units in nodes/{cp,agent}.nix for the real
-# binaries. The node builders should keep the same signature.
+# TODO(5): once v0.2 agent/CP skeletons (`crates/nixfleet-agent`, `crates/
+# nixfleet-control-plane`) exist and their service modules land, swap the
+# minimal systemd units in nodes/{cp,agent}.nix for the real binaries.
+# The node builders should keep the same signature.
 {
   lib,
   pkgs,
   inputs,
 }: let
-  existingHelpers = import ../../modules/tests/_lib/helpers.nix {
-    inherit lib pkgs inputs;
-  };
-  inherit (existingHelpers) mkTlsCerts;
+  # Build a fleet CA + CP server cert + one client cert per hostname.
+  # Deterministic and cached — the same `hostnames` list yields the same
+  # derivation across scenarios. Inlined here (was previously in the now-
+  # retired modules/tests/_lib/helpers.nix that served v0.1 VM scenarios).
+  mkTlsCerts = {hostnames ? ["cp" "agent-01" "agent-02"]}:
+    pkgs.runCommand "nixfleet-harness-test-certs" {
+      nativeBuildInputs = [pkgs.openssl];
+    } ''
+      mkdir -p $out
+
+      # Fleet CA (self-signed, EC P-256)
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+        -keyout $out/ca-key.pem -out $out/ca.pem -days 365 -nodes \
+        -subj '/CN=nixfleet-test-ca'
+
+      # CP server cert (CN=cp, SAN includes cp + localhost for test curl)
+      openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+        -keyout $out/cp-key.pem -out $out/cp-csr.pem -nodes \
+        -subj '/CN=cp' \
+        -addext 'subjectAltName=DNS:cp,DNS:localhost'
+      openssl x509 -req -in $out/cp-csr.pem -CA $out/ca.pem -CAkey $out/ca-key.pem \
+        -CAcreateserial -out $out/cp-cert.pem -days 365 \
+        -copy_extensions copyall
+
+      # Agent client certs (CN = hostname)
+      ${lib.concatMapStringsSep "\n" (h: ''
+          openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -keyout $out/${h}-key.pem -out $out/${h}-csr.pem -nodes \
+            -subj "/CN=${h}"
+          openssl x509 -req -in $out/${h}-csr.pem -CA $out/ca.pem -CAkey $out/ca-key.pem \
+            -CAcreateserial -out $out/${h}-cert.pem -days 365
+        '')
+        hostnames}
+
+      rm -f $out/*-csr.pem $out/*.srl
+    '';
 
   # One cert set covering the harness hostnames. Additional hostnames get
   # added here as new scenarios land.

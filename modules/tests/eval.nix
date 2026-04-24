@@ -152,35 +152,9 @@
             }
           ];
 
-        # --- Agent tags and health checks ---
-        eval-agent-tags-health = let
-          cfg = nixosCfg "agent-test";
-        in
-          mkEvalCheck "agent-tags-health" [
-            {
-              check = cfg.systemd.services.nixfleet-agent.environment.NIXFLEET_TAGS == "web,production";
-              msg = "agent-test should have NIXFLEET_TAGS set to web,production";
-            }
-            {
-              check = cfg.environment.etc."nixfleet/health-checks.json".text != "";
-              msg = "agent-test should have health-checks.json config file";
-            }
-          ];
-
-        # --- Agent metrics port in ExecStart ---
-        eval-agent-metrics = let
-          cfg = nixosCfg "agent-test";
-        in
-          mkEvalCheck "agent-metrics" [
-            {
-              check = builtins.match ".*--metrics-port.*" cfg.systemd.services.nixfleet-agent.serviceConfig.ExecStart != null;
-              msg = "agent-test should have --metrics-port in ExecStart";
-            }
-            {
-              check = builtins.elem 9101 cfg.networking.firewall.allowedTCPPorts;
-              msg = "agent-test should have metrics port 9101 in firewall";
-            }
-          ];
+        # Agent tags / health-checks / metrics-port eval checks retired
+        # alongside the v0.1 agent module (#29). v0.2 agent options are
+        # tested via modules/tests/_agent-v2-trust.nix (added by Task 1.9).
 
         # --- Secrets: resolved paths on server (host key only) ---
         eval-secrets-server = let
