@@ -19,12 +19,15 @@
     config,
     ...
   }: let
-    # Pull the canonicalize package from the crane workspace (same
-    # perSystem, declared in `modules/rust-packages.nix`). The harness
-    # entry point needs it to bake the signed fixture at build time.
+    # Pull crane-built packages from the workspace (same perSystem,
+    # declared in `modules/rust-packages.nix`). The harness entry point
+    # uses `nixfleet-canonicalize` to bake the signed fixture and
+    # `nixfleet-verify-artifact` as the binary the signed-roundtrip
+    # agent microVM runs.
     nixfleet-canonicalize = config.packages.nixfleet-canonicalize or null;
+    nixfleet-verify-artifact = config.packages.nixfleet-verify-artifact or null;
     harness = import ../../tests/harness {
-      inherit lib pkgs inputs nixfleet-canonicalize;
+      inherit lib pkgs inputs nixfleet-canonicalize nixfleet-verify-artifact;
     };
   in
     lib.optionalAttrs (system == "x86_64-linux") {
@@ -40,6 +43,12 @@
           # regression guard; rebuild failure signals non-determinism in
           # mkFleet, canonicalize, or the keygen helper.
           phase-2-signed-fixture = harness.signedFixture;
+        }
+        // lib.optionalAttrs (nixfleet-canonicalize != null && nixfleet-verify-artifact != null) {
+          # Phase 2 PR(b) signed-roundtrip scenario. Exercises the full
+          # stack: fixture build -> mTLS serve -> agent fetch ->
+          # verify_artifact accept -> OK marker.
+          fleet-harness-signed-roundtrip = harness.fleet-harness-signed-roundtrip;
         };
     };
 }

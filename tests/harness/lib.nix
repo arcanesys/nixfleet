@@ -111,6 +111,18 @@
     _module.args = {inherit testCerts resolvedJsonPath;};
   };
 
+  # Signed-fixture CP: routes GET /canonical.json + /canonical.json.sig
+  # from `signedFixture` (the derivation output at
+  # tests/harness/fixtures/signed/default.nix). Used only by the
+  # signed-roundtrip scenario; the smoke scenario keeps `mkCpHostModule`.
+  mkSignedCpHostModule = {
+    testCerts,
+    signedFixture,
+  }: {
+    imports = [./nodes/cp-signed.nix];
+    _module.args = {inherit testCerts signedFixture;};
+  };
+
   mkAgentNode = {
     testCerts,
     hostName,
@@ -126,6 +138,51 @@
 
     _module.args = {
       inherit testCerts controlPlaneHost controlPlanePort;
+      harnessMicrovmDefaults = microvmGuestDefaults;
+      agentHostName = hostName;
+    };
+
+    networking.hostName = hostName;
+    system.stateVersion = lib.mkDefault "24.11";
+  };
+
+  # Verifying agent: fetches canonical.json + .sig from the signed CP,
+  # loads /etc/nixfleet-harness/test-trust.json from `signedFixture`,
+  # invokes the `nixfleet-verify-artifact` binary from
+  # `verifyArtifactPkg` (crane-built) and logs the OK marker on success.
+  #
+  # `now` and `freshnessWindowSecs` defaults are scoped so the
+  # freshness-window check always passes against the fixture's frozen
+  # `signedAt = 2026-05-01T00:00:00Z`:
+  #   now − signedAt = 3600s (1h) << window = 604800s (7d).
+  # Checkpoint 2 scenarios override these to assert Stale refusal.
+  mkVerifyingAgentNode = {
+    testCerts,
+    hostName,
+    signedFixture,
+    verifyArtifactPkg,
+    controlPlaneHost ? "10.0.2.2",
+    controlPlanePort ? 8443,
+    now ? "2026-05-01T01:00:00Z",
+    freshnessWindowSecs ? 604800,
+    extraModules ? [],
+  }: {
+    imports =
+      [
+        ./nodes/agent-verify.nix
+      ]
+      ++ extraModules;
+
+    _module.args = {
+      inherit
+        testCerts
+        controlPlaneHost
+        controlPlanePort
+        signedFixture
+        verifyArtifactPkg
+        now
+        freshnessWindowSecs
+        ;
       harnessMicrovmDefaults = microvmGuestDefaults;
       agentHostName = hostName;
     };
@@ -180,5 +237,13 @@
       meta.timeout = timeout;
     };
 in {
-  inherit mkAgentNode mkCpHostModule mkFleetScenario mkHarnessCerts microvmGuestDefaults;
+  inherit
+    mkAgentNode
+    mkCpHostModule
+    mkFleetScenario
+    mkHarnessCerts
+    mkSignedCpHostModule
+    mkVerifyingAgentNode
+    microvmGuestDefaults
+    ;
 }
