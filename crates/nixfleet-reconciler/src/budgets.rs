@@ -40,3 +40,58 @@ pub(crate) fn budget_max(
         })
         .min_by_key(|(_, max)| *max)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observed::Rollout;
+    use std::collections::HashMap;
+
+    fn observed_with(rollout_hosts: Vec<(String, String)>) -> Observed {
+        let mut host_states = HashMap::new();
+        for (h, s) in rollout_hosts {
+            host_states.insert(h, s);
+        }
+        Observed {
+            channel_refs: HashMap::new(),
+            last_rolled_refs: HashMap::new(),
+            host_state: HashMap::new(),
+            active_rollouts: vec![Rollout {
+                id: "r".into(),
+                channel: "c".into(),
+                target_ref: "ref".into(),
+                state: "Executing".into(),
+                current_wave: 0,
+                host_states,
+            }],
+        }
+    }
+
+    #[test]
+    fn in_flight_count_empty() {
+        let obs = observed_with(vec![]);
+        assert_eq!(in_flight_count(&obs, &["a".into(), "b".into()]), 0);
+    }
+
+    #[test]
+    fn in_flight_count_counts_only_in_flight_states() {
+        let obs = observed_with(vec![
+            ("a".into(), "Queued".into()),
+            ("b".into(), "Dispatched".into()),
+            ("c".into(), "Activating".into()),
+            ("d".into(), "Soaked".into()),
+            ("e".into(), "Healthy".into()),
+        ]);
+        let budget = vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into()];
+        assert_eq!(in_flight_count(&obs, &budget), 3);
+    }
+
+    #[test]
+    fn in_flight_count_filters_by_budget_hosts() {
+        let obs = observed_with(vec![
+            ("a".into(), "Dispatched".into()),
+            ("b".into(), "Dispatched".into()),
+        ]);
+        assert_eq!(in_flight_count(&obs, &["a".into()]), 1);
+    }
+}
