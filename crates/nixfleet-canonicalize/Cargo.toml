@@ -1,0 +1,22 @@
+[package]
+name = "nixfleet-canonicalize"
+version = "0.2.0"
+edition = "2021"
+description = "JCS (RFC 8785) canonicalizer for NixFleet signed artifacts"
+license = "MIT"
+repository = "https://github.com/arcanesys/nixfleet"
+homepage = "https://github.com/arcanesys/nixfleet"
+authors = ["nixfleet contributors"]
+
+[lib]
+name = "nixfleet_canonicalize"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nixfleet-canonicalize"
+path = "src/main.rs"
+
+[dependencies]
+serde_jcs = "0.2"
+serde_json = "1"
+anyhow = "1"
