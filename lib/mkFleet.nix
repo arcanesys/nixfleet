@@ -408,13 +408,23 @@
     in
       builtins.seq emittedWarnings resolved;
 
+  # Stamp CI-provided signing metadata onto a resolved fleet value.
+  # `signatureAlgorithm` is optional — omit it when signing with ed25519
+  # (the default per CONTRACTS §I #1 for backward-compatible consumers).
+  # Set it to `"ecdsa-p256"` (or any future value the contract accepts)
+  # when Stream A's CI signs with a non-default algorithm, e.g. when the
+  # TPM keyslot emits ECDSA P-256.
   withSignature = {
     signedAt,
     ciCommit,
+    signatureAlgorithm ? null,
   }: resolved:
     resolved
     // {
-      meta = resolved.meta // {inherit signedAt ciCommit;};
+      meta =
+        resolved.meta
+        // {inherit signedAt ciCommit;}
+        // lib.optionalAttrs (signatureAlgorithm != null) {inherit signatureAlgorithm;};
     };
 in {
   inherit withSignature;
