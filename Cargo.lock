@@ -1519,6 +1519,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nixfleet-verify-artifact"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "nixfleet-proto",
+ "nixfleet-reconciler",
+ "serde_json",
+]
+
+[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

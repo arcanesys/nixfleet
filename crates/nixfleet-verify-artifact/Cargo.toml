@@ -1,0 +1,20 @@
+[package]
+name = "nixfleet-verify-artifact"
+version = "0.2.0"
+edition = "2021"
+description = "Thin CLI wrapping nixfleet_reconciler::verify_artifact (harness scaffold, Phase 2 PR(a))"
+license = "MIT"
+repository = "https://github.com/arcanesys/nixfleet"
+homepage = "https://github.com/arcanesys/nixfleet"
+authors = ["nixfleet contributors"]
+
+[[bin]]
+name = "nixfleet-verify-artifact"
+path = "src/main.rs"
+
+[dependencies]
+nixfleet-proto = { path = "../nixfleet-proto" }
+nixfleet-reconciler = { path = "../nixfleet-reconciler" }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"

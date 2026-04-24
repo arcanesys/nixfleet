@@ -102,6 +102,18 @@
       };
     });
 
+  nixfleet-verify-artifact = craneLib.buildPackage (commonArgs
+    // {
+      pname = "nixfleet-verify-artifact";
+      cargoExtraArgs = "-p nixfleet-verify-artifact";
+      src = fileSetForCrate {crate = ./crates/nixfleet-verify-artifact;};
+      meta = {
+        description = "Phase 2 harness CLI wrapping nixfleet_reconciler::verify_artifact";
+        license = lib.licenses.mit;
+        mainProgram = "nixfleet-verify-artifact";
+      };
+    });
+
   workspace-tests = craneLib.cargoTest {
     inherit cargoArtifacts;
     src = workspaceSrc;
@@ -110,6 +122,6 @@
     cargoExtraArgs = "--workspace --locked";
   };
 in {
-  packages = {inherit nixfleet-agent nixfleet-control-plane nixfleet-cli nixfleet-canonicalize;};
+  packages = {inherit nixfleet-agent nixfleet-control-plane nixfleet-cli nixfleet-canonicalize nixfleet-verify-artifact;};
   checks = {inherit workspace-tests;};
 }
