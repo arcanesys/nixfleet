@@ -1,0 +1,8 @@
+{
+  "channelRefs": { "stable": "r2" },
+  "lastRolledRefs": { "stable": "r1" },
+  "hostState": {
+    "h1": { "online": true, "currentGeneration": "gen-r1" }
+  },
+  "activeRollouts": []
+}

@@ -1,0 +1,3 @@
+[
+  { "action": "open_rollout", "channel": "stable", "target_ref": "r2" }
+]
