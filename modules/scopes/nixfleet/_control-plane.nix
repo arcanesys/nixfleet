@@ -23,6 +23,19 @@
   # and the orgRootKey ed25519 promotion that matches proto::TrustConfig.
   trustConfig = import ./_trust-json.nix {trust = config.nixfleet.trust;};
   trustJson = pkgs.writers.writeJSON "trust.json" trustConfig;
+
+  # First-deploy bootstrap for observed.json — laid down via
+  # systemd-tmpfiles `C+` (copy only if path does not exist) so the
+  # reconciler's first tick has a parseable file even before the
+  # operator has hand-written one. Operator can edit
+  # `cfg.observedPath` afterwards to populate channel refs / host
+  # state / active rollouts; subsequent rebuilds will not overwrite.
+  initialObservedJson = pkgs.writers.writeJSON "observed-initial.json" {
+    channelRefs = {};
+    lastRolledRefs = {};
+    hostState = {};
+    activeRollouts = [];
+  };
 in {
   options.services.nixfleet-control-plane = {
     enable = lib.mkEnableOption "NixFleet Phase 2 reconciler runner (read-only timer)";
@@ -134,6 +147,14 @@ in {
           ReadWritePaths = ["/var/lib/nixfleet-cp"];
         };
       };
+
+      # First-deploy auto-bootstrap of observed.json. tmpfiles `C+ … - <src>`
+      # copies from `<src>` only if `<target>` does not already exist —
+      # subsequent rebuilds leave operator-written content untouched.
+      systemd.tmpfiles.rules = [
+        "d /var/lib/nixfleet-cp 0755 root root -"
+        "C+ ${cfg.observedPath} 0644 root root - ${initialObservedJson}"
+      ];
 
       systemd.timers.nixfleet-control-plane = {
         description = "NixFleet Phase 2 reconciler runner (timer)";
