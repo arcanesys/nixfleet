@@ -27,3 +27,24 @@ fn every_nullable_roundtrips_byte_for_byte() {
         "FleetResolved round-trip is not JCS byte-identical to Stream B-style emission"
     );
 }
+
+#[test]
+fn signed_artifact_roundtrips_byte_for_byte() {
+    let input = load("signed-artifact.json");
+    let golden = load("signed-artifact.canonical");
+
+    let parsed: FleetResolved =
+        serde_json::from_str(&input).expect("parse signed-artifact.json");
+
+    let reserialized = serde_json::to_string(&parsed).expect("serialize");
+    let produced = canonicalize(&reserialized).expect("canonicalize");
+
+    assert_eq!(produced, golden, "signed-artifact round-trip broken");
+
+    let signed_at = parsed
+        .meta
+        .signed_at
+        .expect("signed-artifact must have meta.signedAt populated");
+    assert_eq!(signed_at.to_rfc3339(), "2026-04-24T10:00:00+00:00");
+    assert_eq!(parsed.meta.ci_commit.as_deref(), Some("deadbeef"));
+}
