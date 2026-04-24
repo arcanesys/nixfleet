@@ -1,9 +1,15 @@
 # tests/harness/scenarios/smoke.nix
 #
-# Minimal smoke scenario: 1 CP microVM + 2 agent microVMs boot on a host
-# VM. Each agent fetches /fleet.resolved.json from the CP over mTLS and
-# logs `harness-agent-ok: signedAt=...`. Scenario asserts both agent units
-# reach `active` state and both emit the OK marker within 60s.
+# Minimal smoke scenario: 2 agent microVMs boot on a host VM that also
+# runs a CP stub as a host-level systemd service. Each agent fetches
+# /fleet.resolved.json from the CP over mTLS and logs `harness-agent-ok:
+# signedAt=...`. Scenario asserts both agents emit the OK marker within 60s.
+#
+# Why CP-on-host rather than CP-in-microVM: qemu user-mode networking
+# isolates every microVM from every other microVM (each VM's gateway
+# 10.0.2.2 is the host VM). Running CP on the host VM lets every agent
+# microVM reach it via that shared gateway with zero bridge/NAT setup.
+# When Stream C's v0.2 CP skeleton lands it keeps the same placement.
 #
 # This is the substrate for every future Checkpoint 2 scenario (magic
 # rollback, compliance gate, freshness refusal). When those land, copy
@@ -22,9 +28,8 @@
   resolvedJsonPath,
   ...
 }: let
-  cpModule = harnessLib.mkCpNode {
+  cpHostModule = harnessLib.mkCpHostModule {
     inherit testCerts resolvedJsonPath;
-    hostName = "cp";
   };
 
   mkAgent = name:
@@ -38,41 +43,33 @@
   # microvm guest to the host VM; the fixture must list the hostname too.
   agentNames = ["agent-01" "agent-02"];
 
-  nodes =
-    {
-      cp = {
-        type = "cp";
-        module = cpModule;
-      };
-    }
-    // lib.listToAttrs (map (n: {
-        name = n;
-        value = {
-          type = "agent";
-          module = mkAgent n;
-        };
-      })
-      agentNames);
+  agents = lib.listToAttrs (map (n: {
+      name = n;
+      value = mkAgent n;
+    })
+    agentNames);
 in
   harnessLib.mkFleetScenario {
     name = "fleet-harness-smoke";
-    inherit nodes;
+    inherit cpHostModule agents;
     timeout = 600;
     testScript = ''
       start_all()
 
-      # Bring the host VM up and wait for the microvm.target to converge.
+      # Bring the host VM up. The CP stub is a host-VM systemd unit so it
+      # comes up with multi-user.target.
       host.wait_for_unit("multi-user.target")
-      host.wait_for_unit("microvms.target", timeout=300)
+      host.wait_for_unit("harness-cp.service")
+      host.wait_for_open_port(8443)
 
-      # Every declared VM becomes a `microvm@<name>.service` on the host.
-      for vm in ${builtins.toJSON (["cp"] ++ agentNames)}:
+      # microvm.nix launches each agent as `microvm@<name>.service` on
+      # the host once microvms.target converges.
+      host.wait_for_unit("microvms.target", timeout=300)
+      for vm in ${builtins.toJSON agentNames}:
           host.wait_for_unit(f"microvm@{vm}.service", timeout=300)
 
-      # Give the CP stub a moment to bind :8443 inside its guest, then
-      # assert each agent logged the OK marker. The agent unit is
-      # oneshot+RemainAfterExit, so its success is equivalent to one
-      # successful mTLS fetch of the fixture.
+      # Agent units are oneshot+RemainAfterExit; success == one successful
+      # mTLS fetch of the fixture.
       import time
       deadline = time.monotonic() + 60
       pending = set(${builtins.toJSON agentNames})

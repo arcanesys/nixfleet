@@ -14,18 +14,11 @@
   pkgs,
   testCerts,
   resolvedJsonPath,
-  harnessMicrovmDefaults,
   ...
 }: {
-  microvm =
-    harnessMicrovmDefaults
-    // {
-      # CP needs a little more RAM because it serves traffic.
-      mem = 384;
-    };
-
-  # Expose certs at stable paths inside the guest. The host-side /nix/store
-  # virtiofs share makes the cert derivation available to the guest for free.
+  # Expose certs + fixture at stable paths on the host VM. Agent microVMs
+  # reach this via the qemu user-net gateway (10.0.2.2:8443 from agent
+  # POV → host VM's :8443).
   environment.etc = {
     "nixfleet-harness/ca.pem".source = "${testCerts}/ca.pem";
     "nixfleet-harness/cp-cert.pem".source = "${testCerts}/cp-cert.pem";

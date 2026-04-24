@@ -46,11 +46,15 @@
       ExecStart = pkgs.writeShellScript "harness-agent-fetch" ''
         set -euo pipefail
 
-        url="https://${controlPlaneHost}:${toString controlPlanePort}/"
+        # URL uses the hostname `cp` so curl's SNI + cert check matches
+        # the CP's server cert (CN=cp, issued by mkTlsCerts). --resolve
+        # maps that hostname to the qemu user-net gateway IP, which
+        # from inside a microVM is the host VM (where the CP stub runs).
+        url="https://cp:${toString controlPlanePort}/"
         resp=$(mktemp)
         trap 'rm -f "$resp"' EXIT
 
-        echo "harness-agent: fetching $url" >&2
+        echo "harness-agent: fetching $url (via ${controlPlaneHost})" >&2
         curl -sf \
           --cacert /etc/nixfleet-harness/ca.pem \
           --cert /etc/nixfleet-harness/${agentHostName}-cert.pem \

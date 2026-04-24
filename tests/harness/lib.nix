@@ -8,9 +8,9 @@
 # host's /nix/store over virtiofs, for cheap fleet-scale scenarios.
 #
 # Public attrs:
-#   mkCpNode       - build a CP microVM NixOS module (serves fleet.resolved.json)
+#   mkCpHostModule - NixOS module for the host VM that runs the CP stub
 #   mkAgentNode    - build an agent microVM NixOS module (curls CP at boot)
-#   mkFleetScenario- wrap one CP + N agents into a runNixOSTest harness
+#   mkFleetScenario- wrap CP-on-host + N agent microVMs into a runNixOSTest
 #   mkHarnessCerts - thin wrapper over mkTlsCerts with the harness hostname set
 #
 # TODO(5): once v0.2 agent/CP skeletons (`crates/agent`, `crates/control-plane`)
@@ -61,25 +61,23 @@
     ];
   };
 
-  mkCpNode = {
+  # CP stub runs on the host VM, not inside a microVM.
+  #
+  # Rationale: qemu user-mode networking isolates every microVM's
+  # gateway (10.0.2.2) to the host VM itself — two user-net microVMs
+  # cannot reach each other directly. Running the CP stub on the host
+  # VM lets every agent microVM reach it via the shared user-net
+  # gateway without bridge/NAT plumbing.
+  #
+  # TODO(5): when Stream C's v0.2 CP skeleton lands, the same host-VM
+  # placement still applies — just swap socat for
+  # services.nixfleet-control-plane inside nodes/cp.nix.
+  mkCpHostModule = {
     testCerts,
     resolvedJsonPath,
-    hostName ? "cp",
-    extraModules ? [],
   }: {
-    imports =
-      [
-        ./nodes/cp.nix
-      ]
-      ++ extraModules;
-
-    _module.args = {
-      inherit testCerts resolvedJsonPath;
-      harnessMicrovmDefaults = microvmGuestDefaults;
-    };
-
-    networking.hostName = hostName;
-    system.stateVersion = lib.mkDefault "24.11";
+    imports = [./nodes/cp.nix];
+    _module.args = {inherit testCerts resolvedJsonPath;};
   };
 
   mkAgentNode = {
@@ -105,17 +103,18 @@
     system.stateVersion = lib.mkDefault "24.11";
   };
 
-  # Wrap one CP + a list of agent modules into a runNixOSTest that boots
-  # them as microVMs on a single host VM. The host uses microvm.nixosModules.host
-  # to run the guests via systemd. Test script asserts each guest reaches
-  # the CP and logs a successful fetch.
+  # Wrap a CP host-module + a list of agent microVM modules into a
+  # runNixOSTest that boots the host and the agent microVMs. The CP stub
+  # runs directly on the host VM (see mkCpHostModule for rationale);
+  # agents run as microVMs sharing the host's /nix/store via virtiofs.
   #
-  # Extension path: `nodes` is an attrset of name -> { type = "cp"|"agent";
-  # module = <nix module>; }. For fleet-N, the scenario file generates
-  # agent-01..agent-N programmatically and passes them here.
+  # Extension path: `agents` is an attrset of name -> <nix module>. For
+  # fleet-N, the scenario file generates agent-01..agent-N programmatically
+  # and passes them here. The CP host module is a single entry.
   mkFleetScenario = {
     name,
-    nodes,
+    cpHostModule,
+    agents,
     testScript,
     timeout ? 600,
   }:
@@ -124,7 +123,10 @@
       node.specialArgs = {inherit inputs;};
 
       nodes.host = {pkgs, ...}: {
-        imports = [inputs.microvm.nixosModules.host];
+        imports = [
+          inputs.microvm.nixosModules.host
+          cpHostModule
+        ];
 
         # The host VM needs KVM nested + enough disk for the microvm state
         # dirs + enough RAM to cover every guest's declared mem budget.
@@ -138,7 +140,7 @@
           ];
         };
 
-        microvm.vms = lib.mapAttrs (_: n: {config = n.module;}) nodes;
+        microvm.vms = lib.mapAttrs (_: mod: {config = mod;}) agents;
 
         environment.systemPackages = [pkgs.jq pkgs.curl];
       };
@@ -147,5 +149,5 @@
       meta.timeout = timeout;
     };
 in {
-  inherit mkCpNode mkAgentNode mkFleetScenario mkHarnessCerts microvmGuestDefaults;
+  inherit mkAgentNode mkCpHostModule mkFleetScenario mkHarnessCerts microvmGuestDefaults;
 }
