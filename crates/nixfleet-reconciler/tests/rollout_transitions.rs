@@ -8,3 +8,15 @@ fn pending_to_planning() {
     let (actual, expected) = common::run("rollout/pending_to_planning");
     common::assert_matches(&actual, &expected);
 }
+
+#[test]
+fn planning_to_executing() {
+    let (actual, expected) = common::run("rollout/planning_to_executing");
+    common::assert_matches(&actual, &expected);
+}
+
+#[test]
+fn wave_active_to_soaking() {
+    let (actual, expected) = common::run("rollout/wave_active_to_soaking");
+    common::assert_matches(&actual, &expected);
+}
