@@ -29,6 +29,14 @@ pub enum VerifyError {
         window: Duration,
     },
 
+    #[error(
+        "artifact signed at {signed_at} is older than reject_before {reject_before} (compromise switch, CONTRACTS.md §II #1)"
+    )]
+    RejectedBeforeTimestamp {
+        signed_at: DateTime<Utc>,
+        reject_before: DateTime<Utc>,
+    },
+
     #[error("unsupported schemaVersion: {0} (accepted: 1)")]
     SchemaVersionUnsupported(u32),
 
@@ -69,12 +77,27 @@ pub enum VerifyError {
 /// will decide whether to accept raw r||s (64 bytes) or DER-encoded
 /// (variable) — for now, non-ed25519 algorithms bail with
 /// `UnsupportedAlgorithm`.
+///
+/// # Compromise switch
+///
+/// `reject_before` is the slot-wide compromise kill-switch per
+/// [`docs/trust-root-flow.md §7.2`][flow] / `CONTRACTS.md §II #1`.
+/// When `Some(ts)`, any artifact whose `meta.signedAt < ts` is rejected
+/// with [`VerifyError::RejectedBeforeTimestamp`] regardless of which
+/// trust root matched the signature. `None` disables the gate. The
+/// check fires before the `freshness_window` check so alerts can
+/// distinguish an operator-declared incident response from routine
+/// staleness. The comparison is strict `<` — an artifact signed
+/// exactly at `reject_before` is accepted.
+///
+/// [flow]: ../../../docs/trust-root-flow.md
 pub fn verify_artifact(
     signed_bytes: &[u8],
     signature: &[u8],
     trusted_keys: &[TrustedPubkey],
     now: DateTime<Utc>,
     freshness_window: Duration,
+    reject_before: Option<DateTime<Utc>>,
 ) -> Result<FleetResolved, VerifyError> {
     if trusted_keys.is_empty() {
         return Err(VerifyError::NoTrustRoots);
@@ -100,13 +123,13 @@ pub fn verify_artifact(
             "ed25519" => {
                 attempted_any_supported = true;
                 if verify_ed25519(canonical.as_bytes(), signature, &key.public).is_ok() {
-                    return finish_verification(&canonical, now, freshness_window);
+                    return finish_verification(&canonical, now, freshness_window, reject_before);
                 }
             }
             "ecdsa-p256" => {
                 attempted_any_supported = true;
                 if verify_ecdsa_p256(canonical.as_bytes(), signature, &key.public).is_ok() {
-                    return finish_verification(&canonical, now, freshness_window);
+                    return finish_verification(&canonical, now, freshness_window, reject_before);
                 }
             }
             _other => {
@@ -233,11 +256,19 @@ fn verify_ecdsa_p256(
         .map_err(|_| VerifyError::BadSignature)
 }
 
-/// Steps 4-6 after signature verification: type-parse, schema-gate, freshness.
+/// Steps 4-6 after signature verification: type-parse, schema-gate,
+/// reject_before compromise switch, freshness.
+///
+/// Ordering rationale: `reject_before` is an operator-declared incident
+/// response (slot-wide compromise switch per trust-root §7.2), a
+/// stronger signal than routine staleness. We surface the more specific
+/// error first so logs and alerts can distinguish "key compromised,
+/// rotate" from "CI is behind, re-run".
 fn finish_verification(
     canonical: &str,
     now: DateTime<Utc>,
     freshness_window: Duration,
+    reject_before: Option<DateTime<Utc>>,
 ) -> Result<FleetResolved, VerifyError> {
     // Step 4: type-parse.
     let fleet: FleetResolved = serde_json::from_str(canonical)?;
@@ -247,8 +278,19 @@ fn finish_verification(
         return Err(VerifyError::SchemaVersionUnsupported(fleet.schema_version));
     }
 
-    // Step 6: freshness.
     let signed_at = fleet.meta.signed_at.ok_or(VerifyError::NotSigned)?;
+
+    // Step 6a: slot-level compromise switch — applies to whichever key matched.
+    if let Some(rb) = reject_before {
+        if signed_at < rb {
+            return Err(VerifyError::RejectedBeforeTimestamp {
+                signed_at,
+                reject_before: rb,
+            });
+        }
+    }
+
+    // Step 6b: freshness.
     let window = ChronoDuration::from_std(freshness_window)
         .expect("freshness_window fits in i64 nanoseconds — multi-century windows are a bug");
     if now - signed_at > window {

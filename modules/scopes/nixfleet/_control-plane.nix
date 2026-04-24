@@ -1,4 +1,10 @@
-# NixOS service module for the NixFleet control plane server.
+# NixOS service module for the NixFleet control plane server (v0.2).
+#
+# Reads a trust-root declaration from /etc/nixfleet/cp/trust.json and
+# consumes a fleet.resolved.json artifact at a local path (git-pull
+# pattern, trust-root-flow.md §4 option b). Reload model is restart-only
+# (docs/trust-root-flow.md §7.1).
+#
 # Auto-included by mkHost (disabled by default).
 {
   config,
@@ -8,7 +14,12 @@
   ...
 }: let
   cfg = config.services.nixfleet-control-plane;
-  nixfleet-control-plane = pkgs.callPackage ../../../crates/control-plane {inherit inputs;};
+  nixfleet-control-plane = inputs.self.packages.${pkgs.system}.nixfleet-control-plane;
+
+  # Shared trust.json payload — see ./_trust-json.nix for shape rationale
+  # and the orgRootKey ed25519 promotion that matches proto::TrustConfig.
+  trustConfig = import ./_trust-json.nix {trust = config.nixfleet.trust;};
+  trustJson = pkgs.writers.writeJSON "trust.json" trustConfig;
 in {
   options.services.nixfleet-control-plane = {
     enable = lib.mkEnableOption "NixFleet control plane server";
@@ -23,6 +34,28 @@ in {
       type = lib.types.str;
       default = "/var/lib/nixfleet-cp/state.db";
       description = "Path to the SQLite state database.";
+    };
+
+    trustFile = lib.mkOption {
+      type = lib.types.path;
+      default = "/etc/nixfleet/cp/trust.json";
+      description = ''
+        Path to the trust-root JSON file (see docs/trust-root-flow.md §3.4).
+        The default is materialised by this module from config.nixfleet.trust
+        via environment.etc.
+      '';
+    };
+
+    releasePath = lib.mkOption {
+      type = lib.types.path;
+      default = "/var/lib/nixfleet-cp/fleet.git/releases/fleet.resolved.json";
+      description = ''
+        Path to the resolved fleet artifact (fleet.resolved.json). v0.2
+        uses the local-checkout distribution pattern described in
+        docs/trust-root-flow.md §4 option (b): a separate systemd timer
+        keeps /var/lib/nixfleet-cp/fleet.git/ in sync with the fleet repo,
+        and the control plane reads the signed artifact from under it.
+      '';
     };
 
     openFirewall = lib.mkOption {
@@ -67,6 +100,8 @@ in {
         }
       ];
 
+      environment.etc."nixfleet/cp/trust.json".source = trustJson;
+
       systemd.services.nixfleet-control-plane = {
         description = "NixFleet Control Plane Server";
         wantedBy = ["multi-user.target"];
@@ -82,6 +117,10 @@ in {
               (lib.escapeShellArg cfg.listen)
               "--db-path"
               (lib.escapeShellArg cfg.dbPath)
+              "--trust-file"
+              (lib.escapeShellArg (toString cfg.trustFile))
+              "--release-path"
+              (lib.escapeShellArg (toString cfg.releasePath))
             ]
             ++ lib.optionals (cfg.tls.cert != null) [
               "--tls-cert"

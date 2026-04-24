@@ -11,10 +11,22 @@
     lib,
     ...
   }: let
-    helpers = import ./_lib/helpers.nix {inherit lib pkgs;};
-    mkEvalCheck = helpers.mkEvalCheck pkgs;
+    # Build a runCommand that prints PASS/FAIL for each assertion and
+    # fails on first failure. Inlined from the now-deleted
+    # modules/tests/_lib/helpers.nix — eval.nix is the only remaining
+    # caller after v0.1 VM tests were retired (#29).
+    mkEvalCheck = name: assertions:
+      pkgs.runCommand "eval-test-${name}" {} (
+        lib.concatStringsSep "\n" (
+          map (a:
+            if a.check
+            then ''echo "PASS: ${a.msg}"''
+            else ''echo "FAIL: ${a.msg}" >&2; exit 1'')
+          assertions
+        )
+        + "\ntouch $out\n"
+      );
     nixosCfg = name: self.nixosConfigurations.${name}.config;
-    darwinCfg = name: self.darwinConfigurations.${name}.config;
   in
     lib.optionalAttrs (system == "x86_64-linux") {
       checks = {
@@ -140,35 +152,25 @@
             }
           ];
 
-        # --- Agent tags and health checks ---
-        eval-agent-tags-health = let
-          cfg = nixosCfg "agent-test";
-        in
-          mkEvalCheck "agent-tags-health" [
-            {
-              check = cfg.systemd.services.nixfleet-agent.environment.NIXFLEET_TAGS == "web,production";
-              msg = "agent-test should have NIXFLEET_TAGS set to web,production";
-            }
-            {
-              check = cfg.environment.etc."nixfleet/health-checks.json".text != "";
-              msg = "agent-test should have health-checks.json config file";
-            }
-          ];
+        # Agent tags / health-checks / metrics-port eval checks retired
+        # alongside the v0.1 agent module (#29). v0.2 agent options are
+        # tested via modules/tests/_agent-v2-trust.nix.
 
-        # --- Agent metrics port in ExecStart ---
-        eval-agent-metrics = let
-          cfg = nixosCfg "agent-test";
-        in
-          mkEvalCheck "agent-metrics" [
-            {
-              check = builtins.match ".*--metrics-port.*" cfg.systemd.services.nixfleet-agent.serviceConfig.ExecStart != null;
-              msg = "agent-test should have --metrics-port in ExecStart";
-            }
-            {
-              check = builtins.elem 9101 cfg.networking.firewall.allowedTCPPorts;
-              msg = "agent-test should have metrics port 9101 in firewall";
-            }
-          ];
+        # --- v0.2 agent: trust.json + ExecStart flags (Task 1.9) ---
+        eval-nixfleet-agent-v2-trust = mkEvalCheck "nixfleet-agent-v2-trust" (
+          import ./_agent-v2-trust.nix {
+            inherit lib;
+            cfg = nixosCfg "agent-test";
+          }
+        );
+
+        # --- v0.2 control plane: trust.json + ExecStart flags (Task 1.9) ---
+        eval-nixfleet-cp-v2-trust = mkEvalCheck "nixfleet-cp-v2-trust" (
+          import ./_cp-v2-trust.nix {
+            inherit lib;
+            cfg = nixosCfg "cp-test";
+          }
+        );
 
         # --- Secrets: resolved paths on server (host key only) ---
         eval-secrets-server = let
@@ -376,57 +378,10 @@
             }
           ];
 
-        # --- Darwin agent: launchd service present ---
-        eval-darwin-agent-launchd = let
-          cfg = darwinCfg "darwin-agent-test";
-        in
-          mkEvalCheck "darwin-agent-launchd" [
-            {
-              check = cfg.launchd.daemons.nixfleet-agent.serviceConfig.Label == "com.nixfleet.agent";
-              msg = "darwin-agent-test should have launchd daemon with correct label";
-            }
-            {
-              check = cfg.launchd.daemons.nixfleet-agent.serviceConfig.KeepAlive == true;
-              msg = "darwin-agent-test should have KeepAlive enabled";
-            }
-          ];
-
-        # --- Darwin agent: health config written ---
-        eval-darwin-agent-health = let
-          cfg = darwinCfg "darwin-agent-test";
-        in
-          mkEvalCheck "darwin-agent-health" [
-            {
-              check = cfg.environment.etc."nixfleet/health-checks.json".text != "";
-              msg = "darwin-agent-test should have health-checks.json config file";
-            }
-          ];
-
-        # --- Darwin agent: tags in environment ---
-        eval-darwin-agent-tags = let
-          cfg = darwinCfg "darwin-agent-test";
-        in
-          mkEvalCheck "darwin-agent-tags" [
-            {
-              check = cfg.launchd.daemons.nixfleet-agent.serviceConfig.EnvironmentVariables.NIXFLEET_TAGS == "workstation,darwin";
-              msg = "darwin-agent-test should have NIXFLEET_TAGS set";
-            }
-          ];
-
-        # --- Darwin hostSpec: isDarwin flag ---
-        eval-darwin-hostspec = let
-          cfg = darwinCfg "darwin-agent-test";
-        in
-          mkEvalCheck "darwin-hostspec" [
-            {
-              check = cfg.hostSpec.isDarwin == true;
-              msg = "darwin-agent-test should have isDarwin set to true";
-            }
-            {
-              check = cfg.hostSpec.hostName == "darwin-agent-test";
-              msg = "darwin-agent-test should have correct hostName";
-            }
-          ];
+        # Darwin agent eval checks (launchd daemon, health config, tags,
+        # isDarwin hostSpec) were retired alongside the v0.1 darwin agent
+        # scope module (#29). Phase 4 trim list already covers darwin
+        # support removal; any reintroduction comes on the v0.2 contract.
       };
     };
 }

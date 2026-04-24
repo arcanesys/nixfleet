@@ -1,4 +1,16 @@
-# NixOS service module for the NixFleet fleet agent.
+# NixOS service module for the NixFleet fleet agent (v0.2 contract).
+#
+# Linux-only. Poll-only agent that reads a trust-root declaration from
+# /etc/nixfleet/agent/trust.json and talks to the control plane over
+# mTLS. Reload model is restart-only (docs/trust-root-flow.md §7.1) —
+# nixos-rebuild switch changes the etc entry content, systemd restarts,
+# the binary re-reads on startup.
+#
+# v0.1 surface (tags, healthChecks, metricsPort, dryRun, allowInsecure,
+# cacheUrl, healthInterval) was removed in #29 as part of the v0.2
+# migration. The v0.2 agent is intentionally minimal; health, metrics,
+# and cache concerns move out of the agent binary in this contract.
+#
 # Auto-included by mkHost (disabled by default).
 {
   config,
@@ -8,7 +20,17 @@
   ...
 }: let
   cfg = config.services.nixfleet-agent;
-  nixfleet-agent = pkgs.callPackage ../../../crates/agent {inherit inputs;};
+  nixfleet-agent = inputs.self.packages.${pkgs.system}.nixfleet-agent;
+
+  # Materialise config.nixfleet.trust into the v0.2 proto::TrustConfig
+  # JSON shape (crates/nixfleet-proto/src/trust.rs). schemaVersion = 1
+  # is required per docs/trust-root-flow.md §7.4 — binaries refuse to
+  # start on unknown versions.
+  #
+  # Shared trust.json payload — see ./_trust-json.nix for shape rationale
+  # and the orgRootKey ed25519 promotion that matches proto::TrustConfig.
+  trustConfig = import ./_trust-json.nix {trust = config.nixfleet.trust;};
+  trustJson = pkgs.writers.writeJSON "trust.json" trustConfig;
 in {
   options.services.nixfleet-agent = {
     enable = lib.mkEnableOption "NixFleet fleet management agent";
@@ -21,8 +43,8 @@ in {
 
     machineId = lib.mkOption {
       type = lib.types.str;
-      default = config.hostSpec.hostName;
-      defaultText = lib.literalExpression "config.hostSpec.hostName";
+      default = config.hostSpec.hostName or config.networking.hostName;
+      defaultText = lib.literalExpression "config.hostSpec.hostName or config.networking.hostName";
       description = "Machine identifier reported to the control plane.";
     };
 
@@ -32,35 +54,15 @@ in {
       description = "Poll interval in seconds (steady-state).";
     };
 
-    retryInterval = lib.mkOption {
-      type = lib.types.int;
-      default = 30;
-      description = "Retry interval in seconds after a failed poll.";
-    };
-
-    cacheUrl = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      example = "https://cache.fleet.example.com";
-      description = "Binary cache URL for nix copy --from. Falls back to control plane default.";
-    };
-
-    dbPath = lib.mkOption {
-      type = lib.types.str;
-      default = "/var/lib/nixfleet/state.db";
-      description = "Path to the SQLite state database.";
-    };
-
-    dryRun = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "When true, check and fetch but do not apply generations.";
-    };
-
-    allowInsecure = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Allow insecure HTTP connections to the control plane. Development only.";
+    trustFile = lib.mkOption {
+      type = lib.types.path;
+      default = "/etc/nixfleet/agent/trust.json";
+      description = ''
+        Path to the trust-root JSON file (see docs/trust-root-flow.md §3.4).
+        The default is materialised by this module from config.nixfleet.trust
+        via environment.etc; override only when sourcing the file from a
+        secrets manager.
+      '';
     };
 
     tls = {
@@ -85,107 +87,11 @@ in {
         description = "Path to client private key PEM file for mTLS authentication.";
       };
     };
-
-    metricsPort = lib.mkOption {
-      type = lib.types.nullOr lib.types.port;
-      default = null;
-      description = "Port for agent Prometheus metrics. Null disables.";
-    };
-
-    metricsOpenFirewall = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open agent metrics port in the firewall.";
-    };
-
-    tags = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [];
-      description = "Tags for grouping this machine in fleet operations.";
-    };
-
-    healthInterval = lib.mkOption {
-      type = lib.types.int;
-      default = 60;
-      description = "Seconds between continuous health reports to control plane.";
-    };
-
-    healthChecks = {
-      systemd = lib.mkOption {
-        type = lib.types.listOf (lib.types.submodule {
-          options.units = lib.mkOption {
-            type = lib.types.listOf lib.types.str;
-            description = "Systemd units that must be active.";
-          };
-        });
-        default = [];
-        description = "Systemd unit health checks.";
-      };
-
-      http = lib.mkOption {
-        type = lib.types.listOf (lib.types.submodule {
-          options = {
-            url = lib.mkOption {
-              type = lib.types.str;
-              description = "URL to GET.";
-            };
-            interval = lib.mkOption {
-              type = lib.types.int;
-              default = 5;
-              description = "Check interval in seconds.";
-            };
-            timeout = lib.mkOption {
-              type = lib.types.int;
-              default = 3;
-              description = "Timeout in seconds.";
-            };
-            expectedStatus = lib.mkOption {
-              type = lib.types.int;
-              default = 200;
-              description = "Expected HTTP status code.";
-            };
-          };
-        });
-        default = [];
-        description = "HTTP endpoint health checks.";
-      };
-
-      command = lib.mkOption {
-        type = lib.types.listOf (lib.types.submodule {
-          options = {
-            name = lib.mkOption {
-              type = lib.types.str;
-              description = "Check name.";
-            };
-            command = lib.mkOption {
-              type = lib.types.str;
-              description = "Shell command (exit 0 = healthy).";
-            };
-            interval = lib.mkOption {
-              type = lib.types.int;
-              default = 10;
-              description = "Check interval in seconds.";
-            };
-            timeout = lib.mkOption {
-              type = lib.types.int;
-              default = 5;
-              description = "Timeout in seconds.";
-            };
-          };
-        });
-        default = [];
-        description = "Custom command health checks.";
-      };
-    };
   };
 
   config = lib.mkMerge [
     (lib.mkIf cfg.enable {
-      environment.etc."nixfleet/health-checks.json".text = builtins.toJSON {
-        systemd = cfg.healthChecks.systemd;
-        http = cfg.healthChecks.http;
-        command = cfg.healthChecks.command;
-      };
+      environment.etc."nixfleet/agent/trust.json".source = trustJson;
 
       systemd.services.nixfleet-agent = {
         description = "NixFleet Fleet Management Agent";
@@ -197,17 +103,13 @@ in {
         # Agent shells out to nix (copy, path-info) and switch-to-configuration
         path = [config.nix.package pkgs.systemd];
 
-        environment =
-          {
-            # Nix writes its metadata cache (narinfo lookups, eval cache, etc.)
-            # to $XDG_CACHE_HOME (default: ~/.cache). Point it at the agent's
-            # StateDirectory so the cache persists on impermanent hosts instead
-            # of being wiped on every reboot.
-            XDG_CACHE_HOME = "/var/lib/nixfleet/.cache";
-          }
-          // lib.optionalAttrs (cfg.tags != []) {
-            NIXFLEET_TAGS = lib.concatStringsSep "," cfg.tags;
-          };
+        environment = {
+          # Nix writes its metadata cache (narinfo lookups, eval cache, etc.)
+          # to $XDG_CACHE_HOME (default: ~/.cache). Point it at the agent's
+          # StateDirectory so the cache persists on impermanent hosts instead
+          # of being wiped on every reboot.
+          XDG_CACHE_HOME = "/var/lib/nixfleet/.cache";
+        };
 
         serviceConfig = {
           Type = "simple";
@@ -220,24 +122,8 @@ in {
               (lib.escapeShellArg cfg.machineId)
               "--poll-interval"
               (toString cfg.pollInterval)
-              "--retry-interval"
-              (toString cfg.retryInterval)
-              "--db-path"
-              (lib.escapeShellArg cfg.dbPath)
-              "--health-config"
-              "/etc/nixfleet/health-checks.json"
-              "--health-interval"
-              (toString cfg.healthInterval)
-            ]
-            ++ lib.optionals (cfg.cacheUrl != null) [
-              "--cache-url"
-              (lib.escapeShellArg cfg.cacheUrl)
-            ]
-            ++ lib.optionals cfg.dryRun [
-              "--dry-run"
-            ]
-            ++ lib.optionals cfg.allowInsecure [
-              "--allow-insecure"
+              "--trust-file"
+              (lib.escapeShellArg (toString cfg.trustFile))
             ]
             ++ lib.optionals (cfg.tls.caCert != null) [
               "--ca-cert"
@@ -250,10 +136,6 @@ in {
             ++ lib.optionals (cfg.tls.clientKey != null) [
               "--client-key"
               (lib.escapeShellArg cfg.tls.clientKey)
-            ]
-            ++ lib.optionals (cfg.metricsPort != null) [
-              "--metrics-port"
-              (toString cfg.metricsPort)
             ]
           );
           Restart = "always";
@@ -269,10 +151,6 @@ in {
           NoNewPrivileges = true;
         };
       };
-
-      # Open metrics port if requested
-      networking.firewall.allowedTCPPorts =
-        lib.mkIf (cfg.metricsPort != null && cfg.metricsOpenFirewall) [cfg.metricsPort];
     })
 
     # Impermanence: persist agent state across reboots. Outer mkIf so

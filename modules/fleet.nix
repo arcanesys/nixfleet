@@ -112,7 +112,7 @@ in {
       ];
     };
 
-    # agent-test: exercises agent with tags and health checks
+    # agent-test: exercises the v0.2 agent against a stub CP.
     agent-test = mkHost {
       hostName = "agent-test";
       platform = "x86_64-linux";
@@ -125,13 +125,33 @@ in {
           services.nixfleet-agent = {
             enable = true;
             controlPlaneUrl = "https://cp.test:8080";
-            tags = ["web" "production"];
-            metricsPort = 9101;
-            metricsOpenFirewall = true;
-            healthChecks = {
-              systemd = [{units = ["nginx"];}];
-              http = [{url = "http://localhost:80/health";}];
-            };
+          };
+          nixfleet.trust.ciReleaseKey.current = {
+            algorithm = "ed25519";
+            public = "AAAA"; # eval-fixture placeholder; real hosts pin real keys
+          };
+        }
+      ];
+    };
+
+    # cp-test: exercises the v0.2 control plane scope module, mirroring
+    # agent-test's role. Pinned ciReleaseKey so trust.json materialises
+    # with a non-null current slot for the eval assertions.
+    cp-test = mkHost {
+      hostName = "cp-test";
+      platform = "x86_64-linux";
+      isVm = true;
+      hostSpec = orgDefaults;
+      modules = [
+        scopes.roles.server
+        orgOperators
+        {
+          services.nixfleet-control-plane = {
+            enable = true;
+          };
+          nixfleet.trust.ciReleaseKey.current = {
+            algorithm = "ed25519";
+            public = "AAAA"; # eval-fixture placeholder; real hosts pin real keys
           };
         }
       ];
@@ -237,26 +257,7 @@ in {
     };
   };
 
-  flake.darwinConfigurations = {
-    # darwin-agent-test: exercises agent with launchd on Darwin
-    # Darwin doesn't use the operators scope yet; userName is set explicitly.
-    darwin-agent-test = mkHost {
-      hostName = "darwin-agent-test";
-      platform = "aarch64-darwin";
-      hostSpec = orgDefaults // {userName = "deploy";};
-      modules = [
-        {
-          services.nixfleet-agent = {
-            enable = true;
-            controlPlaneUrl = "https://cp.test:8080";
-            tags = ["workstation" "darwin"];
-            healthChecks = {
-              launchd = [{labels = ["com.example.myservice"];}];
-              http = [{url = "http://localhost:8080/health";}];
-            };
-          };
-        }
-      ];
-    };
-  };
+  # darwin-agent-test retired alongside the v0.1 darwin agent scope
+  # module (#29). Darwin agent support is on the Phase 4 trim list; any
+  # future darwin support will be reintroduced on the v0.2 contract.
 }
