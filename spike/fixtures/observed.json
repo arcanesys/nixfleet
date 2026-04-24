@@ -1,0 +1,19 @@
+{
+  "channelRefs":      { "stable": "def456abc", "edge-slow": "abc123def" },
+  "lastRolledRefs":   { "stable": "abc123def", "edge-slow": "abc123def" },
+  "hostState": {
+    "m70q-attic":    { "online": false, "currentGeneration": "sha256-aabbcc" },
+    "workstation":   { "online": true,  "currentGeneration": "sha256-aabbcc" },
+    "rpi-sensor-01": { "online": true,  "currentGeneration": "sha256-aabbcc" }
+  },
+  "activeRollouts": [
+    {
+      "id": "stable@def456abc",
+      "channel": "stable",
+      "targetRef": "def456abc",
+      "state": "Executing",
+      "currentWave": 0,
+      "hostStates": { "workstation": "Activating" }
+    }
+  ]
+}

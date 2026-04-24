@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "hosts": {
+    "m70q-attic":    { "system": "x86_64-linux",  "tags": ["homelab","always-on","eu-fr","server","coordinator"], "channel": "stable",    "closureHash": null },
+    "workstation":   { "system": "x86_64-linux",  "tags": ["homelab","eu-fr","workstation","builder"],            "channel": "stable",    "closureHash": null },
+    "rpi-sensor-01": { "system": "aarch64-linux", "tags": ["edge","eu-fr","sensor","low-power"],                  "channel": "edge-slow", "closureHash": null }
+  },
+  "channels": {
+    "stable":    { "rolloutPolicy": "homelab-canary", "reconcileIntervalMinutes": 30,    "compliance": { "strict": true, "frameworks": ["anssi-bp028"] } },
+    "edge-slow": { "rolloutPolicy": "all-at-once",    "reconcileIntervalMinutes": 10080, "compliance": { "strict": true, "frameworks": [] } }
+  },
+  "rolloutPolicies": {
+    "homelab-canary": { "strategy": "canary",      "waves": [{"selector":{"tags":["workstation"],"tagsAny":[],"hosts":[],"channel":null,"all":false},"soakMinutes":30},{"selector":{"tags":["always-on"],"tagsAny":[],"hosts":[],"channel":null,"all":false},"soakMinutes":60}], "healthGate": {"systemdFailedUnits":{"max":0}}, "onHealthFailure": "rollback-and-halt" },
+    "all-at-once":    { "strategy": "all-at-once", "waves": [{"selector":{"tags":[],"tagsAny":[],"hosts":[],"channel":null,"all":true},"soakMinutes":0}],                                                                                                                            "healthGate": {"systemdFailedUnits":{"max":0}}, "onHealthFailure": "rollback-and-halt" }
+  },
+  "waves": {
+    "stable":    [ { "hosts": ["workstation"], "soakMinutes": 30 }, { "hosts": ["m70q-attic"], "soakMinutes": 60 } ],
+    "edge-slow": [ { "hosts": ["rpi-sensor-01"], "soakMinutes": 0 } ]
+  },
+  "edges": [],
+  "disruptionBudgets": [
+    { "hosts": ["m70q-attic"], "maxInFlight": 1, "maxInFlightPct": null },
+    { "hosts": ["m70q-attic"], "maxInFlight": 1, "maxInFlightPct": null }
+  ]
+}
