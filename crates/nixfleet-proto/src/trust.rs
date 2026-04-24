@@ -129,12 +129,52 @@ impl KeySlot {
     }
 }
 
-/// Attic cache key in the attic-native string format `"attic:<host>:<base64>"`.
+/// Attic cache key material in the attic-native string format
+/// `"attic:<host>:<base64>"`.
 ///
-/// Typed as an opaque newtype because Stream B's `modules/_trust.nix`
-/// currently keeps the attic key flat (CONTRACTS.md §II #2 has not yet
-/// been migrated to the `{algorithm, public}` shape that §II #1 uses).
-/// Migrates to `KeySlot<AtticPubkey>` when §II #2 gains that treatment.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Typed as an opaque newtype over `String`: attic's own signing model
+/// encodes host and key bytes inside the string, so splitting it into
+/// `{algorithm, public}` would be redundant with attic-side parsing.
+/// Consumers forward the raw string to attic tooling at closure-verify
+/// time.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
-pub struct AtticKeySlot(pub String);
+pub struct AtticPubkey(pub String);
+
+/// A single attic-cache trust slot with rotation grace + compromise
+/// switch. Shape mirrors [`KeySlot`] — same `current` / `previous` /
+/// `reject_before` semantics — except key material is an opaque
+/// [`AtticPubkey`] rather than a `{algorithm, public}` pair.
+///
+/// A two-key active window supports the 30-day dual-accept rotation
+/// grace documented in CONTRACTS.md §II #2: agents treat closures
+/// signed under either `current` or `previous` as trusted until the
+/// operator closes the window by setting `previous` back to `None`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AtticKeySlot {
+    #[serde(default)]
+    pub current: Option<AtticPubkey>,
+
+    #[serde(default)]
+    pub previous: Option<AtticPubkey>,
+
+    #[serde(default)]
+    pub reject_before: Option<DateTime<Utc>>,
+}
+
+impl AtticKeySlot {
+    /// Returns the active key list for this slot. Both `current` and
+    /// `previous` are returned unconditionally when present, in that
+    /// order — matches the first-match semantics of [`KeySlot::active_keys`].
+    pub fn active_keys(&self) -> Vec<AtticPubkey> {
+        let mut keys = Vec::with_capacity(2);
+        if let Some(k) = &self.current {
+            keys.push(k.clone());
+        }
+        if let Some(k) = &self.previous {
+            keys.push(k.clone());
+        }
+        keys
+    }
+}

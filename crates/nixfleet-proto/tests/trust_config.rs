@@ -2,7 +2,7 @@
 //!
 //! Shape authoritative per docs/trust-root-flow.md §3.4 + §7.4.
 
-use nixfleet_proto::{AtticKeySlot, KeySlot, TrustConfig, TrustedPubkey};
+use nixfleet_proto::{AtticKeySlot, AtticPubkey, KeySlot, TrustConfig, TrustedPubkey};
 
 #[test]
 fn trust_config_roundtrips_minimum_shape() {
@@ -58,10 +58,33 @@ fn key_slot_active_keys_skips_absent() {
 }
 
 #[test]
-fn attic_key_slot_accepts_native_format() {
+fn attic_pubkey_accepts_native_format() {
     let json = r#""attic:cache.example.com:AAAA""#;
+    let pk: AtticPubkey = serde_json::from_str(json).unwrap();
+    assert_eq!(pk.0, "attic:cache.example.com:AAAA");
+}
+
+#[test]
+fn attic_key_slot_roundtrips_populated_shape() {
+    let json = r#"{
+        "current": "attic:cache.example.com:AAAA",
+        "previous": "attic:cache.example.com:BBBB",
+        "rejectBefore": null
+    }"#;
     let slot: AtticKeySlot = serde_json::from_str(json).unwrap();
-    assert_eq!(slot.0, "attic:cache.example.com:AAAA");
+    let keys = slot.active_keys();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].0, "attic:cache.example.com:AAAA");
+    assert_eq!(keys[1].0, "attic:cache.example.com:BBBB");
+    assert!(slot.reject_before.is_none());
+}
+
+#[test]
+fn attic_key_slot_empty_object_is_empty() {
+    let json = r#"{ "current": null, "previous": null, "rejectBefore": null }"#;
+    let slot: AtticKeySlot = serde_json::from_str(json).unwrap();
+    assert!(slot.active_keys().is_empty());
+    assert!(slot.reject_before.is_none());
 }
 
 #[test]

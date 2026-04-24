@@ -91,7 +91,7 @@ in {
 }
 ```
 
-The file is world-readable (contains only public keys — by definition not secret). `atticCacheKey` uses the attic-native `"attic:<host>:<base64>"` string format, not the typed submodule — Stream B's `modules/_trust.nix` currently types only `ciReleaseKey` per CONTRACTS §II #1; the attic key stays flat until §II #2 gains similar treatment.
+The file is world-readable (contains only public keys — by definition not secret). `atticCacheKey` and `orgRootKey` both emit as `{current, previous, rejectBefore}` slot objects: key material stays in its algorithm's native format (attic-native `"attic:<host>:<base64>"` strings under `atticCacheKey`; typed `{algorithm, public}` submodules under `orgRootKey`), but both slots expose the same rotation-grace + compromise-switch surface that `ciReleaseKey` uses.
 
 ### 3.3 CP binary CLI surface
 
@@ -164,7 +164,7 @@ impl KeySlot {
 }
 ```
 
-`AtticKeySlot` is a separate newtype for now (flat string format) — migrates to `KeySlot` when §II #2 gets the same `{algorithm, public}` treatment as §II #1.
+`AtticKeySlot` mirrors `KeySlot`'s shape (`current` / `previous` / `rejectBefore`) with an `AtticPubkey(String)` newtype holding attic-native `"attic:<host>:<base64>"` material instead of a `{algorithm, public}` pair. Agents forward the raw string to attic tooling at closure-verify time.
 
 ### 3.5 Verify call site
 

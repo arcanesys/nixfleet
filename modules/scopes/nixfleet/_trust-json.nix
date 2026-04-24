@@ -3,17 +3,17 @@
 # TrustConfig — see crates/nixfleet-proto/src/trust.rs and
 # docs/trust-root-flow.md §3.4.
 #
-# The proto expects typed `{algorithm, public}` submodules for keys in
-# KeySlot. modules/_trust.nix declares `ciReleaseKey` that way already,
-# but `orgRootKey` still uses the legacy bare-string keySlotType (per
-# CONTRACTS §II #3 org root keys are always ed25519, so a single string
-# was sufficient). This helper promotes the bare-string slot into the
-# proto struct shape so the binaries can deserialize the emission.
+# `ciReleaseKey` is already in proto shape on the option side (typed
+# {algorithm, public} submodules per CONTRACTS §II #1) and passes
+# through unchanged.
 #
-# `atticCacheKey` emits as a flat string (only `.current`) per proto's
-# AtticKeySlot(String) newtype — see docs/trust-root-flow.md §3.2.
-# Rotation for the attic key is handled by re-signing the closure
-# history, not by a second active key, so `.previous` is unused on wire.
+# `atticCacheKey` and `orgRootKey` store bare-string key material on the
+# option side (keySlotType in modules/_trust.nix). They're pinned to one
+# algorithm each per CONTRACTS §II #2 (attic-native) / §II #3 (ed25519),
+# so the algorithm doesn't need to be declared per-slot. This helper
+# emits both slots as `{current, previous, rejectBefore}` objects
+# matching proto's AtticKeySlot / KeySlot shape, and promotes orgRootKey
+# strings into typed TrustedPubkey entries.
 {trust}: let
   wrapEd25519 = key:
     if key == null
@@ -25,7 +25,11 @@
 in {
   schemaVersion = 1;
   ciReleaseKey = trust.ciReleaseKey;
-  atticCacheKey = trust.atticCacheKey.current;
+  atticCacheKey = {
+    current = trust.atticCacheKey.current;
+    previous = trust.atticCacheKey.previous;
+    rejectBefore = trust.atticCacheKey.rejectBefore;
+  };
   orgRootKey = {
     current = wrapEd25519 trust.orgRootKey.current;
     previous = wrapEd25519 trust.orgRootKey.previous;
