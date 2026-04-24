@@ -18,3 +18,10 @@ fn jcs_golden_bytes_match() {
         "JCS output drifted from golden — signature contract broken"
     );
 }
+
+#[test]
+fn canonicalize_is_idempotent() {
+    let once = canonicalize(GOLDEN_INPUT).expect("canonicalize once");
+    let twice = canonicalize(&once).expect("canonicalize canonical form");
+    assert_eq!(once, twice, "canonical form must be a fixed point");
+}
