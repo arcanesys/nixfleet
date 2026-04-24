@@ -1,3 +1,9 @@
+# lib/mkFleet.nix
+#
+# Produces `fleet.resolved` per RFC-0001 §4.1 + docs/CONTRACTS.md §I #1.
+# Output is canonicalized to JCS (RFC 8785) by `bin/nixfleet-canonicalize`
+# (owned by Stream C) before signing — DO NOT introduce floats, opaque
+# derivations, or attrsets whose iteration order is significant here.
 {lib}: let
   inherit (lib) mkOption types;
 
