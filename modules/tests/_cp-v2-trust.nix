@@ -1,11 +1,15 @@
 # modules/tests/_cp-v2-trust.nix
 #
-# Eval-only assertions for the v0.2 control-plane scope module
-# (modules/scopes/nixfleet/_control-plane.nix). Mirrors
-# _agent-v2-trust.nix and additionally verifies:
-#   - --trust-file, --db-path, --release-path land on the ExecStart.
-#   - Default paths match the contract (trust.json under /etc/nixfleet/cp,
-#     release artifact under /var/lib/nixfleet-cp/fleet.git/releases).
+# Eval-only assertions for the Phase 2 control-plane scope module
+# (modules/scopes/nixfleet/_control-plane.nix). Verifies:
+#   - trust.json materialises at /etc/nixfleet/cp/trust.json
+#   - --artifact, --signature, --trust-file, --observed,
+#     --freshness-window-secs land on the ExecStart
+#   - Default paths match the Phase 2 contract
+#   - A timer unit is declared
+#
+# Phase 3 will graft wire endpoints (--listen, mTLS, db-path); update
+# this file when those flags re-enter the CLI surface.
 #
 # Called from modules/tests/eval.nix. Imported (not auto-imported by
 # import-tree) because the filename starts with an underscore.
@@ -18,6 +22,7 @@
   trustEtc = cfg.environment.etc."nixfleet/cp/trust.json";
   svcCfg = cfg.services.nixfleet-control-plane;
   trust = cfg.nixfleet.trust;
+  timer = cfg.systemd.timers.nixfleet-control-plane;
 in [
   {
     check = trustEtc ? source;
@@ -36,27 +41,51 @@ in [
     msg = "CP ExecStart carries --trust-file flag";
   }
   {
-    check = lib.hasInfix "--db-path" execStart;
-    msg = "CP ExecStart carries --db-path flag";
+    check = lib.hasInfix "--artifact" execStart;
+    msg = "CP ExecStart carries --artifact flag";
   }
   {
-    check = lib.hasInfix "--release-path" execStart;
-    msg = "CP ExecStart carries --release-path flag";
+    check = lib.hasInfix "--signature" execStart;
+    msg = "CP ExecStart carries --signature flag";
+  }
+  {
+    check = lib.hasInfix "--observed" execStart;
+    msg = "CP ExecStart carries --observed flag";
+  }
+  {
+    check = lib.hasInfix "--freshness-window-secs" execStart;
+    msg = "CP ExecStart carries --freshness-window-secs flag";
   }
   {
     check = lib.hasInfix "/etc/nixfleet/cp/trust.json" execStart;
     msg = "CP ExecStart passes the canonical trust-file path";
   }
   {
-    check = toString svcCfg.releasePath == "/var/lib/nixfleet-cp/fleet.git/releases/fleet.resolved.json";
-    msg = "CP releasePath defaults per trust-root-flow.md §4 option (b)";
+    check = svcCfg.artifactPath == "/var/lib/nixfleet-cp/fleet/releases/fleet.resolved.json";
+    msg = "CP artifactPath defaults under /var/lib/nixfleet-cp/fleet/releases/";
+  }
+  {
+    check = svcCfg.signaturePath == "/var/lib/nixfleet-cp/fleet/releases/fleet.resolved.json.sig";
+    msg = "CP signaturePath defaults pair with artifactPath";
+  }
+  {
+    check = svcCfg.observedPath == "/var/lib/nixfleet-cp/observed.json";
+    msg = "CP observedPath defaults under /var/lib/nixfleet-cp/";
   }
   {
     check = toString svcCfg.trustFile == "/etc/nixfleet/cp/trust.json";
     msg = "CP trustFile defaults to /etc/nixfleet/cp/trust.json";
   }
   {
-    check = svcCfg.dbPath == "/var/lib/nixfleet-cp/state.db";
-    msg = "CP dbPath defaults to /var/lib/nixfleet-cp/state.db";
+    check = cfg.systemd.services.nixfleet-control-plane.serviceConfig.Type == "oneshot";
+    msg = "CP service is oneshot (timer-driven, not long-running)";
+  }
+  {
+    check = timer.wantedBy == ["timers.target"];
+    msg = "CP timer is wantedBy timers.target";
+  }
+  {
+    check = lib.hasInfix "m" timer.timerConfig.OnUnitActiveSec;
+    msg = "CP timer OnUnitActiveSec is in minutes";
   }
 ]

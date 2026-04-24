@@ -1,0 +1,32 @@
+{
+  "_comment": "Phase 2 demo fixture — a rollout is already in flight. Some hosts are Queued (haven't been dispatched yet); the reconciler should advance them to Dispatched if disruption budgets and edge predecessors permit. Useful for watching the per-host advance logic in the journal.",
+  "channelRefs": {
+    "stable": "abc123def456"
+  },
+  "lastRolledRefs": {
+    "stable": "old000000-pre-rollout-ref"
+  },
+  "hostState": {
+    "lab":   { "online": true, "currentGeneration": "sha256-old-closure" },
+    "krach": { "online": true, "currentGeneration": "sha256-old-closure" },
+    "ohm":   { "online": true, "currentGeneration": "sha256-old-closure" },
+    "aether":{ "online": true, "currentGeneration": "sha256-old-closure" },
+    "pixel": { "online": true, "currentGeneration": "sha256-old-closure" }
+  },
+  "activeRollouts": [
+    {
+      "id": "stable@abc123",
+      "channel": "stable",
+      "targetRef": "abc123def456",
+      "state": "Executing",
+      "currentWave": 0,
+      "hostStates": {
+        "lab":   "Queued",
+        "krach": "Queued",
+        "ohm":   "Queued",
+        "aether":"Queued",
+        "pixel": "Queued"
+      }
+    }
+  ]
+}

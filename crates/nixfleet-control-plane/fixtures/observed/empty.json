@@ -1,0 +1,7 @@
+{
+  "_comment": "Phase 2 demo fixture — empty observed state. No channel refs known yet, no rollouts in flight, no host check-ins. The reconciler should emit zero actions because there is nothing to reconcile against. Useful as a starting point for the operator to copy and edit.",
+  "channelRefs": {},
+  "lastRolledRefs": {},
+  "hostState": {},
+  "activeRollouts": []
+}

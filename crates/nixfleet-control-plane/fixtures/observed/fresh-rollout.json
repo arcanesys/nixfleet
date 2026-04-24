@@ -1,0 +1,15 @@
+{
+  "_comment": "Phase 2 demo fixture — channel ref has moved (CI committed a new fleet.resolved) but no rollout has been opened yet. Reconciler should emit one OpenRollout action for the channel. The operator hand-edits channelRefs after every CI release until Phase 3 wires the live SQLite projection.",
+  "channelRefs": {
+    "stable": "abc123def456-replace-me-with-real-git-rev"
+  },
+  "lastRolledRefs": {},
+  "hostState": {
+    "lab":   { "online": true, "currentGeneration": null },
+    "krach": { "online": true, "currentGeneration": null },
+    "ohm":   { "online": true, "currentGeneration": null },
+    "aether":{ "online": true, "currentGeneration": null },
+    "pixel": { "online": true, "currentGeneration": null }
+  },
+  "activeRollouts": []
+}
