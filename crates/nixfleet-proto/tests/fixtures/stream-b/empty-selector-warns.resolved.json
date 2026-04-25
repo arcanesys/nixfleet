@@ -1,0 +1,79 @@
+{
+  "channels": {
+    "stable": {
+      "compliance": {
+        "frameworks": [],
+        "mode": "enforce"
+      },
+      "freshnessWindow": 180,
+      "reconcileIntervalMinutes": 30,
+      "rolloutPolicy": "emptyish",
+      "signingIntervalMinutes": 60
+    }
+  },
+  "disruptionBudgets": [],
+  "edges": [],
+  "hosts": {
+    "m": {
+      "channel": "stable",
+      "closureHash": null,
+      "pubkey": null,
+      "system": "x86_64-linux",
+      "tags": [
+        "role-a"
+      ]
+    }
+  },
+  "meta": {
+    "ciCommit": null,
+    "schemaVersion": 1,
+    "signedAt": null,
+    "signatureAlgorithm": "ed25519"
+  },
+  "rolloutPolicies": {
+    "emptyish": {
+      "healthGate": {},
+      "onHealthFailure": "rollback-and-halt",
+      "strategy": "canary",
+      "waves": [
+        {
+          "selector": {
+            "all": false,
+            "channel": null,
+            "hosts": [],
+            "tags": [
+              "role-b"
+            ],
+            "tagsAny": []
+          },
+          "soakMinutes": 10
+        },
+        {
+          "selector": {
+            "all": true,
+            "channel": null,
+            "hosts": [],
+            "tags": [],
+            "tagsAny": []
+          },
+          "soakMinutes": 0
+        }
+      ]
+    }
+  },
+  "schemaVersion": 1,
+  "waves": {
+    "stable": [
+      {
+        "hosts": [],
+        "soakMinutes": 10
+      },
+      {
+        "hosts": [
+          "m"
+        ],
+        "soakMinutes": 0
+      }
+    ]
+  }
+}
