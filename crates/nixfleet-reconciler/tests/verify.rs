@@ -561,9 +561,9 @@ fn accepts_artifact_signed_at_after_reject_before() {
 
 #[test]
 fn reject_before_none_disables_the_gate() {
-    let (bytes, sig, trust, _signed_at) = sign_artifact(FIXTURE_SIGNED);
+    let (bytes, sig, trust, signed_at) = sign_artifact(FIXTURE_SIGNED);
     let freshness = Duration::from_secs(86_400);
-    let now = Utc::now();
+    let now = signed_at + ChronoDuration::minutes(30);
 
     let _fleet = verify_artifact(
         &bytes,
