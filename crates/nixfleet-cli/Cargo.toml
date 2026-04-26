@@ -16,8 +16,16 @@ path = "src/lib.rs"
 name = "nixfleet"
 path = "src/main.rs"
 
+# PR-5: nixfleet-mint-token. Operator-side tool that mints a
+# bootstrap token (signed with the org root private key), one per
+# new fleet host. Runs on the operator's workstation, not on lab.
+[[bin]]
+name = "nixfleet-mint-token"
+path = "src/bin/mint_token.rs"
+
 [dependencies]
 nixfleet-proto = { path = "../nixfleet-proto" }
+nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }
 clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
@@ -29,6 +37,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 comfy-table = "7"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+hex = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

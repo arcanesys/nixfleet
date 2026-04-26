@@ -1,13 +1,25 @@
-//! NixFleet control plane — Phase 2 (read-only reconciler runner).
+//! NixFleet control plane.
 //!
-//! Per the architecture doc Phase 2: ship the reconciler from the spike,
-//! run it as a systemd timer on the M70q, read `fleet.resolved.json` +
-//! a simulated `observed.json`, print the action plan to the journal.
-//! No actions taken, no agents yet — just planning.
+//! Phase 2 shipped this as a oneshot reconciler runner: read
+//! `fleet.resolved.json` + a hand-written `observed.json`, verify,
+//! reconcile, emit the plan, exit. Phase 3 PR-1 turns the same binary
+//! into a long-running TLS server: the existing [`tick`] function
+//! becomes the body of a 30s `tokio::time::interval` loop inside a
+//! new [`server`] module, and `GET /healthz` lights up as the first
+//! axum endpoint. The `tick` subcommand is preserved for tests +
+//! ad-hoc operator runs (see `src/main.rs`).
 //!
-//! This crate exposes [`tick`] as a pure function (testable) and
-//! [`render_plan`] as a JSON-line emitter for the systemd journal. The
-//! binary in `src/main.rs` is the thin CLI shell.
+//! [`tick`] remains a pure function so the long-running serve loop
+//! and the oneshot CLI share one verify-and-reconcile path. The
+//! file-backed `--observed` flag stays as a dev/test fallback until
+//! PR-4 introduces the live projection from agent check-ins.
+
+pub mod auth_cn;
+pub mod forgejo_poll;
+pub mod issuance;
+pub mod observed_projection;
+pub mod server;
+pub mod tls;
 
 use std::fs;
 use std::path::PathBuf;

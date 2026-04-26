@@ -2,7 +2,7 @@
 name = "nixfleet-control-plane"
 version = "0.2.0"
 edition = "2021"
-description = "NixFleet control plane — Phase 2: read-only reconciler runner"
+description = "NixFleet control plane — Phase 3: long-running TLS server + reconciler tick loop"
 license = "AGPL-3.0-only"
 repository = "https://github.com/arcanesys/nixfleet"
 homepage = "https://github.com/arcanesys/nixfleet"
@@ -16,17 +16,68 @@ path = "src/lib.rs"
 name = "nixfleet-control-plane"
 path = "src/main.rs"
 
-# Phase 2 deps only. Phase 3+ adds axum, tokio, rusqlite, rustls when
-# the wire endpoints land — re-add per phase, not speculatively.
+# Phase 3 PR-1: re-add the wire stack PR #36 dropped when it trimmed the
+# CP module to the Phase 2 oneshot-runner surface. axum/axum-server/
+# rustls/rustls-pki-types ported from v0.1's working CP — same versions,
+# same shape (see crates/control-plane/Cargo.toml on tag v0.1.1). The
+# `tick` subcommand keeps Phase 2's oneshot-CLI behaviour for tests +
+# ad-hoc operator runs; `serve` is the new long-running default.
 [dependencies]
 nixfleet-proto = { path = "../nixfleet-proto" }
 nixfleet-reconciler = { path = "../nixfleet-reconciler" }
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+rustls = "0.23"
+rustls-pki-types = "1"
+# PR-2 — mTLS + /v1/whoami. axum-server 0.7 doesn't expose peer
+# certificates through any public API (upstream issue #162); we vendor a
+# trimmed `auth_cn` module wrapping RustlsAcceptor to inject the cert
+# chain into request extensions. x509-parser extracts the CN from the
+# leaf cert; tokio-rustls + tower-service + http are the supporting
+# stack the wrapper needs at the type level. Same versions v0.1's CP
+# (tag v0.1.1) shipped against.
+x509-parser = "0.16"
+tokio-rustls = "0.26"
+tower-service = "0.3"
+http = "1"
+# PR-4 — Forgejo channel-refs poll. reqwest with rustls-tls so the
+# CP doesn't depend on system OpenSSL; base64 decodes the Forgejo
+# /api/v1/repos/.../contents response shape.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+base64 = "0.22"
+# PR-5 — bootstrap enrollment + cert renewal. rcgen builds + signs
+# the agent certs; ed25519-dalek verifies bootstrap-token signatures
+# against the org root key from trust.json; sha2 fingerprints CSR
+# pubkeys for the token's expected_pubkey_fingerprint match. **The
+# fleet CA private key is online on the CP under this design — see
+# issue #41 for the deferred TPM-bound replacement.**
+# `x509-parser` feature gates `CertificateParams::from_ca_cert_pem` and
+# `CertificateSigningRequestParams::from_pem`, which we need to load
+# the operator-supplied fleet CA cert + the agent CSR from disk.
+rcgen = { version = "0.13", features = ["x509-parser"] }
+ed25519-dalek = "2"
+sha2 = "0.10"
+nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }
 
 [dev-dependencies]
 tempfile = "3"
+# /healthz integration test: rcgen mints a self-signed server cert,
+# reqwest hits the listener over TLS, asserts 200 + JSON. Same testing
+# stack v0.1's CP used (crates/control-plane/Cargo.toml on v0.1.1).
+rcgen = { version = "0.13", features = ["x509-parser"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# /v1/enroll signature-verification test: mint a real ed25519 keypair
+# operator-side, sign claims, post the token. Mirrors what
+# nixfleet-mint-token does on the operator workstation.
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+hex = "0.4"
+sha2 = "0.10"

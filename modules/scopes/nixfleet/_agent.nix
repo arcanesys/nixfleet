@@ -87,6 +87,26 @@ in {
         description = "Path to client private key PEM file for mTLS authentication.";
       };
     };
+
+    # PR-5: bootstrap token for first-boot enrollment. When set, and
+    # `tls.clientCert` doesn't exist yet on disk, the agent reads
+    # this token, generates a CSR, POSTs /v1/enroll, and writes the
+    # issued cert + key to the configured paths before entering its
+    # poll loop. fleet/modules/secrets/nixos.nix wires this to an
+    # agenix-decrypted `bootstrap-token-${hostname}` path.
+    bootstrapTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/run/agenix/bootstrap-token-krach";
+      description = ''
+        Path to a one-shot bootstrap token (operator-minted by
+        `nixfleet-mint-token`, signed with the org root key). Used
+        by the agent's first-boot enrollment flow only — once the
+        cert exists at `tls.clientCert`, the token is never read
+        again. Renewal at 50% of cert validity uses the existing
+        cert (mTLS-authenticated /v1/agent/renew), not this token.
+      '';
+    };
   };
 
   config = lib.mkMerge [
@@ -136,6 +156,10 @@ in {
             ++ lib.optionals (cfg.tls.clientKey != null) [
               "--client-key"
               (lib.escapeShellArg cfg.tls.clientKey)
+            ]
+            ++ lib.optionals (cfg.bootstrapTokenFile != null) [
+              "--bootstrap-token-file"
+              (lib.escapeShellArg cfg.bootstrapTokenFile)
             ]
           );
           Restart = "always";

@@ -23,6 +23,8 @@
 //! a signed vs unsigned fixture) are handled at the domain level,
 //! not the serde level.
 
+pub mod agent_wire;
+pub mod enroll_wire;
 pub mod fleet_resolved;
 pub mod trust;
 
