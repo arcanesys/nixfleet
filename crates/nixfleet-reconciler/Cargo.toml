@@ -1,0 +1,33 @@
+[package]
+name = "nixfleet-reconciler"
+description = "Pure-function rollout decision procedure + RFC-0002 §4 step 0 verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lib]
+name = "nixfleet_reconciler"
+path = "src/lib.rs"
+
+[dependencies]
+nixfleet-proto = { path = "../nixfleet-proto" }
+nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+ed25519-dalek = "2"
+p256 = { version = "0.13", features = ["ecdsa"] }
+anyhow = "1"
+thiserror = "2"
+base64 = "0.22"
+serde_jcs = "0.2"
+sha2 = "0.10"
+ssh-key = { version = "0.6", features = ["ed25519"] }
+
+[dev-dependencies]
+rand = "0.9"
+# Enable the shared FleetBuilder fixture API for tests.
+nixfleet-proto = { path = "../nixfleet-proto", features = ["testing"] }
