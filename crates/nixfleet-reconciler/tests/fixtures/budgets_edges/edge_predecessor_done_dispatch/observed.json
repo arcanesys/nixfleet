@@ -1,0 +1,13 @@
+{
+  "channelRefs": { "stable": "r2" },
+  "lastRolledRefs": { "stable": "r1" },
+  "hostState": {
+    "h1": { "online": true, "currentGeneration": "gen-r1" },
+    "h2": { "online": true, "currentGeneration": "gen-r2" }
+  },
+  "activeRollouts": [{
+    "id": "stable@r2", "channel": "stable", "targetRef": "r2",
+    "state": "Executing", "currentWave": 0,
+    "hostStates": { "h1": "Queued", "h2": "Converged" }
+  }]
+}

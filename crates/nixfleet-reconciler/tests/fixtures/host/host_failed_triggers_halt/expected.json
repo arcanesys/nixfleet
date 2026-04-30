@@ -1,0 +1,4 @@
+[
+  { "action": "halt_rollout", "rollout": "stable@r2", "reason": "host h1 failed (policy: rollback-and-halt)" },
+  { "action": "rollback_host", "rollout": "stable@r2", "host": "h1", "target_ref": "r2" }
+]

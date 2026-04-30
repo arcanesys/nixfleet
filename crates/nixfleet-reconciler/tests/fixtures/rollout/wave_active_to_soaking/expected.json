@@ -1,0 +1,3 @@
+[
+  { "action": "promote_wave", "rollout": "stable@r2", "new_wave": 1 }
+]

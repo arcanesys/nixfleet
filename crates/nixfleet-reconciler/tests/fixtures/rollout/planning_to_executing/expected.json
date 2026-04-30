@@ -1,0 +1,4 @@
+[
+  { "action": "dispatch_host", "rollout": "stable@r2", "host": "h1", "target_ref": "r2" },
+  { "action": "dispatch_host", "rollout": "stable@r2", "host": "h2", "target_ref": "r2" }
+]
