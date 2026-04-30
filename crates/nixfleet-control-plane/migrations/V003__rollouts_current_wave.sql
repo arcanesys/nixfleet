@@ -1,0 +1,12 @@
+-- Track the current wave index per rollout. Without this column the
+-- reconciler's `observed_projection` hardcoded current_wave=0, which made
+-- multi-wave channels (workstation->endpoint) silently stuck: PromoteWave
+-- actions fired every tick but were CP-side no-ops, so wave 1 hosts were
+-- never visible to handle_wave and ConvergeRollout never reached the
+-- terminal branch for those channels.
+--
+-- Persisted here (vs. computed at projection time) so a CP rebuild
+-- starting from empty state still reflects the correct wave once the
+-- rollouts table is repopulated by the polling tick - same soft-state
+-- model as the supersession columns.
+ALTER TABLE rollouts ADD COLUMN current_wave INTEGER NOT NULL DEFAULT 0;
