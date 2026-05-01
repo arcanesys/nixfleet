@@ -113,7 +113,7 @@ impl HostDispatchState<'_> {
         };
         super::txn(self.conn, "atomic-confirm", |t| {
             upsert_operational(t, &row, PendingConfirmState::Confirmed, Some(confirmed_at))?;
-            super::dispatch_history::insert_history(t, &row)?;
+            let history_id = super::dispatch_history::insert_history(t, &row)?;
             // Shared with RolloutState::transition_host_state via the free fn so
             // the host_rollout_state row lands in the same txn - partial commit
             // would leave hrs NULL and the soak timer never fires.
@@ -125,6 +125,28 @@ impl HostDispatchState<'_> {
                 crate::state::HealthyMarker::Set(healthy_since),
                 None,
             )?;
+            // Born-terminal: when the atomic confirm is itself jumping
+            // straight to Converged (converged-at-dispatch path - host
+            // was already on target before any dispatch attempt), stamp
+            // the just-inserted dispatch_history row's terminal_state in
+            // the same txn. Without this, `/v1/rollouts/{id}/trace` shows
+            // these hosts as `open` forever; the row never falls under
+            // `mark_rollout_converged`'s sweep because that runs only on
+            // ConvergeRollout, which never fires when the entire wave is
+            // already at terminal at dispatch time.
+            if matches!(target_state, crate::state::HostRolloutState::Converged) {
+                t.execute(
+                    "UPDATE dispatch_history
+                     SET terminal_state = ?1, terminal_at = ?2
+                     WHERE id = ?3 AND terminal_state IS NULL",
+                    params![
+                        crate::state::TerminalState::ConvergedAtDispatch,
+                        confirmed_at.to_rfc3339(),
+                        history_id,
+                    ],
+                )
+                .context("stamp converged-at-dispatch terminal_state")?;
+            }
             Ok(())
         })
     }
@@ -256,9 +278,10 @@ impl HostDispatchState<'_> {
         rollout_id: &str,
         terminal: TerminalState,
     ) -> Result<usize> {
-        // LOADBEARING: Converged stays Confirmed at the operational level; only RolledBack/Cancelled flip the column.
+        // LOADBEARING: Converged / ConvergedAtDispatch stay Confirmed at the operational
+        // level; only RolledBack/Cancelled flip the column.
         let new_state = match terminal {
-            TerminalState::Converged => return Ok(0),
+            TerminalState::Converged | TerminalState::ConvergedAtDispatch => return Ok(0),
             TerminalState::RolledBack => PendingConfirmState::RolledBack,
             TerminalState::Cancelled => PendingConfirmState::Cancelled,
         };
@@ -1038,5 +1061,47 @@ mod tests {
             r.last_healthy_since.contains_key("host-02"),
             "last_healthy_since stamps even on Converged (audit-trail nicety)",
         );
+
+        // C3: born-terminal dispatch_history row. Without this the trace
+        // endpoint shows converged-at-dispatch hosts as `open` forever
+        // because mark_rollout_converged only runs on ConvergeRollout,
+        // which never fires when the entire wave is already terminal.
+        let history = db.dispatch_history().recent_for_host("host-02", 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0].terminal_state.as_deref(),
+            Some("converged-at-dispatch"),
+            "Converged target_state must stamp dispatch_history terminal in same txn",
+        );
+        assert!(
+            history[0].terminal_at.is_some(),
+            "terminal_at must accompany terminal_state",
+        );
+    }
+
+    /// `target_state=Healthy` keeps the row open - the soak window must
+    /// still apply for normal dispatches. Born-terminal is exclusively a
+    /// converged-at-dispatch property.
+    #[test]
+    fn atomic_confirm_with_healthy_state_leaves_history_open() {
+        let db = fresh_db();
+        let now = Utc::now();
+        db.host_dispatch_state()
+            .record_confirmed_dispatch_with_state(
+                "agent-02",
+                "stable@r1",
+                "stable",
+                0,
+                "system-r1",
+                "stable@r1",
+                now,
+                HostRolloutState::Healthy,
+                now,
+            )
+            .unwrap();
+        let history = db.dispatch_history().recent_for_host("agent-02", 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert!(history[0].terminal_state.is_none());
+        assert!(history[0].terminal_at.is_none());
     }
 }
