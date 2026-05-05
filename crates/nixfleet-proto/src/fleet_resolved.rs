@@ -217,11 +217,25 @@ pub struct Edge {
 /// reached terminal state `converged`. If `before` has never had a rollout,
 /// the gate is open (no rollout to wait for). Validated at mkFleet eval time:
 /// both channels must exist, no cycles.
+/// Field semantics match the host-level `Edge` (gated/gates):
+///
+///   `gates` is the predecessor channel — it must converge before any
+///   new rollout opens on `gated`. "gates" reads as "the channel that
+///   gates dispatch on `gated`." `gated` reads as "the channel whose
+///   dispatch is gated by `gates`."
+///
+/// Wire-format aliases `before`/`after` accepted on deserialize so
+/// fleet.resolved bytes signed before the rename still verify on
+/// upgraded CPs. New emitters (mk-fleet) write `gates`/`gated`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelEdge {
-    pub before: String,
-    pub after: String,
+    /// Predecessor channel. Was `before` — kept as serde alias.
+    #[serde(alias = "before")]
+    pub gates: String,
+    /// Dependent channel — held until `gates` converges. Was `after`.
+    #[serde(alias = "after")]
+    pub gated: String,
     #[serde(default)]
     pub reason: Option<String>,
 }
@@ -259,5 +273,40 @@ impl Meta {
     /// Use this in any read path that needs a concrete algorithm string.
     pub fn signature_algorithm_or_default(&self) -> &str {
         self.signature_algorithm.as_deref().unwrap_or("ed25519")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pre-rename fleet.resolved bytes used `before`/`after` keys.
+    /// New CPs must accept those via serde alias, otherwise an
+    /// upgraded CP would reject any signed artifact in the existing
+    /// channel-refs window.
+    #[test]
+    fn channel_edge_accepts_legacy_before_after_wire_format() {
+        let legacy = r#"{"before":"edge","after":"stable","reason":"lab canary"}"#;
+        let parsed: ChannelEdge = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.gates, "edge");
+        assert_eq!(parsed.gated, "stable");
+        assert_eq!(parsed.reason.as_deref(), Some("lab canary"));
+    }
+
+    /// New emitters (mk-fleet post-rename) write `gates`/`gated`.
+    /// Round-trip must be lossless.
+    #[test]
+    fn channel_edge_canonical_wire_format_round_trips() {
+        let edge = ChannelEdge {
+            gates: "edge".into(),
+            gated: "stable".into(),
+            reason: Some("canary".into()),
+        };
+        let bytes = serde_json::to_string(&edge).unwrap();
+        // Canonical wire emits new field names.
+        assert!(bytes.contains("\"gates\":\"edge\""), "wire must use canonical 'gates' field; got {bytes}");
+        assert!(bytes.contains("\"gated\":\"stable\""), "wire must use canonical 'gated' field; got {bytes}");
+        let back: ChannelEdge = serde_json::from_str(&bytes).unwrap();
+        assert_eq!(back, edge);
     }
 }

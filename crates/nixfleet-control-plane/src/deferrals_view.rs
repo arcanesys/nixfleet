@@ -134,7 +134,7 @@ pub async fn compute_channel_deferrals(state: &AppState) -> Vec<ChannelDeferral>
             let reason = fleet
                 .channel_edges
                 .iter()
-                .find(|e| e.after == *channel && e.before == blocker)
+                .find(|e| e.gated == *channel && e.gates == blocker)
                 .and_then(|e| e.reason.clone())
                 .unwrap_or_else(|| {
                     format!("predecessor channel '{blocker}' has an unfinished rollout")

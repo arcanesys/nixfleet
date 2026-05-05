@@ -109,8 +109,8 @@ fn fleet_two_channels() -> FleetResolved {
         waves,
         edges: vec![],
         channel_edges: vec![ChannelEdge {
-            before: "edge".into(),
-            after: "stable".into(),
+            gates: "edge".into(),
+            gated: "stable".into(),
             reason: None,
         }],
         disruption_budgets: vec![],

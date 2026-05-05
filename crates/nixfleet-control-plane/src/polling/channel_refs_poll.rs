@@ -431,8 +431,8 @@ mod tests {
             waves: HashMap::new(),
             edges: vec![],
             channel_edges: vec![ChannelEdge {
-                before: "edge".into(),
-                after: "stable".into(),
+                gates: "edge".into(),
+                gated: "stable".into(),
                 reason: Some("canary".into()),
             }],
             disruption_budgets: vec![],

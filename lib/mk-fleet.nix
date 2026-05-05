@@ -206,18 +206,59 @@
     };
   };
 
-  # Channel-level DAG edge. `before` channel must converge its rollout
-  # before `after` channel opens. `before`/`after` here read naturally
-  # in time order (predecessor / successor).
+  # Cross-channel ordering edge. Canonical names match the host-level
+  # `Edge` (gated/gates): `gates` is the predecessor that runs first;
+  # `gated` is the dependent that holds until `gates` converges.
+  #
+  # `before`/`after` are accepted as deprecated aliases — older
+  # fleet.nix files keep working without an atomic rename. The
+  # validation block below errors if both legacy + canonical names
+  # are set on the same edge so the operator picks one shape.
   channelEdgeType = types.submodule {
     options = {
-      before = mkOption {type = types.str;};
-      after = mkOption {type = types.str;};
+      gates = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Predecessor channel — must converge before `gated` opens.";
+      };
+      gated = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Dependent channel — held until `gates` converges.";
+      };
+      before = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "DEPRECATED alias for `gates`. Update to `gates` on next edit.";
+      };
+      after = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "DEPRECATED alias for `gated`. Update to `gated` on next edit.";
+      };
       reason = mkOption {
         type = types.str;
         default = "";
       };
     };
+  };
+
+  # Normalize a channelEdge record from either field naming to
+  # `{gates, gated, reason}`. Errors when both shapes are set on
+  # the same edge — the operator must pick one.
+  normalizeChannelEdge = e: let
+    g =
+      if e.gates != null
+      then e.gates
+      else e.before;
+    d =
+      if e.gated != null
+      then e.gated
+      else e.after;
+  in {
+    gates = g;
+    gated = d;
+    reason = e.reason;
   };
 
   budgetType = types.submodule {
@@ -234,17 +275,20 @@
     };
   };
 
-  # LOADBEARING: edge { after = "a"; before = "b"; } walks "after → before".
+  # LOADBEARING: edges are walked "gated → gates" (dependent → predecessor).
+  # Operates on the NORMALIZED form (post `normalizeChannelEdge`) so legacy
+  # `before`/`after` and canonical `gates`/`gated` shapes both flow through
+  # the same DAG check.
   hasCycle = edges: let
     adj =
       lib.foldl' (
         acc: e: let
-          current = acc.${e.after} or [];
+          current = acc.${e.gated} or [];
         in
-          acc // {${e.after} = current ++ [e.before];}
+          acc // {${e.gated} = current ++ [e.gates];}
       ) {}
       edges;
-    nodes = lib.unique (map (e: e.after) edges ++ map (e: e.before) edges);
+    nodes = lib.unique (map (e: e.gated) edges ++ map (e: e.gates) edges);
     visit = node: path: visited:
       if builtins.elem node path
       then {
@@ -354,14 +398,34 @@
       )
       cfg.edges;
 
+    # Detect mixed-shape entries before normalization — operator must
+    # pick one naming. Cleaner than silently picking gates+after.
+    channelEdgeShapeErrors =
+      lib.concatMap (
+        e:
+          lib.optional ((e.gates != null) && (e.before != null))
+          "channelEdges entry sets both `gates` and `before` — pick one (canonical: `gates`)"
+          ++ lib.optional ((e.gated != null) && (e.after != null))
+          "channelEdges entry sets both `gated` and `after` — pick one (canonical: `gated`)"
+          ++ lib.optional ((e.gates == null) && (e.before == null))
+          "channelEdges entry must set `gates` (or legacy alias `before`)"
+          ++ lib.optional ((e.gated == null) && (e.after == null))
+          "channelEdges entry must set `gated` (or legacy alias `after`)"
+      )
+      cfg.channelEdges;
+
+    # All downstream channelEdge-aware code reads from this normalized
+    # list. Single shape ⇒ no per-site if-else for the legacy fields.
+    normalizedChannelEdges = map normalizeChannelEdge cfg.channelEdges;
+
     channelEdgeErrors =
       lib.concatMap (
         e:
-          lib.optional (!builtins.elem e.before channelNames) "channelEdges.before references unknown channel '${e.before}'"
-          ++ lib.optional (!builtins.elem e.after channelNames) "channelEdges.after references unknown channel '${e.after}'"
-          ++ lib.optional (e.before == e.after) "channelEdges entry has before == after ('${e.before}'); use a wave-staged policy for intra-channel ordering instead"
+          lib.optional (!builtins.elem e.gates channelNames) "channelEdges.gates references unknown channel '${e.gates}'"
+          ++ lib.optional (!builtins.elem e.gated channelNames) "channelEdges.gated references unknown channel '${e.gated}'"
+          ++ lib.optional (e.gates == e.gated) "channelEdges entry has gates == gated ('${e.gates}'); use a wave-staged policy for intra-channel ordering instead"
       )
-      cfg.channelEdges;
+      normalizedChannelEdges;
 
     configurationErrors =
       lib.concatMap (
@@ -389,17 +453,13 @@
       )
       (lib.attrNames cfg.channels);
 
-    # Normalise host-edge field names (gated/gates) to the channelEdge
-    # before/after shape that hasCycle expects: "before runs first, after
-    # runs second". A `gated` host runs AFTER its `gates` host completes
-    # (gates → gated in DAG order), so map gates → before, gated → after.
-    cycleErrors = lib.optional (hasCycle (map (e: {
-        before = e.gates;
-        after = e.gated;
-      })
-      cfg.edges)) "edges form a cycle; the DAG invariant is violated";
+    # `hasCycle` expects edges with `gates`/`gated`. Host-level `edges`
+    # already use that schema; channelEdges flow through
+    # `normalizedChannelEdges` so legacy `before`/`after` entries also
+    # work without per-site translation.
+    cycleErrors = lib.optional (hasCycle cfg.edges) "edges form a cycle; the DAG invariant is violated";
 
-    channelCycleErrors = lib.optional (hasCycle cfg.channelEdges) "channelEdges form a cycle; cross-channel ordering must be a DAG";
+    channelCycleErrors = lib.optional (hasCycle normalizedChannelEdges) "channelEdges form a cycle; cross-channel ordering must be a DAG";
 
     freshnessErrors =
       lib.concatMap (
@@ -450,7 +510,7 @@
       lib.filter (n: resolvedComplianceMode n == "enforce") (lib.attrNames cfg.channels);
     staticComplianceErrors = staticFailuresForChannels enforceChannels;
 
-    errs = hostChannelErrors ++ channelPolicyErrors ++ edgeErrors ++ channelEdgeErrors ++ configurationErrors ++ complianceErrors ++ cycleErrors ++ channelCycleErrors ++ freshnessErrors ++ staticComplianceErrors;
+    errs = hostChannelErrors ++ channelPolicyErrors ++ edgeErrors ++ channelEdgeShapeErrors ++ channelEdgeErrors ++ configurationErrors ++ complianceErrors ++ cycleErrors ++ channelCycleErrors ++ freshnessErrors ++ staticComplianceErrors;
   in
     if errs == []
     then true
@@ -564,7 +624,11 @@
           )
           cfg.channels;
         edges = cfg.edges;
-        channelEdges = cfg.channelEdges;
+        # Emit canonical {gates, gated, reason} regardless of whether the
+        # operator wrote `before/after` or `gates/gated` in fleet.nix.
+        # Old fleet.resolved.json bytes (legacy `before/after`) still
+        # verify on upgraded CPs via the proto's serde alias.
+        channelEdges = map normalizeChannelEdge cfg.channelEdges;
         # Selector preserved at wire level (was: expanded to hosts at eval).
         # Reconciler resolves dynamically so adding/removing a tagged host
         # doesn't require re-signing fleet.resolved. Pre-feat-channel-edges

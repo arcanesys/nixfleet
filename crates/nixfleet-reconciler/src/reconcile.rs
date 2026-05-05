@@ -32,16 +32,16 @@ pub fn topological_channel_order(
         successors.insert(ch.clone(), Vec::new());
     }
     for edge in &fleet.channel_edges {
-        if !channel_set.contains(edge.before.as_str())
-            || !channel_set.contains(edge.after.as_str())
+        if !channel_set.contains(edge.gates.as_str())
+            || !channel_set.contains(edge.gated.as_str())
         {
             continue;
         }
         successors
-            .entry(edge.before.clone())
+            .entry(edge.gates.clone())
             .or_default()
-            .push(edge.after.clone());
-        *in_degree.entry(edge.after.clone()).or_insert(0) += 1;
+            .push(edge.gated.clone());
+        *in_degree.entry(edge.gated.clone()).or_insert(0) += 1;
     }
     let mut frontier: Vec<String> = in_degree
         .iter()
@@ -231,8 +231,8 @@ mod channel_edge_tests {
         // counting as a blocker even though the rollout row remains in
         // the DB until superseded.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
-            before: "db".into(),
-            after: "app".into(),
+            gates: "db".into(),
+            gated: "app".into(),
             reason: None,
         }]);
         let mut observed = Observed::default();
@@ -272,8 +272,8 @@ mod channel_edge_tests {
         // (Soaked or Converged), the predecessor is still active and
         // blocks its successor.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
-            before: "db".into(),
-            after: "app".into(),
+            gates: "db".into(),
+            gated: "app".into(),
             reason: None,
         }]);
         let mut observed = Observed::default();
@@ -308,8 +308,8 @@ mod channel_edge_tests {
         // counts as terminal-for-ordering so the successor doesn't
         // get artificially held for one extra tick.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
-            before: "db".into(),
-            after: "app".into(),
+            gates: "db".into(),
+            gated: "app".into(),
             reason: None,
         }]);
         let mut observed = Observed::default();
@@ -345,8 +345,8 @@ mod channel_edge_tests {
         // previous ConvergeRollout-equivalent path) while the last
         // wave's hosts are at Soaked. Either is terminal-for-ordering.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
-            before: "db".into(),
-            after: "app".into(),
+            gates: "db".into(),
+            gated: "app".into(),
             reason: None,
         }]);
         let mut observed = Observed::default();
@@ -381,8 +381,8 @@ mod channel_edge_tests {
         // active_rollouts (empty post-DB-wipe). The fix iterates channels
         // in topological order and tracks emitted_opens within the tick.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
-            before: "db".into(),
-            after: "app".into(),
+            gates: "db".into(),
+            gated: "app".into(),
             reason: Some("schema-migration".into()),
         }]);
         let mut observed = Observed::default();
@@ -414,8 +414,8 @@ mod channel_edge_tests {
     #[test]
     fn channel_edge_with_active_predecessor_defers_rather_than_opens() {
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
-            before: "db".into(),
-            after: "app".into(),
+            gates: "db".into(),
+            gated: "app".into(),
             reason: Some("schema-migration".into()),
         }]);
         let observed = observed_with_active_rollout_on("db");
@@ -451,8 +451,8 @@ mod channel_edge_tests {
         // never released" as "proceed" (edges constrain ordering between
         // active rollouts, not a presence requirement).
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
-            before: "db".into(),
-            after: "app".into(),
+            gates: "db".into(),
+            gated: "app".into(),
             reason: None,
         }]);
         let mut observed = Observed::default();
@@ -470,8 +470,8 @@ mod channel_edge_tests {
     #[test]
     fn rollout_deferred_is_debounced_via_last_deferrals() {
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
-            before: "db".into(),
-            after: "app".into(),
+            gates: "db".into(),
+            gated: "app".into(),
             reason: None,
         }]);
         let mut observed = observed_with_active_rollout_on("db");
@@ -503,13 +503,13 @@ mod channel_edge_tests {
     fn rollout_deferred_re_fires_on_blocker_change() {
         let fleet = fleet_with_channel_edges(vec![
             ChannelEdge {
-                before: "db".into(),
-                after: "app".into(),
+                gates: "db".into(),
+                gated: "app".into(),
                 reason: None,
             },
             ChannelEdge {
-                before: "infra".into(),
-                after: "app".into(),
+                gates: "infra".into(),
+                gated: "app".into(),
                 reason: None,
             },
         ]);
@@ -568,8 +568,8 @@ mod channel_edge_tests {
     fn channel_edge_clears_when_predecessor_converges() {
         // No active rollout on db means nothing to wait for.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
-            before: "db".into(),
-            after: "app".into(),
+            gates: "db".into(),
+            gated: "app".into(),
             reason: None,
         }]);
         let mut observed = Observed::default();

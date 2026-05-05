@@ -53,16 +53,16 @@ pub fn check_for_channel(
     fleet
         .channel_edges
         .iter()
-        .filter(|e| e.after == channel)
+        .filter(|e| e.gated == channel)
         .find_map(|e| {
             channel_blocked(
                 fleet,
                 observed,
                 emitted_opens_in_tick,
-                &e.before,
+                &e.gates,
                 conservative_on_missing_state,
             )
-            .then(|| e.before.clone())
+            .then(|| e.gates.clone())
         })
 }
 
