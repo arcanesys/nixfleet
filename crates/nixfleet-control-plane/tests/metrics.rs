@@ -263,6 +263,16 @@ async fn metrics_endpoint_returns_expected_gauges_and_counters() {
         metric_present(&scrape2, "nixfleet_host_outstanding_compliance_failures"),
         "missing outstanding gauge after report:\n{body2}"
     );
+    // Pre-summed outstanding total — the dashboard reads this directly
+    // instead of computing the sum via PromQL arithmetic.
+    assert!(
+        metric_present_with_labels(
+            &scrape2,
+            "nixfleet_host_outstanding_total",
+            &[("host", HOST), ("channel", CHANNEL)],
+        ),
+        "missing outstanding_total gauge after report:\n{body2}"
+    );
 
     // Active-rollouts and channel-deferred parity metrics: emitted on
     // every scrape regardless of state (zero where nothing's active /

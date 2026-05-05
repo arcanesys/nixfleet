@@ -98,6 +98,30 @@ impl HostRolloutState {
     pub fn is_failed(&self) -> bool {
         matches!(self, Self::Failed | Self::Reverted)
     }
+
+    /// Stable numeric encoding for tabular dashboards (Grafana value
+    /// mappings render the integer as the state name).
+    ///
+    /// Ordering is lifecycle-progress ascending: a host with a higher
+    /// code has either advanced further OR fallen into a failure
+    /// terminal. Failed/Reverted sit at 7/8 so threshold colouring
+    /// (`>=7 → red`) flags them without per-state mappings.
+    ///
+    /// LOADBEARING: changing a code is a wire-format break for the
+    /// dashboard's value mappings — bump the dashboard JSON in lock-step.
+    pub fn state_code(&self) -> u32 {
+        match self {
+            Self::Queued => 0,
+            Self::Dispatched => 1,
+            Self::Activating => 2,
+            Self::ConfirmWindow => 3,
+            Self::Healthy => 4,
+            Self::Soaked => 5,
+            Self::Converged => 6,
+            Self::Failed => 7,
+            Self::Reverted => 8,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -127,5 +151,41 @@ mod tests {
         assert!(HostRolloutState::from_db_str("healthy").is_err());
         assert!(HostRolloutState::from_db_str("soaked").is_err());
         assert!(HostRolloutState::from_db_str("Healhty").is_err());
+    }
+
+    #[test]
+    fn state_codes_are_distinct_and_lifecycle_ordered() {
+        let codes: Vec<u32> = [
+            HostRolloutState::Queued,
+            HostRolloutState::Dispatched,
+            HostRolloutState::Activating,
+            HostRolloutState::ConfirmWindow,
+            HostRolloutState::Healthy,
+            HostRolloutState::Soaked,
+            HostRolloutState::Converged,
+            HostRolloutState::Failed,
+            HostRolloutState::Reverted,
+        ]
+        .iter()
+        .map(|s| s.state_code())
+        .collect();
+        // Distinct.
+        let mut sorted = codes.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), codes.len(), "state_code values must be unique");
+        // Lifecycle-ascending up through Converged, then failure terminals.
+        assert!(
+            codes[0] < codes[1] && codes[1] < codes[2] && codes[2] < codes[3]
+                && codes[3] < codes[4] && codes[4] < codes[5] && codes[5] < codes[6],
+            "Queued..Converged must be strictly ascending: {codes:?}",
+        );
+        assert!(
+            HostRolloutState::Failed.state_code() > HostRolloutState::Converged.state_code(),
+            "Failed must rank above Converged so threshold colouring fires",
+        );
+        assert!(
+            HostRolloutState::Reverted.state_code() > HostRolloutState::Converged.state_code(),
+        );
     }
 }

@@ -232,6 +232,12 @@ fn record_host_gauges(view: &HostStatusEntry, now: chrono::DateTime<Utc>) {
     .set(view.outstanding_compliance_failures as f64);
     gauge!("nixfleet_host_outstanding_runtime_gate_errors", &labels[..])
         .set(view.outstanding_runtime_gate_errors as f64);
+    // Pre-summed outstanding total — the dashboard's Fleet Status table
+    // joins this directly instead of computing the sum via PromQL
+    // arithmetic (which drops `__name__` and breaks joinByLabels).
+    gauge!("nixfleet_host_outstanding_total", &labels[..]).set(
+        (view.outstanding_compliance_failures + view.outstanding_runtime_gate_errors) as f64,
+    );
     gauge!("nixfleet_host_verified_event_count", &labels[..])
         .set(view.verified_event_count as f64);
 
@@ -252,11 +258,22 @@ fn record_host_gauges(view: &HostStatusEntry, now: chrono::DateTime<Utc>) {
         .set(uptime as f64);
     }
 
-    // One-of-N gauge: emit only the active state per host. PromQL queries
-    // (`nixfleet_host_rollout_state == 1`, `count by (state)`) read this
-    // naturally; absent state = host has no DB row for the current
-    // rollout (e.g. fresh deploy hasn't reached this host yet).
-    // Cardinality bound: hosts × channels × at most 1 active state.
+    // Two parallel state surfaces, by design:
+    //
+    // 1. `nixfleet_host_rollout_state{host,channel,state}` — one-of-N
+    //    label-style gauge. Used by `count by (state) (... == 1)` to
+    //    drive the per-state distribution bargauge. The state name is
+    //    in the LABEL.
+    //
+    // 2. `nixfleet_host_state_code{host,channel}` — numeric encoding
+    //    of the same enum. Used by tabular dashboards that join
+    //    multiple metrics by (host,channel) via `joinByLabels` —
+    //    those joins discard non-key labels, so a state-via-label
+    //    metric can't carry the state name through. Numeric value +
+    //    Grafana value mappings recovers the name.
+    //
+    // Cardinality cost of the second surface: +1 series per (host,channel),
+    // bounded by the verified-fleet snapshot.
     if let Some(state) = view.rollout_state {
         gauge!(
             "nixfleet_host_rollout_state",
@@ -265,6 +282,7 @@ fn record_host_gauges(view: &HostStatusEntry, now: chrono::DateTime<Utc>) {
             "state" => state.as_db_str().to_string(),
         )
         .set(1.0);
+        gauge!("nixfleet_host_state_code", &labels[..]).set(f64::from(state.state_code()));
     }
 }
 
@@ -308,6 +326,44 @@ mod tests {
         assert!(
             body.contains("host=\"metrics-test-host\""),
             "missing host label:\n{body}"
+        );
+    }
+
+    #[test]
+    fn host_state_code_renders_numeric_value() {
+        use nixfleet_proto::HostRolloutState;
+        let handle = install_recorder();
+        let view = HostStatusEntry {
+            hostname: "state-code-host".into(),
+            channel: "stable".into(),
+            declared_closure_hash: None,
+            current_closure_hash: None,
+            pending_closure_hash: None,
+            last_checkin_at: None,
+            last_rollout_id: None,
+            converged: false,
+            outstanding_compliance_failures: 2,
+            outstanding_runtime_gate_errors: 1,
+            verified_event_count: 0,
+            last_uptime_secs: None,
+            rollout_state: Some(HostRolloutState::Healthy),
+        };
+        record_host_gauges(&view, Utc::now());
+        let body = handle.render();
+        assert!(
+            body.contains("nixfleet_host_state_code{channel=\"stable\",host=\"state-code-host\"} 4")
+                || body.contains(
+                    "nixfleet_host_state_code{host=\"state-code-host\",channel=\"stable\"} 4"
+                ),
+            "expected state_code=4 (Healthy) for state-code-host:\n{body}"
+        );
+        // Outstanding total = compliance + runtime = 3.
+        assert!(
+            body.contains("nixfleet_host_outstanding_total{channel=\"stable\",host=\"state-code-host\"} 3")
+                || body.contains(
+                    "nixfleet_host_outstanding_total{host=\"state-code-host\",channel=\"stable\"} 3"
+                ),
+            "expected outstanding_total=3 for state-code-host:\n{body}"
         );
     }
 
