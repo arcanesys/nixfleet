@@ -12,13 +12,12 @@ pub struct RolloutState<'a> {
     pub(super) conn: &'a Mutex<Connection>,
 }
 
-/// Single-source-of-truth host_rollout_state transition: SELECT prev →
-/// UPDATE/INSERT → emit metric on flip. Takes a `&Connection` so it
-/// composes inside a `Transaction` (rusqlite `Transaction` derefs to
-/// `Connection`) — used both by `RolloutState::transition_host_state`
-/// and by `host_dispatch_state::record_confirmed_dispatch_with_healthy_marker`'s
-/// atomic txn. Replaces the previously-duplicated UPSERT SQL across the
-/// two locations.
+/// Single-source-of-truth host_rollout_state transition. Takes a
+/// `&Connection` so it composes inside a `Transaction` (rusqlite
+/// `Transaction` derefs to `Connection`) — used both by
+/// `RolloutState::transition_host_state` (lock-and-delegate) and by
+/// `host_dispatch_state::record_confirmed_dispatch_with_healthy_marker`'s
+/// atomic txn. One SQL definition for both paths.
 ///
 /// `expected_from = Some(prev)` is the state-machine guard — concurrent
 /// reconcilers can't both flip `Failed → Reverted`; the second UPDATE
@@ -37,16 +36,6 @@ pub(super) fn transition_host_state_inner(
         HealthyMarker::Set(ts) => Some(ts.to_rfc3339()),
         HealthyMarker::Untouched => None,
     };
-
-    let prev: Option<HostRolloutState> = conn
-        .query_row(
-            "SELECT host_state FROM host_rollout_state
-             WHERE rollout_id = ?1 AND hostname = ?2",
-            params![rollout_id, hostname],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-        .and_then(|s| HostRolloutState::from_db_str(&s).ok());
 
     let n = match expected_from {
         None => conn
@@ -84,22 +73,14 @@ pub(super) fn transition_host_state_inner(
             .context("guarded transition host_rollout_state")?,
     };
 
-    if n > 0 && prev != Some(new_state) {
-        crate::metrics::record_state_transition(
-            prev.as_ref().map(|p| p.as_db_str()).unwrap_or("(none)"),
-            new_state.as_db_str(),
-        );
-    }
-
     Ok(n)
 }
 
 impl RolloutState<'_> {
     /// Lock-and-delegate wrapper around `transition_host_state_inner`.
-    /// The inner function does SELECT-before-UPDATE under one connection
-    /// handle and emits the
-    /// `nixfleet_host_state_transition_total{from_state, to_state}` counter
-    /// on flip — single source of truth for both the SQL and the metric.
+    /// The inner function holds the canonical UPSERT SQL and is shared
+    /// with the orphan-confirm atomic txn — both paths write through one
+    /// definition.
     pub fn transition_host_state(
         &self,
         hostname: &str,
@@ -121,9 +102,6 @@ impl RolloutState<'_> {
     /// Other states (Failed, Reverted, Healthy, ConfirmWindow, etc.) are
     /// untouched — those represent un-completed work the reconciler must
     /// still resolve, and stamping them Converged would lose information.
-    ///
-    /// Each affected row emits one `Soaked → Converged` transition counter
-    /// — same emission site as the singular `transition_host_state` path.
     pub fn mark_rollout_hosts_converged(&self, rollout_id: &str) -> Result<usize> {
         let guard = super::lock_conn(self.conn)?;
         let n = guard
@@ -136,9 +114,6 @@ impl RolloutState<'_> {
                 params![rollout_id],
             )
             .context("mark_rollout_hosts_converged: Soaked → Converged sweep")?;
-        for _ in 0..n {
-            crate::metrics::record_state_transition("Soaked", "Converged");
-        }
         Ok(n)
     }
 

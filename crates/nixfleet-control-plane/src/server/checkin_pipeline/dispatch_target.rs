@@ -115,7 +115,6 @@ pub(super) async fn dispatch_target_for_checkin(
         state.confirm_deadline_secs as u32,
         current_wave,
     );
-    crate::metrics::record_checkin_decision(&req.hostname, decision.discriminator());
     match decision {
         crate::dispatch::Decision::Dispatch {
             target,

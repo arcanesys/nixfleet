@@ -254,14 +254,6 @@ async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
         crate::VerifyOutcome::Ok(ok) => &ok.actions,
         crate::VerifyOutcome::Failed { .. } => return,
     };
-    // Decompose the action stream as a counter — one increment per
-    // emitted Action, kebab-case discriminator on the label. Drives the
-    // dashboard's operations-activity panels (reconciler decisions,
-    // soak transitions, wave promotions, convergence, rollback). Runs
-    // before the DB gate so DB-less CPs still report action shape.
-    for action in actions {
-        crate::metrics::record_reconciler_action(crate::metrics::action_kind_label(action));
-    }
     // Stamp / clear deferral state BEFORE the DB gate below — deferrals are
     // pure-journal and the debounce must work even on a CP started without
     // --db. OpenRollout for a previously-deferred channel clears the entry

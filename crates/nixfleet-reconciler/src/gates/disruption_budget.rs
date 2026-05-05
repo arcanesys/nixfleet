@@ -47,10 +47,8 @@ pub fn check(input: &GateInput) -> Option<GateBlock> {
 
 /// Sum of in-flight hosts across all active rollouts whose snapshot has
 /// a budget with the matching `selector`. Match by selector equality
-/// (not list index) — see module doc. Public so the metrics scraper
-/// can read the same predicate the gate uses; one source of truth for
-/// "how many slots are taken".
-pub fn in_flight_count(observed: &Observed, selector: &Selector) -> u32 {
+/// (not list index) — see module doc.
+fn in_flight_count(observed: &Observed, selector: &Selector) -> u32 {
     observed
         .active_rollouts
         .iter()
