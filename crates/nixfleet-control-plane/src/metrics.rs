@@ -461,21 +461,18 @@ fn record_host_gauges(view: &HostStatusEntry, now: chrono::DateTime<Utc>) {
     gauge!("nixfleet_host_verified_event_count", &labels[..])
         .set(view.verified_event_count as f64);
 
+    // {host,channel} label set for ALL per-host gauges — joinByLabels at
+    // the dashboard level joins host_state_code/_converged/_outstanding/
+    // _checkin_seconds/_uptime_seconds by both keys, and a metric missing
+    // `channel` falls out of the join → empty rows in the Fleet Status
+    // table. Keep label sets uniform across the per-host family.
     if let Some(last) = view.last_checkin_at {
         let age = now.signed_duration_since(last).num_seconds().max(0);
-        gauge!(
-            "nixfleet_host_last_checkin_seconds",
-            "host" => view.hostname.clone(),
-        )
-        .set(age as f64);
+        gauge!("nixfleet_host_last_checkin_seconds", &labels[..]).set(age as f64);
     }
 
     if let Some(uptime) = view.last_uptime_secs {
-        gauge!(
-            "nixfleet_host_uptime_seconds",
-            "host" => view.hostname.clone(),
-        )
-        .set(uptime as f64);
+        gauge!("nixfleet_host_uptime_seconds", &labels[..]).set(uptime as f64);
     }
 
     // Two parallel state surfaces, by design:
