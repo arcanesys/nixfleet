@@ -171,8 +171,12 @@ pub(in crate::server) async fn list_active(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let db = state.db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let rollouts_meta = db.rollouts().list_active().map_err(|err| {
-        tracing::warn!(error = %err, "list_active rollouts query failed");
+    // UI surface — show only rollouts the operator should still care
+    // about (excludes both superseded and terminal). The gate observed
+    // builders use `list_active()` directly so converged predecessors
+    // stay visible to channel_edges.
+    let rollouts_meta = db.rollouts().list_in_flight().map_err(|err| {
+        tracing::warn!(error = %err, "list_in_flight rollouts query failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let snap = db
@@ -236,6 +240,12 @@ pub(in crate::server) async fn lifecycle(
         "rolloutId": rollout_id,
         "supersededAt": status.superseded_at.map(|t| t.to_rfc3339()),
         "supersededBy": status.superseded_by,
+        // Distinct from supersededAt — terminal_at fires on natural
+        // convergence (Action::ConvergeRollout) or orphan-sweep retire
+        // (channel has no expected hosts). UI consumers use this to
+        // gray out finished rollouts; gates ignore it (they read the
+        // host_states directly from list_active).
+        "terminalAt": status.terminal_at.map(|t| t.to_rfc3339()),
     })
     .to_string();
     let mut headers = HeaderMap::new();

@@ -114,6 +114,7 @@ pub(super) async fn build_observed_for_gates(
                 host_states,
                 last_healthy_since,
                 budgets: vec![],
+                terminal_at: in_flight_r.terminal_at,
             }
         })
         .collect();

@@ -218,6 +218,7 @@ mod channel_edge_tests {
             host_states: HashMap::new(),
             last_healthy_since: HashMap::new(),
             budgets: vec![],
+            terminal_at: None,
         });
         o
     }
@@ -248,6 +249,7 @@ mod channel_edge_tests {
             ]),
             last_healthy_since: HashMap::new(),
             budgets: vec![],
+            terminal_at: None,
         });
         let actions = reconcile(&fleet, &observed, chrono::Utc::now());
         assert!(
@@ -288,6 +290,7 @@ mod channel_edge_tests {
             ]),
             last_healthy_since: HashMap::new(),
             budgets: vec![],
+            terminal_at: None,
         });
         let actions = reconcile(&fleet, &observed, chrono::Utc::now());
         let blocked = actions.iter().any(
@@ -323,6 +326,7 @@ mod channel_edge_tests {
             ]),
             last_healthy_since: HashMap::new(),
             budgets: vec![],
+            terminal_at: None,
         });
         let actions = reconcile(&fleet, &observed, chrono::Utc::now());
         assert!(
@@ -359,6 +363,7 @@ mod channel_edge_tests {
             ]),
             last_healthy_since: HashMap::new(),
             budgets: vec![],
+            terminal_at: None,
         });
         let actions = reconcile(&fleet, &observed, chrono::Utc::now());
         assert!(
@@ -521,6 +526,7 @@ mod channel_edge_tests {
             host_states: HashMap::new(),
             last_healthy_since: HashMap::new(),
             budgets: vec![],
+            terminal_at: None,
         });
         // Need a third channel in fleet for completeness.
         observed.last_deferrals.insert(

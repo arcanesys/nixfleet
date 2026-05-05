@@ -76,6 +76,14 @@ pub struct RolloutDbSnapshot {
     /// when `Action::PromoteWave` fires. Defaults to 0 for rollouts not yet
     /// in the rollouts table (transitional, single-tick window).
     pub current_wave: u32,
+    /// `Some(t)` once the rollout reaches a terminal state (ConvergeRollout
+    /// stamped, or orphan-sweep retired). Plumbed through to
+    /// `Rollout::terminal_at` so `advance_rollout` short-circuits and so
+    /// gates can distinguish "predecessor converged" from "predecessor
+    /// not yet known". `None` for snapshots built without joining the
+    /// rollouts table (test fixtures, legacy paths).
+    #[doc(hidden)]
+    pub terminal_at: Option<DateTime<Utc>>,
 }
 
 /// `(hostname, rollout_id, wave, target_closure_hash)` for rows with a passed deadline.
@@ -344,6 +352,11 @@ impl HostDispatchState<'_> {
                     host_states: HashMap::new(),
                     last_healthy_since: HashMap::new(),
                     current_wave: current_wave as u32,
+                    // active_rollouts_snapshot is keyed off host_dispatch_state;
+                    // terminal_at lives on the rollouts table. Callers that
+                    // need it (gate observed builders) merge from
+                    // db.rollouts().list_active() and overwrite this field.
+                    terminal_at: None,
                 });
             entry.host_states.insert(hostname.clone(), host_state);
             if let Some(ts) = hrs_ts {

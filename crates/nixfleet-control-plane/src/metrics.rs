@@ -126,10 +126,16 @@ fn record_active_rollouts(state: &AppState, all_channels: &[String], now: DateTi
     let Some(db) = state.db.as_deref() else {
         return;
     };
-    let rollouts = match db.rollouts().list_active() {
+    // UI/operator metric — count what's actually pending operator
+    // attention. `list_in_flight()` excludes both superseded AND
+    // terminal so a converged-and-stamped rollout doesn't keep
+    // bumping `nixfleet_active_rollouts` after the work is done.
+    // Gates use `list_active()` instead (terminal predecessors stay
+    // visible to channel_edges).
+    let rollouts = match db.rollouts().list_in_flight() {
         Ok(rs) => rs,
         Err(err) => {
-            tracing::warn!(error = %err, "metrics: list_active rollouts failed");
+            tracing::warn!(error = %err, "metrics: list_in_flight rollouts failed");
             return;
         }
     };

@@ -286,6 +286,7 @@ async fn record_rollouts_gated_by_channel_edges(
                 .collect(),
             last_healthy_since: snap.last_healthy_since,
             budgets: vec![],
+            terminal_at: snap.terminal_at,
         })
         .collect();
 

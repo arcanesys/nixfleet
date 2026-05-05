@@ -124,6 +124,14 @@ fn fleet_two_channels() -> FleetResolved {
 }
 
 fn rollout(channel: &str, host_states: Vec<(&str, HostRolloutState)>) -> Rollout {
+    rollout_with_terminal(channel, host_states, None)
+}
+
+fn rollout_with_terminal(
+    channel: &str,
+    host_states: Vec<(&str, HostRolloutState)>,
+    terminal_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Rollout {
     Rollout {
         id: format!("rid-{channel}"),
         channel: channel.into(),
@@ -136,6 +144,7 @@ fn rollout(channel: &str, host_states: Vec<(&str, HostRolloutState)>) -> Rollout
             .collect(),
         last_healthy_since: HashMap::new(),
         budgets: vec![],
+        terminal_at,
     }
 }
 
@@ -188,6 +197,104 @@ fn channel_edges_passes_when_predecessor_converged() {
         conservative_on_missing_state: false,
     };
     assert_eq!(evaluate_for_host(&input), None);
+}
+
+/// **Regression guard for the dispatch/reconciler asymmetry that
+/// surfaced after the first lifecycle attempt.** When a converged
+/// predecessor was filtered out of `observed.active_rollouts`,
+/// channel_edges fell into the `None` arm and answered differently:
+///
+///   - reconciler (`conservative_on_missing_state=false`) → release
+///   - dispatch endpoint (`conservative_on_missing_state=true`) → block
+///
+/// The reconciler emitted `DispatchHost`, the dispatch endpoint
+/// refused — krach stuck in an infinite loop on lab.
+///
+/// The fix keeps terminal rollouts visible in observed (filtered
+/// only from the UI surface). This test pins both modes returning
+/// `None` (release) when the predecessor is terminal — same input,
+/// same verdict, regardless of mode.
+///
+/// If anyone reverts to filtering terminal rollouts at the gate
+/// observed builder, the conservative arm of this test will start
+/// returning `ChannelEdges` (block) and the test fails — preventing
+/// the regression from shipping.
+#[test]
+fn channel_edges_releases_on_terminal_predecessor_in_both_modes() {
+    let fleet = fleet_two_channels();
+    let now = Utc::now();
+    // Predecessor is in observed, terminal_at stamped, all hosts
+    // soaked-or-converged (terminal-for-ordering). The predecessor
+    // is functionally done; both modes must agree.
+    let observed = Observed {
+        active_rollouts: vec![rollout_with_terminal(
+            "edge",
+            vec![
+                ("lab", HostRolloutState::Converged),
+            ],
+            Some(now),
+        )],
+        ..Default::default()
+    };
+    let empty = empty_set();
+
+    for conservative in [false, true] {
+        let input = GateInput {
+            fleet: &fleet,
+            observed: &observed,
+            rollout: None,
+            host: "krach",
+            now,
+            emitted_opens_in_tick: &empty,
+            conservative_on_missing_state: conservative,
+        };
+        assert_eq!(
+            evaluate_for_host(&input),
+            None,
+            "channel_edges must release successor when predecessor is terminal — \
+             conservative={conservative}. If this fails, terminal rollouts \
+             are again being filtered out of observed.active_rollouts and \
+             the dispatch/reconciler asymmetry has been re-introduced."
+        );
+    }
+}
+
+/// **Companion regression guard.** The asymmetry-permitting case:
+/// predecessor genuinely missing from observed (fresh-boot, no
+/// rollouts recorded yet). Conservative blocks, non-conservative
+/// allows. The two test cases together pin the entire decision
+/// table: terminal-in-observed must be symmetric, missing-from-observed
+/// is the only place the modes legitimately diverge.
+#[test]
+fn channel_edges_diverges_only_on_truly_missing_predecessor() {
+    let fleet = fleet_two_channels();
+    let now = Utc::now();
+    // Empty observed = predecessor truly unknown.
+    let observed = Observed::default();
+    let empty = empty_set();
+
+    let mk_input = |conservative| GateInput {
+        fleet: &fleet,
+        observed: &observed,
+        rollout: None,
+        host: "krach",
+        now,
+        emitted_opens_in_tick: &empty,
+        conservative_on_missing_state: conservative,
+    };
+
+    // Conservative: blocks (fresh-boot protection — predecessor's
+    // existence in fleet means dispatch should hold until polling
+    // catches up).
+    assert_eq!(
+        evaluate_for_host(&mk_input(true)),
+        Some(GateBlock::ChannelEdges {
+            predecessor_channel: "edge".into(),
+        }),
+    );
+    // Non-conservative: allows (reconciler trusts emitted_opens_in_tick
+    // as the in-tick authority; absence means "not opened this tick").
+    assert_eq!(evaluate_for_host(&mk_input(false)), None);
 }
 
 #[test]

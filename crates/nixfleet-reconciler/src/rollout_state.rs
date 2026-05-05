@@ -58,6 +58,18 @@ pub(crate) fn advance_rollout(
         return actions;
     }
 
+    // Terminal rollouts are observed-but-done: kept in
+    // `db.rollouts().list_active()` so channel_edges can read their
+    // host_states and detect "predecessor converged" via
+    // `is_active_for_ordering()=false`. Re-emitting actions here would
+    // produce an infinite stream of no-op `ConvergeRollout` writes —
+    // the original "rollouts emit converge_rollout every tick" noise
+    // the lifecycle work was meant to fix. Short-circuit here keeps
+    // the action stream clean while preserving gate visibility.
+    if rollout.terminal_at.is_some() {
+        return actions;
+    }
+
     let waves = match fleet.waves.get(&rollout.channel) {
         Some(w) => w,
         None => return actions,
@@ -272,6 +284,7 @@ mod tests {
             host_states,
             last_healthy_since: HashMap::new(),
             budgets: vec![],
+            terminal_at: None,
         }
     }
 
@@ -417,6 +430,60 @@ mod tests {
             .expect("WaveBlocked emitted");
         assert_eq!(wb.0, &vec!["host-a".to_string(), "host-b".to_string()]);
         assert_eq!(wb.1, 5);
+    }
+
+    /// **Regression guard**: a rollout marked terminal in the rollouts
+    /// table must short-circuit advance_rollout — no actions emitted.
+    /// Without this, the reconciler re-emits `ConvergeRollout` every
+    /// tick (the original "rollouts emit converge_rollout every tick"
+    /// noise the lifecycle work targets), which is functionally a
+    /// no-op (mark_terminal idempotent, dispatch_history terminal
+    /// stamp idempotent) but pollutes the action stream and wastes
+    /// DB writes proportional to the number of converged rollouts.
+    ///
+    /// terminal_at must be checked BEFORE the wave/handle_wave logic
+    /// — otherwise terminal rollouts at the last wave would re-emit
+    /// `ConvergeRollout` from the `current_wave + 1 >= waves.len()`
+    /// branch in `advance_rollout`.
+    #[test]
+    fn advance_rollout_short_circuits_on_terminal_at() {
+        let fleet = fleet_two_waves("enforce");
+        let mut rollout = rollout_at_wave_0_soaked("R1");
+        rollout.terminal_at = Some(Utc::now());
+        let observed = observed_with_failures("R1", &[]);
+        let actions = advance_rollout(&fleet, &observed, &rollout, Utc::now());
+        assert!(
+            actions.is_empty(),
+            "advance_rollout must emit zero actions for terminal rollouts; got {actions:?}",
+        );
+    }
+
+    /// **Companion**: terminal rollouts must NOT re-emit ConvergeRollout
+    /// even at the last wave with all hosts soaked — the natural
+    /// trigger condition. Without the short-circuit, this case would
+    /// emit ConvergeRollout every tick forever.
+    #[test]
+    fn advance_rollout_terminal_at_last_wave_emits_no_converge() {
+        let fleet = fleet_two_waves("enforce");
+        let mut rollout = rollout_at_wave_0_soaked("R1");
+        // Promote to last wave + mark hosts soaked (the natural
+        // ConvergeRollout precondition).
+        rollout.current_wave = 1;
+        rollout
+            .host_states
+            .insert("host-b".into(), HostRolloutState::Soaked);
+        rollout.terminal_at = Some(Utc::now());
+        let observed = observed_with_failures("R1", &[]);
+        let actions = advance_rollout(&fleet, &observed, &rollout, Utc::now());
+        let kinds = extract_action_kind(&actions);
+        assert!(
+            !kinds.contains(&"converge_rollout"),
+            "terminal rollout at last wave must NOT re-emit ConvergeRollout; got {kinds:?}",
+        );
+        assert!(
+            actions.is_empty(),
+            "expected zero actions for terminal rollout, got {actions:?}",
+        );
     }
 }
 

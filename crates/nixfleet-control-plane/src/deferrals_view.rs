@@ -102,6 +102,7 @@ pub async fn compute_channel_deferrals(state: &AppState) -> Vec<ChannelDeferral>
                         host_states: HashMap::new(),
                         last_healthy_since: HashMap::new(),
                         budgets: vec![],
+                        terminal_at: r.terminal_at,
                     });
             }
         }

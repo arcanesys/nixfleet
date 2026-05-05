@@ -109,6 +109,7 @@ pub(super) fn spawn_reconcile_loop(
                                 host_states: snap.host_states.clone(),
                                 last_healthy_since: snap.last_healthy_since.clone(),
                                 current_wave: r.current_wave,
+                                terminal_at: r.terminal_at,
                             },
                             None => crate::db::RolloutDbSnapshot {
                                 rollout_id: r.rollout_id.clone(),
@@ -118,6 +119,7 @@ pub(super) fn spawn_reconcile_loop(
                                 host_states: HashMap::new(),
                                 last_healthy_since: HashMap::new(),
                                 current_wave: r.current_wave,
+                                terminal_at: r.terminal_at,
                             },
                         })
                         .collect()

@@ -64,6 +64,7 @@ pub fn project(
                 .get(&snap.rollout_id)
                 .cloned()
                 .unwrap_or_default(),
+            terminal_at: snap.terminal_at,
         })
         .collect();
 
@@ -179,6 +180,7 @@ mod tests {
             host_states,
             last_healthy_since: HashMap::new(),
             current_wave: 0,
+        terminal_at: None,
         };
         let observed = project(
             &HashMap::new(),
@@ -206,6 +208,7 @@ mod tests {
             host_states,
             last_healthy_since: HashMap::new(),
             current_wave: 0,
+        terminal_at: None,
         };
         let observed = project(
             &HashMap::new(),
@@ -238,6 +241,7 @@ mod tests {
             host_states,
             last_healthy_since: last_healthy,
             current_wave: 0,
+        terminal_at: None,
         };
         let observed = project(
             &HashMap::new(),

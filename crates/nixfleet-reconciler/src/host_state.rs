@@ -154,6 +154,7 @@ mod tests {
             host_states: std::collections::HashMap::new(),
             last_healthy_since: std::collections::HashMap::new(),
             budgets: vec![],
+            terminal_at: None,
         };
         assert_eq!(
             lookup_host_state(&rollout, "missing"),
@@ -242,6 +243,7 @@ mod tests {
             host_states,
             last_healthy_since: std::collections::HashMap::new(),
             budgets: vec![],
+            terminal_at: None,
         }
     }
 

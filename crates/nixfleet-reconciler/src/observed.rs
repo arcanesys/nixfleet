@@ -74,6 +74,20 @@ pub struct Rollout {
     /// carries its own snapshot.
     #[serde(default)]
     pub budgets: Vec<nixfleet_proto::RolloutBudget>,
+    /// `Some(t)` after `Action::ConvergeRollout` stamped the rollouts
+    /// table, OR after the orphan sweep retired a rollout whose
+    /// channel has no expected hosts. `None` while the rollout is
+    /// still progressing through waves.
+    ///
+    /// Visible to the reconciler so `advance_rollout` can short-
+    /// circuit terminal rollouts (no actions, no every-tick
+    /// re-emission of `ConvergeRollout`). Visible to gates so
+    /// `channel_edges` can read the host_states (all
+    /// terminal-for-ordering by construction at this point) and
+    /// release the successor — the symmetric "predecessor done"
+    /// answer in both conservative + non-conservative modes.
+    #[serde(default)]
+    pub terminal_at: Option<DateTime<Utc>>,
 }
 
 impl Rollout {

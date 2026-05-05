@@ -200,38 +200,88 @@ impl Rollouts<'_> {
         Ok(rows)
     }
 
-    /// Canonical "what's in flight" — single source of truth for the
-    /// active-rollouts panel, the dispatch gate observed builder, and
-    /// the reconciler tick. Filters BOTH superseded_at AND terminal_at,
-    /// so a rollout that's converged with no successor stops showing
-    /// up after `Action::ConvergeRollout` stamps terminal_at.
+    /// Canonical source for the dispatch + reconciler gate observed
+    /// builders. Filters superseded only — terminal rollouts MUST stay
+    /// visible to gates so channelEdges can find a converged predecessor
+    /// and release the successor (the rollout's `host_states` are all
+    /// terminal-for-ordering, so `Rollout::is_active_for_ordering()`
+    /// returns false → gate releases).
     ///
-    /// Returns a row even for rollouts that have zero `host_dispatch_state`
-    /// entries yet — i.e., a freshly-opened channel right after
-    /// channelEdges releases. That's the load-bearing change versus
-    /// reading `host_dispatch_state.active_rollouts_snapshot()` directly
-    /// (which is keyed by dispatch rows and goes silent for the brand-
-    /// new rollout's first-checkin window — the exact moment host-edges
-    /// must enforce ordering).
+    /// Hiding terminal rollouts from gates was the regression that
+    /// surfaced after the lifecycle fix: dispatch endpoint with
+    /// `conservative_on_missing_state=true` falls into the
+    /// "fleet has hosts on predecessor → block" arm because the
+    /// predecessor disappeared from observed, while the reconciler
+    /// (non-conservative) allowed dispatch — asymmetric verdicts on
+    /// the same input, leaving krach stuck in dispatch_host loops
+    /// the dispatch endpoint then refused.
+    ///
+    /// UI consumers (/v1/rollouts list, deferrals view, metrics)
+    /// want "what's still in flight from the operator's perspective"
+    /// — those use `list_in_flight()` instead.
     pub fn list_active(&self) -> Result<Vec<ActiveRollout>> {
+        self.list_filtered(false)
+    }
+
+    /// "What's in flight" for UI: filters BOTH superseded AND terminal.
+    /// A converged rollout with no successor still gets removed once
+    /// `Action::ConvergeRollout` stamps terminal_at, matching the
+    /// operator mental model "this rollout is done, don't show it as
+    /// pending work."
+    ///
+    /// NOT used by the dispatch / reconciler gate observed builders
+    /// — those need terminal rollouts visible so channelEdges can
+    /// detect "predecessor converged" via host_states inspection.
+    /// See `list_active()` for that path.
+    pub fn list_in_flight(&self) -> Result<Vec<ActiveRollout>> {
+        self.list_filtered(true)
+    }
+
+    fn list_filtered(&self, exclude_terminal: bool) -> Result<Vec<ActiveRollout>> {
         let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT rollout_id, channel, current_wave, created_at
+        // SQL composed at compile time via two static strings — no
+        // user input interpolated, no injection risk. The terminal_at
+        // filter toggles the WHERE clause cleanly.
+        let sql = if exclude_terminal {
+            "SELECT rollout_id, channel, current_wave, created_at, terminal_at
              FROM rollouts
              WHERE superseded_at IS NULL AND terminal_at IS NULL
-             ORDER BY created_at DESC, rollout_id",
-        )?;
+             ORDER BY created_at DESC, rollout_id"
+        } else {
+            "SELECT rollout_id, channel, current_wave, created_at, terminal_at
+             FROM rollouts
+             WHERE superseded_at IS NULL
+             ORDER BY created_at DESC, rollout_id"
+        };
+        let mut stmt = guard.prepare(sql)?;
         let rows = stmt
             .query_map([], |row| {
-                Ok(ActiveRollout {
-                    rollout_id: row.get(0)?,
-                    channel: row.get(1)?,
-                    current_wave: row.get::<_, i64>(2)? as u32,
-                    created_at: row.get::<_, String>(3)?,
-                })
+                let terminal_at_raw: Option<String> = row.get(4)?;
+                Ok((
+                    ActiveRollout {
+                        rollout_id: row.get(0)?,
+                        channel: row.get(1)?,
+                        current_wave: row.get::<_, i64>(2)? as u32,
+                        created_at: row.get::<_, String>(3)?,
+                        terminal_at: None,
+                    },
+                    terminal_at_raw,
+                ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        // Parse terminal_at outside the closure so error context is precise.
+        rows.into_iter()
+            .map(|(mut row, raw)| -> Result<ActiveRollout> {
+                row.terminal_at = match raw {
+                    Some(s) => Some(
+                        s.parse::<DateTime<Utc>>()
+                            .with_context(|| format!("parse rollouts.terminal_at: {s}"))?,
+                    ),
+                    None => None,
+                };
+                Ok(row)
+            })
+            .collect()
     }
 }
 
@@ -241,6 +291,15 @@ pub struct ActiveRollout {
     pub channel: String,
     pub current_wave: u32,
     pub created_at: String,
+    /// Set when `Action::ConvergeRollout` fires or the orphan sweep
+    /// stamps a rollout whose channel has no expected hosts in the
+    /// current fleet. `None` while the rollout is still progressing
+    /// through waves. Plumbed through to the in-memory `Rollout`
+    /// (in nixfleet-reconciler) so `advance_rollout` short-circuits
+    /// instead of re-emitting `ConvergeRollout` every tick — and so
+    /// `channel_edges` can distinguish "predecessor converged" from
+    /// "predecessor unknown" without inferring it from absence.
+    pub terminal_at: Option<DateTime<Utc>>,
 }
 
 #[cfg(test)]
@@ -414,8 +473,16 @@ mod tests {
         assert!(db.rollouts().supersede_status("r-old").unwrap().is_none());
     }
 
+    /// **Regression guard** for the asymmetry that surfaced after the first
+    /// lifecycle attempt: filtering terminal rollouts at `list_active`
+    /// caused channelEdges to lose sight of converged predecessors, which
+    /// then disagreed with itself between dispatch (conservative) and
+    /// reconciler (non-conservative) modes. This test pins the load-
+    /// bearing semantic: terminal rollouts STAY visible in `list_active`
+    /// (the gate observed source) but are HIDDEN from `list_in_flight`
+    /// (the UI source). Same row, different views.
     #[test]
-    fn mark_terminal_excludes_from_list_active_and_is_idempotent() {
+    fn mark_terminal_keeps_rollout_in_list_active_but_drops_from_list_in_flight() {
         let db = fresh_db();
         db.rollouts()
             .record_active_rollout("r1", "stable")
@@ -424,27 +491,62 @@ mod tests {
             .record_active_rollout("r2", "edge")
             .unwrap();
 
-        // Both visible before terminal stamp.
-        let before = db.rollouts().list_active().unwrap();
-        assert_eq!(before.len(), 2);
+        // Both visible in both views before any terminal stamp.
+        assert_eq!(db.rollouts().list_active().unwrap().len(), 2);
+        assert_eq!(db.rollouts().list_in_flight().unwrap().len(), 2);
 
-        // First mark stamps; second is idempotent no-op.
+        // Mark r1 terminal; idempotent on re-call.
         let now = chrono::Utc::now();
         let n = db.rollouts().mark_terminal("r1", now).unwrap();
         assert_eq!(n, 1);
         let n2 = db.rollouts().mark_terminal("r1", now).unwrap();
         assert_eq!(n2, 0, "re-marking is idempotent");
 
-        // list_active excludes terminal.
-        let after = db.rollouts().list_active().unwrap();
-        assert_eq!(after.len(), 1);
-        assert_eq!(after[0].rollout_id, "r2");
+        // list_active KEEPS r1 — gates need to see converged predecessors
+        // so channel_edges can return is_active_for_ordering=false.
+        let active = db.rollouts().list_active().unwrap();
+        assert_eq!(active.len(), 2, "list_active must include terminal rollouts so gates can see converged predecessors");
+        let r1_active = active.iter().find(|r| r.rollout_id == "r1").unwrap();
+        assert!(r1_active.terminal_at.is_some(), "terminal_at must populate through to ActiveRollout");
 
-        // Status reflects terminal.
+        // list_in_flight DROPS r1 — UI shows only ongoing work.
+        let in_flight = db.rollouts().list_in_flight().unwrap();
+        assert_eq!(in_flight.len(), 1);
+        assert_eq!(in_flight[0].rollout_id, "r2");
+
+        // supersede_status reflects terminal.
         let s = db.rollouts().supersede_status("r1").unwrap().unwrap();
         assert!(s.is_terminal());
         assert!(!s.is_superseded(), "terminal is independent of superseded");
         assert!(s.is_finished());
+    }
+
+    /// Superseded rollouts are dropped from BOTH views regardless of
+    /// terminal_at — supersession is the stronger signal (newer
+    /// rollout for the same channel exists, gates evaluate against it).
+    #[test]
+    fn superseded_dropped_from_both_list_active_and_list_in_flight() {
+        let db = fresh_db();
+        db.rollouts()
+            .record_active_rollout("r1", "stable")
+            .unwrap();
+        db.rollouts()
+            .record_active_rollout("r2", "stable")
+            .unwrap(); // supersedes r1
+
+        for rid in db.rollouts().list_active().unwrap().iter() {
+            assert_ne!(rid.rollout_id, "r1", "superseded must not appear in list_active");
+        }
+        for rid in db.rollouts().list_in_flight().unwrap().iter() {
+            assert_ne!(rid.rollout_id, "r1", "superseded must not appear in list_in_flight");
+        }
+
+        // Even after marking r1 terminal, it stays out of both —
+        // superseded was already excluding it.
+        db.rollouts().mark_terminal("r1", chrono::Utc::now()).unwrap();
+        for rid in db.rollouts().list_active().unwrap().iter() {
+            assert_ne!(rid.rollout_id, "r1");
+        }
     }
 
     #[test]
