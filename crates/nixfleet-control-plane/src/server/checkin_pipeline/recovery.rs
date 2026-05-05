@@ -95,7 +95,19 @@ async fn validate_orphan_recovery(
     Some((target_closure.clone(), host_decl.channel.clone()))
 }
 
-/// Returns true iff operational write succeeded; Healthy marker write is best-effort.
+/// Returns true iff operational + Healthy-marker rows landed atomically.
+///
+/// Pre-fix (split into two transactions): a failure between the
+/// operational UPSERT and the host_rollout_state Healthy-marker
+/// INSERT left host_dispatch_state at `confirmed` with NO matching
+/// host_rollout_state row. The snapshot's LEFT JOIN then projected
+/// the absence as "Healthy with NULL last_healthy_since"; the soak
+/// timer in handle_wave (`if let Some(since) = last_healthy_since.get(host)`)
+/// never fires; the host stayed Healthy forever and blocked the
+/// whole rollout's wave promotion.
+///
+/// Now: one transaction. Either both rows land or neither — the
+/// next checkin re-runs orphan-confirm cleanly.
 fn synthesise_orphan_confirm_rows(
     db: &crate::db::Db,
     req: &ConfirmRequest,
@@ -103,43 +115,33 @@ fn synthesise_orphan_confirm_rows(
     channel: &str,
 ) -> bool {
     let now = Utc::now();
-    if let Err(err) = db.host_dispatch_state().record_confirmed_dispatch(
-        &req.hostname,
-        &req.rollout,
-        channel,
-        req.wave,
-        target_closure,
-        &req.rollout,
-        now,
-    ) {
+    if let Err(err) = db
+        .host_dispatch_state()
+        .record_confirmed_dispatch_with_healthy_marker(
+            &req.hostname,
+            &req.rollout,
+            channel,
+            req.wave,
+            target_closure,
+            &req.rollout,
+            now,
+        )
+    {
         tracing::warn!(
             hostname = %req.hostname,
             rollout = %req.rollout,
             error = %err,
-            "orphan-confirm recovery: record_confirmed_dispatch failed",
+            "orphan-confirm recovery: atomic operational+Healthy write failed; \
+             no rows committed (next checkin retries)",
         );
         return false;
-    }
-    if let Err(err) = db.rollout_state().transition_host_state(
-        &req.hostname,
-        &req.rollout,
-        crate::state::HostRolloutState::Healthy,
-        crate::state::HealthyMarker::Set(now),
-        None,
-    ) {
-        tracing::warn!(
-            hostname = %req.hostname,
-            rollout = %req.rollout,
-            error = %err,
-            "orphan-confirm recovery: transition to Healthy failed (synthetic row already inserted)",
-        );
     }
     tracing::info!(
         target: "confirm",
         hostname = %req.hostname,
         rollout = %req.rollout,
         target_closure = %target_closure,
-        "orphan-confirm recovery: synthesised confirmed host_dispatch_state row + Healthy marker",
+        "orphan-confirm recovery: synthesised confirmed host_dispatch_state row + Healthy marker (atomic)",
     );
     true
 }
