@@ -329,3 +329,119 @@ async fn converged_at_dispatch_does_not_leak_dispatch_history_rows() {
 
     handle.abort();
 }
+
+/// Concurrent companion to `converged_at_dispatch_does_not_leak_dispatch_history_rows`.
+///
+/// The sequential test pins the host_state-probe guard under repeat
+/// invocation. This one pins the same guard under N parallel checkins
+/// arriving simultaneously — no caller has seen the probe yet, so each
+/// concurrent task believes it must materialise. The host_rollout_state
+/// UNIQUE constraint and the surrounding txn must serialise the writes;
+/// only one row may land.
+///
+/// If a future refactor accidentally makes the materialisation lockless
+/// (e.g., reads host_state outside the insert txn), this test will fail
+/// with N>1 dispatch_history rows. Cheap insurance against the race
+/// class the guard is supposed to close.
+#[tokio::test]
+async fn converged_at_dispatch_is_idempotent_under_concurrent_checkins() {
+    install_crypto_provider_once();
+
+    let dir = TempDir::new().unwrap();
+    let (artifact, signature, trust) = write_signed_fleet(&dir, DECLARED_CLOSURE, CI_COMMIT);
+    let (ca, server_cert, server_key, client_cert, client_key) =
+        mint_ca_and_certs(&dir, "test-host");
+    let db_path = dir.path().join("state.db");
+    let port = pick_free_port().await;
+
+    let handle = spawn_with_signed_fleet(
+        &dir,
+        artifact,
+        signature,
+        trust,
+        server_cert,
+        server_key,
+        ca.clone(),
+        db_path.clone(),
+        port,
+    )
+    .await;
+
+    // Single mTLS client, shared connection pool. Reqwest will fan
+    // requests out across HTTP/2 streams or parallel TCP — either
+    // is the race we want to exercise.
+    let client = build_mtls_client(&ca, &client_cert, &client_key);
+    let url = format!("https://localhost:{port}/v1/agent/checkin");
+
+    // Fire N concurrent checkins and wait for ALL to settle. Use
+    // futures::join_all-equivalent via tokio::spawn so each request
+    // runs on the runtime's threadpool independently.
+    const N: usize = 8;
+    let mut tasks = Vec::with_capacity(N);
+    for _ in 0..N {
+        let client = client.clone();
+        let url = url.clone();
+        tasks.push(tokio::spawn(async move {
+            client
+                .post(&url)
+                .json(&checkin_request(DECLARED_CLOSURE))
+                .send()
+                .await
+                .map(|r| r.status())
+        }));
+    }
+    for t in tasks {
+        let status = t.await.unwrap().unwrap();
+        assert_eq!(
+            status, 200,
+            "every concurrent checkin must return 200 — converged-at-dispatch is non-mutating from the agent's perspective",
+        );
+    }
+
+    // Assertion 1: exactly one open dispatch_history row. The race
+    // window between "probe says no row" and "insert row" must be
+    // closed by the UNIQUE constraint + atomic txn.
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let history_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM dispatch_history
+             WHERE hostname = ?1 AND terminal_state IS NULL",
+            rusqlite::params!["test-host"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        history_rows, 1,
+        "concurrent converged-at-dispatch must produce EXACTLY one open dispatch_history row \
+         (got {history_rows}). If this fails, the guard is not race-safe — multiple concurrent \
+         checkins materialised in parallel.",
+    );
+
+    // Assertion 2: host_rollout_state ends in Converged.
+    let state: String = conn
+        .query_row(
+            "SELECT host_state FROM host_rollout_state WHERE hostname = ?1",
+            rusqlite::params!["test-host"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        state, "Converged",
+        "concurrent converged-at-dispatch must leave host_rollout_state at Converged",
+    );
+
+    // Assertion 3: exactly one host_rollout_state row (UNIQUE constraint).
+    let rollout_state_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM host_rollout_state WHERE hostname = ?1",
+            rusqlite::params!["test-host"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        rollout_state_rows, 1,
+        "concurrent checkins must not produce duplicate host_rollout_state rows",
+    );
+
+    handle.abort();
+}
