@@ -130,6 +130,62 @@ pub async fn build_for_gates(
         })
         .collect();
 
+    // LOADBEARING: close the polling-race window between channelEdges
+    // releasing and channel-refs poll recording the new successor
+    // rollout. During that ~30-60s gap, `list_active` does NOT
+    // contain the current-fleet rollout for the just-opened channel
+    // — so the dispatch endpoint's gate evaluation finds no rollout
+    // for the host's channel, host_edges shorts (`input.rollout?` →
+    // None), and the first checkin slips through unblocked. The
+    // dispatched target is computed from the live fleet snapshot
+    // (`compute_rollout_id_for_channel`) so the host gets the right
+    // closure, but ordering invariants (host_edges,
+    // disruption_budget, compliance_wave) were silently bypassed.
+    //
+    // Synthesize empty Rollout placeholders for every channel
+    // expected to have a current rollout — empty `host_states`
+    // means peer states default to `Queued`, which is correctly
+    // NOT terminal-for-ordering, so host_edges fires and channel-
+    // edges sees the predecessor as `is_active_for_ordering()=true`.
+    // Polling-tick records the rollout shortly after; subsequent
+    // gate evaluations get the real host_states LEFT-JOINed in.
+    let known_ids: std::collections::HashSet<String> =
+        active_rollouts.iter().map(|r| r.id.clone()).collect();
+    for channel_name in fleet.channels.keys() {
+        let computed = match nixfleet_reconciler::compute_rollout_id_for_channel(
+            fleet,
+            fleet_resolved_hash,
+            channel_name,
+        ) {
+            Ok(Some(id)) => id,
+            Ok(None) => continue, // channel has no host with closureHash
+            Err(err) => {
+                tracing::warn!(
+                    channel = %channel_name,
+                    error = %err,
+                    "observed_view: compute_rollout_id_for_channel failed; skipping placeholder",
+                );
+                continue;
+            }
+        };
+        if known_ids.contains(&computed) {
+            continue;
+        }
+        // Empty placeholder. host_states empty → peers default
+        // Queued → host_edges and friends correctly enforce.
+        active_rollouts.push(Rollout {
+            id: computed.clone(),
+            channel: channel_name.clone(),
+            target_ref: computed,
+            state: RolloutState::Executing,
+            current_wave: 0,
+            host_states: HashMap::new(),
+            last_healthy_since: HashMap::new(),
+            budgets: vec![],
+            terminal_at: None,
+        });
+    }
+
     if let Some(dir) = rollouts_dir {
         for r in active_rollouts.iter_mut() {
             r.budgets = load_budgets_from_manifest(dir, &r.id).await;

@@ -88,7 +88,7 @@ pub(super) fn spawn_reconcile_loop(
             // build_observed_for_gates so gates see identical input at
             // both call sites — a freshly-opened rollout is visible
             // even before any host has dispatched on it.
-            let rollouts: Vec<crate::db::RolloutDbSnapshot> = match state.db.as_deref() {
+            let mut rollouts: Vec<crate::db::RolloutDbSnapshot> = match state.db.as_deref() {
                 Some(db) => {
                     let in_flight = match db.rollouts().list_active() {
                         Ok(v) => v.into_inner(),
@@ -161,6 +161,51 @@ pub(super) fn spawn_reconcile_loop(
             // tick instead of waiting for lab to rebuild and re-link the
             // baked-in artifact path.
             let live_fleet = state.verified_fleet.read().await.clone();
+
+            // LOADBEARING: close the polling-race window between
+            // channelEdges releasing and channel-refs poll recording
+            // the new successor rollout. Synthesize empty placeholders
+            // for current-fleet rollouts not yet present in the
+            // rollouts table — same shape as `observed_view::build_for_gates`
+            // so reconciler-side gate evaluation matches the dispatch
+            // endpoint's view byte-for-byte. Without this, host_edges
+            // misses the freshly-opened channel's first dispatch.
+            if let Some(snapshot) = live_fleet.as_ref() {
+                let known: std::collections::HashSet<String> =
+                    rollouts.iter().map(|r| r.rollout_id.clone()).collect();
+                for channel_name in snapshot.fleet.channels.keys() {
+                    let computed = match nixfleet_reconciler::compute_rollout_id_for_channel(
+                        &snapshot.fleet,
+                        &snapshot.fleet_resolved_hash,
+                        channel_name,
+                    ) {
+                        Ok(Some(id)) => id,
+                        Ok(None) => continue,
+                        Err(err) => {
+                            tracing::warn!(
+                                channel = %channel_name,
+                                error = %err,
+                                "reconcile: compute_rollout_id_for_channel failed; skipping placeholder",
+                            );
+                            continue;
+                        }
+                    };
+                    if known.contains(&computed) {
+                        continue;
+                    }
+                    rollouts.push(crate::db::RolloutDbSnapshot {
+                        rollout_id: computed.clone(),
+                        channel: channel_name.clone(),
+                        target_closure_hash: String::new(),
+                        target_channel_ref: computed,
+                        host_states: HashMap::new(),
+                        last_healthy_since: HashMap::new(),
+                        current_wave: 0,
+                        terminal_at: None,
+                    });
+                }
+            }
+
             let last_deferrals = state.last_deferrals.read().await.clone();
             // Load each active rollout's budget snapshot from its signed
             // manifest. Disk-backed lookup is fine at reconcile cadence

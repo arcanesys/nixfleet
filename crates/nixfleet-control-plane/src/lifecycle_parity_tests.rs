@@ -469,3 +469,177 @@ fn stage5_terminal_rollout_visible_to_gates_hidden_from_ui() {
     let demoted = gate_view.into_ui();
     assert_eq!(demoted.len(), 0, "into_ui filters terminal");
 }
+
+/// **Regression guard for the polling-race window.**
+///
+/// Lab observed live (2026-05-05): a fresh fleet release came in
+/// while the previous edge rollout was still soaking. When edge
+/// Soaked → channelEdges released → the new stable rollout was
+/// expected to open. There's a ~30-60 s window between channelEdges
+/// release and the next channel-refs poll recording the new
+/// successor in the rollouts table. During that window:
+///
+///   - `list_active` does NOT include the new successor rollout
+///     (polling hasn't recorded it yet)
+///   - `current_rollout_ids` derived from the live fleet snapshot
+///     DOES include it
+///   - dispatch endpoint's gate evaluation found no rollout for
+///     the host's channel → `host_edges::check`'s `let rollout =
+///     input.rollout?` returned None → gate skipped
+///   - first checkin slipped through, dispatched on the new
+///     rollout via `decide_target` (which uses
+///     `compute_rollout_id_for_channel`, not list_active)
+///   - host_edges' ordering invariant violated for the
+///     freshly-opened channel
+///
+/// The fix synthesizes empty Rollout placeholders for current-
+/// fleet rollouts not yet in `list_active`. Empty `host_states`
+/// → peer states default to `Queued` → host_edges fires correctly.
+///
+/// This test pins the synthesis. If a future commit reverts the
+/// placeholder loop in `observed_view::build_for_gates` (or the
+/// reconciler's equivalent), this test fails because aether's
+/// dispatch on a freshly-opened stable channel passes when it
+/// should be blocked by host-edges.
+#[test]
+fn polling_race_window_observed_view_synthesizes_placeholder() {
+    use nixfleet_proto::Edge;
+
+    let db = fresh_db();
+    let mut fleet = fleet();
+    fleet.meta.signed_at = Some(Utc::now());
+    fleet.meta.ci_commit = Some("test-ci-commit".into());
+    fleet.edges = vec![Edge {
+        gated: "aether".into(),
+        gates: "krach".into(),
+        reason: None,
+    }];
+    // Add aether and krach to the fleet (the existing fixture only
+    // has lab + krach). aether on stable; krach on stable; lab on
+    // edge as before.
+    fleet.hosts.insert(
+        "aether".into(),
+        nixfleet_proto::Host {
+            system: "aarch64-darwin".into(),
+            tags: vec!["dev".into()],
+            channel: "stable".into(),
+            closure_hash: Some("aether-closure".into()),
+            pubkey: None,
+        },
+    );
+    fleet.waves.insert(
+        "stable".into(),
+        vec![nixfleet_proto::Wave {
+            hosts: vec!["krach".into(), "aether".into()],
+            soak_minutes: 5,
+        }],
+    );
+    let fleet_resolved_hash = "test-fleet-hash";
+
+    // Set up the polling-race window:
+    //   - lab on edge has reached Soaked (predecessor terminal-
+    //     for-ordering, so channel_edges releases stable)
+    //   - stable's current rollout (per fleet snapshot) is NOT
+    //     yet in the rollouts table — channel-refs poll hasn't run
+    let edge_rid = nixfleet_reconciler::compute_rollout_id_for_channel(
+        &fleet,
+        fleet_resolved_hash,
+        "edge",
+    )
+    .unwrap()
+    .unwrap();
+    db.rollouts()
+        .record_active_rollout(&edge_rid, "edge")
+        .unwrap();
+    db.host_dispatch_state()
+        .record_dispatch(&crate::db::DispatchInsert {
+            hostname: "lab",
+            rollout_id: &edge_rid,
+            channel: "edge",
+            wave: 0,
+            target_closure_hash: "lab-closure",
+            target_channel_ref: &edge_rid,
+            confirm_deadline: Utc::now() + chrono::Duration::minutes(10),
+        })
+        .unwrap();
+    db.rollout_state()
+        .transition_host_state(
+            "lab",
+            &edge_rid,
+            HostRolloutState::Soaked,
+            crate::state::HealthyMarker::Set(Utc::now()),
+            None,
+        )
+        .unwrap();
+
+    // The stable rollout the fleet snapshot expects:
+    let stable_rid = nixfleet_reconciler::compute_rollout_id_for_channel(
+        &fleet,
+        fleet_resolved_hash,
+        "stable",
+    )
+    .unwrap()
+    .unwrap();
+    // CRITICAL: stable_rid is NOT in the rollouts table — that's
+    // the race window. list_active won't return it.
+    assert_eq!(
+        db.rollouts().list_active().unwrap().len(),
+        1,
+        "fixture: only edge rollout recorded; stable is the race-window unrecorded one",
+    );
+
+    // Build observed via the production builder (synchronous wrapper).
+    let observed = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(crate::observed_view::build_for_gates(
+            &db,
+            &fleet,
+            fleet_resolved_hash,
+            None, // no rollouts_dir → no budgets, fine for this test
+        ));
+
+    // Synthesis assertion: stable_rid must appear in active_rollouts
+    // even though it's not in list_active.
+    let stable_in_observed = observed
+        .active_rollouts
+        .iter()
+        .find(|r| r.id == stable_rid)
+        .expect(
+            "stable rollout MUST be synthesized as a placeholder when missing \
+             from list_active — that's the polling-race-window fix",
+        );
+    assert_eq!(stable_in_observed.channel, "stable");
+    assert!(
+        stable_in_observed.host_states.is_empty(),
+        "synthesized placeholder must have empty host_states so peers default to Queued",
+    );
+    assert!(stable_in_observed.terminal_at.is_none());
+
+    // Now run the host_edges gate against this observed for aether.
+    // Without the placeholder: input.rollout=None → gate short-
+    // circuits → aether dispatches (the bug). With the placeholder:
+    // input.rollout=Some(stable_rid_with_empty_host_states) → krach
+    // defaults Queued → host_edges fires. This is the load-bearing
+    // assertion — the entire fix exists to make this verdict stable.
+    let empty: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let input = nixfleet_reconciler::gates::GateInput {
+        fleet: &fleet,
+        observed: &observed,
+        rollout: Some(stable_in_observed),
+        host: "aether",
+        now: Utc::now(),
+        emitted_opens_in_tick: &empty,
+        mode: nixfleet_reconciler::gates::GateMode::Dispatch,
+    };
+    let verdict = nixfleet_reconciler::gates::evaluate_for_host(&input);
+    match verdict {
+        Some(nixfleet_reconciler::gates::GateBlock::HostEdge { gating_host }) => {
+            assert_eq!(gating_host, "krach");
+        }
+        other => panic!(
+            "expected HostEdge {{ gating_host: \"krach\" }} block on the synthesized \
+             placeholder; got {other:?}. If this fails, the polling-race window has \
+             re-opened — host_edges is bypassed for freshly-opened rollouts.",
+        ),
+    }
+}
