@@ -32,6 +32,12 @@ pub struct ChannelRefsCache {
 }
 
 /// Failure retains previous state; cancel exits the loop cleanly.
+///
+/// `kick`: optional watch receiver that wakes the poll loop on event-
+/// driven triggers (reconciler signals after `ConvergeRollout` /
+/// `SoakHost` state transitions). Absent → cadence-only. The 60 s
+/// `POLL_INTERVAL` cadence is preserved either way as a safety net
+/// against missed kicks.
 pub fn spawn(
     cancel: tokio_util::sync::CancellationToken,
     cache: Arc<RwLock<ChannelRefsCache>>,
@@ -41,12 +47,13 @@ pub fn spawn(
         RwLock<HashMap<String, nixfleet_reconciler::observed::DeferralRecord>>,
     >,
     config: ChannelRefsSource,
+    kick: Option<tokio::sync::watch::Receiver<()>>,
 ) -> tokio::task::JoinHandle<()> {
     SignedArtifactPoller {
         interval: POLL_INTERVAL,
         label: "channel-refs",
     }
-    .spawn(cancel, move |client| {
+    .spawn_with_kick(cancel, kick, move |client| {
         let cache = Arc::clone(&cache);
         let verified_fleet = Arc::clone(&verified_fleet);
         let db = db.clone();

@@ -223,6 +223,28 @@ pub(super) fn spawn_reconcile_loop(
     })
 }
 
+/// Wake the channel-refs poll on relevant state transitions so a
+/// freshly-released channelEdges successor gets its rollout recorded
+/// without waiting up to 60 s. Fire-and-forget — `watch::Sender::send`
+/// only fails when all receivers are dropped, which means the polling
+/// task has exited; we log + continue so the reconciler doesn't seize.
+fn kick_channel_refs_poll(state: &AppState, reason: &'static str) {
+    if let Err(err) = state.channel_refs_kick.send(()) {
+        tracing::debug!(
+            target: "polling",
+            reason,
+            error = %err,
+            "channel-refs kick: no receivers (poll task exited?); falling back to cadence",
+        );
+    } else {
+        tracing::debug!(
+            target: "polling",
+            reason,
+            "channel-refs kick sent (event-driven poll wake)",
+        );
+    }
+}
+
 /// At-least-once action handler; SoakHost + ConvergeRollout mutate DB, others are journal-only.
 async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
     use nixfleet_reconciler::observed::DeferralRecord;
@@ -300,6 +322,11 @@ async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
                             rollout = %rollout,
                             "soak: host transitioned Healthy → Soaked",
                         );
+                        // A newly-Soaked host can flip the predecessor's
+                        // `is_active_for_ordering()` to false; channelEdges
+                        // for any successor needs to know now, not at the
+                        // next 60 s polling tick.
+                        kick_channel_refs_poll(state, "SoakHost transition");
                     }
                     Err(err) => {
                         tracing::warn!(
@@ -382,6 +409,12 @@ async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
                             rollout = %rollout,
                             "converge: stamped rollouts.terminal_at — rollout removed from in-flight",
                         );
+                        // Predecessor just went terminal — channelEdges
+                        // for any successor channel can now release.
+                        // Wake the poll so the successor's rollout gets
+                        // recorded immediately rather than waiting up to
+                        // 60 s for the next cadence tick.
+                        kick_channel_refs_poll(state, "ConvergeRollout terminal_at");
                     }
                     Err(err) => {
                         tracing::warn!(

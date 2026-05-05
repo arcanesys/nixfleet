@@ -180,6 +180,7 @@ async fn poll_refreshes_verified_fleet_snapshot() {
         None,
         last_deferrals,
         cfg,
+        None, // no event kick in tests
     );
 
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
@@ -281,6 +282,7 @@ async fn poll_retains_snapshot_on_verify_failure() {
         None,
         last_deferrals,
         cfg,
+        None, // no event kick in tests
     );
 
     // GOTCHA: negative-observation test — fixed sleep is correct because no positive condition can converge.

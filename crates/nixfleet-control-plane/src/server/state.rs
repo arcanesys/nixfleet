@@ -130,6 +130,20 @@ pub struct AppState {
     /// only — losing this on restart just means one duplicate line on the
     /// first post-restart tick, which is correct behavior.
     pub last_deferrals: Arc<RwLock<HashMap<String, nixfleet_reconciler::observed::DeferralRecord>>>,
+    /// Event-driven kick for the channel-refs poll. The reconciler sends `()`
+    /// after state transitions that might release a channelEdges-blocked
+    /// successor (`ConvergeRollout` stamping `terminal_at`, `SoakHost`
+    /// transitioning a host to Soaked). The polling loop selects on its
+    /// 60 s ticker AND this watch — whichever fires first triggers a
+    /// `poll_once`. Closes the timing window between channelEdges semantically
+    /// releasing and the table reflecting the new successor rollout.
+    ///
+    /// `watch` semantics (latest value, no backlog) collapse a burst of
+    /// kicks into one wake — the poller doesn't need to drain a queue.
+    /// The 60 s ticker stays as a safety net: if the kick is ever missed
+    /// (subscriber starvation, reconciler crash mid-stamp), polling
+    /// catches up within the cadence.
+    pub channel_refs_kick: tokio::sync::watch::Sender<()>,
     pub confirm_deadline_secs: i64,
     pub rollouts_dir: Option<PathBuf>,
     pub rollouts_source: Option<crate::rollouts_source::RolloutsSource>,
@@ -150,6 +164,7 @@ impl Default for AppState {
             closure_upstream: None,
             verified_fleet: Arc::new(RwLock::new(None)),
             last_deferrals: Arc::new(RwLock::new(HashMap::new())),
+            channel_refs_kick: tokio::sync::watch::channel(()).0,
             confirm_deadline_secs: DEFAULT_CONFIRM_DEADLINE_SECS,
             rollouts_dir: None,
             rollouts_source: None,

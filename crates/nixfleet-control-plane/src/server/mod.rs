@@ -293,6 +293,10 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
             state.db.clone(),
             state.last_deferrals.clone(),
             channel_refs_source,
+            // Reconciler-driven event kick — closes the timing window
+            // between channelEdges releasing and the rollouts table
+            // reflecting the new successor. See AppState::channel_refs_kick.
+            Some(state.channel_refs_kick.subscribe()),
         ));
     }
 

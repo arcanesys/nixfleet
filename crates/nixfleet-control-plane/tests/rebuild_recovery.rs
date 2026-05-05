@@ -260,6 +260,7 @@ async fn polling_populates_rollouts_after_rebuild_and_supersedes_on_bump() {
             trust_path: fixture.trust_path.clone(),
             freshness_window: Duration::from_secs(86400 * 365 * 5),
         },
+        None, // cadence-only in this test
     );
 
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
