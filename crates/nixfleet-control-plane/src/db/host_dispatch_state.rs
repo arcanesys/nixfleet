@@ -191,30 +191,21 @@ impl HostDispatchState<'_> {
             Some(confirmed_at),
         )?;
         super::dispatch_history::insert_history(&txn, &row)?;
-        // Same upsert SQL as `rollout_state::transition_host_state` for
-        // the unconditional (expected_from = None) branch — extracted
-        // here so the whole orphan-confirm completes in a single txn.
-        // Keep the SQL synchronized with rollout_state.rs:38-49.
-        txn.execute(
-            "INSERT INTO host_rollout_state(rollout_id, hostname,
-                                            host_state,
-                                            last_healthy_since,
-                                            updated_at)
-             VALUES (?1, ?2, ?3, ?4, datetime('now'))
-             ON CONFLICT(rollout_id, hostname) DO UPDATE SET
-               host_state = excluded.host_state,
-               last_healthy_since = COALESCE(
-                   excluded.last_healthy_since,
-                   host_rollout_state.last_healthy_since),
-               updated_at = datetime('now')",
-            params![
-                rollout_id,
-                hostname,
-                crate::state::HostRolloutState::Healthy.as_db_str(),
-                Some(confirmed_at.to_rfc3339()),
-            ],
-        )
-        .context("upsert host_rollout_state Healthy in orphan-confirm txn")?;
+        // Single source of truth for the host_rollout_state UPSERT —
+        // shared with `RolloutState::transition_host_state` via the
+        // free fn. Operates on the live transaction handle so the
+        // whole orphan-confirm still completes atomically. Also fires
+        // `nixfleet_host_state_transition_total{from_state, to_state}`
+        // from inside, so the orphan-confirm path shows up in
+        // observability.
+        super::rollout_state::transition_host_state_inner(
+            &txn,
+            hostname,
+            rollout_id,
+            crate::state::HostRolloutState::Healthy,
+            crate::state::HealthyMarker::Set(confirmed_at),
+            None,
+        )?;
         txn.commit().context("commit orphan-confirm txn")?;
         Ok(())
     }

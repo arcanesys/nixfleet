@@ -1,6 +1,5 @@
 //! `/v1/agent/checkin` and `/v1/agent/confirm` handlers.
 
-mod dispatch_observed;
 mod dispatch_target;
 mod recovery;
 mod rollback_signal;
@@ -134,6 +133,9 @@ pub(super) async fn confirm(
                 .expect("Response::builder with valid status + body is infallible"));
         }
     } else {
+        // transition_host_state SELECTs prev under the same lock and
+        // emits the actual prev→new transition counter from inside —
+        // no synthetic "(any)" tag needed at this call site.
         if let Err(err) = db.rollout_state().transition_host_state(
             &req.hostname,
             &req.rollout,

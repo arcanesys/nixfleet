@@ -157,6 +157,36 @@ impl Selector {
             .map(|(n, _)| n.clone())
             .collect()
     }
+
+    /// Canonical short string for log lines, metric labels, and any
+    /// other consumer that needs to refer to a `Selector` by name.
+    /// Sorted-list semantics keep the rendering stable across HashMap
+    /// iteration orders. Priority order matches `matches()` evaluation
+    /// shape: broadest predicate (`all`) first, then specific lists.
+    pub fn summary(&self) -> String {
+        if self.all {
+            return "all".to_string();
+        }
+        if let Some(channel) = &self.channel {
+            return format!("channel:{channel}");
+        }
+        if !self.tags.is_empty() {
+            let mut t = self.tags.clone();
+            t.sort();
+            return format!("tags:{}", t.join(","));
+        }
+        if !self.tags_any.is_empty() {
+            let mut t = self.tags_any.clone();
+            t.sort();
+            return format!("tags_any:{}", t.join(","));
+        }
+        if !self.hosts.is_empty() {
+            let mut h = self.hosts.clone();
+            h.sort();
+            return format!("hosts:{}", h.join(","));
+        }
+        "unknown".to_string()
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -308,5 +338,43 @@ mod tests {
         assert!(bytes.contains("\"gated\":\"stable\""), "wire must use canonical 'gated' field; got {bytes}");
         let back: ChannelEdge = serde_json::from_str(&bytes).unwrap();
         assert_eq!(back, edge);
+    }
+
+    #[test]
+    fn selector_summary_priority_and_sorted_lists() {
+        let s = Selector {
+            all: true,
+            ..Default::default()
+        };
+        assert_eq!(s.summary(), "all");
+
+        let s = Selector {
+            channel: Some("stable".into()),
+            ..Default::default()
+        };
+        assert_eq!(s.summary(), "channel:stable");
+
+        let s = Selector {
+            // Unsorted on the way in; summary sorts.
+            tags: vec!["server".into(), "prod".into()],
+            ..Default::default()
+        };
+        assert_eq!(s.summary(), "tags:prod,server");
+
+        let s = Selector {
+            tags_any: vec!["b".into(), "a".into()],
+            ..Default::default()
+        };
+        assert_eq!(s.summary(), "tags_any:a,b");
+
+        let s = Selector {
+            hosts: vec!["zzz".into(), "aaa".into()],
+            ..Default::default()
+        };
+        assert_eq!(s.summary(), "hosts:aaa,zzz");
+
+        // Empty selector: explicit sentinel rather than empty string,
+        // so a Prometheus label with this value is still queryable.
+        assert_eq!(Selector::default().summary(), "unknown");
     }
 }

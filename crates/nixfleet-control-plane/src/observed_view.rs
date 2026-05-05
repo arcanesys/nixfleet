@@ -1,7 +1,16 @@
-//! Shared `Observed` builder for the dispatch endpoint's gate evaluation.
+//! Canonical `Observed` builder for fleet-level gate evaluation.
 //!
-//! Every gate sees identical inputs at the dispatch endpoint, and a
-//! single fix to filtering covers all of them.
+//! Sibling of `state_view` (per-host status view) and `deferrals_view`
+//! (per-channel deferral view). One module per "shared substrate the
+//! CP exposes to multiple consumers". Three callers today:
+//!
+//!   - `server::checkin_pipeline::dispatch_target` — per-checkin gate
+//!     evaluation.
+//!   - `server::reconcile` — per-tick gate evaluation (currently builds
+//!     its own equivalent inline; could migrate to this module too).
+//!   - `metrics::record_disruption_budgets` — uses the same Observed
+//!     for `in_flight_count` so the metric and the gate verdict can
+//!     never disagree.
 //!
 //! LOADBEARING: source `active_rollouts` from `db.rollouts().list_active()`
 //! (the canonical "in-flight" list, filters BOTH superseded_at AND
@@ -23,6 +32,7 @@
 //! mid-release race where the table caught up before the verified-
 //! fleet swap). Same filter as `record_rollouts_gated_by_channel_edges`
 //! in the polling layer.
+
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -30,21 +40,22 @@ use nixfleet_proto::FleetResolved;
 use nixfleet_reconciler::observed::{Observed, Rollout};
 use nixfleet_reconciler::{HostRolloutState, RolloutState};
 
-use super::super::state::AppState;
+use crate::server::AppState;
 
-/// Build the per-checkin `Observed` for dispatch-time gate evaluation.
+/// Build the per-checkin / per-scrape `Observed` for fleet-level gate
+/// evaluation.
 ///
 /// `rollouts_dir` is `state.rollouts_dir` — the directory CI writes
 /// signed rollout manifests into. When `Some`, each active rollout's
 /// `disruption_budgets` snapshot is loaded so the budget gate has the
 /// frozen membership the reconciler also sees. When `None` (test
-/// fixtures, CP without artifact dir), budgets are empty and the
-/// budget gate no-ops — same permissive behaviour as
-/// `server::reconcile::load_rollout_budgets`.
+/// fixtures, CP without artifact dir, or scrape-time use that doesn't
+/// need budgets), budgets are empty and the budget gate no-ops — same
+/// permissive behaviour as `server::reconcile::load_rollout_budgets`.
 ///
 /// Returns a default-empty `Observed` if any DB read fails; callers
 /// already handle the "no DB" / "no fleet" cases gracefully.
-pub(super) async fn build_observed_for_gates(
+pub async fn build_for_gates(
     db: &crate::db::Db,
     fleet: &FleetResolved,
     fleet_resolved_hash: &str,
@@ -59,7 +70,7 @@ pub(super) async fn build_observed_for_gates(
     let in_flight = match db.rollouts().list_active() {
         Ok(v) => v,
         Err(err) => {
-            tracing::warn!(error = %err, "dispatch_observed: list_active failed; gates fall back to permissive");
+            tracing::warn!(error = %err, "observed_view: list_active failed; gates fall back to permissive");
             return Observed::default();
         }
     };
@@ -72,7 +83,7 @@ pub(super) async fn build_observed_for_gates(
         match db.host_dispatch_state().active_rollouts_snapshot() {
             Ok(v) => v.into_iter().map(|s| (s.rollout_id.clone(), s)).collect(),
             Err(err) => {
-                tracing::warn!(error = %err, "dispatch_observed: active_rollouts_snapshot failed; merging with empty host states");
+                tracing::warn!(error = %err, "observed_view: active_rollouts_snapshot failed; merging with empty host states");
                 HashMap::new()
             }
         };
@@ -136,7 +147,7 @@ pub(super) async fn build_observed_for_gates(
         Err(err) => {
             tracing::warn!(
                 error = %err,
-                "dispatch_observed: outstanding_compliance_events_by_rollout failed; compliance gate no-ops",
+                "observed_view: outstanding_compliance_events_by_rollout failed; compliance gate no-ops",
             );
             std::collections::HashMap::new()
         }
@@ -151,16 +162,16 @@ pub(super) async fn build_observed_for_gates(
 
 /// Wrapper that pulls the manifest dir from `AppState`. Most callers
 /// have AppState handy and shouldn't have to thread the path manually.
-pub(super) async fn build_observed_for_gates_from_state(
+pub async fn build_for_gates_from_state(
     state: &AppState,
     fleet: &FleetResolved,
     fleet_resolved_hash: &str,
 ) -> Observed {
-    build_observed_for_gates(
+    build_for_gates(
         state
             .db
             .as_ref()
-            .expect("dispatch_observed: caller already verified db.is_some()"),
+            .expect("observed_view: caller already verified db.is_some()"),
         fleet,
         fleet_resolved_hash,
         state.rollouts_dir.as_deref(),
@@ -183,7 +194,7 @@ async fn load_budgets_from_manifest(
                 rollout = %rollout_id,
                 path = %manifest_path.display(),
                 error = %err,
-                "dispatch_observed: manifest unavailable; budget gate no-ops",
+                "observed_view: manifest unavailable; budget gate no-ops",
             );
             return Vec::new();
         }
@@ -194,7 +205,7 @@ async fn load_budgets_from_manifest(
             tracing::warn!(
                 rollout = %rollout_id,
                 error = %err,
-                "dispatch_observed: manifest parse failed; budget gate no-ops",
+                "observed_view: manifest parse failed; budget gate no-ops",
             );
             Vec::new()
         }

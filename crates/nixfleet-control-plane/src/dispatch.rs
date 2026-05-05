@@ -37,6 +37,23 @@ pub enum Decision {
     },
 }
 
+impl Decision {
+    /// kebab-case discriminator for metrics labels. Bounded label set —
+    /// exactly one variant per call. Stable across versions; the
+    /// dashboard depends on these literals.
+    pub fn discriminator(&self) -> &'static str {
+        match self {
+            Decision::Converged => "converged",
+            Decision::Unmanaged => "unmanaged",
+            Decision::NoDeclaration => "no-declaration",
+            Decision::InFlight => "in-flight",
+            Decision::HoldAfterFailure => "hold-after-failure",
+            Decision::WaveNotReached => "wave-not-reached",
+            Decision::Dispatch { .. } => "dispatch",
+        }
+    }
+}
+
 /// LOADBEARING: `fleet_resolved_hash` anchors rolloutId to the verified
 /// snapshot's canonical bytes — different snapshot at the same channel ref
 /// produces a different rolloutId, by design. Drift breaks the wire promise

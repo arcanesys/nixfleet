@@ -7,6 +7,7 @@ pub mod deferrals_view;
 pub mod dispatch;
 pub mod metrics;
 pub mod observed_projection;
+pub mod observed_view;
 pub mod polling;
 pub mod rollouts_source;
 pub mod server;

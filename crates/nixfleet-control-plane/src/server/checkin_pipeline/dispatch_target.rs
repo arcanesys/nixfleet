@@ -23,7 +23,7 @@ pub(super) async fn dispatch_target_for_checkin(
     // automatically. See nixfleet-reconciler/src/gates/mod.rs.
     if let Some(host) = fleet.hosts.get(&req.hostname) {
         let observed =
-            super::dispatch_observed::build_observed_for_gates_from_state(state, &fleet, &fleet_resolved_hash)
+            crate::observed_view::build_for_gates_from_state(state, &fleet, &fleet_resolved_hash)
                 .await;
         // Locate the rollout for this host's channel — host-edges + budget
         // gates need the host's current rollout to read frozen budgets +
@@ -115,6 +115,7 @@ pub(super) async fn dispatch_target_for_checkin(
         state.confirm_deadline_secs as u32,
         current_wave,
     );
+    crate::metrics::record_checkin_decision(&req.hostname, decision.discriminator());
     match decision {
         crate::dispatch::Decision::Dispatch {
             target,

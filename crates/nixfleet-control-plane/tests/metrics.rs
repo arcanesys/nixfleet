@@ -312,6 +312,25 @@ async fn metrics_endpoint_returns_expected_gauges_and_counters() {
         ),
         "missing channel_deferred gauge for un-blocked channel:\n{body}"
     );
+    // Declarative info gauge — emitted for every channel in fleet.resolved.
+    // Labels are only stable categorical fields; numeric values (signing
+    // interval, freshness window) sit on their own gauges.
+    assert!(
+        metric_present_with_labels(
+            &scrape,
+            "nixfleet_channel_info",
+            &[("channel", CHANNEL), ("rollout_policy", "default"), ("compliance_mode", "disabled")],
+        ),
+        "missing channel_info gauge:\n{body}"
+    );
+    assert!(
+        metric_present_with_labels(
+            &scrape,
+            "nixfleet_channel_signing_interval_minutes",
+            &[("channel", CHANNEL)],
+        ),
+        "missing channel_signing_interval_minutes gauge:\n{body}"
+    );
 
     // Counter increment is monotonic — second scrape's value strictly
     // exceeds first scrape's (zero or absent before the report posted).

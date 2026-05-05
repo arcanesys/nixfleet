@@ -73,6 +73,72 @@ pub fn record_gate_block(gate_kind: &str) {
     .increment(1);
 }
 
+/// Increment for every `Action` the reconciler emits per tick, labelled
+/// by its snake_case discriminator (`open_rollout`, `dispatch_host`,
+/// `promote_wave`, `converge_rollout`, `halt_rollout`, `rollback_host`,
+/// `soak_host`, `channel_unknown`, `skip`, `wave_blocked`,
+/// `rollout_deferred`). The dashboard decomposes the action stream
+/// into per-kind rate panels (reconciler decisions, soak transitions,
+/// wave promotions, convergence, rollback) — all sourced from this
+/// single counter. Bounded label set: 11 action kinds.
+pub fn record_reconciler_action(action_kind: &'static str) {
+    counter!(
+        "nixfleet_reconciler_action_total",
+        "action_kind" => action_kind,
+    )
+    .increment(1);
+}
+
+/// snake_case discriminator matching the `Action` enum's serde tag.
+/// Kept here instead of on the reconciler crate so the latter stays
+/// dependency-light (no metrics crate pull).
+pub fn action_kind_label(action: &nixfleet_reconciler::Action) -> &'static str {
+    use nixfleet_reconciler::Action;
+    match action {
+        Action::OpenRollout { .. } => "open_rollout",
+        Action::DispatchHost { .. } => "dispatch_host",
+        Action::PromoteWave { .. } => "promote_wave",
+        Action::ConvergeRollout { .. } => "converge_rollout",
+        Action::HaltRollout { .. } => "halt_rollout",
+        Action::RollbackHost { .. } => "rollback_host",
+        Action::SoakHost { .. } => "soak_host",
+        Action::ChannelUnknown { .. } => "channel_unknown",
+        Action::Skip { .. } => "skip",
+        Action::WaveBlocked { .. } => "wave_blocked",
+        Action::RolloutDeferred { .. } => "rollout_deferred",
+    }
+}
+
+/// Increment per `/v1/agent/checkin` once `decide_target` has produced
+/// its `Decision`. `decision` is the kebab-case discriminator
+/// (dispatch / converged / unmanaged / no-declaration / in-flight /
+/// hold-after-failure / wave-not-reached) — bounded set. `host` lets
+/// the dashboard show "is this host actively being responded to?".
+/// Cardinality: hosts × 7 decision kinds, bounded.
+pub fn record_checkin_decision(host: &str, decision: &'static str) {
+    counter!(
+        "nixfleet_checkin_decision_total",
+        "host" => host.to_string(),
+        "decision" => decision,
+    )
+    .increment(1);
+}
+
+/// Increment when `transition_host_state` actually flips a row
+/// (DB returned >0 affected). `from`/`to` are the canonical SQL
+/// literal names (`Healthy`, `Soaked`, `Converged`, `Failed`, ...).
+/// NO host label — cardinality is 9² ≤ 81 even if every transition
+/// edge is exercised, vs. hosts × 9² which blows up. Per-host
+/// transitions are visible in the journal stream by design.
+pub fn record_state_transition(from: &str, to: &str) {
+    counter!(
+        "nixfleet_host_state_transition_total",
+        "from_state" => from.to_string(),
+        "to_state" => to.to_string(),
+    )
+    .increment(1);
+}
+
 /// Refresh per-host + per-channel gauges from the current fleet state
 /// view. Called by the `/metrics` handler on every scrape. The DB-backed
 /// reads (active rollouts, deferrals) are bounded by the fleet size and
@@ -106,8 +172,156 @@ pub async fn record_fleet_metrics(state: &AppState) -> Result<(), StateViewError
 
     record_active_rollouts(state, &snapshot.fleet.channels.keys().cloned().collect::<Vec<_>>(), now);
     record_channel_deferrals(state, &snapshot.fleet.channels.keys().cloned().collect::<Vec<_>>()).await;
+    record_declarative_info(&snapshot.fleet);
+    record_disruption_budgets(&snapshot.fleet, state).await;
+    record_agent_versions(state).await;
 
     Ok(())
+}
+
+/// Declarative shape of the fleet — channels, edges, wave plan. All
+/// derived from the verified-fleet snapshot at scrape time. Cardinality
+/// is bounded by fleet config size: hosts + channels + edges + waves.
+/// Operator dashboards consume these as info-style gauges (`== 1` filter
+/// + label projection) — the value is always 1 except for wave_size
+/// which carries the host count.
+fn record_declarative_info(fleet: &nixfleet_proto::FleetResolved) {
+    for (name, channel) in &fleet.channels {
+        // Info gauge: only stable categorical labels. Numeric values
+        // (freshness window, signing interval) live as their own
+        // gauges so they series-flip cleanly when reconfigured —
+        // putting them on labels would leave stale series for the
+        // ~staleness window every time the operator bumps a value.
+        gauge!(
+            "nixfleet_channel_info",
+            "channel" => name.clone(),
+            "rollout_policy" => channel.rollout_policy.clone(),
+            "compliance_mode" => channel.compliance.mode.clone(),
+        )
+        .set(1.0);
+        gauge!(
+            "nixfleet_channel_signing_interval_minutes",
+            "channel" => name.clone(),
+        )
+        .set(f64::from(channel.signing_interval_minutes));
+        // freshness_window_minutes already its own gauge — emitted in
+        // record_fleet_metrics' channels loop above.
+    }
+    for edge in &fleet.channel_edges {
+        gauge!(
+            "nixfleet_channel_edge_info",
+            "gates" => edge.gates.clone(),
+            "gated" => edge.gated.clone(),
+        )
+        .set(1.0);
+    }
+    for edge in &fleet.edges {
+        gauge!(
+            "nixfleet_host_edge_info",
+            "gates" => edge.gates.clone(),
+            "gated" => edge.gated.clone(),
+        )
+        .set(1.0);
+    }
+    // Per-channel wave plan — one series per (channel, wave) carrying
+    // the host count. Reads `fleet.waves[channel]` (the resolved wave
+    // assignment, not the `rolloutPolicies.waves` template — the latter
+    // is selector-driven and not host-resolved at this layer).
+    for (channel, waves) in &fleet.waves {
+        for (idx, wave) in waves.iter().enumerate() {
+            gauge!(
+                "nixfleet_channel_wave_size",
+                "channel" => channel.clone(),
+                "wave" => idx.to_string(),
+            )
+            .set(wave.hosts.len() as f64);
+        }
+    }
+}
+
+/// Per-disruption-budget headroom. Cardinality bound: number of declared
+/// `disruption_budgets` entries (typically ≤ a handful).
+///
+/// Two metrics, both labelled by `Selector::summary()`:
+///
+///   nixfleet_disruption_budget_max{selector}        — declared cap
+///   nixfleet_disruption_budget_in_flight{selector}  — current count
+///
+/// The in-flight count uses `gates::disruption_budget::in_flight_count`
+/// against the same `Observed` view the gates evaluate against —
+/// ONE source of truth for "how many slots are taken". Drift between
+/// metric and gate is structurally impossible.
+///
+/// Max is the declared `max_in_flight`, or `floor(pct/100 * matched_hosts)`
+/// when only `max_in_flight_pct` is set. `Selector::resolve` provides
+/// the matched-host count from the live fleet snapshot.
+async fn record_disruption_budgets(
+    fleet: &nixfleet_proto::FleetResolved,
+    state: &AppState,
+) {
+    if state.db.is_none() {
+        return;
+    }
+    let observed = crate::observed_view::build_for_gates_from_state(
+        state,
+        fleet,
+        &state
+            .verified_fleet
+            .read()
+            .await
+            .as_ref()
+            .map(|s| s.fleet_resolved_hash.clone())
+            .unwrap_or_default(),
+    )
+    .await;
+
+    for budget in &fleet.disruption_budgets {
+        let label = budget.selector.summary();
+        let max = budget
+            .max_in_flight
+            .map(f64::from)
+            .or_else(|| {
+                budget.max_in_flight_pct.and_then(|pct| {
+                    let total = budget.selector.resolve(fleet.hosts.iter()).len() as u32;
+                    if total == 0 {
+                        None
+                    } else {
+                        Some(((pct as f64 / 100.0) * total as f64).floor())
+                    }
+                })
+            })
+            .unwrap_or(0.0);
+        gauge!(
+            "nixfleet_disruption_budget_max",
+            "selector" => label.clone(),
+        )
+        .set(max);
+        let in_flight = nixfleet_reconciler::gates::disruption_budget::in_flight_count(
+            &observed,
+            &budget.selector,
+        );
+        gauge!(
+            "nixfleet_disruption_budget_in_flight",
+            "selector" => label,
+        )
+        .set(f64::from(in_flight));
+    }
+}
+
+/// Per-host agent version, info-gauge style. One series per (host,
+/// agent_version) pair seen at last checkin. Cardinality bounded:
+/// hosts × few-versions-rolled-out-at-once. Operators read the
+/// dashboard for "is everyone on the same version?".
+async fn record_agent_versions(state: &AppState) {
+    let checkins = state.host_checkins.read().await;
+    for (hostname, record) in checkins.iter() {
+        gauge!(
+            "nixfleet_host_agent_version_info",
+            "host" => hostname.clone(),
+            "agent_version" => record.checkin.agent_version.clone(),
+        )
+        .set(1.0);
+    }
 }
 
 /// Per-channel rollout activity. Pulls from the rollouts table directly
@@ -407,4 +621,70 @@ mod tests {
             "missing disruption-budget label:\n{body}"
         );
     }
+
+    #[test]
+    fn reconciler_action_counter_uses_snake_case_kind() {
+        use nixfleet_reconciler::Action;
+        let handle = install_recorder();
+        record_reconciler_action(action_kind_label(&Action::OpenRollout {
+            channel: "stable".into(),
+            target_ref: "abc".into(),
+        }));
+        record_reconciler_action(action_kind_label(&Action::DispatchHost {
+            rollout: "r1".into(),
+            host: "lab".into(),
+            target_ref: "abc".into(),
+        }));
+        record_reconciler_action(action_kind_label(&Action::ConvergeRollout {
+            rollout: "r1".into(),
+        }));
+        let body = handle.render();
+        assert!(
+            body.contains("action_kind=\"open_rollout\""),
+            "missing open_rollout label:\n{body}"
+        );
+        assert!(
+            body.contains("action_kind=\"dispatch_host\""),
+            "missing dispatch_host label:\n{body}"
+        );
+        assert!(
+            body.contains("action_kind=\"converge_rollout\""),
+            "missing converge_rollout label:\n{body}"
+        );
+    }
+
+    #[test]
+    fn checkin_decision_counter_carries_host_and_decision() {
+        let handle = install_recorder();
+        record_checkin_decision("test-host-A", "dispatch");
+        record_checkin_decision("test-host-B", "converged");
+        record_checkin_decision("test-host-A", "in-flight");
+        let body = handle.render();
+        assert!(
+            body.contains("nixfleet_checkin_decision_total"),
+            "missing decision counter:\n{body}"
+        );
+        // Either label-order is fine.
+        assert!(
+            body.contains("decision=\"dispatch\"") && body.contains("host=\"test-host-A\""),
+            "missing decision/host labels:\n{body}"
+        );
+    }
+
+    #[test]
+    fn state_transition_counter_pairs_from_to() {
+        let handle = install_recorder();
+        record_state_transition("Healthy", "Soaked");
+        record_state_transition("Soaked", "Converged");
+        let body = handle.render();
+        assert!(
+            body.contains("nixfleet_host_state_transition_total"),
+            "missing transition counter:\n{body}"
+        );
+        assert!(
+            body.contains("from_state=\"Healthy\"") && body.contains("to_state=\"Soaked\""),
+            "missing from/to labels:\n{body}"
+        );
+    }
+
 }

@@ -41,14 +41,16 @@ pub fn check(input: &GateInput) -> Option<GateBlock> {
         .map(|(in_flight, max, selector)| GateBlock::DisruptionBudget {
             in_flight,
             max,
-            selector_summary: selector_summary(&selector),
+            selector_summary: selector.summary(),
         })
 }
 
 /// Sum of in-flight hosts across all active rollouts whose snapshot has
 /// a budget with the matching `selector`. Match by selector equality
-/// (not list index) — see module doc.
-fn in_flight_count(observed: &Observed, selector: &Selector) -> u32 {
+/// (not list index) — see module doc. Public so the metrics scraper
+/// can read the same predicate the gate uses; one source of truth for
+/// "how many slots are taken".
+pub fn in_flight_count(observed: &Observed, selector: &Selector) -> u32 {
     observed
         .active_rollouts
         .iter()
@@ -67,24 +69,4 @@ fn in_flight_count(observed: &Observed, selector: &Selector) -> u32 {
                 .count() as u32
         })
         .sum()
-}
-
-/// Short human-readable selector for log lines.
-fn selector_summary(s: &Selector) -> String {
-    if s.all {
-        return "all".into();
-    }
-    if !s.tags.is_empty() {
-        return format!("tags=[{}]", s.tags.join(","));
-    }
-    if !s.tags_any.is_empty() {
-        return format!("tagsAny=[{}]", s.tags_any.join(","));
-    }
-    if !s.hosts.is_empty() {
-        return format!("hosts=[{}]", s.hosts.join(","));
-    }
-    if let Some(ch) = &s.channel {
-        return format!("channel={ch}");
-    }
-    "(empty)".into()
 }
