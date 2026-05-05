@@ -219,8 +219,8 @@ impl Rollouts<'_> {
     /// UI consumers (/v1/rollouts list, deferrals view, metrics)
     /// want "what's still in flight from the operator's perspective"
     /// — those use `list_in_flight()` instead.
-    pub fn list_active(&self) -> Result<Vec<ActiveRollout>> {
-        self.list_filtered(false)
+    pub fn list_active(&self) -> Result<GateRollouts> {
+        Ok(GateRollouts(self.list_filtered(false)?))
     }
 
     /// "What's in flight" for UI: filters BOTH superseded AND terminal.
@@ -233,8 +233,8 @@ impl Rollouts<'_> {
     /// — those need terminal rollouts visible so channelEdges can
     /// detect "predecessor converged" via host_states inspection.
     /// See `list_active()` for that path.
-    pub fn list_in_flight(&self) -> Result<Vec<ActiveRollout>> {
-        self.list_filtered(true)
+    pub fn list_in_flight(&self) -> Result<UiRollouts> {
+        Ok(UiRollouts(self.list_filtered(true)?))
     }
 
     fn list_filtered(&self, exclude_terminal: bool) -> Result<Vec<ActiveRollout>> {
@@ -300,6 +300,78 @@ pub struct ActiveRollout {
     /// `channel_edges` can distinguish "predecessor converged" from
     /// "predecessor unknown" without inferring it from absence.
     pub terminal_at: Option<DateTime<Utc>>,
+}
+
+/// Result of `list_active()` — the gate-observed view. Contains
+/// converged-but-not-superseded rollouts (terminal_at populated)
+/// because channel_edges needs to see them to detect "predecessor
+/// done" via host_states inspection. Functions that consume gate
+/// observed should accept `GateRollouts` so the wrong query result
+/// can't be passed at the type level.
+#[derive(Debug, Clone, Default)]
+pub struct GateRollouts(Vec<ActiveRollout>);
+
+/// Result of `list_in_flight()` — the operator/UI view. Excludes
+/// converged rollouts (terminal_at populated). Functions that drive
+/// dashboards / metrics / `/v1/rollouts` should accept `UiRollouts`.
+#[derive(Debug, Clone, Default)]
+pub struct UiRollouts(Vec<ActiveRollout>);
+
+// Common API shape: iter / len / is_empty / into_iter / into_inner.
+// `into_inner` is the escape hatch — needed where downstream code
+// merges with `host_dispatch_state` snapshots and produces a fresh
+// `Vec<RolloutDbSnapshot>`. Outside the database layer, prefer the
+// typed view.
+macro_rules! rollout_view_api {
+    ($t:ident) => {
+        impl $t {
+            pub fn iter(&self) -> std::slice::Iter<'_, ActiveRollout> {
+                self.0.iter()
+            }
+            pub fn len(&self) -> usize {
+                self.0.len()
+            }
+            pub fn is_empty(&self) -> bool {
+                self.0.is_empty()
+            }
+            pub fn into_inner(self) -> Vec<ActiveRollout> {
+                self.0
+            }
+        }
+        impl IntoIterator for $t {
+            type Item = ActiveRollout;
+            type IntoIter = std::vec::IntoIter<ActiveRollout>;
+            fn into_iter(self) -> Self::IntoIter {
+                self.0.into_iter()
+            }
+        }
+        impl<'a> IntoIterator for &'a $t {
+            type Item = &'a ActiveRollout;
+            type IntoIter = std::slice::Iter<'a, ActiveRollout>;
+            fn into_iter(self) -> Self::IntoIter {
+                self.0.iter()
+            }
+        }
+    };
+}
+rollout_view_api!(GateRollouts);
+rollout_view_api!(UiRollouts);
+
+impl GateRollouts {
+    /// Demote to the UI view by filtering out terminal rollouts.
+    /// Asymmetric: there is NO `UiRollouts → GateRollouts` direction
+    /// because the UI view is a strict subset and re-fabricating
+    /// missing terminal entries would silently fix what should be a
+    /// type error. If a caller has `UiRollouts` and needs the gate
+    /// view, query `list_active()` directly.
+    pub fn into_ui(self) -> UiRollouts {
+        UiRollouts(
+            self.0
+                .into_iter()
+                .filter(|r| r.terminal_at.is_none())
+                .collect(),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -423,7 +495,7 @@ mod tests {
         // Advance r3 to wave 1 (stable's promotion).
         db.rollouts().set_current_wave("r3", 1).unwrap();
 
-        let mut rows = db.rollouts().list_active().unwrap();
+        let mut rows = db.rollouts().list_active().unwrap().into_inner();
         rows.sort_by(|a, b| a.rollout_id.cmp(&b.rollout_id));
         assert_eq!(rows.len(), 2, "list_active excludes superseded r1");
         let r2 = rows.iter().find(|r| r.rollout_id == "r2").unwrap();
@@ -510,7 +582,7 @@ mod tests {
         assert!(r1_active.terminal_at.is_some(), "terminal_at must populate through to ActiveRollout");
 
         // list_in_flight DROPS r1 — UI shows only ongoing work.
-        let in_flight = db.rollouts().list_in_flight().unwrap();
+        let in_flight = db.rollouts().list_in_flight().unwrap().into_inner();
         assert_eq!(in_flight.len(), 1);
         assert_eq!(in_flight[0].rollout_id, "r2");
 
@@ -573,6 +645,54 @@ mod tests {
 
         // r2 (active, neither superseded nor terminal) absent from finished set.
         assert!(!ids.contains(&"r2".to_string()));
+    }
+
+    /// `GateRollouts.into_ui()` filters out terminal rollouts —
+    /// a caller that has the gate-flavored view but needs the UI
+    /// view can demote safely. Reverse direction (UI → Gate) does
+    /// NOT exist by design: the UI view is a strict subset.
+    #[test]
+    fn gate_rollouts_into_ui_filters_terminal() {
+        let db = fresh_db();
+        db.rollouts()
+            .record_active_rollout("r-active", "stable")
+            .unwrap();
+        db.rollouts()
+            .record_active_rollout("r-converged", "edge")
+            .unwrap();
+        db.rollouts()
+            .mark_terminal("r-converged", chrono::Utc::now())
+            .unwrap();
+
+        let gate = db.rollouts().list_active().unwrap();
+        assert_eq!(gate.len(), 2, "gate view keeps the terminal rollout");
+
+        let ui = gate.into_ui();
+        assert_eq!(ui.len(), 1, "into_ui filters terminal");
+        assert_eq!(ui.into_inner()[0].rollout_id, "r-active");
+    }
+
+    /// **Documentation test** — the type system should enforce that
+    /// gate-flavored and UI-flavored rollout lists are not
+    /// interchangeable. This is checked by compilation: if someone
+    /// writes a function `fn use_gate(r: GateRollouts)` and tries
+    /// to pass `db.rollouts().list_in_flight().unwrap()`, it fails
+    /// to compile. We can't write that as an `#[test]` directly
+    /// (compile-fail tests aren't trivial in stable rustc), but
+    /// the structural requirement is captured by the distinct
+    /// types and the absence of `From<UiRollouts> for GateRollouts`.
+    /// If a future commit adds such a conversion, this test's
+    /// premise breaks — keep the asymmetric `into_ui` only.
+    #[test]
+    fn gate_and_ui_rollouts_are_distinct_types() {
+        let db = fresh_db();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
+
+        // Both queries return ActiveRollout data; the wrapper TYPE
+        // is what differs. Using fully-qualified type names so a
+        // future refactor that conflates them fails to compile.
+        let _gate: super::GateRollouts = db.rollouts().list_active().unwrap();
+        let _ui: super::UiRollouts = db.rollouts().list_in_flight().unwrap();
     }
 
     /// Supersession overrides terminal: superseded rollouts can't be

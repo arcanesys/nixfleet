@@ -84,7 +84,7 @@ pub(super) fn spawn_reconcile_loop(
             let rollouts: Vec<crate::db::RolloutDbSnapshot> = match state.db.as_deref() {
                 Some(db) => {
                     let in_flight = match db.rollouts().list_active() {
-                        Ok(v) => v,
+                        Ok(v) => v.into_inner(),
                         Err(err) => {
                             tracing::warn!(error = %err, "reconcile: list_active failed; treating as empty");
                             Vec::new()
