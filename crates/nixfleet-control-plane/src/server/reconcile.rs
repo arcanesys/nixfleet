@@ -81,55 +81,34 @@ pub(super) fn spawn_reconcile_loop(
             };
             let checkins = state.host_checkins.read().await.clone();
 
-            // Reconciler-side observed: source from rollouts.list_active()
-            // (canonical "in-flight" — excludes both superseded_at AND
-            // terminal_at) and merge per-host observable state from
-            // host_dispatch_state. Same shape as the dispatch endpoint's
-            // build_observed_for_gates so gates see identical input at
-            // both call sites — a freshly-opened rollout is visible
-            // even before any host has dispatched on it.
-            let mut rollouts: Vec<crate::db::RolloutDbSnapshot> = match state.db.as_deref() {
+            // Snapshot the live verified-fleet cache once. Reconciler prefers
+            // it over the static artifact so fleet.nix changes (rolloutPolicies,
+            // selector tweaks, channel metadata) apply on the next polling
+            // tick instead of waiting for lab to rebuild and re-link the
+            // baked-in artifact path.
+            let live_fleet = state.verified_fleet.read().await.clone();
+
+            // Reconciler-side observed: same shared substrate as the
+            // dispatch endpoint via `observed_view::list_active_rollouts`
+            // + `synthesize_polling_race_placeholders` (commit 37e8d07).
+            // Reconciler does NOT filter by `current_rollout_ids` — it
+            // needs to see non-current in-flight rollouts so
+            // `sweep_terminal_orphans` and ConvergeRollout fire on
+            // stragglers. Dispatch path applies the filter inside
+            // `build_for_gates`. When the verified-fleet snapshot isn't
+            // primed yet (first boot, polling hasn't caught up), skip
+            // synthesis — the next tick closes the hole.
+            let rollouts: Vec<crate::db::RolloutDbSnapshot> = match state.db.as_deref() {
                 Some(db) => {
-                    let in_flight = match db.rollouts().list_active() {
-                        Ok(v) => v.into_inner(),
-                        Err(err) => {
-                            tracing::warn!(error = %err, "reconcile: list_active failed; treating as empty");
-                            Vec::new()
-                        }
-                    };
-                    let host_state_by_rollout: HashMap<String, crate::db::RolloutDbSnapshot> =
-                        match db.host_dispatch_state().active_rollouts_snapshot() {
-                            Ok(v) => v.into_iter().map(|s| (s.rollout_id.clone(), s)).collect(),
-                            Err(err) => {
-                                tracing::warn!(error = %err, "reconcile: active_rollouts_snapshot failed; merging with empty host states");
-                                HashMap::new()
-                            }
-                        };
-                    in_flight
-                        .into_iter()
-                        .map(|r| match host_state_by_rollout.get(&r.rollout_id) {
-                            Some(snap) => crate::db::RolloutDbSnapshot {
-                                rollout_id: r.rollout_id,
-                                channel: r.channel,
-                                target_closure_hash: snap.target_closure_hash.clone(),
-                                target_channel_ref: snap.target_channel_ref.clone(),
-                                host_states: snap.host_states.clone(),
-                                last_healthy_since: snap.last_healthy_since.clone(),
-                                current_wave: r.current_wave,
-                                terminal_at: r.terminal_at,
-                            },
-                            None => crate::db::RolloutDbSnapshot {
-                                rollout_id: r.rollout_id.clone(),
-                                channel: r.channel,
-                                target_closure_hash: String::new(),
-                                target_channel_ref: r.rollout_id,
-                                host_states: HashMap::new(),
-                                last_healthy_since: HashMap::new(),
-                                current_wave: r.current_wave,
-                                terminal_at: r.terminal_at,
-                            },
-                        })
-                        .collect()
+                    let mut snapshots = crate::observed_view::list_active_rollouts(db);
+                    if let Some(snapshot) = live_fleet.as_ref() {
+                        crate::observed_view::synthesize_polling_race_placeholders(
+                            &mut snapshots,
+                            &snapshot.fleet,
+                            &snapshot.fleet_resolved_hash,
+                        );
+                    }
+                    snapshots
                 }
                 None => Vec::new(),
             };
@@ -155,56 +134,6 @@ pub(super) fn spawn_reconcile_loop(
                 now,
                 ..inputs.clone()
             };
-            // Snapshot the live verified-fleet cache once. Reconciler prefers
-            // it over the static artifact so fleet.nix changes (rolloutPolicies,
-            // selector tweaks, channel metadata) apply on the next polling
-            // tick instead of waiting for lab to rebuild and re-link the
-            // baked-in artifact path.
-            let live_fleet = state.verified_fleet.read().await.clone();
-
-            // LOADBEARING: close the polling-race window between
-            // channelEdges releasing and channel-refs poll recording
-            // the new successor rollout. Synthesize empty placeholders
-            // for current-fleet rollouts not yet present in the
-            // rollouts table — same shape as `observed_view::build_for_gates`
-            // so reconciler-side gate evaluation matches the dispatch
-            // endpoint's view byte-for-byte. Without this, host_edges
-            // misses the freshly-opened channel's first dispatch.
-            if let Some(snapshot) = live_fleet.as_ref() {
-                let known: std::collections::HashSet<String> =
-                    rollouts.iter().map(|r| r.rollout_id.clone()).collect();
-                for channel_name in snapshot.fleet.channels.keys() {
-                    let computed = match nixfleet_reconciler::compute_rollout_id_for_channel(
-                        &snapshot.fleet,
-                        &snapshot.fleet_resolved_hash,
-                        channel_name,
-                    ) {
-                        Ok(Some(id)) => id,
-                        Ok(None) => continue,
-                        Err(err) => {
-                            tracing::warn!(
-                                channel = %channel_name,
-                                error = %err,
-                                "reconcile: compute_rollout_id_for_channel failed; skipping placeholder",
-                            );
-                            continue;
-                        }
-                    };
-                    if known.contains(&computed) {
-                        continue;
-                    }
-                    rollouts.push(crate::db::RolloutDbSnapshot {
-                        rollout_id: computed.clone(),
-                        channel: channel_name.clone(),
-                        target_closure_hash: String::new(),
-                        target_channel_ref: computed,
-                        host_states: HashMap::new(),
-                        last_healthy_since: HashMap::new(),
-                        current_wave: 0,
-                        terminal_at: None,
-                    });
-                }
-            }
 
             let last_deferrals = state.last_deferrals.read().await.clone();
             // Load each active rollout's budget snapshot from its signed

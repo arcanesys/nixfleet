@@ -31,7 +31,7 @@ use nixfleet_reconciler::gates::{evaluate_for_host, GateBlock, GateInput, GateMo
 use nixfleet_reconciler::observed::{Observed, Rollout};
 use nixfleet_reconciler::{HostRolloutState, RolloutState};
 
-use crate::db::{Db, DispatchInsert, RolloutDbSnapshot};
+use crate::db::{Db, DispatchInsert};
 use crate::state::HealthyMarker;
 
 // ============================================================
@@ -142,60 +142,37 @@ fn fleet() -> FleetResolved {
     }
 }
 
-/// Mirror of the canonical observed builder shape used by both
-/// the dispatch endpoint and the reconciler. Reads `list_active`
-/// (gate view, includes terminal) + active_rollouts_snapshot;
-/// LEFT-JOINs by rollout_id; preserves all the asymmetry-pinning
-/// semantics the recent fixes locked in.
+/// Test-side `Observed` constructor — delegates to the production
+/// `list_active_rollouts` helper, then maps each `RolloutDbSnapshot`
+/// into a `Rollout` with the same shape the dispatch path uses.
 ///
-/// If a future commit accidentally diverges the dispatch path's
-/// builder from this shape, gate verdicts in this file's
-/// scenarios will diverge from the unit-test gate predicates and
-/// surface the regression here.
+/// Skips the `current_rollout_ids` filter and the polling-race
+/// synthesis: tests in this file set up arbitrary rids (`R-edge`,
+/// `R-stable`) that don't match a `compute_rollout_id_for_channel`
+/// output. Those concerns have dedicated coverage —
+/// `polling_race_window_observed_view_synthesizes_placeholder` and
+/// the helper-direct test below.
 fn build_observed(db: &Db) -> Observed {
-    let in_flight = db.rollouts().list_active().unwrap().into_inner();
-    let snap = db
-        .host_dispatch_state()
-        .active_rollouts_snapshot()
-        .unwrap();
-    let host_state_by_rollout: std::collections::HashMap<String, RolloutDbSnapshot> = snap
+    let active_rollouts: Vec<Rollout> = crate::observed_view::list_active_rollouts(db)
         .into_iter()
-        .map(|s| (s.rollout_id.clone(), s))
-        .collect();
-
-    let active_rollouts: Vec<Rollout> = in_flight
-        .into_iter()
-        .map(|r| {
-            let host_snap = host_state_by_rollout.get(&r.rollout_id);
-            let target_ref = host_snap
-                .map(|s| s.target_channel_ref.clone())
-                .unwrap_or_else(|| r.rollout_id.clone());
-            let host_states = host_snap
-                .map(|s| {
-                    s.host_states
-                        .iter()
-                        .filter_map(|(h, st)| {
-                            HostRolloutState::from_db_str(st)
-                                .ok()
-                                .map(|parsed| (h.clone(), parsed))
-                        })
-                        .collect()
+        .map(|s| Rollout {
+            id: s.rollout_id,
+            channel: s.channel,
+            target_ref: s.target_channel_ref,
+            state: RolloutState::Executing,
+            current_wave: s.current_wave as usize,
+            host_states: s
+                .host_states
+                .iter()
+                .filter_map(|(h, st)| {
+                    HostRolloutState::from_db_str(st)
+                        .ok()
+                        .map(|parsed| (h.clone(), parsed))
                 })
-                .unwrap_or_default();
-            let last_healthy_since = host_snap
-                .map(|s| s.last_healthy_since.clone())
-                .unwrap_or_default();
-            Rollout {
-                id: r.rollout_id,
-                channel: r.channel,
-                target_ref,
-                state: RolloutState::Executing,
-                current_wave: r.current_wave as usize,
-                host_states,
-                last_healthy_since,
-                budgets: vec![],
-                terminal_at: r.terminal_at,
-            }
+                .collect(),
+            last_healthy_since: s.last_healthy_since,
+            budgets: vec![],
+            terminal_at: s.terminal_at,
         })
         .collect();
 
@@ -642,4 +619,109 @@ fn polling_race_window_observed_view_synthesizes_placeholder() {
              re-opened — host_edges is bypassed for freshly-opened rollouts.",
         ),
     }
+}
+
+/// Directly pin the split `list_active_rollouts` /
+/// `synthesize_polling_race_placeholders` contract.
+///
+/// The dispatch endpoint and reconciler both feed gates from the same
+/// substrate (commit 37e8d07 closed the polling-race window). This
+/// test bypasses the gate evaluation and asserts the helpers' shape
+/// directly: only-list_active rows from the table, then synthesis
+/// adds placeholders for current-fleet rollouts not yet recorded,
+/// idempotent on second pass.
+///
+/// If a future commit reintroduces a parallel inline copy of either
+/// helper in `server::reconcile` or `observed_view::build_for_gates`,
+/// this test still passes (the helpers are correct in isolation) but
+/// the existing `polling_race_window_observed_view_synthesizes_placeholder`
+/// will fail, surfacing the drift. Together the two tests pin both
+/// halves of the contract.
+#[test]
+fn helper_split_lists_active_then_synthesizes_only_unknown_current_rollouts() {
+    let db = fresh_db();
+    let mut fleet = fleet();
+    fleet.meta.signed_at = Some(Utc::now());
+    let fleet_resolved_hash = "test-fleet-hash";
+
+    // Pre-populate one rollout the table knows about. Use the channel's
+    // computed rid so the synthesis sees it as "already known."
+    let edge_rid = nixfleet_reconciler::compute_rollout_id_for_channel(
+        &fleet,
+        fleet_resolved_hash,
+        "edge",
+    )
+    .unwrap()
+    .unwrap();
+    db.rollouts()
+        .record_active_rollout(&edge_rid, "edge")
+        .unwrap();
+    db.host_dispatch_state()
+        .record_dispatch(&DispatchInsert {
+            hostname: "lab",
+            rollout_id: &edge_rid,
+            channel: "edge",
+            wave: 0,
+            target_closure_hash: "lab-closure",
+            target_channel_ref: &edge_rid,
+            confirm_deadline: Utc::now() + chrono::Duration::minutes(10),
+        })
+        .unwrap();
+
+    // Step 1: list_active_rollouts returns the one recorded row, with
+    // operational state LEFT-JOINed in. No synthesis yet.
+    let mut snapshots = crate::observed_view::list_active_rollouts(&db);
+    assert_eq!(snapshots.len(), 1, "list_active_rollouts: only the recorded edge rollout");
+    assert_eq!(snapshots[0].rollout_id, edge_rid);
+    assert_eq!(snapshots[0].channel, "edge");
+    assert_eq!(snapshots[0].target_closure_hash, "lab-closure");
+    assert!(
+        snapshots[0].host_states.contains_key("lab"),
+        "list_active_rollouts must LEFT-JOIN host_dispatch_state",
+    );
+
+    // Step 2: synthesize for the fleet's two channels. Edge already
+    // present (skipped); stable not present → placeholder added.
+    crate::observed_view::synthesize_polling_race_placeholders(
+        &mut snapshots,
+        &fleet,
+        fleet_resolved_hash,
+    );
+    let stable_rid = nixfleet_reconciler::compute_rollout_id_for_channel(
+        &fleet,
+        fleet_resolved_hash,
+        "stable",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(snapshots.len(), 2, "synthesis must add stable placeholder");
+    let stable = snapshots
+        .iter()
+        .find(|s| s.rollout_id == stable_rid)
+        .expect("stable placeholder must be synthesized");
+    assert_eq!(stable.channel, "stable");
+    assert!(
+        stable.host_states.is_empty(),
+        "synthesized placeholder must have empty host_states (peers default Queued)",
+    );
+    assert!(stable.terminal_at.is_none());
+    // Edge row preserved unchanged.
+    let edge = snapshots
+        .iter()
+        .find(|s| s.rollout_id == edge_rid)
+        .expect("edge row must survive synthesis");
+    assert_eq!(edge.target_closure_hash, "lab-closure");
+    assert!(edge.host_states.contains_key("lab"));
+
+    // Step 3: idempotence — second synthesis pass is a no-op.
+    crate::observed_view::synthesize_polling_race_placeholders(
+        &mut snapshots,
+        &fleet,
+        fleet_resolved_hash,
+    );
+    assert_eq!(
+        snapshots.len(),
+        2,
+        "synthesize_polling_race_placeholders must be idempotent",
+    );
 }
