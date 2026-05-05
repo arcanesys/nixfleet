@@ -12,6 +12,11 @@ const TICK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const TOKEN_REPLAY_RETENTION_HOURS: i64 = 24;
 const DISPATCH_HISTORY_RETENTION_HOURS: i64 = 24 * 90;
 const HOST_REPORTS_RETENTION_HOURS: i64 = 24 * 7;
+/// Match `dispatch_history` (90d) — the rollouts table is the
+/// other side of the same audit story. Operators investigating a
+/// 60-day-old release on lab still want to see the per-host
+/// states it produced, not just the dispatch records.
+const FINISHED_ROLLOUTS_RETENTION_HOURS: i64 = 24 * 90;
 const BACKUP_RETENTION_DAYS: u64 = 14;
 const BACKUP_FILENAME_PREFIX: &str = "state.db.pre-";
 
@@ -44,6 +49,16 @@ pub fn spawn(
                 db.reports()
                     .prune_host_reports(HOST_REPORTS_RETENTION_HOURS)
             });
+            let (hrs_pruned, rollouts_pruned) = match db
+                .rollouts()
+                .prune_finished_rollouts(FINISHED_ROLLOUTS_RETENTION_HOURS)
+            {
+                Ok(pair) => pair,
+                Err(err) => {
+                    tracing::warn!(error = %err, "prune timer: finished_rollouts failed");
+                    (0, 0)
+                }
+            };
             let backups_pruned = db_path
                 .as_deref()
                 .and_then(Path::parent)
@@ -58,6 +73,8 @@ pub fn spawn(
                 token_replay = token_pruned,
                 dispatch_history = history_pruned,
                 host_reports = reports_pruned,
+                host_rollout_state = hrs_pruned,
+                rollouts = rollouts_pruned,
                 state_db_backups = backups_pruned,
                 "prune timer: hourly sweep complete",
             );

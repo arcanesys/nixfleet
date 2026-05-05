@@ -283,6 +283,60 @@ impl Rollouts<'_> {
             })
             .collect()
     }
+
+    /// Prune finished (superseded OR terminal) rollouts whose finish
+    /// timestamp is older than `max_age_hours`, AND the
+    /// `host_rollout_state` rows that reference them.
+    ///
+    /// Single transaction: host_rollout_state rows go first, then
+    /// the rollouts rows. SQLite has no FK on host_rollout_state
+    /// here, but ordering matters for crash safety — if we deleted
+    /// rollouts first and crashed before host_rollout_state, the
+    /// hrs rows would still reference deleted rollout_ids and the
+    /// snapshot's LEFT JOIN would surface stale state.
+    ///
+    /// Returns `(host_rollout_state_rows_pruned, rollouts_rows_pruned)`
+    /// for separate metric reporting.
+    ///
+    /// LOADBEARING: only `superseded_at` / `terminal_at` rollouts
+    /// are candidates. In-flight rollouts are never pruned no matter
+    /// how old `created_at` is — those are still operationally
+    /// active and the snapshot's LEFT JOIN would silently lose
+    /// state.
+    pub fn prune_finished_rollouts(&self, max_age_hours: i64) -> Result<(usize, usize)> {
+        let cutoff = Utc::now() - chrono::Duration::hours(max_age_hours);
+        let cutoff_str = cutoff.to_rfc3339();
+        let mut guard = super::lock_conn(self.conn)?;
+        let txn = guard
+            .transaction()
+            .context("begin prune_finished_rollouts txn")?;
+
+        // 1. host_rollout_state rows for finished+old rollouts.
+        let hrs_pruned = txn
+            .execute(
+                "DELETE FROM host_rollout_state
+                 WHERE rollout_id IN (
+                     SELECT rollout_id FROM rollouts
+                     WHERE (superseded_at IS NOT NULL AND superseded_at < ?1)
+                        OR (terminal_at IS NOT NULL AND terminal_at < ?1)
+                 )",
+                params![&cutoff_str],
+            )
+            .context("DELETE host_rollout_state for finished rollouts")?;
+
+        // 2. The rollouts rows themselves.
+        let rollouts_pruned = txn
+            .execute(
+                "DELETE FROM rollouts
+                 WHERE (superseded_at IS NOT NULL AND superseded_at < ?1)
+                    OR (terminal_at IS NOT NULL AND terminal_at < ?1)",
+                params![&cutoff_str],
+            )
+            .context("DELETE rollouts (finished + past retention)")?;
+
+        txn.commit().context("commit prune_finished_rollouts")?;
+        Ok((hrs_pruned, rollouts_pruned))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -377,6 +431,7 @@ impl GateRollouts {
 #[cfg(test)]
 mod tests {
     use crate::db::Db;
+    use rusqlite::params;
 
     fn fresh_db() -> Db {
         let db = Db::open_in_memory().unwrap();
@@ -724,5 +779,103 @@ mod tests {
         assert!(s1_after.is_superseded());
         assert!(s1_after.is_terminal());
         assert!(s1_after.is_finished());
+    }
+
+    /// **Regression guard**: prune drops finished rollouts past
+    /// retention AND their host_rollout_state rows; leaves
+    /// in-flight rollouts and recent finishes alone.
+    ///
+    /// This test pins the load-bearing invariant that the prune
+    /// is finished-only — if a future refactor accidentally
+    /// drops the `superseded_at IS NOT NULL OR terminal_at IS NOT NULL`
+    /// guard, this test fails (in-flight r-active disappears).
+    #[test]
+    fn prune_finished_rollouts_drops_old_finished_keeps_recent_and_in_flight() {
+        let db = fresh_db();
+        let now = chrono::Utc::now();
+        let old = now - chrono::Duration::days(120);
+        let recent = now - chrono::Duration::days(30);
+
+        // r-active: in-flight, never touched. Must survive prune.
+        db.rollouts()
+            .record_active_rollout("r-active", "stable")
+            .unwrap();
+
+        // r-old-superseded: superseded long ago. Should prune.
+        db.rollouts()
+            .record_active_rollout("r-old-superseded", "edge")
+            .unwrap();
+        db.rollouts()
+            .record_active_rollout("r-old-superseder", "edge")
+            .unwrap(); // supersedes r-old-superseded with now()
+        // Force superseded_at to the old timestamp via direct SQL —
+        // record_active_rollout stamps `now()`, but we need a row
+        // older than 90d to verify the retention boundary.
+        {
+            let guard = crate::db::lock_conn(db.rollouts().conn).unwrap();
+            guard
+                .execute(
+                    "UPDATE rollouts SET superseded_at = ?1 WHERE rollout_id = 'r-old-superseded'",
+                    params![old.to_rfc3339()],
+                )
+                .unwrap();
+        }
+
+        // r-recent-terminal: terminal recently (30d). Should NOT prune.
+        db.rollouts()
+            .record_active_rollout("r-recent-terminal", "preview")
+            .unwrap();
+        db.rollouts()
+            .mark_terminal("r-recent-terminal", recent)
+            .unwrap();
+
+        // r-old-terminal: terminal long ago (120d). Should prune.
+        db.rollouts()
+            .record_active_rollout("r-old-terminal", "preview-old")
+            .unwrap();
+        db.rollouts()
+            .mark_terminal("r-old-terminal", old)
+            .unwrap();
+
+        // host_rollout_state rows tied to each — verify they
+        // co-prune with their rollouts.
+        for rid in [
+            "r-active",
+            "r-old-superseded",
+            "r-recent-terminal",
+            "r-old-terminal",
+        ] {
+            db.rollout_state()
+                .transition_host_state(
+                    "host-x",
+                    rid,
+                    crate::state::HostRolloutState::Healthy,
+                    crate::state::HealthyMarker::Set(now),
+                    None,
+                )
+                .unwrap();
+        }
+
+        // Run prune — 90d retention.
+        let (hrs_pruned, rollouts_pruned) =
+            db.rollouts().prune_finished_rollouts(24 * 90).unwrap();
+        assert_eq!(rollouts_pruned, 2, "r-old-superseded + r-old-terminal");
+        assert_eq!(hrs_pruned, 2, "host_rollout_state rows for the two pruned rollouts");
+
+        // r-active and r-recent-terminal must still be present.
+        let active = db.rollouts().list_active().unwrap();
+        let kept_ids: Vec<&str> = active.iter().map(|r| r.rollout_id.as_str()).collect();
+        assert!(kept_ids.contains(&"r-active"), "in-flight rollout retained");
+        // r-recent-terminal stays in list_active (terminal is filtered
+        // only by list_in_flight). Confirm it's NOT pruned.
+        let status = db.rollouts().supersede_status("r-recent-terminal").unwrap();
+        assert!(
+            status.is_some(),
+            "recent terminal rollout retained inside the 90d window",
+        );
+
+        // r-old-superseded + r-old-terminal: gone from rollouts table.
+        assert!(db.rollouts().supersede_status("r-old-superseded").unwrap().is_none());
+        assert!(db.rollouts().supersede_status("r-old-terminal").unwrap().is_none());
     }
 }
