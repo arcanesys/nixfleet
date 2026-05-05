@@ -129,7 +129,11 @@ pub async fn compute_channel_deferrals(state: &AppState) -> Vec<ChannelDeferral>
             &observed,
             &no_in_tick_opens,
             channel,
-            false,
+            // Live read for the dashboard, not the dispatch path —
+            // missing predecessor here just means "not yet recorded";
+            // we don't want a fresh-boot CP to surface every successor
+            // as `deferred`. Reconcile mode is the right one.
+            nixfleet_reconciler::gates::GateMode::Reconcile,
         ) {
             let reason = fleet
                 .channel_edges

@@ -48,7 +48,7 @@ pub(super) async fn dispatch_target_for_checkin(
             // flag, the FIRST agent on a held successor channel would
             // race ahead via record_dispatched_target's defensive
             // record_active_rollout. See gates/channel_edges.rs.
-            conservative_on_missing_state: true,
+            mode: nixfleet_reconciler::gates::GateMode::Dispatch,
         };
         if let Some(block) = nixfleet_reconciler::gates::evaluate_for_host(&input) {
             crate::metrics::record_gate_block(block.discriminator());

@@ -119,6 +119,47 @@ impl GateBlock {
     }
 }
 
+/// Caller context for a gate evaluation.
+///
+/// The two callers — reconciler tick and dispatch endpoint — share
+/// every gate predicate, but legitimately diverge on ONE decision:
+/// what to do when a referenced predecessor rollout isn't yet in
+/// observed.active_rollouts.
+///
+///   - `Reconcile`: trust `emitted_opens_in_tick` as the in-tick
+///     authority. Absence means "predecessor not opened this tick"
+///     → don't block; if anything's needed it'll fire next tick.
+///
+///   - `Dispatch`: conservative — if the fleet declares hosts on
+///     the predecessor channel, BLOCK until polling has had a
+///     chance to record the predecessor's rollout. Without this,
+///     a fresh-boot agent checkin races
+///     `record_dispatched_target`'s defensive `record_active_rollout`
+///     and would silently bypass channelEdges on the first poll
+///     after every release.
+///
+/// This used to be a `bool conservative_on_missing_state` field on
+/// `GateInput`. Naming it as a mode at every call site makes the
+/// asymmetry visible to readers (and to `grep`) — every gate that
+/// branches on this enum has to handle BOTH variants explicitly,
+/// which is exactly the property that prevents the regression we
+/// just shipped fixes for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateMode {
+    /// Reconciler tick — non-conservative on missing predecessor.
+    Reconcile,
+    /// Per-checkin dispatch endpoint — conservative on missing.
+    Dispatch,
+}
+
+impl GateMode {
+    /// Returns true iff this mode treats a missing predecessor as
+    /// a blocker (the conservative branch of channel_edges, etc).
+    pub fn conservative_on_missing(self) -> bool {
+        matches!(self, GateMode::Dispatch)
+    }
+}
+
 /// Input bundle for a gate evaluation.
 ///
 /// Both the reconciler (per-host iteration in handle_wave) and the CP
@@ -137,15 +178,8 @@ pub struct GateInput<'a> {
     /// to emit `OpenRollout`. Empty for the dispatch-endpoint context
     /// (no in-tick state at agent checkin time).
     pub emitted_opens_in_tick: &'a HashSet<String>,
-    /// Conservative-on-missing-state: when no DB rollout exists for a
-    /// referenced predecessor, treat it as a blocker IF the predecessor
-    /// has hosts in fleet. This is the dispatch-endpoint setting and
-    /// covers the fresh-boot / fresh-rev race where polling hasn't yet
-    /// recorded the predecessor and an agent checkin would otherwise
-    /// race ahead via `record_dispatched_target`'s defensive
-    /// record_active_rollout. Set false in the reconciler context where
-    /// `emitted_opens_in_tick` is the authoritative in-tick view.
-    pub conservative_on_missing_state: bool,
+    /// Caller context — reconciler vs dispatch endpoint. See [`GateMode`].
+    pub mode: GateMode,
 }
 
 /// Run every registered gate in order. Returns the first block, or None

@@ -110,7 +110,7 @@ pub fn reconcile(fleet: &FleetResolved, observed: &Observed, now: DateTime<Utc>)
             observed,
             &emitted_opens,
             &channel,
-            false, // reconciler context: emitted_opens is the in-tick signal
+            crate::gates::GateMode::Reconcile,
         ) {
             // Debounce: only emit when (target_ref, blocked_by) would change.
             let proposed = DeferralRecord {

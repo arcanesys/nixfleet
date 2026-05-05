@@ -166,7 +166,7 @@ fn channel_edges_blocks_when_predecessor_active() {
         host: "krach",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     assert_eq!(
         evaluate_for_host(&input),
@@ -194,7 +194,7 @@ fn channel_edges_passes_when_predecessor_converged() {
         host: "krach",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     assert_eq!(evaluate_for_host(&input), None);
 }
@@ -204,8 +204,8 @@ fn channel_edges_passes_when_predecessor_converged() {
 /// predecessor was filtered out of `observed.active_rollouts`,
 /// channel_edges fell into the `None` arm and answered differently:
 ///
-///   - reconciler (`conservative_on_missing_state=false`) → release
-///   - dispatch endpoint (`conservative_on_missing_state=true`) → block
+///   - reconciler (`GateMode::Reconcile`) → release
+///   - dispatch endpoint (`GateMode::Dispatch`) → block
 ///
 /// The reconciler emitted `DispatchHost`, the dispatch endpoint
 /// refused — krach stuck in an infinite loop on lab.
@@ -246,13 +246,13 @@ fn channel_edges_releases_on_terminal_predecessor_in_both_modes() {
             host: "krach",
             now,
             emitted_opens_in_tick: &empty,
-            conservative_on_missing_state: conservative,
+            mode: if conservative { super::GateMode::Dispatch } else { super::GateMode::Reconcile },
         };
         assert_eq!(
             evaluate_for_host(&input),
             None,
             "channel_edges must release successor when predecessor is terminal — \
-             conservative={conservative}. If this fails, terminal rollouts \
+             mode_dispatch={conservative}. If this fails, terminal rollouts \
              are again being filtered out of observed.active_rollouts and \
              the dispatch/reconciler asymmetry has been re-introduced."
         );
@@ -280,7 +280,7 @@ fn channel_edges_diverges_only_on_truly_missing_predecessor() {
         host: "krach",
         now,
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: conservative,
+        mode: if conservative { super::GateMode::Dispatch } else { super::GateMode::Reconcile },
     };
 
     // Conservative: blocks (fresh-boot protection — predecessor's
@@ -301,7 +301,7 @@ fn channel_edges_diverges_only_on_truly_missing_predecessor() {
 fn channel_edges_conservative_blocks_on_missing_predecessor_with_hosts() {
     // Fresh-boot scenario: predecessor channel has hosts in fleet but
     // no rollout recorded yet. Dispatch endpoint sets
-    // conservative_on_missing_state=true to block until polling
+    // GateMode::Dispatch to block until polling
     // populates state.
     let fleet = fleet_two_channels();
     let observed = Observed::default();
@@ -313,7 +313,7 @@ fn channel_edges_conservative_blocks_on_missing_predecessor_with_hosts() {
         host: "krach",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: true,
+        mode: super::GateMode::Dispatch,
     };
     assert_eq!(
         evaluate_for_host(&input),
@@ -357,7 +357,7 @@ fn wave_promotion_blocks_wave_one_when_current_is_zero() {
         host: "aether",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     assert_eq!(
         evaluate_for_host(&input),
@@ -397,7 +397,7 @@ fn host_edges_blocks_until_gating_host_converges() {
         host: "krach",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     assert_eq!(
         evaluate_for_host(&input),
@@ -442,7 +442,7 @@ fn host_edges_fires_on_freshly_opened_rollout_with_empty_host_states() {
         host: "krach",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     assert_eq!(
         evaluate_for_host(&input),
@@ -481,7 +481,7 @@ fn disruption_budget_blocks_when_at_max_in_flight() {
         host: "aether",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     let block = evaluate_for_host(&input);
     match block {
@@ -520,7 +520,7 @@ fn disruption_budget_passes_when_under_max() {
         host: "aether",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     assert_eq!(evaluate_for_host(&input), None);
 }
@@ -553,7 +553,7 @@ fn host_edges_skips_cross_channel_edges() {
         host: "krach",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     assert_eq!(
         evaluate_for_host(&input),
@@ -608,7 +608,7 @@ fn compliance_wave_blocks_when_earlier_wave_has_failures_under_enforce() {
         host: "aether",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     let block = evaluate_for_host(&input);
     match block {
@@ -669,7 +669,7 @@ fn compliance_wave_passes_under_permissive_mode() {
         host: "aether",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     assert_eq!(
         evaluate_for_host(&input),
@@ -697,7 +697,7 @@ fn empty_input_passes_all_gates() {
         host: "krach",
         now: Utc::now(),
         emitted_opens_in_tick: &empty,
-        conservative_on_missing_state: false,
+        mode: super::GateMode::Reconcile,
     };
     assert_eq!(evaluate_for_host(&input), None);
 }

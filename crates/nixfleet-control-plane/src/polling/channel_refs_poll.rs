@@ -314,7 +314,10 @@ async fn record_rollouts_gated_by_channel_edges(
             &pseudo_observed,
             &emitted_opens,
             &channel,
-            false, // polling iterates topo + emitted_opens; non-conservative is correct
+            // Polling iterates predecessor → successor in topo order
+            // and updates `emitted_opens` as it goes. The in-tick set
+            // is the authoritative signal — Reconcile mode is correct.
+            nixfleet_reconciler::gates::GateMode::Reconcile,
         ) {
             tracing::info!(
                 channel = %channel,

@@ -209,7 +209,7 @@ impl Rollouts<'_> {
     ///
     /// Hiding terminal rollouts from gates was the regression that
     /// surfaced after the lifecycle fix: dispatch endpoint with
-    /// `conservative_on_missing_state=true` falls into the
+    /// `GateMode::Dispatch` falls into the
     /// "fleet has hosts on predecessor → block" arm because the
     /// predecessor disappeared from observed, while the reconciler
     /// (non-conservative) allowed dispatch — asymmetric verdicts on

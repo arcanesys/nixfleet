@@ -15,7 +15,7 @@ use crate::observed::Observed;
 use nixfleet_proto::FleetResolved;
 use std::collections::HashSet;
 
-use super::{GateBlock, GateInput};
+use super::{GateBlock, GateInput, GateMode};
 
 /// Per-host gate entry. Derives the host's channel from `fleet.hosts`
 /// and dispatches to `check_for_channel`.
@@ -30,7 +30,7 @@ pub fn check(input: &GateInput) -> Option<GateBlock> {
         input.observed,
         input.emitted_opens_in_tick,
         host_channel,
-        input.conservative_on_missing_state,
+        input.mode,
     )
     .map(|predecessor| GateBlock::ChannelEdges {
         predecessor_channel: predecessor,
@@ -48,7 +48,7 @@ pub fn check_for_channel(
     observed: &Observed,
     emitted_opens_in_tick: &HashSet<String>,
     channel: &str,
-    conservative_on_missing_state: bool,
+    mode: GateMode,
 ) -> Option<String> {
     fleet
         .channel_edges
@@ -60,7 +60,7 @@ pub fn check_for_channel(
                 observed,
                 emitted_opens_in_tick,
                 &e.gates,
-                conservative_on_missing_state,
+                mode,
             )
             .then(|| e.gates.clone())
         })
@@ -76,17 +76,17 @@ pub fn check_for_channel(
 ///      Converged) means the predecessor is done.
 ///   2. Otherwise, if the predecessor was emitted in this reconcile
 ///      tick, it counts as active.
-///   3. Otherwise, in conservative mode (dispatch endpoint, fresh-boot
-///      protection), block if the fleet declares hosts on the
-///      predecessor channel. The reconciler's non-conservative mode
-///      lets it through — `emitted_opens_in_tick` is the authoritative
-///      in-tick signal there.
+///   3. Otherwise, in `Dispatch` mode (fresh-boot protection at the
+///      dispatch endpoint), block if the fleet declares hosts on the
+///      predecessor channel. `Reconcile` mode lets it through —
+///      `emitted_opens_in_tick` is the authoritative in-tick signal
+///      there.
 fn channel_blocked(
     fleet: &FleetResolved,
     observed: &Observed,
     emitted_opens_in_tick: &HashSet<String>,
     predecessor: &str,
-    conservative_on_missing_state: bool,
+    mode: GateMode,
 ) -> bool {
     let db_rollout = observed
         .active_rollouts
@@ -98,10 +98,11 @@ fn channel_blocked(
             if emitted_opens_in_tick.contains(predecessor) {
                 return true;
             }
-            if conservative_on_missing_state {
-                fleet.hosts.values().any(|h| h.channel == predecessor)
-            } else {
-                false
+            // Mode is the load-bearing axis here — keep this match
+            // explicit so adding a future mode forces a decision.
+            match mode {
+                GateMode::Dispatch => fleet.hosts.values().any(|h| h.channel == predecessor),
+                GateMode::Reconcile => false,
             }
         }
     }

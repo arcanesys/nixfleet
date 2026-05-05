@@ -67,7 +67,7 @@ pub(crate) fn handle_wave(
                     // table; missing predecessor state is a real "predecessor
                     // not yet declared" situation and shouldn't pre-block
                     // every channel.
-                    conservative_on_missing_state: false,
+                    mode: crate::gates::GateMode::Reconcile,
                 };
                 if let Some(block) = crate::gates::evaluate_for_host(&gate_input) {
                     out.actions.push(Action::Skip {
