@@ -54,6 +54,13 @@ pub(super) fn spawn_reconcile_loop(
             }
         }
 
+        // Once-per-startup invariant pass: reset host_rollout_state
+        // rows the current gate semantics would not have produced.
+        // Cleans up dirty rows from past partial-write races and
+        // pre-fix gate-bug dispatches. See startup_invariants for
+        // full rationale.
+        super::startup_invariants::reset_dirty_host_rollout_state(&state).await;
+
         let mut ticker =
             tokio::time::interval_at(Instant::now() + RECONCILE_INTERVAL, RECONCILE_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
