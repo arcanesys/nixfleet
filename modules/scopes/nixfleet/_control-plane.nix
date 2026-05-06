@@ -239,8 +239,37 @@ in {
       description = ''
         Fleet CA private key path (decrypted by the fleet's secrets
         backend). Used to sign agent certs in /v1/enroll and
-        /v1/agent/renew. **Online on the CP under the current
-        design; a TPM-bound replacement is deferred.**
+        /v1/agent/renew via the file-backed `FileCaSigner`. Mutually
+        exclusive with the `tpmCa*` options at runtime — when TPM
+        flags are set, the CP picks `TpmCaSigner` and this path is
+        ignored. Keep set during the Bundle C migration overlap so a
+        revert (drop `tpmCa*` options) restores file-backed signing
+        without re-deriving the legacy CA.
+      '';
+    };
+
+    tpmCaPubkeyRaw = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/var/lib/nixfleet-tpm-keyslot/issuanceCA/pubkey.raw";
+      description = ''
+        Bundle C (nixfleet#41): path to the keyslots scope's
+        `pubkey.raw` (64 bytes raw P-256 X||Y) for the issuance CA's
+        TPM key. Setting this AND `tpmCaSignWrapper` switches issuance
+        to TPM signing; `fleetCaKey` becomes unused. Pair with
+        `fleetCaCert` pointing at the offline-root-signed issuance CA
+        cert (typically `/etc/nixfleet/cp/issuance-ca.pem`).
+      '';
+    };
+
+    tpmCaSignWrapper = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/run/current-system/sw/bin/tpm-sign-issuanceCA";
+      description = ''
+        Bundle C (nixfleet#41): path to the keyslots scope's
+        `tpm-sign-<keyname>` shell wrapper. Set together with
+        `tpmCaPubkeyRaw` to enable TPM-backed issuance.
       '';
     };
 
@@ -489,6 +518,14 @@ in {
             ++ lib.optionals (cfg.fleetCaKey != null) [
               "--fleet-ca-key"
               (lib.escapeShellArg cfg.fleetCaKey)
+            ]
+            ++ lib.optionals (cfg.tpmCaPubkeyRaw != null) [
+              "--tpm-ca-pubkey-raw"
+              (lib.escapeShellArg cfg.tpmCaPubkeyRaw)
+            ]
+            ++ lib.optionals (cfg.tpmCaSignWrapper != null) [
+              "--tpm-ca-sign-wrapper"
+              (lib.escapeShellArg cfg.tpmCaSignWrapper)
             ]
             ++ [
               "--audit-log"
