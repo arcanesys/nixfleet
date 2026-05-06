@@ -9,17 +9,27 @@
 //!     Cardinality bound: O(hosts) — each host has exactly one active series;
 //!     stale series age out via Prometheus staleness when any label changes.
 //!
-//!   - `nixfleet_rollout_view{kind, rollout_id, channel, target_ref,
-//!                            current_wave, host, wave, state, target_closure,
+//!   - `nixfleet_rollout_view{kind, rollout_id, channel, display_name,
+//!                            target_ref, current_wave, wave_summary,
+//!                            fleet_anchor, health_max_failures,
+//!                            compliance_required, compliance_frameworks,
+//!                            host, wave, state, target_closure,
 //!                            soak_window_minutes}` (0..100)
 //!     and `nixfleet_rollout_view_time_seconds{...same labels...}` (seconds).
 //!     Unified master/detail surface — one row per rollout summary
-//!     (`kind=rollout`) and one row per dispatched host within each
-//!     in-flight rollout (`kind=host`). Identical label schemas → a
-//!     single `joinByField` in Grafana folds the two metrics into one
-//!     logical row each. Source filtering excludes terminal + superseded
-//!     rollouts entirely (no zombie host rows). Cardinality bound:
-//!     O(in-flight rollouts × hosts in those rollouts).
+//!     (`kind=rollout`) and one row per host within each in-flight
+//!     rollout (`kind=host`, including pre-dispatch hosts of late waves
+//!     so the full wave plan renders even before its dispatch). Source
+//!     filtering excludes terminal + superseded rollouts entirely.
+//!     Cardinality bound: O(in-flight rollouts × hosts in those
+//!     rollouts' manifests).
+//!
+//!     Manifest-derived rollout fields (`display_name`, `fleet_anchor`,
+//!     `wave_summary`, `health_max_failures`, `compliance_required`,
+//!     `compliance_frameworks`) come from the signed
+//!     `{rollout_id}.json` on local disk. Empty when the manifest hasn't
+//!     reached the artifact dir yet — the rollout still gets a summary
+//!     row with the DB-only fields.
 //!
 //!     Value semantics:
 //!       - kind=rollout: `view` = (converged+soaked) / total dispatched × 100;
@@ -259,16 +269,26 @@ fn record_host_info(view: &HostStatusEntry) {
 /// zombie host rows from rollouts whose host_dispatch_state hasn't been
 /// orphan-swept yet. Same data path the `/v1/rollouts` HTTP route uses.
 ///
-/// Per in-flight rollout R: one `kind=rollout` row carrying rollout-side
-/// fields (target_ref, current_wave) with host-side labels empty; one
-/// `kind=host` row per dispatched host carrying host-side fields with
-/// rollout-side labels empty. Sort `[rollout_id ASC, kind DESC]` in the
-/// dashboard puts each rollout summary above its host detail rows.
+/// For each in-flight rollout R, the loop reads R's signed manifest from
+/// `state.rollouts_dir/{rolloutId}.json` (already on local disk — the
+/// channel-refs poll downloads them). Manifest parse failure is
+/// permissive: rollout still gets a summary row, host detail just won't
+/// see pre-dispatch hosts (rare, only matters for freshly-opened
+/// rollouts). The manifest enriches:
+///   - rollout summary labels: `display_name`, `fleet_anchor`,
+///     `health_max_failures`, `compliance_required`,
+///     `compliance_frameworks`, `wave_summary`
+///   - host rows for hosts in `manifest.host_set` that haven't been
+///     dispatched yet — they appear with `state="Queued"` so the operator
+///     sees the full wave plan, not just hosts already in motion.
+///
+/// Sort `[rollout_id ASC, kind DESC]` in the dashboard puts each rollout
+/// summary above its host detail rows.
 ///
 /// Soak math mirrors fleet-status's `soak_status_for_host` (render.sh):
-/// elapsed comes straight from `host_rollout_state.last_healthy_since`,
-/// soak window from `policy.waves[wave].soak_minutes`. Soaked/Converged
-/// pin to progress=100 / remaining=0.
+/// elapsed from `host_rollout_state.last_healthy_since`, soak window
+/// from `policy.waves[wave].soak_minutes`. Soaked/Converged pin to
+/// progress=100 / remaining=0; pre-dispatch (Queued) pins to 0/0.
 async fn record_rollout_overview(
     state: &AppState,
     fleet: &nixfleet_proto::FleetResolved,
@@ -297,12 +317,24 @@ async fn record_rollout_overview(
 
     for r in rollouts.iter() {
         let snap = snap_by_id.get(&r.rollout_id);
+        let manifest = load_rollout_manifest(state.rollouts_dir.as_deref(), &r.rollout_id).await;
         let target_ref = snap.map(|s| s.target_channel_ref.clone()).unwrap_or_default();
 
-        // Rollout summary row. Progress = (converged + soaked) / total
-        // dispatched. Empty host_states (rollout opened but no dispatch
-        // yet) yields progress=0, which renders as a 0% bar — accurate
-        // signal that the rollout is just sitting there.
+        // Build the wave breakdown from the manifest's host_set joined
+        // with snap.host_states. "wave 0: 1/2 · wave 1: 0/2" form; same
+        // shape as fleet-status's wave_summary. Empty manifest → empty
+        // string — the operator sees the rollout but loses the breakdown
+        // until the manifest reaches /var/lib/nixfleet-cp/rollouts/.
+        let wave_summary = manifest
+            .as_ref()
+            .map(|m| compute_wave_summary(m, snap))
+            .unwrap_or_default();
+
+        // Progress = (converged + soaked) / total dispatched. The denominator
+        // is dispatched (not manifest size) because pre-dispatch hosts of
+        // late waves shouldn't dilute the progress signal — when wave 0
+        // converges the rollout shows 50% (wave 1 not yet dispatched), then
+        // climbs as wave 1 dispatches and converges.
         let (done, total) = snap
             .map(|s| {
                 let total = s.host_states.len();
@@ -326,12 +358,48 @@ async fn record_rollout_overview(
                     .max(0)
             })
             .unwrap_or(0);
+
+        let display_name = manifest
+            .as_ref()
+            .map(|m| m.display_name.clone())
+            .unwrap_or_default();
+        let fleet_anchor = manifest
+            .as_ref()
+            .map(|m| short_id(Some(&m.fleet_resolved_hash)))
+            .unwrap_or_default();
+        let health_max_failures = manifest
+            .as_ref()
+            .and_then(|m| m.health_gate.systemd_failed_units.as_ref())
+            .map(|s| s.max.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let compliance_required = manifest
+            .as_ref()
+            .and_then(|m| m.health_gate.compliance_probes.as_ref())
+            .map(|c| {
+                if c.required {
+                    "required".to_string()
+                } else {
+                    "optional".to_string()
+                }
+            })
+            .unwrap_or_default();
+        let compliance_frameworks = manifest
+            .as_ref()
+            .map(|m| m.compliance_frameworks.join(", "))
+            .unwrap_or_default();
+
         let rollout_labels = [
             ("kind", "rollout".to_string()),
             ("rollout_id", short_id(Some(&r.rollout_id))),
             ("channel", r.channel.clone()),
+            ("display_name", display_name),
             ("target_ref", short_id(Some(&target_ref))),
             ("current_wave", r.current_wave.to_string()),
+            ("wave_summary", wave_summary),
+            ("fleet_anchor", fleet_anchor),
+            ("health_max_failures", health_max_failures),
+            ("compliance_required", compliance_required),
+            ("compliance_frameworks", compliance_frameworks),
             ("host", String::new()),
             ("wave", String::new()),
             ("state", String::new()),
@@ -345,29 +413,55 @@ async fn record_rollout_overview(
         )
         .set(rollout_age as f64);
 
-        // Per-host detail rows. No snap (rollout opened but pre-dispatch)
-        // → no host rows; the rollout summary still renders above.
-        let Some(snap) = snap else { continue };
+        // Per-host detail rows. Source-of-truth precedence:
+        //   1. manifest.host_set if available — full wave plan, including
+        //      pre-dispatch hosts that don't have host_dispatch_state rows
+        //      yet (so wave 1 hosts show "Queued" while wave 0 is in
+        //      flight).
+        //   2. snap.host_states fallback when no manifest — same set as
+        //      `/v1/rollouts.hostStates`, but misses pre-dispatch hosts.
         let policy = fleet
             .channels
             .get(&r.channel)
             .and_then(|c| fleet.rollout_policies.get(&c.rollout_policy));
+        let host_iter: Vec<(String, u32, String)> = if let Some(m) = manifest.as_ref() {
+            m.host_set
+                .iter()
+                .map(|h| {
+                    (
+                        h.hostname.clone(),
+                        h.wave_index,
+                        h.target_closure.clone(),
+                    )
+                })
+                .collect()
+        } else if let Some(s) = snap {
+            s.host_states
+                .keys()
+                .map(|h| {
+                    (
+                        h.clone(),
+                        s.host_waves.get(h).copied().unwrap_or(r.current_wave),
+                        s.target_closure_hash.clone(),
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
-        for (host, host_state) in &snap.host_states {
-            let wave = snap
-                .host_waves
-                .get(host)
-                .copied()
-                .unwrap_or(r.current_wave) as usize;
-            let wave_def = policy.and_then(|p| p.waves.get(wave));
+        for (host, wave_idx, target_closure) in &host_iter {
+            let host_state = snap
+                .and_then(|s| s.host_states.get(host).cloned())
+                .unwrap_or_else(|| "Queued".to_string());
+            let wave_def = policy.and_then(|p| p.waves.get(*wave_idx as usize));
             let window = wave_def
                 .map(|w| i64::from(w.soak_minutes) * 60)
                 .unwrap_or(0);
             let elapsed = match host_state.as_str() {
                 "Soaked" | "Converged" => window,
                 "Healthy" => snap
-                    .last_healthy_since
-                    .get(host)
+                    .and_then(|s| s.last_healthy_since.get(host))
                     .map(|t| now.signed_duration_since(*t).num_seconds().clamp(0, window))
                     .unwrap_or(0),
                 _ => 0,
@@ -384,12 +478,18 @@ async fn record_rollout_overview(
                 ("kind", "host".to_string()),
                 ("rollout_id", short_id(Some(&r.rollout_id))),
                 ("channel", r.channel.clone()),
+                ("display_name", String::new()),
                 ("target_ref", String::new()),
                 ("current_wave", String::new()),
+                ("wave_summary", String::new()),
+                ("fleet_anchor", String::new()),
+                ("health_max_failures", String::new()),
+                ("compliance_required", String::new()),
+                ("compliance_frameworks", String::new()),
                 ("host", host.clone()),
-                ("wave", wave.to_string()),
-                ("state", host_state.clone()),
-                ("target_closure", short_id(Some(&snap.target_closure_hash))),
+                ("wave", wave_idx.to_string()),
+                ("state", host_state),
+                ("target_closure", short_id(Some(target_closure))),
                 (
                     "soak_window_minutes",
                     wave_def
@@ -402,6 +502,59 @@ async fn record_rollout_overview(
                 .set(remaining as f64);
         }
     }
+}
+
+/// Read + parse `{rollout_id}.json` from the rollouts artifact dir.
+/// Permissive on every failure mode (no dir configured, file absent,
+/// parse error) — caller falls back to host_dispatch_state-only data.
+/// Mirrors `observed_view::load_budgets_from_manifest` minus the
+/// budgets-only narrowing.
+async fn load_rollout_manifest(
+    dir: Option<&std::path::Path>,
+    rollout_id: &str,
+) -> Option<nixfleet_proto::RolloutManifest> {
+    let dir = dir?;
+    let path = dir.join(format!("{rollout_id}.json"));
+    let bytes = tokio::fs::read(&path).await.ok()?;
+    match serde_json::from_slice::<nixfleet_proto::RolloutManifest>(&bytes) {
+        Ok(m) => Some(m),
+        Err(err) => {
+            tracing::warn!(
+                rollout = %rollout_id,
+                error = %err,
+                "metrics: rollout manifest parse failed; rollout summary loses display_name + wave_summary",
+            );
+            None
+        }
+    }
+}
+
+/// `wave 0: 1/2 · wave 1: 0/2` — total per wave from manifest, done count
+/// per wave from `snap.host_states` (Soaked + Converged). Returns empty
+/// string for an empty manifest host_set.
+fn compute_wave_summary(
+    manifest: &nixfleet_proto::RolloutManifest,
+    snap: Option<&crate::db::RolloutDbSnapshot>,
+) -> String {
+    use std::collections::BTreeMap;
+    let mut by_wave: BTreeMap<u32, (u32, u32)> = BTreeMap::new();
+    for h in &manifest.host_set {
+        let entry = by_wave.entry(h.wave_index).or_insert((0, 0));
+        entry.1 += 1;
+        if let Some(s) = snap {
+            if matches!(
+                s.host_states.get(&h.hostname).map(String::as_str),
+                Some("Soaked") | Some("Converged"),
+            ) {
+                entry.0 += 1;
+            }
+        }
+    }
+    by_wave
+        .iter()
+        .map(|(w, (done, total))| format!("wave {w}: {done}/{total}"))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// Per-channel info gauge merging "running a rollout" and "deferred by
