@@ -220,6 +220,42 @@ fn build_signed_compliance_failure(
     }
 }
 
+fn build_signed_runtime_gate_error(sk: &SigningKey, rollout: &str) -> ReportRequest {
+    use nixfleet_proto::evidence_signing::RuntimeGateErrorSignedPayload;
+
+    let evidence_collected_at = Utc::now();
+    let activation_completed_at = Utc::now();
+    let reason = "evidence-stale";
+    let collector_exit_code = Some(0);
+
+    let payload = RuntimeGateErrorSignedPayload {
+        hostname: HOSTNAME,
+        rollout: Some(rollout),
+        reason,
+        collector_exit_code,
+        evidence_collected_at: Some(evidence_collected_at),
+        activation_completed_at,
+    };
+    let canonical = serde_jcs::to_vec(&payload).unwrap();
+    let signature = sk.sign(&canonical);
+    let signature_b64 =
+        base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+
+    ReportRequest {
+        hostname: HOSTNAME.to_string(),
+        agent_version: "test".to_string(),
+        occurred_at: Utc::now(),
+        rollout: Some(rollout.to_string()),
+        event: ReportEvent::RuntimeGateError {
+            reason: reason.to_string(),
+            collector_exit_code,
+            evidence_collected_at: Some(evidence_collected_at),
+            activation_completed_at,
+            signature: Some(signature_b64),
+        },
+    }
+}
+
 async fn post_checkin(
     client: &reqwest::Client,
     port: u16,
@@ -413,6 +449,94 @@ async fn enforce_mode_still_blocks_dispatch_after_cp_restart() {
     );
 
     handle2.abort();
+}
+
+/// Parity with `enforce_mode_blocks_dispatch_after_signed_compliance_failure`,
+/// but with a `RuntimeGateError` event (collector broke / evidence stale)
+/// instead of a `ComplianceFailure` (a probe returned FAIL). Both kinds
+/// land in `host_reports.event_kind IN ('compliance-failure',
+/// 'runtime-gate-error')`; the SQL aggregator treats them identically.
+/// This test pins the kind-agnostic gate behaviour at the integration
+/// layer — without it, a regression that filtered out runtime-gate-error
+/// events from the projection would silently unlock dispatch for hosts
+/// whose evidence chain is broken (the "we couldn't measure" class).
+#[tokio::test]
+async fn enforce_mode_blocks_dispatch_after_signed_runtime_gate_error() {
+    install_crypto_provider_once();
+
+    let dir = TempDir::new().unwrap();
+    let (host_sk, host_pubkey) = fresh_host_keypair();
+    let (artifact, signature, trust) =
+        write_signed_fleet(&dir, "enforce", Some(&host_pubkey));
+    let (ca, server_cert, server_key, client_cert, client_key) =
+        mint_ca_and_certs(&dir, HOSTNAME);
+    let db_path = dir.path().join("state.db");
+    let port = pick_free_port().await;
+
+    let handle = spawn_with_signed_fleet(
+        &dir,
+        artifact,
+        signature,
+        trust,
+        server_cert,
+        server_key,
+        ca.clone(),
+        db_path,
+        port,
+    )
+    .await;
+    let client = build_mtls_client(&ca, &client_cert, &client_key);
+
+    let resp1 = post_checkin(&client, port, &checkin_request(CURRENT_CLOSURE)).await;
+    assert!(
+        resp1.target.is_some(),
+        "first checkin should dispatch (no outstanding events yet)"
+    );
+    let dispatched_rollout = resp1
+        .target
+        .as_ref()
+        .map(|t| t.rollout_id.clone())
+        .expect("dispatch carries rollout_id");
+
+    let report = build_signed_runtime_gate_error(&host_sk, &dispatched_rollout);
+    let report_resp: ReportResponse = client
+        .post(format!("https://localhost:{port}/v1/agent/report"))
+        .json(&report)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        report_resp.event_id.starts_with("evt-"),
+        "runtime-gate-error report accepted, got id: {}",
+        report_resp.event_id
+    );
+
+    // GOTCHA: must echo rollout_id so wave gate's "host is on this rollout" lookup hits.
+    let mut checkin_after_failure = checkin_request(CURRENT_CLOSURE);
+    checkin_after_failure.last_evaluated_target =
+        Some(nixfleet_proto::agent_wire::EvaluatedTarget {
+            closure_hash: DECLARED_CLOSURE.to_string(),
+            channel_ref: dispatched_rollout.clone(),
+            evaluated_at: Utc::now(),
+            rollout_id: dispatched_rollout.clone(),
+            wave_index: None,
+            activate: None,
+            signed_at: Utc::now(),
+            freshness_window_secs: 3600,
+            compliance_mode: Some("enforce".to_string()),
+        });
+    let resp2 = post_checkin(&client, port, &checkin_after_failure).await;
+    assert!(
+        resp2.target.is_none(),
+        "enforce + outstanding runtime-gate-error must block dispatch identically to \
+         compliance-failure — got target {:?}",
+        resp2.target
+    );
+
+    handle.abort();
 }
 
 #[tokio::test]

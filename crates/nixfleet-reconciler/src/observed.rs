@@ -15,11 +15,17 @@ pub struct Observed {
     pub last_rolled_refs: HashMap<String, String>,
     pub host_state: HashMap<String, HostState>,
     pub active_rollouts: Vec<Rollout>,
-    /// `[rollout_id][host] → count`. Per-rollout grouping enforces
-    /// resolution-by-replacement so events under a superseded rollout
-    /// don't gate the new one.
+    /// `[rollout_id][host] → count` of outstanding compliance evidence
+    /// failures. Aggregates BOTH `ComplianceFailure` events (a probe
+    /// returned FAIL) and `RuntimeGateError` events (the collector
+    /// itself broke / evidence is stale) — both classes mean "this
+    /// host's evidence chain is broken", and both block wave promotion
+    /// identically under enforce mode (DB-side filter at
+    /// `db::reports::outstanding_compliance_events_by_rollout`).
+    /// Per-rollout grouping enforces resolution-by-replacement so
+    /// events under a superseded rollout don't gate the new one.
     #[serde(default)]
-    pub compliance_failures_by_rollout: HashMap<String, HashMap<String, usize>>,
+    pub outstanding_compliance_events_by_rollout: HashMap<String, HashMap<String, usize>>,
     /// Last `RolloutDeferred` the CP successfully journalled per channel.
     /// The reconciler consults this and only emits a fresh `RolloutDeferred`
     /// when (target_ref, blocked_by) would change — without this debounce,

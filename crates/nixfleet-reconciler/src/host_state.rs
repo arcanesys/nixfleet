@@ -262,7 +262,7 @@ mod tests {
             last_rolled_refs: std::collections::HashMap::new(),
             host_state,
             active_rollouts: vec![],
-            compliance_failures_by_rollout: std::collections::HashMap::new(),
+            outstanding_compliance_events_by_rollout: std::collections::HashMap::new(),
             last_deferrals: std::collections::HashMap::new(),
         }
     }

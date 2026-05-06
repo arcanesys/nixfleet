@@ -17,7 +17,7 @@ pub fn project(
     host_checkins: &HashMap<String, HostCheckinRecord>,
     channel_refs: &HashMap<String, String>,
     rollouts: &[RolloutDbSnapshot],
-    compliance_failures_by_rollout: HashMap<String, HashMap<String, usize>>,
+    outstanding_compliance_events_by_rollout: HashMap<String, HashMap<String, usize>>,
     last_deferrals: HashMap<String, DeferralRecord>,
     rollout_budgets: &HashMap<String, Vec<RolloutBudget>>,
 ) -> Observed {
@@ -85,7 +85,7 @@ pub fn project(
         last_rolled_refs,
         host_state,
         active_rollouts,
-        compliance_failures_by_rollout,
+        outstanding_compliance_events_by_rollout,
         last_deferrals,
     }
 }

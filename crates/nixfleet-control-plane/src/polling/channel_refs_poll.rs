@@ -302,7 +302,7 @@ async fn record_rollouts_gated_by_channel_edges(
         last_rolled_refs: HashMap::new(),
         host_state: HashMap::new(),
         active_rollouts,
-        compliance_failures_by_rollout: HashMap::new(),
+        outstanding_compliance_events_by_rollout: HashMap::new(),
         last_deferrals: HashMap::new(),
     };
 

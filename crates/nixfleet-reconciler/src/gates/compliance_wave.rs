@@ -1,15 +1,22 @@
 //! Compliance-wave gate — earlier-wave hosts with outstanding compliance
-//! failures hold dispatch of later-wave hosts under `enforce` mode.
+//! evidence failures hold dispatch of later-wave hosts under `enforce`.
+//!
+//! Event-kind agnostic: aggregates BOTH `ComplianceFailure` (a probe
+//! returned FAIL) and `RuntimeGateError` (collector itself broke /
+//! evidence stale). Both classes mean "this host's evidence chain is
+//! broken" and gate identically — the SQL `IN ('compliance-failure',
+//! 'runtime-gate-error')` predicate at
+//! `db::reports::outstanding_compliance_events_by_rollout` is the single
+//! decision site for what counts.
 //!
 //! Migrated from `nixfleet_control_plane::wave_gate::evaluate_channel_gate`.
 //! The migration uses the AGGREGATED form
-//! (`Observed.compliance_failures_by_rollout`, populated from the DB-side
-//! `outstanding_compliance_events_by_rollout` query that already excludes
-//! `mismatch`/`malformed` signature statuses) — same data the
-//! reconciler's `wave_blocked` event reads. Both layers go through this
-//! gate at the dispatch decision; the reconciler's `Action::WaveBlocked`
-//! is a separate concern (wave-promotion gate inside rollout_state.rs)
-//! and stays untouched.
+//! (`Observed.outstanding_compliance_events_by_rollout`, populated from
+//! the DB-side query that already excludes `mismatch`/`malformed`
+//! signature statuses) — same data the reconciler's `wave_blocked`
+//! event reads. Both layers go through this gate at the dispatch
+//! decision; the reconciler's `Action::WaveBlocked` is a separate
+//! concern (wave-promotion gate inside rollout_state.rs).
 //!
 //! Mode handling:
 //!   - `disabled`: no-op.
@@ -17,7 +24,7 @@
 //!     never blocks. Returns `None`.
 //!   - `enforce`: blocks dispatch when any host in an EARLIER wave
 //!     (strictly less than the requesting host's wave) has outstanding
-//!     compliance failures recorded against the current rollout.
+//!     compliance events recorded against the current rollout.
 //!
 //! Per-rollout grouping enforces resolution-by-replacement: events under
 //! a superseded rollout never appear under the current rollout's key, so
@@ -30,8 +37,10 @@ use crate::observed::Observed;
 
 use super::{GateBlock, GateInput};
 
-/// Outstanding compliance failures grouped per host, restricted to the
-/// hosts in `wave_range` of `waves`. Returned vec is sorted+deduped.
+/// Outstanding compliance evidence failures grouped per host, restricted
+/// to the hosts in `wave_range` of `waves`. Returned vec is sorted+deduped.
+/// Counts include both `ComplianceFailure` and `RuntimeGateError` events
+/// (DB filter is the kind-discriminator; this helper sees only sums).
 ///
 /// LOADBEARING: same predicate consumed by both the dispatch gate
 /// (waves 0..host_wave, exclusive — only EARLIER waves count) and the
@@ -46,7 +55,10 @@ pub fn outstanding_failures_in_waves(
     waves: &[Wave],
     wave_range: std::ops::Range<usize>,
 ) -> Vec<(String, usize)> {
-    let Some(per_host) = observed.compliance_failures_by_rollout.get(rollout_id) else {
+    let Some(per_host) = observed
+        .outstanding_compliance_events_by_rollout
+        .get(rollout_id)
+    else {
         return Vec::new();
     };
     let mut out: Vec<(String, usize)> = Vec::new();

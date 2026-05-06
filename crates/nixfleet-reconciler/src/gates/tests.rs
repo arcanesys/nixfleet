@@ -597,7 +597,7 @@ fn compliance_wave_blocks_when_earlier_wave_has_failures_under_enforce() {
             "edge",
             vec![("lab", HostRolloutState::Converged)],
         )],
-        compliance_failures_by_rollout: compliance_failures,
+        outstanding_compliance_events_by_rollout: compliance_failures,
         ..Default::default()
     };
     let empty = empty_set();
@@ -658,7 +658,7 @@ fn compliance_wave_passes_under_permissive_mode() {
             "edge",
             vec![("lab", HostRolloutState::Converged)],
         )],
-        compliance_failures_by_rollout: compliance_failures,
+        outstanding_compliance_events_by_rollout: compliance_failures,
         ..Default::default()
     };
     let empty = empty_set();
@@ -676,6 +676,97 @@ fn compliance_wave_passes_under_permissive_mode() {
         None,
         "permissive mode must not block",
     );
+}
+
+/// 3-wave fleet, wave-0 host has outstanding evidence events, host
+/// being evaluated is in wave-2 (NOT immediately adjacent to the
+/// failing wave). Proves the gate's range predicate is transitive
+/// — a failure two waves back still blocks. The 2-wave variant
+/// above only proves wave-0 → wave-1 (adjacent) blocking.
+///
+/// `outstanding_compliance_events_by_rollout` is kind-agnostic: this
+/// test fires identically whether the underlying event is a
+/// `ComplianceFailure` or a `RuntimeGateError`. Kind-specific
+/// end-to-end coverage lives in the CP integration suite
+/// (`tests/wave_gate.rs`).
+#[test]
+fn compliance_wave_blocks_transitively_across_three_waves_under_enforce() {
+    let mut fleet = fleet_two_channels();
+    // Add pixel as a third stable-channel host so we can split the
+    // stable wave plan into three single-host waves.
+    fleet.hosts.insert(
+        "pixel".into(),
+        Host {
+            system: "x86_64-linux".into(),
+            tags: vec!["dev".into()],
+            channel: "stable".into(),
+            closure_hash: Some("pixel-closure".into()),
+            pubkey: None,
+        },
+    );
+    fleet
+        .channels
+        .get_mut("stable")
+        .unwrap()
+        .compliance
+        .mode = "enforce".into();
+    fleet.waves.insert(
+        "stable".into(),
+        vec![
+            Wave {
+                hosts: vec!["krach".into()],
+                soak_minutes: 5,
+            },
+            Wave {
+                hosts: vec!["aether".into()],
+                soak_minutes: 5,
+            },
+            Wave {
+                hosts: vec!["pixel".into()],
+                soak_minutes: 60,
+            },
+        ],
+    );
+
+    let mut r = rollout("stable", vec![]);
+    r.current_wave = 2; // wave_promotion gate must pass for pixel (wave 2)
+    let mut events = HashMap::new();
+    let mut by_host = HashMap::new();
+    // krach in wave-0 has 1 outstanding event — kind doesn't matter
+    // at this layer (DB-side filter is the kind-discriminator).
+    by_host.insert("krach".to_string(), 1usize);
+    events.insert(r.id.clone(), by_host);
+
+    let observed = Observed {
+        active_rollouts: vec![rollout(
+            "edge",
+            vec![("lab", HostRolloutState::Converged)],
+        )],
+        outstanding_compliance_events_by_rollout: events,
+        ..Default::default()
+    };
+    let empty = empty_set();
+    let input = GateInput {
+        fleet: &fleet,
+        observed: &observed,
+        rollout: Some(&r),
+        host: "pixel",
+        now: Utc::now(),
+        emitted_opens_in_tick: &empty,
+        mode: super::GateMode::Reconcile,
+    };
+    match evaluate_for_host(&input) {
+        Some(GateBlock::ComplianceWave {
+            failing_events_count,
+            host_wave,
+        }) => {
+            assert_eq!(failing_events_count, 1);
+            assert_eq!(host_wave, 2, "host_wave must reflect pixel's wave-2 slot");
+        }
+        other => panic!(
+            "expected ComplianceWave block from transitive wave-0 failure, got {other:?}",
+        ),
+    }
 }
 
 #[test]

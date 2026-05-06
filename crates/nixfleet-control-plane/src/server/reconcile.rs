@@ -93,7 +93,7 @@ pub(super) fn spawn_reconcile_loop(
                 .map(crate::observed_view::list_active_rollouts)
                 .unwrap_or_default();
 
-            let compliance_failures_by_rollout = match state
+            let outstanding_compliance_events_by_rollout = match state
                 .db
                 .as_deref()
                 .map(|db| db.reports().outstanding_compliance_events_by_rollout())
@@ -131,7 +131,7 @@ pub(super) fn spawn_reconcile_loop(
                     &checkins,
                     &channel_refs,
                     &rollouts,
-                    compliance_failures_by_rollout,
+                    outstanding_compliance_events_by_rollout,
                     last_deferrals,
                     &rollout_budgets,
                 )
@@ -516,7 +516,7 @@ fn run_tick_with_projection(
     checkins: &HashMap<String, HostCheckinRecord>,
     channel_refs: &HashMap<String, String>,
     rollouts: &[crate::db::RolloutDbSnapshot],
-    compliance_failures_by_rollout: HashMap<String, HashMap<String, usize>>,
+    outstanding_compliance_events_by_rollout: HashMap<String, HashMap<String, usize>>,
     last_deferrals: HashMap<String, nixfleet_reconciler::observed::DeferralRecord>,
     rollout_budgets: &HashMap<String, Vec<nixfleet_proto::RolloutBudget>>,
 ) -> (
@@ -550,7 +550,7 @@ fn run_tick_with_projection(
             checkins,
             channel_refs,
             rollouts,
-            compliance_failures_by_rollout,
+            outstanding_compliance_events_by_rollout,
             last_deferrals,
             rollout_budgets,
         );
@@ -617,7 +617,7 @@ fn run_tick_with_projection(
                 checkins,
                 channel_refs,
                 rollouts,
-                compliance_failures_by_rollout,
+                outstanding_compliance_events_by_rollout,
                 last_deferrals.clone(),
             rollout_budgets,
         );

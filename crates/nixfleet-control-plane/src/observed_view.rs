@@ -147,13 +147,18 @@ pub async fn build_for_gates(
         }
     }
 
-    // Compliance failures aggregated by (rollout, host). Same DB query
-    // the reconciler tick uses, so the compliance_wave gate sees the
-    // same input at both call sites. Permissive on read failure: the
-    // gate then no-ops which is the same behaviour as the disabled
-    // mode, preserving "missing data is silent" rather than surprising
-    // the operator with a hard block.
-    let compliance_failures_by_rollout = match db.reports().outstanding_compliance_events_by_rollout() {
+    // Outstanding compliance events aggregated by (rollout, host). Same
+    // DB query the reconciler tick uses, so the compliance_wave gate
+    // sees the same input at both call sites. Aggregates BOTH
+    // ComplianceFailure and RuntimeGateError events — kind is the SQL
+    // filter, not visible past this seam. Permissive on read failure:
+    // the gate then no-ops which matches `disabled` mode, preserving
+    // "missing data is silent" rather than surprising the operator
+    // with a hard block.
+    let outstanding_compliance_events_by_rollout = match db
+        .reports()
+        .outstanding_compliance_events_by_rollout()
+    {
         Ok(m) => m,
         Err(err) => {
             tracing::warn!(
@@ -166,7 +171,7 @@ pub async fn build_for_gates(
 
     Observed {
         active_rollouts,
-        compliance_failures_by_rollout,
+        outstanding_compliance_events_by_rollout,
         ..Default::default()
     }
 }
