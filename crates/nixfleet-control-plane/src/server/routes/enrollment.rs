@@ -156,18 +156,17 @@ pub(in crate::server) async fn enroll(
         }
     }
 
-    let paths = state.issuance_paths.read().await.clone();
-    let (ca_cert, ca_key, audit_log_path) = match (&paths.fleet_ca_cert, &paths.fleet_ca_key) {
-        (Some(c), Some(k)) => (c.clone(), k.clone(), paths.audit_log.clone()),
-        _ => {
-            tracing::error!("enroll: fleet CA cert/key paths not configured");
+    let audit_log_path = state.issuance_paths.read().await.audit_log.clone();
+    let signer = match state.ca_signer.read().await.as_ref() {
+        Some(s) => Arc::clone(s),
+        None => {
+            tracing::error!("enroll: CA signer not configured");
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
     let (cert_pem, not_after) = crate::auth::issuance::issue_cert(
         &req.csr_pem,
-        &ca_cert,
-        &ca_key,
+        signer.as_ref(),
         crate::auth::issuance::AGENT_CERT_VALIDITY,
         now,
     )
@@ -250,16 +249,15 @@ pub(in crate::server) async fn renew(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let paths = state.issuance_paths.read().await.clone();
-    let (ca_cert, ca_key, audit_log_path) = match (&paths.fleet_ca_cert, &paths.fleet_ca_key) {
-        (Some(c), Some(k)) => (c.clone(), k.clone(), paths.audit_log.clone()),
-        _ => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    let audit_log_path = state.issuance_paths.read().await.audit_log.clone();
+    let signer = match state.ca_signer.read().await.as_ref() {
+        Some(s) => Arc::clone(s),
+        None => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
 
     let (cert_pem, not_after) = crate::auth::issuance::issue_cert(
         &req.csr_pem,
-        &ca_cert,
-        &ca_key,
+        signer.as_ref(),
         crate::auth::issuance::AGENT_CERT_VALIDITY,
         now,
     )

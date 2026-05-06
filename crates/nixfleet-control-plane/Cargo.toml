@@ -99,9 +99,12 @@ refinery = { version = "0.8", features = ["rusqlite"] }
 # Already in the workspace lockfile via agent + cli prod deps and this
 # crate's dev-deps.
 rand = "0.8"
+# Holds message bytes for shell-out to the TPM sign wrapper
+# (`auth::issuance::TpmCaSigner`); cleaned on drop so the message
+# isn't left readable on disk after issuance.
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
 # `tokio::time::pause` + `start_paused` are gated on test-util; the
 # graceful-shutdown unit tests use them to fast-forward past the 30s
 # task-drain deadline without real wall-clock waiting.

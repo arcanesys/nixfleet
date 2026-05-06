@@ -29,7 +29,19 @@ pub struct ServeArgs {
     pub client_ca: Option<PathBuf>,
     /// Often the same path as `client_ca`.
     pub fleet_ca_cert: Option<PathBuf>,
+    /// File-backed CA signer's private key PEM. Mutually exclusive with
+    /// `tpm_ca_sign_wrapper` — if both are set the TPM signer wins, the
+    /// file path is ignored.
     pub fleet_ca_key: Option<PathBuf>,
+    /// TPM-backed CA signer: path to the keyslot scope's `pubkey.raw`
+    /// (64 bytes raw P-256 X||Y) for the issuance CA's TPM key.
+    /// Setting this AND `tpm_ca_sign_wrapper` switches the issuance
+    /// path to TPM signing; `fleet_ca_key` becomes unused.
+    pub tpm_ca_pubkey_raw: Option<PathBuf>,
+    /// TPM-backed CA signer: path to the keyslot scope's
+    /// `tpm-sign-<keyname>` wrapper (typically
+    /// `/run/current-system/sw/bin/tpm-sign-issuanceCA`).
+    pub tpm_ca_sign_wrapper: Option<PathBuf>,
     pub audit_log_path: Option<PathBuf>,
     pub artifact_path: PathBuf,
     pub signature_path: PathBuf,
@@ -62,6 +74,8 @@ impl Default for ServeArgs {
             client_ca: None,
             fleet_ca_cert: None,
             fleet_ca_key: None,
+            tpm_ca_pubkey_raw: None,
+            tpm_ca_sign_wrapper: None,
             audit_log_path: None,
             artifact_path: PathBuf::new(),
             signature_path: PathBuf::new(),
@@ -130,6 +144,11 @@ pub struct AppState {
     pub host_reports: RwLock<HashMap<String, VecDeque<ReportRecord>>>,
     pub channel_refs_cache: Arc<RwLock<crate::polling::channel_refs_poll::ChannelRefsCache>>,
     pub issuance_paths: RwLock<IssuancePaths>,
+    /// Built once at server start from `ServeArgs` — `TpmCaSigner` if
+    /// the TPM flags are set, `FileCaSigner` otherwise, `None` if no
+    /// CA flags supplied (enroll/renew return 500). `dyn` lets enroll
+    /// + renew handlers stay agnostic to signing backend.
+    pub ca_signer: RwLock<Option<Arc<dyn crate::auth::issuance::CaSigner>>>,
     pub db: Option<Arc<crate::db::Db>>,
     pub closure_upstream: Option<ClosureUpstream>,
     pub verified_fleet: Arc<RwLock<Option<VerifiedFleetSnapshot>>>,
@@ -169,6 +188,7 @@ impl Default for AppState {
                 crate::polling::channel_refs_poll::ChannelRefsCache::default(),
             )),
             issuance_paths: RwLock::new(IssuancePaths::default()),
+            ca_signer: RwLock::new(None),
             db: None,
             closure_upstream: None,
             verified_fleet: Arc::new(RwLock::new(None)),

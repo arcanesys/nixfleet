@@ -92,6 +92,19 @@ struct ServeFlags {
     #[arg(long, env = "NIXFLEET_CP_FLEET_CA_KEY")]
     fleet_ca_key: Option<PathBuf>,
 
+    /// TPM-backed issuance CA: path to the keyslots scope's `pubkey.raw`
+    /// (64 bytes raw P-256 X||Y) for the issuance CA's TPM key. Set
+    /// alongside `--tpm-ca-sign-wrapper` to switch issuance to TPM
+    /// signing. Mutually exclusive with `--fleet-ca-key` (TPM wins).
+    #[arg(long, env = "NIXFLEET_CP_TPM_CA_PUBKEY_RAW")]
+    tpm_ca_pubkey_raw: Option<PathBuf>,
+
+    /// TPM-backed issuance CA: path to the keyslots scope's
+    /// `tpm-sign-<keyname>` shell wrapper (typically
+    /// `/run/current-system/sw/bin/tpm-sign-issuanceCA`).
+    #[arg(long, env = "NIXFLEET_CP_TPM_CA_SIGN_WRAPPER")]
+    tpm_ca_sign_wrapper: Option<PathBuf>,
+
     /// JSON-lines per issuance; best-effort writes.
     #[arg(
         long,
@@ -267,6 +280,8 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
         client_ca: flags.client_ca,
         fleet_ca_cert: flags.fleet_ca_cert,
         fleet_ca_key: flags.fleet_ca_key,
+        tpm_ca_pubkey_raw: flags.tpm_ca_pubkey_raw,
+        tpm_ca_sign_wrapper: flags.tpm_ca_sign_wrapper,
         audit_log_path: Some(flags.audit_log),
         artifact_path: flags.artifact,
         signature_path: flags.signature,

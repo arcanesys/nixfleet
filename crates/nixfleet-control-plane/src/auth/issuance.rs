@@ -261,29 +261,244 @@ pub fn validate_csr_against_fleet_host(
     Ok(())
 }
 
+/// Abstracts CA signing so the file-backed and TPM-backed paths share
+/// `issue_cert`. Both impls own the issuer `Certificate` (built once at
+/// construction; for TPM that costs one `tpm_sign` call at startup) and
+/// produce a fresh `KeyPair` per `make_key_pair()` call — fresh PEM
+/// reads for the file path, fresh `Box<TpmRemoteSigner>` for TPM.
+pub trait CaSigner: Send + Sync {
+    /// Issuer Certificate object — used by rcgen for issuer DN + AKID
+    /// derivation. Self-signed reconstruction matching the CA's SPKI.
+    fn issuer(&self) -> &rcgen::Certificate;
+
+    /// Build the signing `KeyPair` for one issuance. File: re-parses the
+    /// CA key PEM so operator key rotations apply without restart. TPM:
+    /// constructs a fresh `RemoteKeyPair` boxed signer.
+    fn make_key_pair(&self) -> Result<KeyPair>;
+}
+
+/// File-backed CA signer (current default; agenix-encrypted PEM on disk).
+pub struct FileCaSigner {
+    key_path: PathBuf,
+    issuer_cert: rcgen::Certificate,
+}
+
+impl FileCaSigner {
+    pub fn from_paths(ca_cert_path: &Path, ca_key_path: &Path) -> Result<Self> {
+        let ca_cert_pem = std::fs::read_to_string(ca_cert_path)
+            .with_context(|| format!("read fleet CA cert {}", ca_cert_path.display()))?;
+        let ca_key_pem_raw = std::fs::read_to_string(ca_key_path)
+            .with_context(|| format!("read fleet CA key {}", ca_key_path.display()))?;
+        // FOOTGUN: rcgen's `from_pem` reads only the first block. OpenSSL
+        // EC keys ship `EC PARAMETERS` first and `EC PRIVATE KEY` second —
+        // strip the parameters block before handing to rcgen.
+        let ca_key_pem = extract_private_key_pem_block(&ca_key_pem_raw)
+            .context("extract private-key block from fleet CA key PEM")?;
+        let ca_key = KeyPair::from_pem(&ca_key_pem).context("parse fleet CA key PEM")?;
+        let ca_params = CertificateParams::from_ca_cert_pem(&ca_cert_pem)
+            .context("parse fleet CA cert PEM")?;
+        let issuer_cert = ca_params
+            .self_signed(&ca_key)
+            .context("rebuild fleet CA from PEM (rcgen quirk)")?;
+        Ok(Self {
+            key_path: ca_key_path.to_path_buf(),
+            issuer_cert,
+        })
+    }
+}
+
+impl CaSigner for FileCaSigner {
+    fn issuer(&self) -> &rcgen::Certificate {
+        &self.issuer_cert
+    }
+    fn make_key_pair(&self) -> Result<KeyPair> {
+        let raw = std::fs::read_to_string(&self.key_path)
+            .with_context(|| format!("read fleet CA key {}", self.key_path.display()))?;
+        let pem =
+            extract_private_key_pem_block(&raw).context("extract CA key PEM block")?;
+        KeyPair::from_pem(&pem).context("parse fleet CA key PEM")
+    }
+}
+
+/// TPM-backed CA signer. Holds the issuance CA's TPM-managed P-256
+/// public key (as uncompressed SEC1 point, 0x04||X||Y, 65 bytes — what
+/// `rcgen::RemoteKeyPair::public_key()` expects for ECDSA) and a path
+/// to the `tpm-sign-<keyname>` shell wrapper provisioned by the
+/// `nixfleet.keyslots.tpm` scope. `make_key_pair()` constructs a fresh
+/// `Box<TpmRemoteSigner>` per call — rcgen consumes it.
+///
+/// At construction we self-sign the issuer cert via the TPM (one
+/// `tpm_sign` call at CP startup) so subsequent `issuer()` reads are
+/// pure cache hits. The CA cert's *real* signature (by the offline
+/// fleet root) lives in `/etc/nixfleet/cp/issuance-ca.pem` — rcgen's
+/// `signed_by` only reads the issuer's DN + pubkey, never the
+/// signature, so re-self-signing for the in-memory `Certificate` is
+/// sound.
+pub struct TpmCaSigner {
+    pubkey_uncompressed: Vec<u8>,
+    sign_wrapper_path: PathBuf,
+    issuer_cert: rcgen::Certificate,
+}
+
+impl TpmCaSigner {
+    /// `tpm_pubkey_raw_path` points at the keyslot scope's `pubkey.raw`
+    /// (64 bytes X||Y, no leading 0x04). `sign_wrapper_path` is the
+    /// `tpm-sign-<keyname>` binary (typically
+    /// `/run/current-system/sw/bin/tpm-sign-issuanceCA`).
+    pub fn from_paths(
+        ca_cert_path: &Path,
+        tpm_pubkey_raw_path: &Path,
+        sign_wrapper_path: &Path,
+    ) -> Result<Self> {
+        let pubkey_raw = std::fs::read(tpm_pubkey_raw_path)
+            .with_context(|| format!("read TPM pubkey {}", tpm_pubkey_raw_path.display()))?;
+        if pubkey_raw.len() != 64 {
+            anyhow::bail!(
+                "TPM pubkey expected 64 bytes (raw P-256 X||Y), got {}",
+                pubkey_raw.len(),
+            );
+        }
+        let mut pubkey_uncompressed = Vec::with_capacity(65);
+        pubkey_uncompressed.push(0x04);
+        pubkey_uncompressed.extend_from_slice(&pubkey_raw);
+
+        let ca_cert_pem = std::fs::read_to_string(ca_cert_path)
+            .with_context(|| format!("read issuance CA cert {}", ca_cert_path.display()))?;
+
+        // One TPM sign at startup to produce the in-memory issuer Cert.
+        let signer = TpmRemoteSigner {
+            pubkey_uncompressed: pubkey_uncompressed.clone(),
+            sign_wrapper_path: sign_wrapper_path.to_path_buf(),
+        };
+        let key_pair =
+            KeyPair::from_remote(Box::new(signer)).context("rcgen from_remote (TPM)")?;
+        let ca_params = CertificateParams::from_ca_cert_pem(&ca_cert_pem)
+            .context("parse issuance CA cert PEM")?;
+        let issuer_cert = ca_params
+            .self_signed(&key_pair)
+            .context("self-sign issuer via TPM at startup")?;
+
+        Ok(Self {
+            pubkey_uncompressed,
+            sign_wrapper_path: sign_wrapper_path.to_path_buf(),
+            issuer_cert,
+        })
+    }
+}
+
+impl CaSigner for TpmCaSigner {
+    fn issuer(&self) -> &rcgen::Certificate {
+        &self.issuer_cert
+    }
+    fn make_key_pair(&self) -> Result<KeyPair> {
+        let signer = TpmRemoteSigner {
+            pubkey_uncompressed: self.pubkey_uncompressed.clone(),
+            sign_wrapper_path: self.sign_wrapper_path.clone(),
+        };
+        KeyPair::from_remote(Box::new(signer)).context("rcgen from_remote (TPM)")
+    }
+}
+
+/// `RemoteKeyPair` impl that shells out to the keyslots scope's
+/// `tpm-sign-<keyname>` wrapper. The wrapper takes a file argument
+/// (the message bytes) and writes raw `R || S` (64 bytes for P-256)
+/// to stdout. rcgen's ECDSA path expects DER-encoded `Ecdsa-Sig-Value
+/// SEQUENCE { r INTEGER, s INTEGER }` — `der_encode_ecdsa_p256_sig`
+/// handles the conversion.
+struct TpmRemoteSigner {
+    pubkey_uncompressed: Vec<u8>,
+    sign_wrapper_path: PathBuf,
+}
+
+impl rcgen::RemoteKeyPair for TpmRemoteSigner {
+    fn public_key(&self) -> &[u8] {
+        &self.pubkey_uncompressed
+    }
+    fn sign(&self, msg: &[u8]) -> std::result::Result<Vec<u8>, rcgen::Error> {
+        let raw = invoke_tpm_sign(&self.sign_wrapper_path, msg).map_err(|err| {
+            tracing::error!(error = %err, "tpm-sign invocation failed");
+            rcgen::Error::RingUnspecified
+        })?;
+        der_encode_ecdsa_p256_sig(&raw).map_err(|err| {
+            tracing::error!(error = %err, raw_len = raw.len(), "DER-encoding TPM signature failed");
+            rcgen::Error::RingUnspecified
+        })
+    }
+    fn algorithm(&self) -> &'static rcgen::SignatureAlgorithm {
+        &rcgen::PKCS_ECDSA_P256_SHA256
+    }
+}
+
+/// Write `msg` to a tempfile, invoke the tpm-sign wrapper, return stdout.
+fn invoke_tpm_sign(wrapper: &Path, msg: &[u8]) -> Result<Vec<u8>> {
+    use std::io::Write;
+    let mut tmp = tempfile::NamedTempFile::new().context("create tpm-sign tempfile")?;
+    tmp.write_all(msg).context("write tpm-sign tempfile")?;
+    tmp.flush().ok();
+    let output = std::process::Command::new(wrapper)
+        .arg(tmp.path())
+        .output()
+        .with_context(|| format!("invoke tpm-sign wrapper {}", wrapper.display()))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "tpm-sign wrapper {} exited {}: stderr={}",
+            wrapper.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+    Ok(output.stdout)
+}
+
+/// Convert raw `R || S` (64 bytes for P-256) to DER `Ecdsa-Sig-Value
+/// SEQUENCE { r INTEGER, s INTEGER }` — what rcgen expects from a
+/// `RemoteKeyPair::sign` for ECDSA P-256.
+fn der_encode_ecdsa_p256_sig(raw: &[u8]) -> Result<Vec<u8>> {
+    if raw.len() != 64 {
+        anyhow::bail!("expected 64 raw P-256 sig bytes, got {}", raw.len());
+    }
+    let r = der_encode_int(&raw[..32]);
+    let s = der_encode_int(&raw[32..]);
+    let body_len = r.len() + s.len();
+    // SEQUENCE for P-256 worst case: 2*(2+33) = 70 body, +2 header = 72; <128
+    // so always single-byte length.
+    let mut out = Vec::with_capacity(2 + body_len);
+    out.push(0x30); // SEQUENCE
+    out.push(body_len as u8);
+    out.extend(r);
+    out.extend(s);
+    Ok(out)
+}
+
+/// DER-encode a fixed-length unsigned big-endian integer as ASN.1
+/// INTEGER. Strips leading zeros; prepends 0x00 if MSB is set (DER
+/// requires the top bit clear for positive integers).
+fn der_encode_int(bytes: &[u8]) -> Vec<u8> {
+    let mut start = 0;
+    while start + 1 < bytes.len() && bytes[start] == 0 {
+        start += 1;
+    }
+    let needs_pad = (bytes[start] & 0x80) != 0;
+    let len = bytes.len() - start + usize::from(needs_pad);
+    let mut out = Vec::with_capacity(2 + len);
+    out.push(0x02); // INTEGER
+    out.push(len as u8);
+    if needs_pad {
+        out.push(0x00);
+    }
+    out.extend_from_slice(&bytes[start..]);
+    out
+}
+
 /// Issues an agent cert (clientAuth EKU + SAN dNSName=CN); caller pre-validates CN.
 pub fn issue_cert(
     csr_pem: &str,
-    ca_cert_path: &Path,
-    ca_key_path: &Path,
+    signer: &dyn CaSigner,
     validity: Duration,
     now: DateTime<Utc>,
 ) -> Result<(String, DateTime<Utc>)> {
-    let ca_cert_pem = std::fs::read_to_string(ca_cert_path)
-        .with_context(|| format!("read fleet CA cert {}", ca_cert_path.display()))?;
-    let ca_key_pem_raw = std::fs::read_to_string(ca_key_path)
-        .with_context(|| format!("read fleet CA key {}", ca_key_path.display()))?;
-    // FOOTGUN: rcgen's `from_pem` reads only the first block. OpenSSL
-    // EC keys ship `EC PARAMETERS` first and `EC PRIVATE KEY` second —
-    // strip the parameters block before handing to rcgen.
-    let ca_key_pem = extract_private_key_pem_block(&ca_key_pem_raw)
-        .context("extract private-key block from fleet CA key PEM")?;
-    let ca_key = KeyPair::from_pem(&ca_key_pem).context("parse fleet CA key PEM")?;
-    let ca_params =
-        CertificateParams::from_ca_cert_pem(&ca_cert_pem).context("parse fleet CA cert PEM")?;
-    let ca = ca_params
-        .self_signed(&ca_key)
-        .context("rebuild fleet CA from PEM (rcgen quirk)")?;
+    let ca_key = signer.make_key_pair()?;
+    let ca = signer.issuer();
 
     let csr_params = CertificateSigningRequestParams::from_pem(csr_pem).context("parse CSR PEM")?;
     let cn = csr_params
@@ -320,7 +535,7 @@ pub fn issue_cert(
     params.not_after = not_after_sys.into();
 
     let cert = params
-        .signed_by(&csr_params.public_key, &ca, &ca_key)
+        .signed_by(&csr_params.public_key, ca, &ca_key)
         .context("sign cert with fleet CA")?;
 
     let not_after = chrono::DateTime::<Utc>::from(not_after_sys);
@@ -361,6 +576,158 @@ pub fn audit_log(
         })
     {
         tracing::warn!(error = %err, path = %path.display(), "failed to append audit log");
+    }
+}
+
+#[cfg(test)]
+mod der_encode_tests {
+    use super::*;
+
+    #[test]
+    fn encodes_minimal_positive_int() {
+        // Single byte 0x01 → INTEGER 0x02 0x01 0x01 (no padding, no strip).
+        assert_eq!(der_encode_int(&[0x01]), vec![0x02, 0x01, 0x01]);
+    }
+
+    #[test]
+    fn pads_when_msb_set() {
+        // 0x80 → must prepend 0x00 to mark positive: 0x02 0x02 0x00 0x80
+        assert_eq!(der_encode_int(&[0x80]), vec![0x02, 0x02, 0x00, 0x80]);
+    }
+
+    #[test]
+    fn strips_leading_zeros() {
+        // 0x00 0x00 0x42 → strip leading zeros: 0x02 0x01 0x42
+        assert_eq!(der_encode_int(&[0x00, 0x00, 0x42]), vec![0x02, 0x01, 0x42]);
+    }
+
+    #[test]
+    fn keeps_one_zero_when_value_is_zero() {
+        // All zeros → minimum representation: 0x02 0x01 0x00
+        // (DER INTEGER 0 must be encoded as a single 0x00 byte.)
+        assert_eq!(der_encode_int(&[0x00, 0x00, 0x00]), vec![0x02, 0x01, 0x00]);
+    }
+
+    #[test]
+    fn pads_after_stripping_when_msb_still_set() {
+        // 0x00 0x80 0x01 → strip leading zero, MSB set, prepend 0x00:
+        // 0x02 0x03 0x00 0x80 0x01
+        assert_eq!(
+            der_encode_int(&[0x00, 0x80, 0x01]),
+            vec![0x02, 0x03, 0x00, 0x80, 0x01]
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_length_p256_sig() {
+        let err = der_encode_ecdsa_p256_sig(&[0u8; 32]).unwrap_err();
+        assert!(format!("{err}").contains("64"));
+    }
+
+    #[test]
+    fn encodes_p256_sig_typical_shape() {
+        // Mid-range r and s without MSB set — clean encoding, no padding.
+        let mut raw = [0u8; 64];
+        raw[..32].iter_mut().enumerate().for_each(|(i, b)| *b = 1 + i as u8);
+        raw[32..].iter_mut().enumerate().for_each(|(i, b)| *b = 0x40 + i as u8);
+        let der = der_encode_ecdsa_p256_sig(&raw).expect("encode");
+        // SEQUENCE
+        assert_eq!(der[0], 0x30);
+        // body length: 2 (INTEGER tag+len) + 32 + 2 + 32 = 68
+        assert_eq!(der[1], 68);
+        // first INTEGER
+        assert_eq!(der[2], 0x02);
+        assert_eq!(der[3], 32);
+        // second INTEGER
+        assert_eq!(der[2 + 2 + 32], 0x02);
+        assert_eq!(der[2 + 2 + 32 + 1], 32);
+    }
+
+    #[test]
+    fn encodes_p256_sig_max_padding_both_components() {
+        // MSB set in both r and s → both pad to 33 bytes.
+        let mut raw = [0u8; 64];
+        raw[0] = 0x80; // r MSB set
+        raw[32] = 0x80; // s MSB set
+        let der = der_encode_ecdsa_p256_sig(&raw).expect("encode");
+        // body: 2 + 33 + 2 + 33 = 70
+        assert_eq!(der[1], 70);
+        // first INTEGER length 33
+        assert_eq!(der[3], 33);
+        // padding byte
+        assert_eq!(der[4], 0x00);
+        assert_eq!(der[5], 0x80);
+        // second INTEGER length 33
+        assert_eq!(der[2 + 2 + 33], 0x02);
+        assert_eq!(der[2 + 2 + 33 + 1], 33);
+    }
+}
+
+#[cfg(test)]
+mod ca_signer_tests {
+    use super::*;
+    use rcgen::{CertificateParams, KeyPair as RcgenKeyPair};
+
+    /// FileCaSigner round-trip: build, issue an agent cert, verify the
+    /// resulting PEM parses as an X.509 cert with the expected subject DN.
+    #[test]
+    fn file_ca_signer_round_trips() {
+        // Mint a throwaway P-256 CA for the test.
+        let ca_key = RcgenKeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .expect("rcgen P-256 keypair");
+        let mut ca_params = CertificateParams::new(vec!["test-ca".to_string()]).unwrap();
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let ca_cert = ca_params.self_signed(&ca_key).expect("self-sign");
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cert_path = tmp.path().join("ca.pem");
+        let key_path = tmp.path().join("ca.key");
+        std::fs::write(&cert_path, ca_cert.pem()).unwrap();
+        std::fs::write(&key_path, ca_key.serialize_pem()).unwrap();
+
+        let signer =
+            FileCaSigner::from_paths(&cert_path, &key_path).expect("build FileCaSigner");
+
+        // Build a CSR for an agent with a fresh keypair.
+        let agent_key = RcgenKeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .expect("agent keypair");
+        let mut agent_params = CertificateParams::new(vec!["agent-test".to_string()]).unwrap();
+        agent_params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "agent-test");
+        let csr = agent_params
+            .serialize_request(&agent_key)
+            .expect("serialize CSR");
+
+        let now = chrono::Utc::now();
+        let (cert_pem, _not_after) = issue_cert(
+            &csr.pem().unwrap(),
+            &signer,
+            std::time::Duration::from_secs(3600),
+            now,
+        )
+        .expect("issue agent cert");
+
+        // Verify the issued PEM parses as an X.509 cert + has agent CN.
+        let parsed = rcgen::CertificateParams::from_ca_cert_pem(&cert_pem)
+            .expect("parse issued cert");
+        let cn = parsed
+            .distinguished_name
+            .iter()
+            .find_map(|(t, v)| {
+                if matches!(t, rcgen::DnType::CommonName) {
+                    Some(v.clone())
+                } else {
+                    None
+                }
+            })
+            .expect("cert has CN");
+        let cn_str = match cn {
+            rcgen::DnValue::PrintableString(s) => s.to_string(),
+            rcgen::DnValue::Utf8String(s) => s.to_string(),
+            _ => panic!("unexpected CN type"),
+        };
+        assert_eq!(cn_str, "agent-test");
     }
 }
 
