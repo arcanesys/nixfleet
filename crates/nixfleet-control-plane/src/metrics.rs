@@ -1,6 +1,6 @@
 //! Prometheus metrics surface — minimum needed for the operator dashboard.
 //!
-//! Five info gauges drive the bulk of the dashboard:
+//! Six info gauges + one numeric pair drive the bulk of the dashboard:
 //!   - `nixfleet_host_info{host, channel, state, convergence,
 //!                         current_closure, declared_closure, rollout_id}=1`
 //!     One series per declared host. Labels carry the operator-visible state
@@ -26,6 +26,12 @@
 //!     an in-flight rollout (then `rollout_id` carries it); `status="deferred"`
 //!     when held by a fleet-level gate (then `blocked_by` + `reason` carry
 //!     the operator-visible explanation). Cardinality bound: O(channels).
+//!
+//!   - `nixfleet_host_soak_progress_pct{rollout_id, channel, host, wave}` (0..100)
+//!     and `nixfleet_host_soak_remaining_seconds{rollout_id, channel, host, wave}`.
+//!     Drive the soak progress bar + countdown on the per-host detail rows.
+//!     Soaked/Converged pin to (100, 0); Healthy uses elapsed since
+//!     `last_healthy_since`; other states pin to (0, full window).
 //!
 //!   - `nixfleet_fleet_meta_info{ci_commit, signed_at, signature_algorithm,
 //!                               schema_version}=1`
@@ -164,6 +170,7 @@ pub async fn record_fleet_metrics(state: &AppState) -> Result<(), StateViewError
     record_active_rollouts_info(state, now).await;
     record_rollout_host_state(state).await;
     record_channel_status(state, &snapshot.fleet).await;
+    record_soak_progress(state, &snapshot.fleet, now).await;
 
     Ok(())
 }
@@ -286,6 +293,7 @@ async fn record_active_rollouts_info(state: &AppState, now: chrono::DateTime<Utc
             .unwrap_or(0);
         gauge!(
             "nixfleet_active_rollout_age_seconds",
+            "kind" => "rollout".to_string(),
             "rollout_id" => short_id(Some(&r.rollout_id)),
             "channel" => r.channel.clone(),
             "target_ref" => short_id(Some(&target_ref)),
@@ -325,6 +333,7 @@ async fn record_rollout_host_state(state: &AppState) {
             let wave = r.host_waves.get(host).copied().unwrap_or(r.current_wave);
             gauge!(
                 "nixfleet_rollout_host_state",
+                "kind" => "host".to_string(),
                 "rollout_id" => short_id(Some(&r.rollout_id)),
                 "channel" => r.channel.clone(),
                 "host" => host.clone(),
@@ -333,6 +342,62 @@ async fn record_rollout_host_state(state: &AppState) {
                 "target_closure" => short_id(Some(&r.target_closure_hash)),
             )
             .set(1.0);
+        }
+    }
+}
+
+/// Per-(rollout, host) soak progress. Same shape as fleet-status's
+/// `soak_status_for_host` (render.sh) — but the elapsed input comes
+/// straight from `host_rollout_state.last_healthy_since` instead of
+/// re-grepping the journal.
+async fn record_soak_progress(
+    state: &AppState,
+    fleet: &nixfleet_proto::FleetResolved,
+    now: chrono::DateTime<Utc>,
+) {
+    let Some(db) = state.db.as_deref() else {
+        return;
+    };
+    let Ok(snap) = db.host_dispatch_state().active_rollouts_snapshot() else {
+        return;
+    };
+    for r in &snap {
+        let Some(c) = fleet.channels.get(&r.channel) else {
+            continue;
+        };
+        let Some(p) = fleet.rollout_policies.get(&c.rollout_policy) else {
+            continue;
+        };
+        for (host, host_state) in &r.host_states {
+            let wave = r
+                .host_waves
+                .get(host)
+                .copied()
+                .unwrap_or(r.current_wave) as usize;
+            let Some(w) = p.waves.get(wave) else { continue };
+            let window = i64::from(w.soak_minutes) * 60;
+            let elapsed = match host_state.as_str() {
+                "Soaked" | "Converged" => window,
+                "Healthy" => r
+                    .last_healthy_since
+                    .get(host)
+                    .map(|t| now.signed_duration_since(*t).num_seconds().clamp(0, window))
+                    .unwrap_or(0),
+                _ => 0,
+            };
+            let pct = if window > 0 {
+                elapsed as f64 / window as f64 * 100.0
+            } else {
+                100.0
+            };
+            let labels = [
+                ("rollout_id", short_id(Some(&r.rollout_id))),
+                ("host", host.clone()),
+                ("wave", wave.to_string()),
+            ];
+            gauge!("nixfleet_host_soak_progress_pct", &labels[..]).set(pct);
+            gauge!("nixfleet_host_soak_remaining_seconds", &labels[..])
+                .set((window - elapsed) as f64);
         }
     }
 }
