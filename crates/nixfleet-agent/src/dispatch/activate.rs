@@ -1,0 +1,248 @@
+//! Dispatch entry: freshness gate -> manifest gate -> activate -> route outcome.
+
+use std::sync::Arc;
+
+use nixfleet_proto::agent_wire::{EvaluatedTarget, FetchOutcome, FetchResult, ReportEvent};
+use nixfleet_proto::RolloutManifest;
+
+use nixfleet_agent::comms::Reporter;
+use nixfleet_agent::evidence_signer::EvidenceSigner;
+use nixfleet_agent::manifest_cache::ManifestError;
+
+use crate::Args;
+
+use super::confirm::handle_fired_and_polled;
+use super::deferred::handle_deferred_pending_reboot;
+use super::manifest_error;
+use super::quarantined::{
+    evaluate as evaluate_quarantine, post_quarantine_event, QuarantineDecision,
+};
+use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
+use super::verify_mismatch::{handle_switch_failed, handle_verify_mismatch};
+use super::DispatchCtx;
+
+/// Map manifest-cache result onto the wire enum. `Missing` (HTTP/network) ⇒
+/// FetchFailed; `VerifyFailed`/`Mismatch` (content) ⇒ VerifyFailed. The
+/// `rollout_id` is stamped on every outcome so the CP's HoldAfterFailure
+/// circuit breaker can discriminate "agent's prior failure was for THIS
+/// rollout" from "agent's prior failure was for an unrelated rollout".
+fn fetch_outcome_for(
+    result: &Result<RolloutManifest, ManifestError>,
+    rollout_id: &str,
+) -> FetchOutcome {
+    let rollout_id = Some(rollout_id.to_string());
+    match result {
+        Ok(_) => FetchOutcome {
+            result: FetchResult::Ok,
+            error: None,
+            rollout_id,
+        },
+        Err(ManifestError::Missing(s)) => FetchOutcome {
+            result: FetchResult::FetchFailed,
+            error: Some(s.clone()),
+            rollout_id,
+        },
+        Err(ManifestError::VerifyFailed(s)) | Err(ManifestError::Mismatch(s)) => FetchOutcome {
+            result: FetchResult::VerifyFailed,
+            error: Some(s.clone()),
+            rollout_id,
+        },
+    }
+}
+
+pub(crate) async fn process_dispatch_target(
+    target: &EvaluatedTarget,
+    reporter: &impl Reporter,
+    client: &reqwest::Client,
+    args: &Args,
+    evidence_signer: &Arc<Option<EvidenceSigner>>,
+) {
+    let ctx = DispatchCtx {
+        target,
+        reporter,
+        args,
+        evidence_signer,
+    };
+    use nixfleet_agent::freshness::{check as freshness_check, FreshnessCheck};
+    if let FreshnessCheck::Stale {
+        signed_at,
+        freshness_window_secs,
+        age_secs,
+    } = freshness_check(target, chrono::Utc::now())
+    {
+        tracing::warn!(
+            closure_hash = %target.closure_hash,
+            channel_ref = %target.channel_ref,
+            signed_at = %signed_at,
+            freshness_window_secs,
+            age_secs,
+            "agent: refusing stale target - fleet.resolved older than freshness_window + 60s slack",
+        );
+        let stale_payload = nixfleet_agent::evidence_signer::StaleTargetSignedPayload {
+            hostname: &args.machine_id,
+            rollout: Some(&target.channel_ref),
+            closure_hash: &target.closure_hash,
+            channel_ref: &target.channel_ref,
+            signed_at,
+            freshness_window_secs,
+            age_secs,
+        };
+        let signature = ctx.try_sign(&stale_payload);
+        reporter
+            .post_report(
+                Some(&target.channel_ref),
+                ReportEvent::StaleTarget {
+                    closure_hash: target.closure_hash.clone(),
+                    channel_ref: target.channel_ref.clone(),
+                    signed_at,
+                    freshness_window_secs,
+                    age_secs,
+                    signature,
+                },
+            )
+            .await;
+        return;
+    }
+
+    // LOADBEARING: verify manifest + membership BEFORE consuming any target
+    // field. Refuse-to-act if the manifest doesn't validate.
+    let rollout_id = target.rollout_id.as_str();
+    let cache =
+        nixfleet_agent::manifest_cache::ManifestCache::new(&args.state_dir, &args.trust_file);
+    let wave_index = target.wave_index.unwrap_or(0);
+    let fetch_result = cache
+        .ensure(
+            client,
+            &args.control_plane_url,
+            rollout_id,
+            &args.machine_id,
+            wave_index,
+        )
+        .await;
+    // Persist BEFORE any branch returns - CP's circuit breaker
+    // (Decision::HoldAfterFailure) reads this on the next checkin.
+    let _ = nixfleet_agent::checkin_state::write_last_fetch_outcome(
+        &args.state_dir,
+        &fetch_outcome_for(&fetch_result, rollout_id),
+    );
+    match fetch_result {
+        Ok(_manifest) => {
+            tracing::debug!(
+                rollout_id = %rollout_id,
+                wave_index = wave_index,
+                "agent: rollout manifest verified",
+            );
+        }
+        Err(err) => {
+            manifest_error::handle(&ctx, err, rollout_id).await;
+            return;
+        }
+    }
+
+    // Skip the boot-recovery breadcrumb for non-confirmable targets. Write
+    // failure here only loses boot-recovery; next-checkin re-dispatches.
+    if let Some(activate) = target.activate.as_ref() {
+        let dispatch_record = nixfleet_agent::checkin_state::LastDispatchRecord {
+            closure_hash: target.closure_hash.clone(),
+            channel_ref: target.channel_ref.clone(),
+            rollout_id: target.rollout_id.clone(),
+            compliance_mode: target.compliance_mode.clone(),
+            confirm_endpoint: activate.confirm_endpoint.clone(),
+            dispatched_at: chrono::Utc::now(),
+        };
+        if let Err(err) =
+            nixfleet_agent::checkin_state::write_last_dispatched(&args.state_dir, &dispatch_record)
+        {
+            tracing::warn!(
+                error = %err,
+                state_dir = %args.state_dir.display(),
+                "write_last_dispatched failed; boot-recovery path will fall back to next-checkin re-dispatch",
+            );
+        }
+    }
+
+    // Suppress redundant activate-and-defer for the same closure_hash;
+    // outcome won't change until reboot or a fresher closure supersedes.
+    // Cleared by `record_confirm_success`. Read failure is fail-open - the
+    // CP-side transition handler is idempotent.
+    let suppress_due_to_prior_defer = matches!(
+        nixfleet_agent::checkin_state::read_last_deferred(&args.state_dir),
+        Ok(Some(ref rec)) if rec.closure_hash == target.closure_hash,
+    );
+    if suppress_due_to_prior_defer {
+        tracing::debug!(
+            target_closure = %target.closure_hash,
+            channel_ref = %target.channel_ref,
+            "agent: skipping dispatch - already deferred for this closure (awaiting reboot)",
+        );
+        return;
+    }
+
+    // Suppress retry of a closure that already failed within the quarantine
+    // window. Differs from the deferred suppression above: deferred is
+    // silent (awaiting reboot); quarantined is loud (throttled
+    // `ClosureQuarantined` posts to alert the operator). Auto-clears on
+    // channel-ref advance.
+    if let QuarantineDecision::Suppress(record) =
+        evaluate_quarantine(&args.state_dir, target, chrono::Utc::now())
+    {
+        post_quarantine_event(&ctx, record, chrono::Utc::now()).await;
+        return;
+    }
+
+    reporter
+        .post_report(
+            Some(&target.channel_ref),
+            ReportEvent::ActivationStarted {
+                closure_hash: target.closure_hash.clone(),
+                channel_ref: target.channel_ref.clone(),
+            },
+        )
+        .await;
+
+    let outcome = nixfleet_agent::activation::activate(target).await;
+    handle_activation_outcome(outcome, &ctx, client).await;
+}
+
+async fn handle_activation_outcome<R: Reporter>(
+    outcome: anyhow::Result<nixfleet_agent::activation::ActivationOutcome>,
+    ctx: &DispatchCtx<'_, R>,
+    client_handle: &reqwest::Client,
+) {
+    use nixfleet_agent::activation::ActivationOutcome;
+    match outcome {
+        Ok(ActivationOutcome::FiredAndPolled) => handle_fired_and_polled(ctx, client_handle).await,
+        Ok(ActivationOutcome::RealiseFailed { reason }) => handle_realise_failed(ctx, reason).await,
+        Ok(ActivationOutcome::SignatureMismatch {
+            closure_hash,
+            stderr_tail,
+        }) => handle_closure_signature_mismatch(ctx, closure_hash, stderr_tail).await,
+        Ok(ActivationOutcome::SwitchFailed { phase, exit_code }) => {
+            handle_switch_failed(ctx, phase, exit_code).await
+        }
+        Ok(ActivationOutcome::VerifyMismatch { expected, actual }) => {
+            handle_verify_mismatch(ctx, expected, actual).await
+        }
+        Ok(ActivationOutcome::DeferredPendingReboot { component }) => {
+            handle_deferred_pending_reboot(ctx, component).await
+        }
+        Err(err) => handle_activation_spawn_error(ctx, err).await,
+    }
+}
+
+/// State unknown (may have failed pre-realise) so no rollback; posts unsigned `Other`.
+async fn handle_activation_spawn_error<R: Reporter>(ctx: &DispatchCtx<'_, R>, err: anyhow::Error) {
+    tracing::error!(error = %err, "activation spawn failed");
+    ctx.reporter
+        .post_report(
+            Some(&ctx.target.channel_ref),
+            ReportEvent::Other {
+                kind: "activation-spawn-failed".to_string(),
+                detail: Some(serde_json::json!({
+                    "error": err.to_string(),
+                    "target_closure": ctx.target.closure_hash,
+                })),
+            },
+        )
+        .await;
+}
