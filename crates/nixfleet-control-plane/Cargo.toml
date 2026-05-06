@@ -1,12 +1,12 @@
 [package]
 name = "nixfleet-control-plane"
-version = "0.2.0"
-edition = "2021"
 description = "NixFleet control plane — Phase 3: long-running TLS server + reconciler tick loop"
 license = "AGPL-3.0-only"
-repository = "https://github.com/arcanesys/nixfleet"
-homepage = "https://github.com/arcanesys/nixfleet"
-authors = ["nixfleet contributors"]
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [lib]
 name = "nixfleet_control_plane"
@@ -23,7 +23,7 @@ path = "src/main.rs"
 # `tick` subcommand keeps Phase 2's oneshot-CLI behaviour for tests +
 # ad-hoc operator runs; `serve` is the new long-running default.
 [dependencies]
-nixfleet-proto = { path = "../nixfleet-proto" }
+nixfleet-proto = { path = "../nixfleet-proto", features = ["rusqlite"] }
 nixfleet-reconciler = { path = "../nixfleet-reconciler" }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
@@ -113,6 +113,8 @@ metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
 
 [dev-dependencies]
+# Enable the shared FleetBuilder fixture API for tests.
+nixfleet-proto = { path = "../nixfleet-proto", features = ["rusqlite", "testing"] }
 # `tokio::time::pause` + `start_paused` are gated on test-util; the
 # graceful-shutdown unit tests use them to fast-forward past the 30s
 # task-drain deadline without real wall-clock waiting.

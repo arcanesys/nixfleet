@@ -110,10 +110,7 @@ pub(super) async fn confirm(
     let updated = db
         .host_dispatch_state()
         .confirm(&req.hostname, &req.rollout)
-        .map_err(|err| {
-            tracing::error!(error = %err, "confirm: db update failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .map_err(super::route_error::internal("confirm: db update failed"))?;
 
     if updated == 0 {
         if recovery::try_recover_orphan_confirm(&state, &req).await {
@@ -180,8 +177,6 @@ pub(super) mod tests {
     use chrono::{DateTime, Utc};
     use nixfleet_proto::agent_wire::{ConfirmRequest, GenerationRef};
     use nixfleet_proto::fleet_resolved::Meta;
-    use nixfleet_proto::{Channel, Compliance, Host};
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     use super::AppState;
@@ -190,51 +185,14 @@ pub(super) mod tests {
         hostname: &str,
         closure: Option<&str>,
     ) -> nixfleet_proto::FleetResolved {
-        let mut hosts = HashMap::new();
-        hosts.insert(
-            hostname.to_string(),
-            Host {
-                system: "x86_64-linux".to_string(),
-                tags: vec![],
-                channel: "stable".to_string(),
-                closure_hash: closure.map(String::from),
-                pubkey: None,
-            },
-        );
-        let mut channels = HashMap::new();
-        channels.insert(
-            "stable".to_string(),
-            Channel {
-                rollout_policy: "default".to_string(),
-                reconcile_interval_minutes: 5,
-                freshness_window: 60,
-                signing_interval_minutes: 30,
-                compliance: Compliance {
-                    frameworks: vec![],
-                    mode: "disabled".to_string(),
-                },
-            },
-        );
-        let mut rollout_policies = HashMap::new();
-        rollout_policies.insert(
-            "default".to_string(),
-            nixfleet_proto::RolloutPolicy {
-                strategy: "waves".to_string(),
-                waves: vec![],
-                health_gate: nixfleet_proto::HealthGate::default(),
-                on_health_failure: nixfleet_proto::OnHealthFailure::Halt,
-            },
-        );
-        nixfleet_proto::FleetResolved {
-            schema_version: 1,
-            hosts,
-            channels,
-            rollout_policies,
-            waves: HashMap::new(),
-            edges: vec![],
-            channel_edges: vec![],
-            disruption_budgets: vec![],
-            meta: Meta {
+        use nixfleet_proto::testing::FleetBuilder;
+        // Pin policy name to "default" — `rollback_signal` tests look it up by that key.
+        let mut b = FleetBuilder::new()
+            .channel("stable", "default")
+            .host(hostname, "stable")
+            .policy_strategy("default", "waves")
+            .policy_waves("default", vec![])
+            .meta(Meta {
                 schema_version: 1,
                 signed_at: Some(
                     DateTime::parse_from_rfc3339("2026-04-30T00:00:00Z")
@@ -243,8 +201,15 @@ pub(super) mod tests {
                 ),
                 ci_commit: Some("abc12345".to_string()),
                 signature_algorithm: Some("ed25519".to_string()),
-            },
-        }
+            });
+        b = match closure {
+            Some(c) => b.host_closure(hostname, c),
+            None => b.host_no_closure(hostname),
+        };
+        let mut f = b.build();
+        // host() auto-created policy "p"; tests only consult "default".
+        f.rollout_policies.remove("p");
+        f
     }
 
     pub(super) const TEST_FLEET_HASH: &str =

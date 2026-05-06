@@ -12,11 +12,10 @@ use nixfleet_agent::manifest_cache::ManifestError;
 use crate::Args;
 
 use super::confirm::handle_fired_and_polled;
-use nixfleet_agent::evidence_signer::try_sign;
-use super::handler::{DispatchCtx, DispatchHandler};
-use super::manifest_error::ManifestErrorHandler;
-use super::realise_failed::{ClosureSignatureMismatchHandler, RealiseFailedHandler};
-use super::verify_mismatch::{SwitchFailedHandler, VerifyMismatchHandler};
+use super::DispatchCtx;
+use super::manifest_error;
+use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
+use super::verify_mismatch::{handle_switch_failed, handle_verify_mismatch};
 
 /// Map a manifest-cache result onto the wire enum the CP circuit-breaker
 /// understands. `Missing` is HTTP-shaped (404 / 5xx / network) → FetchFailed;
@@ -75,10 +74,7 @@ pub(crate) async fn process_dispatch_target(
             freshness_window_secs,
             age_secs,
         };
-        let signature = evidence_signer
-            .as_ref()
-            .as_ref()
-            .and_then(|s| try_sign(s, &stale_payload));
+        let signature = ctx.try_sign(&stale_payload);
         reporter
             .post_report(
                 Some(&target.channel_ref),
@@ -120,12 +116,7 @@ pub(crate) async fn process_dispatch_target(
             );
         }
         Err(err) => {
-            ManifestErrorHandler {
-                err,
-                rollout_id: rollout_id.to_string(),
-            }
-            .handle(&ctx)
-            .await;
+            manifest_error::handle(&ctx, err, rollout_id).await;
             return;
         }
     }
@@ -176,54 +167,35 @@ async fn handle_activation_outcome<R: Reporter>(
 ) {
     use nixfleet_agent::activation::ActivationOutcome;
     match outcome {
-        Ok(ActivationOutcome::FiredAndPolled) => {
-            handle_fired_and_polled(ctx, client_handle).await;
-        }
-        Ok(ActivationOutcome::RealiseFailed { reason }) => {
-            RealiseFailedHandler { reason }.handle(ctx).await;
-        }
+        Ok(ActivationOutcome::FiredAndPolled) => handle_fired_and_polled(ctx, client_handle).await,
+        Ok(ActivationOutcome::RealiseFailed { reason }) => handle_realise_failed(ctx, reason).await,
         Ok(ActivationOutcome::SignatureMismatch {
             closure_hash,
             stderr_tail,
-        }) => {
-            ClosureSignatureMismatchHandler {
-                closure_hash,
-                stderr_tail,
-            }
-            .handle(ctx)
-            .await;
-        }
+        }) => handle_closure_signature_mismatch(ctx, closure_hash, stderr_tail).await,
         Ok(ActivationOutcome::SwitchFailed { phase, exit_code }) => {
-            SwitchFailedHandler { phase, exit_code }.handle(ctx).await;
+            handle_switch_failed(ctx, phase, exit_code).await
         }
         Ok(ActivationOutcome::VerifyMismatch { expected, actual }) => {
-            VerifyMismatchHandler { expected, actual }.handle(ctx).await;
+            handle_verify_mismatch(ctx, expected, actual).await
         }
-        Err(err) => {
-            ActivationSpawnErrorHandler { err }.handle(ctx).await;
-        }
+        Err(err) => handle_activation_spawn_error(ctx, err).await,
     }
 }
 
 /// State unknown (may have failed pre-realise) so no rollback; posts unsigned `Other`.
-pub(crate) struct ActivationSpawnErrorHandler {
-    pub err: anyhow::Error,
-}
-
-impl DispatchHandler for ActivationSpawnErrorHandler {
-    async fn handle<R: Reporter>(&self, ctx: &DispatchCtx<'_, R>) {
-        tracing::error!(error = %self.err, "activation spawn failed");
-        ctx.reporter
-            .post_report(
-                Some(&ctx.target.channel_ref),
-                ReportEvent::Other {
-                    kind: "activation-spawn-failed".to_string(),
-                    detail: Some(serde_json::json!({
-                        "error": self.err.to_string(),
-                        "target_closure": ctx.target.closure_hash,
-                    })),
-                },
-            )
-            .await;
-    }
+async fn handle_activation_spawn_error<R: Reporter>(ctx: &DispatchCtx<'_, R>, err: anyhow::Error) {
+    tracing::error!(error = %err, "activation spawn failed");
+    ctx.reporter
+        .post_report(
+            Some(&ctx.target.channel_ref),
+            ReportEvent::Other {
+                kind: "activation-spawn-failed".to_string(),
+                detail: Some(serde_json::json!({
+                    "error": err.to_string(),
+                    "target_closure": ctx.target.closure_hash,
+                })),
+            },
+        )
+        .await;
 }

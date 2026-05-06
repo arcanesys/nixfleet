@@ -8,7 +8,7 @@ use nixfleet_agent::comms::Reporter;
 
 use crate::Args;
 
-use super::handler::DispatchCtx;
+use super::DispatchCtx;
 
 pub(super) async fn run_runtime_gate(
     target: &EvaluatedTarget,

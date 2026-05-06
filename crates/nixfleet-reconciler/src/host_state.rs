@@ -163,71 +163,23 @@ mod tests {
     }
 
     fn fleet_with_policy(on_health_failure: nixfleet_proto::OnHealthFailure) -> FleetResolved {
-        use nixfleet_proto::{
-            Channel, Compliance, Host, Meta, PolicyWave, RolloutPolicy, Selector,
-        };
-        use std::collections::HashMap;
+        use nixfleet_proto::testing::FleetBuilder;
+        use nixfleet_proto::Selector;
 
-        let mut hosts = HashMap::new();
-        hosts.insert(
-            "host-a".to_string(),
-            Host {
-                system: "x86_64-linux".into(),
-                tags: vec![],
-                channel: "stable".into(),
-                closure_hash: None,
-                pubkey: None,
-            },
-        );
-        let mut channels = HashMap::new();
-        channels.insert(
-            "stable".to_string(),
-            Channel {
-                rollout_policy: "p".into(),
-                reconcile_interval_minutes: 30,
-                signing_interval_minutes: 60,
-                freshness_window: 86400,
-                compliance: Compliance {
-                    mode: "permissive".into(),
-                    frameworks: vec![],
+        FleetBuilder::new()
+            .host("host-a", "stable")
+            .host_no_closure("host-a")
+            .channel_compliance("stable", "permissive", &[])
+            .policy_wave(
+                "p",
+                Selector {
+                    all: true,
+                    ..Default::default()
                 },
-            },
-        );
-        let mut rollout_policies = HashMap::new();
-        rollout_policies.insert(
-            "p".to_string(),
-            RolloutPolicy {
-                strategy: "all-at-once".into(),
-                waves: vec![PolicyWave {
-                    selector: Selector {
-                        tags: vec![],
-                        tags_any: vec![],
-                        hosts: vec![],
-                        channel: None,
-                        all: true,
-                    },
-                    soak_minutes: 0,
-                }],
-                health_gate: nixfleet_proto::HealthGate::default(),
-                on_health_failure,
-            },
-        );
-        FleetResolved {
-            schema_version: 1,
-            hosts,
-            channels,
-            rollout_policies,
-            waves: HashMap::new(),
-            edges: vec![],
-            channel_edges: vec![],
-            disruption_budgets: vec![],
-            meta: Meta {
-                schema_version: 1,
-                signed_at: None,
-                ci_commit: None,
-                signature_algorithm: Some("ed25519".into()),
-            },
-        }
+                0,
+            )
+            .policy_on_failure("p", on_health_failure)
+            .build()
     }
 
     fn rollout_with_state(host: &str, state: HostRolloutState) -> Rollout {

@@ -9,6 +9,7 @@ use nixfleet_proto::enroll_wire::{EnrollRequest, EnrollResponse, RenewRequest, R
 use rcgen::PublicKeyData;
 
 use super::super::middleware::AuthenticatedCn;
+use super::super::route_error::{bad_request, bad_request_error, internal};
 use super::super::state::AppState;
 
 /// `POST /v1/enroll` — bootstrap a new fleet host (no mTLS; auth via bootstrap-token signature).
@@ -23,16 +24,13 @@ pub(in crate::server) async fn enroll(
         StatusCode::SERVICE_UNAVAILABLE
     })?;
 
-    match db.tokens().token_seen(&req.token.claims.nonce) {
-        Ok(true) => {
-            tracing::warn!(nonce = %req.token.claims.nonce, "enroll: token replay rejected");
-            return Err(StatusCode::CONFLICT);
-        }
-        Ok(false) => {}
-        Err(err) => {
-            tracing::error!(error = %err, "enroll: db token_seen failed");
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
+    if db
+        .tokens()
+        .token_seen(&req.token.claims.nonce)
+        .map_err(internal("enroll: db token_seen failed"))?
+    {
+        tracing::warn!(nonce = %req.token.claims.nonce, "enroll: token replay rejected");
+        return Err(StatusCode::CONFLICT);
     }
 
     if now < req.token.claims.issued_at || now >= req.token.claims.expires_at {
@@ -63,11 +61,8 @@ pub(in crate::server) async fn enroll(
         },
     )?;
 
-    let csr_params =
-        rcgen::CertificateSigningRequestParams::from_pem(&req.csr_pem).map_err(|err| {
-            tracing::warn!(error = %err, "enroll: parse CSR PEM");
-            StatusCode::BAD_REQUEST
-        })?;
+    let csr_params = rcgen::CertificateSigningRequestParams::from_pem(&req.csr_pem)
+        .map_err(bad_request("enroll: parse CSR PEM"))?;
     let csr_cn: Option<String> = csr_params.params.distinguished_name.iter().find_map(
         |(t, v): (&rcgen::DnType, &rcgen::DnValue)| {
             if matches!(t, rcgen::DnType::CommonName) {
@@ -138,22 +133,16 @@ pub(in crate::server) async fn enroll(
     }
 
     // LOADBEARING: plain INSERT closes the TOCTOU between token_seen() and cert issuance via PK conflict.
-    match db
+    let outcome = db
         .tokens()
         .record_token_nonce(&req.token.claims.nonce, &req.token.claims.hostname)
-    {
-        Ok(crate::db::RecordTokenOutcome::Recorded) => {}
-        Ok(crate::db::RecordTokenOutcome::AlreadyRecorded) => {
-            tracing::warn!(
-                nonce = %req.token.claims.nonce,
-                "enroll: token replay detected at record (concurrent enroll race or retry)",
-            );
-            return Err(StatusCode::CONFLICT);
-        }
-        Err(err) => {
-            tracing::error!(error = %err, "enroll: db record_token_nonce failed; refusing enrollment");
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
+        .map_err(internal("enroll: db record_token_nonce failed; refusing enrollment"))?;
+    if matches!(outcome, crate::db::RecordTokenOutcome::AlreadyRecorded) {
+        tracing::warn!(
+            nonce = %req.token.claims.nonce,
+            "enroll: token replay detected at record (concurrent enroll race or retry)",
+        );
+        return Err(StatusCode::CONFLICT);
     }
 
     let audit_log_path = state.issuance_paths.read().await.audit_log.clone();
@@ -171,10 +160,7 @@ pub(in crate::server) async fn enroll(
         now,
         &state.agent_cn_suffix,
     )
-    .map_err(|err| {
-        tracing::error!(error = %err, "enroll: issue_cert failed");
-        StatusCode::BAD_REQUEST
-    })?;
+    .map_err(bad_request_error("enroll: issue_cert failed"))?;
 
     if let Some(path) = &audit_log_path {
         crate::auth::issuance::audit_log(
@@ -216,10 +202,7 @@ pub(in crate::server) async fn renew(
     // (non-host-bound) keypair — defeating the binding the operator
     // declared in fleet.nix.
     let renew_csr_params = rcgen::CertificateSigningRequestParams::from_pem(&req.csr_pem)
-        .map_err(|err| {
-            tracing::warn!(error = %err, "renew: parse CSR PEM");
-            StatusCode::BAD_REQUEST
-        })?;
+        .map_err(bad_request("renew: parse CSR PEM"))?;
     let csr_pubkey_der = renew_csr_params.public_key.der_bytes();
     if csr_pubkey_der.len() != 32 {
         tracing::warn!(
@@ -266,10 +249,7 @@ pub(in crate::server) async fn renew(
         now,
         &state.agent_cn_suffix,
     )
-    .map_err(|err| {
-        tracing::error!(error = %err, "renew: issue_cert failed");
-        StatusCode::BAD_REQUEST
-    })?;
+    .map_err(bad_request_error("renew: issue_cert failed"))?;
 
     if let Some(path) = &audit_log_path {
         crate::auth::issuance::audit_log(

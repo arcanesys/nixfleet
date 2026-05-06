@@ -5,13 +5,12 @@
 use anyhow::Result;
 use nixfleet_proto::agent_wire::EvaluatedTarget;
 
-mod backend;
-mod outcome;
 mod pipeline;
 mod profile;
 mod realise;
 #[path = "rollback.rs"]
 mod rollback_mod;
+mod types;
 mod verify_poll;
 
 #[cfg(target_os = "linux")]
@@ -19,15 +18,15 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod darwin;
 
-pub use backend::{ActivationBackend, DefaultBackend, DEFAULT_BACKEND};
-#[cfg(target_os = "linux")]
-pub use backend::LinuxBackend;
-#[cfg(target_os = "macos")]
-pub use backend::DarwinBackend;
-pub use outcome::{ActivationOutcome, RollbackOutcome, POLL_BUDGET, POLL_INTERVAL};
 pub use pipeline::activate_with;
 pub use realise::RealiseError;
 pub use rollback_mod::rollback_with;
+pub use types::{ActivationBackend, DefaultBackend, DEFAULT_BACKEND};
+pub use types::{ActivationOutcome, RollbackOutcome, POLL_BUDGET, POLL_INTERVAL};
+#[cfg(target_os = "linux")]
+pub use types::LinuxBackend;
+#[cfg(target_os = "macos")]
+pub use types::DarwinBackend;
 
 /// Single attempt per call; retry is the main poll loop's job (in-call retry
 /// would trip the CP confirm deadline since each attempt eats `POLL_BUDGET`).
@@ -113,8 +112,8 @@ mod tests {
 
     use anyhow::{anyhow, Result};
 
-    use super::backend::ActivationBackend;
-    use super::outcome::{ActivationOutcome, RollbackOutcome};
+    use super::types::ActivationBackend;
+    use super::types::{ActivationOutcome, RollbackOutcome};
     use super::realise::looks_like_signature_error;
     use super::verify_poll::{PollOutcome, VerifyPoll};
     use super::DEFAULT_BACKEND;

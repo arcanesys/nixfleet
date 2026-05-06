@@ -30,7 +30,6 @@ pub(super) fn transition_host_state_inner(
     marker: HealthyMarker,
     expected_from: Option<HostRolloutState>,
 ) -> Result<usize> {
-    let new_state_str = new_state.as_db_str();
     // GOTCHA: NULL marker_bind + COALESCE preserves the existing column on Untouched (writing NULL would clobber).
     let marker_bind: Option<String> = match marker {
         HealthyMarker::Set(ts) => Some(ts.to_rfc3339()),
@@ -51,7 +50,7 @@ pub(super) fn transition_host_state_inner(
                        excluded.last_healthy_since,
                        host_rollout_state.last_healthy_since),
                    updated_at = datetime('now')",
-                params![rollout_id, hostname, new_state_str, marker_bind],
+                params![rollout_id, hostname, new_state, marker_bind],
             )
             .context("upsert host_rollout_state")?,
         Some(prev) => conn
@@ -62,13 +61,7 @@ pub(super) fn transition_host_state_inner(
                      updated_at = datetime('now')
                  WHERE rollout_id = ?1 AND hostname = ?2
                    AND host_state = ?5",
-                params![
-                    rollout_id,
-                    hostname,
-                    new_state_str,
-                    marker_bind,
-                    prev.as_db_str()
-                ],
+                params![rollout_id, hostname, new_state, marker_bind, prev],
             )
             .context("guarded transition host_rollout_state")?,
     };
@@ -89,23 +82,16 @@ impl RolloutState<'_> {
         marker: HealthyMarker,
         expected_from: Option<HostRolloutState>,
     ) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        transition_host_state_inner(&guard, hostname, rollout_id, new_state, marker, expected_from)
+        super::read(self.conn, |c| {
+            transition_host_state_inner(c, hostname, rollout_id, new_state, marker, expected_from)
+        })
     }
 
     /// Bulk-transition every `Soaked` host of `rollout_id` to `Converged`.
-    /// Called by `apply_actions` when the reconciler emits `ConvergeRollout`
-    /// — the rollout has terminally completed (all waves soaked, last wave
-    /// reached) so the per-host state machine settles at Converged.
-    ///
-    /// Idempotent (only matches Soaked rows); subsequent calls return 0.
-    /// Other states (Failed, Reverted, Healthy, ConfirmWindow, etc.) are
-    /// untouched — those represent un-completed work the reconciler must
-    /// still resolve, and stamping them Converged would lose information.
+    /// Idempotent (only matches Soaked rows); other states untouched.
     pub fn mark_rollout_hosts_converged(&self, rollout_id: &str) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "UPDATE host_rollout_state
                  SET host_state = 'Converged',
                      updated_at = datetime('now')
@@ -113,16 +99,15 @@ impl RolloutState<'_> {
                    AND host_state = 'Soaked'",
                 params![rollout_id],
             )
-            .context("mark_rollout_hosts_converged: Soaked → Converged sweep")?;
-        Ok(n)
+            .context("mark_rollout_hosts_converged: Soaked → Converged sweep")
+        })
     }
 
     /// GOTCHA: nulls only `last_healthy_since` — `host_state` is left for the
     /// reconciler. The soak timer must restart on next Healthy attestation.
     pub fn clear_healthy_marker(&self, hostname: &str, rollout_id: &str) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "UPDATE host_rollout_state
                  SET last_healthy_since = NULL,
                      updated_at = datetime('now')
@@ -130,39 +115,41 @@ impl RolloutState<'_> {
                    AND last_healthy_since IS NOT NULL",
                 params![rollout_id, hostname],
             )
-            .context("clear host_rollout_state.last_healthy_since")?;
-        Ok(n)
+            .context("clear host_rollout_state.last_healthy_since")
+        })
     }
 
     /// Row absent → `Ok(None)`. A real DB error (lock poisoned, schema drift,
     /// I/O) propagates as `Err` so the caller can warn rather than silently
     /// rendering "no rollout state".
     pub fn host_state(&self, hostname: &str, rollout_id: &str) -> Result<Option<String>> {
-        let guard = super::lock_conn(self.conn)?;
-        match guard.query_row(
-            "SELECT host_state FROM host_rollout_state
-             WHERE rollout_id = ?1 AND hostname = ?2",
-            params![rollout_id, hostname],
-            |row| row.get::<_, String>(0),
-        ) {
-            Ok(s) => Ok(Some(s)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e).context("host_rollout_state lookup"),
-        }
+        super::read(self.conn, |c| {
+            match c.query_row(
+                "SELECT host_state FROM host_rollout_state
+                 WHERE rollout_id = ?1 AND hostname = ?2",
+                params![rollout_id, hostname],
+                |row| row.get::<_, String>(0),
+            ) {
+                Ok(s) => Ok(Some(s)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(e).context("host_rollout_state lookup"),
+            }
+        })
     }
 
     /// Existing row authoritative over re-attestation; recovery skips when row exists.
     pub fn host_rollout_state_exists(&self, hostname: &str, rollout_id: &str) -> Result<bool> {
-        let guard = super::lock_conn(self.conn)?;
-        let n: i64 = guard
-            .query_row(
-                "SELECT COUNT(*) FROM host_rollout_state
-                 WHERE rollout_id = ?1 AND hostname = ?2",
-                params![rollout_id, hostname],
-                |row| row.get(0),
-            )
-            .context("count host_rollout_state")?;
-        Ok(n > 0)
+        super::read(self.conn, |c| {
+            let n: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM host_rollout_state
+                     WHERE rollout_id = ?1 AND hostname = ?2",
+                    params![rollout_id, hostname],
+                    |row| row.get(0),
+                )
+                .context("count host_rollout_state")?;
+            Ok(n > 0)
+        })
     }
 
     /// Healthy hosts and entry timestamp; excludes NULL markers.
@@ -170,20 +157,22 @@ impl RolloutState<'_> {
         &self,
         rollout_id: &str,
     ) -> Result<HashMap<String, DateTime<Utc>>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT hostname, last_healthy_since
-             FROM host_rollout_state
-             WHERE rollout_id = ?1
-               AND last_healthy_since IS NOT NULL",
-        )?;
-        let rows = stmt
-            .query_map(params![rollout_id], |row| {
-                let hostname: String = row.get(0)?;
-                let ts: String = row.get(1)?;
-                Ok((hostname, ts))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let rows: Vec<(String, String)> = super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT hostname, last_healthy_since
+                 FROM host_rollout_state
+                 WHERE rollout_id = ?1
+                   AND last_healthy_since IS NOT NULL",
+            )?;
+            let rows = stmt
+                .query_map(params![rollout_id], |row| {
+                    let hostname: String = row.get(0)?;
+                    let ts: String = row.get(1)?;
+                    Ok((hostname, ts))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })?;
         let mut out = HashMap::with_capacity(rows.len());
         for (hostname, ts) in rows {
             let parsed = ts
@@ -196,47 +185,47 @@ impl RolloutState<'_> {
 
     /// (rollout_id, target_closure_hash) for currently-Healthy rollouts of this host.
     pub fn healthy_rollouts_for_host(&self, hostname: &str) -> Result<Vec<(String, String)>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT hrs.rollout_id, hds.target_closure_hash
-             FROM host_rollout_state hrs
-             JOIN host_dispatch_state hds
-               ON hds.hostname = hrs.hostname
-              AND hds.rollout_id = hrs.rollout_id
-             WHERE hrs.hostname = ?1
-               AND hrs.last_healthy_since IS NOT NULL
-               AND hds.state = ?2",
-        )?;
-        let rows = stmt
-            .query_map(
-                params![hostname, PendingConfirmState::Confirmed.as_db_str()],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT hrs.rollout_id, hds.target_closure_hash
+                 FROM host_rollout_state hrs
+                 JOIN host_dispatch_state hds
+                   ON hds.hostname = hrs.hostname
+                  AND hds.rollout_id = hrs.rollout_id
+                 WHERE hrs.hostname = ?1
+                   AND hrs.last_healthy_since IS NOT NULL
+                   AND hds.state = ?2",
+            )?;
+            let rows = stmt
+                .query_map(
+                    params![hostname, PendingConfirmState::Confirmed],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
     }
 
     /// (rollout_id, target_channel_ref) for Failed rollouts of this host.
     pub fn failed_rollouts_for_host(&self, hostname: &str) -> Result<Vec<(String, String)>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT hrs.rollout_id, hds.target_channel_ref
-             FROM host_rollout_state hrs
-             JOIN host_dispatch_state hds
-               ON hds.hostname = hrs.hostname
-              AND hds.rollout_id = hrs.rollout_id
-             WHERE hrs.hostname = ?1
-               AND hrs.host_state = ?2",
-        )?;
-        let rows = stmt
-            .query_map(
-                params![hostname, HostRolloutState::Failed.as_db_str()],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT hrs.rollout_id, hds.target_channel_ref
+                 FROM host_rollout_state hrs
+                 JOIN host_dispatch_state hds
+                   ON hds.hostname = hrs.hostname
+                  AND hds.rollout_id = hrs.rollout_id
+                 WHERE hrs.hostname = ?1
+                   AND hrs.host_state = ?2",
+            )?;
+            let rows = stmt
+                .query_map(params![hostname, HostRolloutState::Failed], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
     }
-
 }
 
 #[cfg(test)]

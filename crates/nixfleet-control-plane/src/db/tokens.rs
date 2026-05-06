@@ -17,9 +17,8 @@ pub enum RecordTokenOutcome {
 
 impl Tokens<'_> {
     pub fn token_seen(&self, nonce: &str) -> Result<bool> {
-        let guard = super::lock_conn(self.conn)?;
-        let exists: bool = guard
-            .query_row(
+        super::read(self.conn, |c| {
+            c.query_row(
                 "SELECT 1 FROM token_replay WHERE nonce = ?1",
                 params![nonce],
                 |_| Ok(true),
@@ -28,8 +27,8 @@ impl Tokens<'_> {
                 rusqlite::Error::QueryReturnedNoRows => Ok(false),
                 e => Err(e),
             })
-            .context("query token_replay")?;
-        Ok(exists)
+            .context("query token_replay")
+        })
     }
 
     /// Plain INSERT (not OR IGNORE): PK conflict surfaces as `AlreadyRecorded` for atomic check-and-set.
@@ -38,31 +37,31 @@ impl Tokens<'_> {
         nonce: &str,
         hostname: &str,
     ) -> Result<RecordTokenOutcome> {
-        let guard = super::lock_conn(self.conn)?;
-        match guard.execute(
-            "INSERT INTO token_replay(nonce, hostname) VALUES (?1, ?2)",
-            params![nonce, hostname],
-        ) {
-            Ok(_) => Ok(RecordTokenOutcome::Recorded),
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                Ok(RecordTokenOutcome::AlreadyRecorded)
+        super::read(self.conn, |c| {
+            match c.execute(
+                "INSERT INTO token_replay(nonce, hostname) VALUES (?1, ?2)",
+                params![nonce, hostname],
+            ) {
+                Ok(_) => Ok(RecordTokenOutcome::Recorded),
+                Err(rusqlite::Error::SqliteFailure(err, _))
+                    if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    Ok(RecordTokenOutcome::AlreadyRecorded)
+                }
+                Err(e) => Err(anyhow::Error::from(e).context("insert token_replay")),
             }
-            Err(e) => Err(anyhow::Error::from(e).context("insert token_replay")),
-        }
+        })
     }
 
     pub fn prune_token_replay(&self, max_age_hours: i64) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "DELETE FROM token_replay
                  WHERE first_seen < datetime('now', ?1)",
                 params![format!("-{max_age_hours} hours")],
             )
-            .context("prune token_replay")?;
-        Ok(n)
+            .context("prune token_replay")
+        })
     }
 }
 

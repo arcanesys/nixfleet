@@ -8,60 +8,36 @@ use nixfleet_control_plane::db::{Db, DispatchInsert};
 use nixfleet_control_plane::observed_projection;
 use nixfleet_control_plane::state::{HealthyMarker, HostRolloutState};
 use nixfleet_proto::fleet_resolved::Meta;
-use nixfleet_proto::{Channel, Compliance, FleetResolved, Host, Wave};
+use nixfleet_proto::testing::FleetBuilder;
+use nixfleet_proto::FleetResolved;
 use nixfleet_reconciler::{reconcile, Action};
 use tempfile::TempDir;
 
 fn fleet_with_single_wave_host(hostname: &str, closure: &str, soak_minutes: u32) -> FleetResolved {
-    let mut hosts = HashMap::new();
-    hosts.insert(
-        hostname.to_string(),
-        Host {
-            system: "x86_64-linux".to_string(),
-            tags: vec![],
-            channel: "stable".to_string(),
-            closure_hash: Some(closure.to_string()),
-            pubkey: None,
-        },
-    );
-    let mut channels = HashMap::new();
-    channels.insert(
-        "stable".to_string(),
-        Channel {
-            rollout_policy: "default".to_string(),
-            reconcile_interval_minutes: 5,
-            freshness_window: 60,
-            signing_interval_minutes: 30,
-            compliance: Compliance {
-                frameworks: vec![],
-                mode: "disabled".to_string(),
-            },
-        },
-    );
-    let mut waves = HashMap::new();
-    waves.insert(
-        "stable".to_string(),
-        vec![Wave {
-            hosts: vec![hostname.to_string()],
-            soak_minutes,
-        }],
-    );
-    FleetResolved {
-        schema_version: 1,
-        hosts,
-        channels,
-        rollout_policies: HashMap::new(),
-        waves,
-        edges: vec![],
-        channel_edges: vec![],
-        disruption_budgets: vec![],
-        meta: Meta {
+    let mut f = FleetBuilder::new()
+        .channel("stable", "default")
+        .host(hostname, "stable")
+        .host_closure(hostname, closure)
+        .wave_with_soak("stable", &[hostname], soak_minutes)
+        .meta(Meta {
             schema_version: 1,
             signed_at: Some(Utc::now()),
             ci_commit: Some("abc12345".to_string()),
             signature_algorithm: Some("ed25519".into()),
-        },
-    }
+        })
+        .build();
+    // Tweak: channel was first declared with a default, but host("...","stable")
+    // (idempotent) keeps it. Tweak the per-channel reconcile/freshness/signing
+    // intervals to match the original fixture.
+    let c = f.channels.get_mut("stable").unwrap();
+    c.reconcile_interval_minutes = 5;
+    c.freshness_window = 60;
+    c.signing_interval_minutes = 30;
+    // Original fixture left rollout_policies empty (channel references
+    // "default" but no policy registered) — reconcile() doesn't need it
+    // here. Drop the auto-inserted "default" policy.
+    f.rollout_policies = HashMap::new();
+    f
 }
 
 #[test]

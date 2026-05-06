@@ -10,10 +10,8 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
-use nixfleet_proto::{
-    Channel, ChannelEdge, Compliance, Edge, FleetResolved, Host, Meta, OnHealthFailure,
-    PolicyWave, RolloutBudget, RolloutPolicy, Selector, Wave,
-};
+use nixfleet_proto::testing::FleetBuilder;
+use nixfleet_proto::{Edge, FleetResolved, Host, RolloutBudget, Selector, Wave};
 
 use crate::host_state::HostRolloutState;
 use crate::observed::{Observed, Rollout};
@@ -26,101 +24,26 @@ fn empty_set() -> HashSet<String> {
 }
 
 fn fleet_two_channels() -> FleetResolved {
-    let mut hosts = HashMap::new();
-    hosts.insert(
-        "lab".into(),
-        Host {
-            system: "x86_64-linux".into(),
-            tags: vec!["server".into()],
-            channel: "edge".into(),
-            closure_hash: Some("lab-closure".into()),
-            pubkey: None,
-        },
-    );
-    hosts.insert(
-        "krach".into(),
-        Host {
-            system: "x86_64-linux".into(),
-            tags: vec!["dev".into()],
-            channel: "stable".into(),
-            closure_hash: Some("krach-closure".into()),
-            pubkey: None,
-        },
-    );
-    hosts.insert(
-        "aether".into(),
-        Host {
-            system: "aarch64-darwin".into(),
-            tags: vec!["dev".into()],
-            channel: "stable".into(),
-            closure_hash: Some("aether-closure".into()),
-            pubkey: None,
-        },
-    );
-
-    let mut channels = HashMap::new();
-    for ch in ["edge", "stable"] {
-        channels.insert(
-            ch.into(),
-            Channel {
-                rollout_policy: "p".into(),
-                reconcile_interval_minutes: 30,
-                freshness_window: 1440,
-                signing_interval_minutes: 60,
-                compliance: Compliance {
-                    frameworks: vec![],
-                    mode: "disabled".into(),
-                },
+    FleetBuilder::new()
+        .host("lab", "edge")
+        .host_tag("lab", "server")
+        .host("krach", "stable")
+        .host_tag("krach", "dev")
+        .host("aether", "stable")
+        .host_system("aether", "aarch64-darwin")
+        .host_tag("aether", "dev")
+        .policy_strategy("p", "staged")
+        .policy_wave(
+            "p",
+            Selector {
+                tags: vec!["dev".into()],
+                ..Default::default()
             },
-        );
-    }
-
-    let mut rollout_policies = HashMap::new();
-    rollout_policies.insert(
-        "p".into(),
-        RolloutPolicy {
-            strategy: "staged".into(),
-            waves: vec![PolicyWave {
-                selector: Selector {
-                    tags: vec!["dev".into()],
-                    ..Default::default()
-                },
-                soak_minutes: 5,
-            }],
-            health_gate: Default::default(),
-            on_health_failure: OnHealthFailure::Halt,
-        },
-    );
-
-    let mut waves = HashMap::new();
-    waves.insert(
-        "stable".into(),
-        vec![Wave {
-            hosts: vec!["krach".into(), "aether".into()],
-            soak_minutes: 5,
-        }],
-    );
-
-    FleetResolved {
-        schema_version: 1,
-        hosts,
-        channels,
-        rollout_policies,
-        waves,
-        edges: vec![],
-        channel_edges: vec![ChannelEdge {
-            gates: "edge".into(),
-            gated: "stable".into(),
-            reason: None,
-        }],
-        disruption_budgets: vec![],
-        meta: Meta {
-            schema_version: 1,
-            signed_at: None,
-            ci_commit: None,
-            signature_algorithm: Some("ed25519".into()),
-        },
-    }
+            5,
+        )
+        .channel_edge("edge", "stable")
+        .wave("stable", &["krach", "aether"])
+        .build()
 }
 
 fn rollout(channel: &str, host_states: Vec<(&str, HostRolloutState)>) -> Rollout {

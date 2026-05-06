@@ -16,10 +16,8 @@ use sha2::{Digest, Sha256};
 /// 30 days; agents self-pace renewal at 50% via `/v1/agent/renew`.
 pub const AGENT_CERT_VALIDITY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
-/// Default agent CN FQDN suffix. Issued cert CNs are canonicalised to
-/// `agent-<machineId>.<suffix>` so they fall under the issuance CA's
-/// `dNSName` name constraint (D14: `*.fleet.lab.internal` + EKU
-/// clientAuth). Operator-overridable via `--agent-cn-suffix`.
+/// Default suffix for canonical agent CNs (`agent-<machineId>.<suffix>`).
+/// Must match the issuance CA's `dNSName` constraint (D14).
 pub const DEFAULT_AGENT_CN_SUFFIX: &str = "fleet.lab.internal";
 
 /// Build the canonical CN for an agent cert: `agent-<machineId>.<suffix>`.
@@ -27,14 +25,7 @@ pub fn canonical_agent_cn(machine_id: &str, suffix: &str) -> String {
     format!("agent-{machine_id}.{suffix}")
 }
 
-/// Extract the bare machine_id from an agent cert CN. Accepts both:
-///   * canonical form `agent-<machineId>.<suffix>` (post-C.3)
-///   * legacy bare-machineId form (pre-C.3 issued certs)
-///
-/// During the migration window, agents holding legacy certs present
-/// bare CNs at /renew; CP issues canonical certs going forward. Once
-/// the fleet has rotated through one /renew cycle, all CNs are
-/// canonical and the legacy fallback can be dropped.
+/// Idempotent: passes through bare CNs unchanged, strips canonical wrapper.
 pub fn extract_machine_id(cn: &str, suffix: &str) -> String {
     let trailer = format!(".{suffix}");
     if let Some(rest) = cn.strip_prefix("agent-") {
@@ -51,11 +42,8 @@ pub enum AuditContext {
     Renew { previous_cert_serial: String },
 }
 
-/// Verifying a bootstrap-token signature involves: read trust.json, parse
-/// TrustConfig, walk current+previous orgRootKey candidates, and try ed25519
-/// verification against each. Splitting the stages into separate error
-/// variants lets axum handlers log + map to StatusCodes correctly without
-/// duplicating the candidate loop in every handler.
+/// Stage-typed error so axum handlers map each phase to the right StatusCode
+/// without duplicating the candidate loop.
 #[derive(Debug)]
 pub enum TrustVerifyError {
     TrustFileRead {
@@ -91,15 +79,9 @@ impl std::fmt::Display for TrustVerifyError {
     }
 }
 
-/// Loads trust.json fresh on every call so operator key rotations propagate
-/// without restart. ed25519-only — non-ed25519 candidates and base64-decode
-/// failures are logged and skipped, never fatal.
-///
-/// `now` lets the verifier accept the orgRootKey's `successor` during
-/// the rotation overlap window (`now < retire_at`). Without this, a
-/// declared successor would be ignored and operator-side rotation
-/// tooling would have to flip `current → previous` before any token
-/// minted by the new key could verify.
+/// Re-reads trust.json each call (key rotations propagate without restart).
+/// ed25519-only; non-ed25519 / base64-decode failures skip the candidate.
+/// `now` enables the `successor` overlap window (`now < retire_at`).
 pub fn verify_bootstrap_token_against_trust(
     trust_path: &Path,
     token: &BootstrapToken,
@@ -200,22 +182,10 @@ pub fn fingerprint(pubkey_bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(digest)
 }
 
-/// Extract the first private-key PEM block from a (possibly multi-block)
-/// PEM document. Re-emits as a single-block PEM string suitable for
-/// `rcgen::KeyPair::from_pem`.
-///
-/// Why this exists: OpenSSL-generated EC keys (`openssl ecparam
-/// -genkey`) write TWO blocks — a leading `EC PARAMETERS` block (just
-/// the curve OID) and the actual `EC PRIVATE KEY`. rcgen's
-/// `KeyPair::from_pem` reads only the first block, sees the parameters
-/// block, fails. PKCS#8-formatted keys (`BEGIN PRIVATE KEY`) and
-/// rcgen-generated keys are single-block and work without this
-/// helper, but operators routinely supply OpenSSL-generated CAs in
-/// production. Accepting the wider PEM shape keeps the framework
-/// robust to whatever shape the operator's offline CA tooling emits.
-///
-/// Accepted labels (in priority order): `PRIVATE KEY` (PKCS#8),
-/// `EC PRIVATE KEY` (SEC1), `RSA PRIVATE KEY` (PKCS#1).
+/// Extract the first private-key PEM block; rcgen's `KeyPair::from_pem`
+/// reads only one block, so OpenSSL-generated EC keys (`EC PARAMETERS` +
+/// `EC PRIVATE KEY`) need this stripping. Accepted labels:
+/// `PRIVATE KEY` (PKCS#8), `EC PRIVATE KEY` (SEC1), `RSA PRIVATE KEY` (PKCS#1).
 pub fn extract_private_key_pem_block(pem_text: &str) -> Result<String> {
     const ACCEPTED: &[&str] = &["PRIVATE KEY", "EC PRIVATE KEY", "RSA PRIVATE KEY"];
 
@@ -290,20 +260,63 @@ pub fn validate_csr_against_fleet_host(
     Ok(())
 }
 
-/// Abstracts CA signing so the file-backed and TPM-backed paths share
-/// `issue_cert`. Both impls own the issuer `Certificate` (built once at
-/// construction; for TPM that costs one `tpm_sign` call at startup) and
-/// produce a fresh `KeyPair` per `make_key_pair()` call — fresh PEM
-/// reads for the file path, fresh `Box<TpmRemoteSigner>` for TPM.
+/// CA signer abstraction over file-backed + TPM-backed paths. `issuer()` is
+/// cached at construction (TPM pays one `tpm_sign` call upfront);
+/// `make_key_pair()` produces a fresh signer per issuance so operator key
+/// rotations apply without restart.
 pub trait CaSigner: Send + Sync {
-    /// Issuer Certificate object — used by rcgen for issuer DN + AKID
-    /// derivation. Self-signed reconstruction matching the CA's SPKI.
     fn issuer(&self) -> &rcgen::Certificate;
-
-    /// Build the signing `KeyPair` for one issuance. File: re-parses the
-    /// CA key PEM so operator key rotations apply without restart. TPM:
-    /// constructs a fresh `RemoteKeyPair` boxed signer.
     fn make_key_pair(&self) -> Result<KeyPair>;
+}
+
+/// Builds a `CaSigner` from a flag triple. TPM (`pub_raw + wrapper`) wins
+/// over file (`fleet_ca_key`); both absent → `None` (enroll/renew will 500).
+pub fn build_signer_from_args(
+    cert_path: &Path,
+    tpm_pubkey_raw: Option<&Path>,
+    tpm_sign_wrapper: Option<&Path>,
+    fleet_ca_key: Option<&Path>,
+) -> Option<std::sync::Arc<dyn CaSigner>> {
+    match (tpm_pubkey_raw, tpm_sign_wrapper, fleet_ca_key) {
+        (Some(pub_raw), Some(wrapper), _) => {
+            match TpmCaSigner::from_paths(cert_path, pub_raw, wrapper) {
+                Ok(s) => {
+                    tracing::info!(
+                        cert = %cert_path.display(),
+                        pubkey_raw = %pub_raw.display(),
+                        wrapper = %wrapper.display(),
+                        "issuance CA signer: TPM-backed",
+                    );
+                    Some(std::sync::Arc::new(s))
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, "build TPM CA signer; enroll/renew will 500");
+                    None
+                }
+            }
+        }
+        (None, None, Some(key_path)) => match FileCaSigner::from_paths(cert_path, key_path) {
+            Ok(s) => {
+                tracing::info!(
+                    cert = %cert_path.display(),
+                    key = %key_path.display(),
+                    "issuance CA signer: file-backed",
+                );
+                Some(std::sync::Arc::new(s))
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "build file CA signer; enroll/renew will 500");
+                None
+            }
+        },
+        _ => {
+            tracing::warn!(
+                "no CA signer flags satisfied (need --fleet-ca-key or --tpm-ca-pubkey-raw + \
+                 --tpm-ca-sign-wrapper); enroll/renew will 500"
+            );
+            None
+        }
+    }
 }
 
 /// File-backed CA signer (current default; agenix-encrypted PEM on disk).
@@ -349,20 +362,11 @@ impl CaSigner for FileCaSigner {
     }
 }
 
-/// TPM-backed CA signer. Holds the issuance CA's TPM-managed P-256
-/// public key (as uncompressed SEC1 point, 0x04||X||Y, 65 bytes — what
-/// `rcgen::RemoteKeyPair::public_key()` expects for ECDSA) and a path
-/// to the `tpm-sign-<keyname>` shell wrapper provisioned by the
-/// `nixfleet.keyslots.tpm` scope. `make_key_pair()` constructs a fresh
-/// `Box<TpmRemoteSigner>` per call — rcgen consumes it.
-///
-/// At construction we self-sign the issuer cert via the TPM (one
-/// `tpm_sign` call at CP startup) so subsequent `issuer()` reads are
-/// pure cache hits. The CA cert's *real* signature (by the offline
-/// fleet root) lives in `/etc/nixfleet/cp/issuance-ca.pem` — rcgen's
-/// `signed_by` only reads the issuer's DN + pubkey, never the
-/// signature, so re-self-signing for the in-memory `Certificate` is
-/// sound.
+/// TPM-backed CA. Holds uncompressed SEC1 P-256 pubkey (`0x04 || X || Y`,
+/// 65 bytes — rcgen's ECDSA shape) + the `tpm-sign-<keyname>` wrapper path.
+/// Issuer cert is self-signed via TPM once at construction; the real CA
+/// signature (by the offline fleet root) lives on disk and rcgen never
+/// reads it (only DN + pubkey), so the re-self-sign is sound.
 pub struct TpmCaSigner {
     pubkey_uncompressed: Vec<u8>,
     sign_wrapper_path: PathBuf,
@@ -370,10 +374,8 @@ pub struct TpmCaSigner {
 }
 
 impl TpmCaSigner {
-    /// `tpm_pubkey_raw_path` points at the keyslot scope's `pubkey.raw`
-    /// (64 bytes X||Y, no leading 0x04). `sign_wrapper_path` is the
-    /// `tpm-sign-<keyname>` binary (typically
-    /// `/run/current-system/sw/bin/tpm-sign-issuanceCA`).
+    /// `tpm_pubkey_raw_path` = 64-byte X||Y (no leading 0x04).
+    /// `sign_wrapper_path` = `tpm-sign-<keyname>` binary.
     pub fn from_paths(
         ca_cert_path: &Path,
         tpm_pubkey_raw_path: &Path,
@@ -428,12 +430,8 @@ impl CaSigner for TpmCaSigner {
     }
 }
 
-/// `RemoteKeyPair` impl that shells out to the keyslots scope's
-/// `tpm-sign-<keyname>` wrapper. The wrapper takes a file argument
-/// (the message bytes) and writes raw `R || S` (64 bytes for P-256)
-/// to stdout. rcgen's ECDSA path expects DER-encoded `Ecdsa-Sig-Value
-/// SEQUENCE { r INTEGER, s INTEGER }` — `der_encode_ecdsa_p256_sig`
-/// handles the conversion.
+/// Shells out to the keyslot's `tpm-sign-<keyname>` (file in, raw R||S out);
+/// `der_encode_ecdsa_p256_sig` rewraps to the DER form rcgen expects.
 struct TpmRemoteSigner {
     pubkey_uncompressed: Vec<u8>,
     sign_wrapper_path: PathBuf,
@@ -499,9 +497,7 @@ fn der_encode_ecdsa_p256_sig(raw: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// DER-encode a fixed-length unsigned big-endian integer as ASN.1
-/// INTEGER. Strips leading zeros; prepends 0x00 if MSB is set (DER
-/// requires the top bit clear for positive integers).
+/// Big-endian unsigned int → DER INTEGER. Strips leading zeros + pads if MSB set.
 fn der_encode_int(bytes: &[u8]) -> Vec<u8> {
     let mut start = 0;
     while start + 1 < bytes.len() && bytes[start] == 0 {
@@ -519,13 +515,9 @@ fn der_encode_int(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Issues an agent cert with `clientAuth` EKU and canonical CN
-/// `agent-<machineId>.<agent_cn_suffix>` (CSR CN is interpreted as
-/// the bare machineId — legacy form). SAN `dNSName=<CN>` is set so
-/// the cert satisfies the issuance CA's name constraint and rustls/
-/// webpki will accept it (CN-only certs are rejected). Caller
-/// validates the CSR pubkey ↔ host pubkey binding before reaching
-/// here.
+/// Issues an agent cert: clientAuth EKU + canonical CN `agent-<machineId>.<suffix>`
+/// + SAN dNSName=<CN> (rustls/webpki rejects CN-only certs). CSR CN is read as
+/// the bare machineId. Caller validates CSR-pubkey ↔ host-pubkey binding upstream.
 pub fn issue_cert(
     csr_pem: &str,
     signer: &dyn CaSigner,
@@ -555,19 +547,15 @@ pub fn issue_cert(
         rcgen::DnValue::Utf8String(s) => s.to_string(),
         _ => format!("{:?}", csr_cn),
     };
-    // Treat the CSR CN as the bare machineId — agents emit CSRs with
-    // CN=<machineId> and the CP rewrites the issued cert's CN to the
-    // canonical FQDN so it falls under the issuance CA's name
-    // constraint (D14: `*.fleet.lab.internal`). `extract_machine_id`
-    // is idempotent on already-canonical CNs.
+    // CSR CN = bare machineId; we rewrite to canonical FQDN for the D14
+    // name constraint. `extract_machine_id` is idempotent on canonical input.
     let machine_id = extract_machine_id(&csr_cn_str, agent_cn_suffix);
     let canonical_cn = canonical_agent_cn(&machine_id, agent_cn_suffix);
 
     let mut params = csr_params.params;
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
 
-    // Rebuild the DN with the canonical CN, preserving any other
-    // attributes (O, OU, C) the CSR carried.
+    // Preserve non-CN attributes (O, OU, C) the CSR carried.
     let mut new_dn = rcgen::DistinguishedName::new();
     for (t, v) in params.distinguished_name.iter() {
         if !matches!(t, DnType::CommonName) {

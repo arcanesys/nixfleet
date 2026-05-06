@@ -2,12 +2,10 @@
 
 mod common;
 
-use std::path::PathBuf;
-
 use chrono::Utc;
 use common::{
     build_mtls_client, install_crypto_provider_once, mint_ca_and_certs, pick_free_port,
-    wait_for_listener_ready, write_pem,
+    spawn_server, write_phase2_input_stubs,
 };
 use nixfleet_control_plane::server;
 use nixfleet_proto::agent_wire::{
@@ -15,29 +13,6 @@ use nixfleet_proto::agent_wire::{
     ReportEvent, ReportRequest, ReportResponse,
 };
 use tempfile::TempDir;
-
-fn write_phase2_input_stubs(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
-    let artifact = write_pem(dir, "fleet.resolved.json", "{}");
-    let signature = write_pem(dir, "fleet.resolved.json.sig", "");
-    let trust = write_pem(
-        dir,
-        "trust.json",
-        r#"{"ciReleaseKey":{"current":[],"rejectBefore":null}}"#,
-    );
-    let observed = write_pem(
-        dir,
-        "observed.json",
-        r#"{"channelRefs":{},"lastRolledRefs":{},"hostState":{},"activeRollouts":[]}"#,
-    );
-    (artifact, signature, trust, observed)
-}
-
-async fn spawn_server(args: server::ServeArgs) -> tokio::task::JoinHandle<anyhow::Result<()>> {
-    let port = args.listen.port();
-    let handle = tokio::spawn(server::serve(args));
-    wait_for_listener_ready(port, &handle).await;
-    handle
-}
 
 #[tokio::test]
 async fn checkin_records_request_and_returns_null_target() {

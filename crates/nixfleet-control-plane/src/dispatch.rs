@@ -170,50 +170,19 @@ mod tests {
     use nixfleet_proto::{
         agent_wire::{FetchOutcome, GenerationRef},
         fleet_resolved::Meta,
-        Channel, Compliance, HealthGate, Host, OnHealthFailure, RolloutPolicy,
+        Host,
     };
-    use std::collections::HashMap;
 
     const TEST_FLEET_HASH: &str =
         "0000000000000000000000000000000000000000000000000000000000000000";
 
     fn fleet_with(hostname: &str, host: Host) -> FleetResolved {
-        let mut hosts = HashMap::new();
-        hosts.insert(hostname.to_string(), host);
-        let mut channels = HashMap::new();
-        channels.insert(
-            "stable".to_string(),
-            Channel {
-                rollout_policy: "default".to_string(),
-                reconcile_interval_minutes: 5,
-                freshness_window: 60,
-                signing_interval_minutes: 30,
-                compliance: Compliance {
-                    frameworks: vec![],
-                    mode: "disabled".to_string(),
-                },
-            },
-        );
-        let mut rollout_policies = HashMap::new();
-        rollout_policies.insert(
-            "default".to_string(),
-            RolloutPolicy {
-                strategy: "waves".to_string(),
-                waves: vec![],
-                health_gate: HealthGate::default(),
-                on_health_failure: OnHealthFailure::Halt,
-            },
-        );
-        FleetResolved {
-            schema_version: 1,
-            hosts,
-            channels,
-            rollout_policies,
-            waves: HashMap::new(),
-            edges: vec![],
-            channel_edges: vec![],
-            disruption_budgets: vec![],
-            meta: Meta {
+        use nixfleet_proto::testing::FleetBuilder;
+        let mut f = FleetBuilder::new()
+            .channel("stable", "p")
+            .policy_strategy("p", "waves")
+            .policy_waves("p", vec![])
+            .meta(Meta {
                 schema_version: 1,
                 signed_at: Some(
                     DateTime::parse_from_rfc3339("2026-04-26T00:00:00Z")
@@ -222,8 +191,13 @@ mod tests {
                 ),
                 ci_commit: Some("abc12345deadbeef".to_string()),
                 signature_algorithm: Some("ed25519".into()),
-            },
-        }
+            })
+            .build();
+        // Caller passes in a fully-formed Host (varies per test), so insert
+        // raw rather than going through host() defaults. Channel "stable"
+        // declares rollout_policy "p" — match what host.channel references.
+        f.hosts.insert(hostname.to_string(), host);
+        f
     }
 
     fn host(closure_hash: Option<&str>) -> Host {

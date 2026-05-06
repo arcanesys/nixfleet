@@ -31,13 +31,8 @@ pub struct ChannelRefsCache {
     pub last_refreshed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Failure retains previous state; cancel exits the loop cleanly.
-///
-/// `kick`: optional watch receiver that wakes the poll loop on event-
-/// driven triggers (reconciler signals after `ConvergeRollout` /
-/// `SoakHost` state transitions). Absent → cadence-only. The 60 s
-/// `POLL_INTERVAL` cadence is preserved either way as a safety net
-/// against missed kicks.
+/// Cadence + optional `kick` (reconciler wakes us on `ConvergeRollout` / `SoakHost`).
+/// Failure retains previous state; cadence is the safety net for missed kicks.
 pub fn spawn(
     cancel: tokio_util::sync::CancellationToken,
     cache: Arc<RwLock<ChannelRefsCache>>,
@@ -392,82 +387,25 @@ mod tests {
     use crate::server::VerifiedFleetSnapshot;
     use crate::state::{HealthyMarker, HostRolloutState};
     use chrono::Utc;
-    use nixfleet_proto::{
-        Channel, ChannelEdge, Compliance, FleetResolved, Host, Meta, OnHealthFailure,
-        RolloutPolicy,
-    };
+    use nixfleet_proto::testing::FleetBuilder;
+    use nixfleet_proto::{ChannelEdge, FleetResolved};
 
     fn fleet_edge_then_stable() -> FleetResolved {
-        let mut hosts = HashMap::new();
-        hosts.insert(
-            "lab".into(),
-            Host {
-                system: "x86_64-linux".into(),
-                tags: vec!["server".into()],
-                channel: "edge".into(),
-                closure_hash: Some("lab-closure-new".into()),
-                pubkey: None,
-            },
-        );
-        hosts.insert(
-            "krach".into(),
-            Host {
-                system: "x86_64-linux".into(),
-                tags: vec!["dev".into()],
-                channel: "stable".into(),
-                closure_hash: Some("krach-closure-new".into()),
-                pubkey: None,
-            },
-        );
-
-        let mut channels = HashMap::new();
-        for ch in ["edge", "stable"] {
-            channels.insert(
-                ch.to_string(),
-                Channel {
-                    rollout_policy: "p".into(),
-                    reconcile_interval_minutes: 30,
-                    freshness_window: 1440,
-                    signing_interval_minutes: 60,
-                    compliance: Compliance {
-                        frameworks: vec![],
-                        mode: "disabled".into(),
-                    },
-                },
-            );
-        }
-
-        let mut rollout_policies = HashMap::new();
-        rollout_policies.insert(
-            "p".into(),
-            RolloutPolicy {
-                strategy: "all-at-once".into(),
-                waves: vec![],
-                health_gate: Default::default(),
-                on_health_failure: OnHealthFailure::Halt,
-            },
-        );
-
-        FleetResolved {
-            schema_version: 1,
-            hosts,
-            channels,
-            rollout_policies,
-            waves: HashMap::new(),
-            edges: vec![],
-            channel_edges: vec![ChannelEdge {
-                gates: "edge".into(),
-                gated: "stable".into(),
-                reason: Some("canary".into()),
-            }],
-            disruption_budgets: vec![],
-            meta: Meta {
-                schema_version: 1,
-                signed_at: None,
-                ci_commit: None,
-                signature_algorithm: Some("ed25519".into()),
-            },
-        }
+        let mut f = FleetBuilder::new()
+            .host("lab", "edge")
+            .host_tag("lab", "server")
+            .host_closure("lab", "lab-closure-new")
+            .host("krach", "stable")
+            .host_tag("krach", "dev")
+            .host_closure("krach", "krach-closure-new")
+            .policy_waves("p", vec![])
+            .build();
+        f.channel_edges = vec![ChannelEdge {
+            gates: "edge".into(),
+            gated: "stable".into(),
+            reason: Some("canary".into()),
+        }];
+        f
     }
 
     fn seed_old_rollout(db: &crate::db::Db, rollout_id: &str, channel: &str, hostname: &str) {

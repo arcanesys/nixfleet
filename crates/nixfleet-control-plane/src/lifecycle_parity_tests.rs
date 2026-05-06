@@ -1,32 +1,14 @@
-//! Lifecycle parity tests — pin the chain `DB state → observed →
-//! gate verdict` at each stage of a multi-channel rollout, and pin
-//! that the dispatch-mode and reconcile-mode evaluations agree on
-//! the same Observed.
-//!
-//! Invariant guarded: the dispatch endpoint and the reconcile loop
-//! reach equivalent verdicts on the same DB state, because both
-//! build `Observed.active_rollouts` from the canonical
-//! `observed_view::list_active_rollouts` substrate. Documented
-//! divergences are conservative-vs-permissive on truly-missing
-//! predecessor data — these tests pin which mode chooses which.
-//!
-//! Companion unit tests cover gate predicates in isolation
-//! (`channel_edges_releases_on_terminal_predecessor_in_both_modes`)
-//! and DB query semantics in isolation
-//! (`mark_terminal_keeps_rollout_in_list_active_but_drops_from_list_in_flight`).
-//! This file fills the seam between them: real DB state at each
-//! lifecycle stage, gate evaluator on the result, both modes
-//! asserted equivalent.
+//! Pin `DB state → observed → gate verdict` parity across dispatch/reconcile modes.
+//! The two modes legitimately diverge only on truly-missing predecessor data
+//! (conservative vs permissive); every other stage must agree.
 
 #![cfg(test)]
 
 use std::collections::HashSet;
 
 use chrono::Utc;
-use nixfleet_proto::{
-    Channel, ChannelEdge, Compliance, FleetResolved, Host, Meta, OnHealthFailure, PolicyWave,
-    RolloutPolicy, Selector, Wave,
-};
+use nixfleet_proto::testing::FleetBuilder;
+use nixfleet_proto::{FleetResolved, Meta};
 use nixfleet_reconciler::gates::{evaluate_for_host, GateBlock, GateInput, GateMode};
 use nixfleet_reconciler::observed::{Observed, Rollout};
 use nixfleet_reconciler::{HostRolloutState, RolloutState};
@@ -34,18 +16,9 @@ use nixfleet_reconciler::{HostRolloutState, RolloutState};
 use crate::db::{Db, DispatchInsert};
 use crate::state::HealthyMarker;
 
-// ============================================================
-// Fixture: edge ─→ stable channel topology
-//
-// hosts:
-//   lab    on edge   (server tier, wave 0)
-//   krach  on stable (dev tier,    wave 0)
-//
-// channelEdges: gates=edge, gated=stable
-//
-// Smallest fleet shape that exercises the cross-channel + per-host
-// gating the parity invariant covers. Mirrors lab's topology.
-// ============================================================
+// Fixture: edge ─→ stable. lab on edge (server, wave 0), krach on
+// stable (dev, wave 0). Smallest shape exercising channelEdges +
+// per-host gating; mirrors lab's topology.
 
 fn fresh_db() -> Db {
     let db = Db::open_in_memory().unwrap();
@@ -54,91 +27,22 @@ fn fresh_db() -> Db {
 }
 
 fn fleet() -> FleetResolved {
-    let mut hosts = std::collections::HashMap::new();
-    hosts.insert(
-        "lab".into(),
-        Host {
-            system: "x86_64-linux".into(),
-            tags: vec!["server".into()],
-            channel: "edge".into(),
-            closure_hash: Some("lab-closure".into()),
-            pubkey: None,
-        },
-    );
-    hosts.insert(
-        "krach".into(),
-        Host {
-            system: "x86_64-linux".into(),
-            tags: vec!["dev".into()],
-            channel: "stable".into(),
-            closure_hash: Some("krach-closure".into()),
-            pubkey: None,
-        },
-    );
-    let mut channels = std::collections::HashMap::new();
-    for c in ["edge", "stable"] {
-        channels.insert(
-            c.into(),
-            Channel {
-                rollout_policy: "p".into(),
-                reconcile_interval_minutes: 30,
-                signing_interval_minutes: 60,
-                freshness_window: 1440,
-                compliance: Compliance {
-                    mode: "disabled".into(),
-                    frameworks: vec![],
-                },
-            },
-        );
-    }
-    let mut rollout_policies = std::collections::HashMap::new();
-    rollout_policies.insert(
-        "p".into(),
-        RolloutPolicy {
-            strategy: "all-at-once".into(),
-            waves: vec![PolicyWave {
-                selector: Selector::default(),
-                soak_minutes: 5,
-            }],
-            health_gate: nixfleet_proto::HealthGate::default(),
-            on_health_failure: OnHealthFailure::Halt,
-        },
-    );
-    let mut waves = std::collections::HashMap::new();
-    waves.insert(
-        "edge".into(),
-        vec![Wave {
-            hosts: vec!["lab".into()],
-            soak_minutes: 5,
-        }],
-    );
-    waves.insert(
-        "stable".into(),
-        vec![Wave {
-            hosts: vec!["krach".into()],
-            soak_minutes: 5,
-        }],
-    );
-    FleetResolved {
-        schema_version: 1,
-        hosts,
-        channels,
-        rollout_policies,
-        waves,
-        edges: vec![],
-        channel_edges: vec![ChannelEdge {
-            gates: "edge".into(),
-            gated: "stable".into(),
-            reason: None,
-        }],
-        disruption_budgets: vec![],
-        meta: Meta {
+    FleetBuilder::new()
+        .host("lab", "edge")
+        .host_tag("lab", "server")
+        .host("krach", "stable")
+        .host_tag("krach", "dev")
+        .channel_edge("edge", "stable")
+        .wave("edge", &["lab"])
+        .wave("stable", &["krach"])
+        // Match historical fixture: signature_algorithm cleared.
+        .meta(Meta {
             schema_version: 1,
             signed_at: None,
             ci_commit: None,
             signature_algorithm: None,
-        },
-    }
+        })
+        .build()
 }
 
 /// Test-side `Observed` constructor — delegates to the production

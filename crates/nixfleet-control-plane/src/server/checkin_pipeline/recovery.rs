@@ -95,12 +95,8 @@ async fn validate_orphan_recovery(
     Some((target_closure.clone(), host_decl.channel.clone()))
 }
 
-/// Returns true iff operational + Healthy-marker rows landed atomically.
-///
-/// Single transaction via `record_confirmed_dispatch_with_state`:
-/// either both rows land or neither does. The orphan-confirm path
-/// writes target_state = Healthy with healthy_since = now (the host
-/// is healthy from this confirm).
+/// Atomic write via `record_confirmed_dispatch_with_state`: target_state =
+/// Healthy, healthy_since = now. Returns true on success.
 fn synthesise_orphan_confirm_rows(
     db: &crate::db::Db,
     req: &ConfirmRequest,
@@ -228,15 +224,9 @@ pub(super) async fn try_recover_pending_from_checkin(
     true
 }
 
-/// True iff the agent-attested `last_confirmed_at` carries a signature
-/// that verifies against the host's declared SSH host pubkey. False
-/// (= drop the attestation) on any failure path: no signature posted,
-/// no `pubkey` declared in fleet.nix, OpenSSH parse failure, base64
-/// decode failure, ed25519 verification mismatch.
-///
-/// Logs at `warn` for "configured but failed verification" cases
-/// (suspicious — operator wants to know) and `debug` for "not
-/// configured" (no signature, no pubkey).
+/// True iff `last_confirmed_at` carries a signature that verifies against the
+/// host's declared SSH host pubkey. Drops the attestation on any failure path
+/// — `warn` on configured-but-mismatched (suspicious), `debug` on absent.
 fn verify_attestation_signature(
     req: &CheckinRequest,
     rollout_id: &str,

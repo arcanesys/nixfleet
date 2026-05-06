@@ -133,3 +133,78 @@ pub fn build_mtls_client(
         .build()
         .unwrap()
 }
+
+/// (artifact, signature, trust, observed) PEM paths — empty/no-op stubs that
+/// satisfy the `serve` startup checks without driving any real polling.
+pub fn write_phase2_input_stubs(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let artifact = write_pem(dir, "fleet.resolved.json", "{}");
+    let signature = write_pem(dir, "fleet.resolved.json.sig", "");
+    let trust = write_pem(
+        dir,
+        "trust.json",
+        r#"{"ciReleaseKey":{"current":[],"rejectBefore":null}}"#,
+    );
+    let observed = write_pem(
+        dir,
+        "observed.json",
+        r#"{"channelRefs":{},"lastRolledRefs":{},"hostState":{},"activeRollouts":[]}"#,
+    );
+    (artifact, signature, trust, observed)
+}
+
+/// Returns `(raw_json_to_write, canonical_bytes_to_sign)` for a single-host
+/// `test-host`/`stable` fleet — the shape every CP integration test that
+/// needs a live fleet uses.
+pub fn build_fleet_resolved_json(declared_closure: &str, ci_commit: &str) -> (String, Vec<u8>) {
+    let json = serde_json::json!({
+        "schemaVersion": 1,
+        "hosts": {
+            "test-host": {
+                "system": "x86_64-linux",
+                "tags": [],
+                "channel": "stable",
+                "closureHash": declared_closure,
+                "pubkey": null,
+            }
+        },
+        "channels": {
+            "stable": {
+                "rolloutPolicy": "default",
+                "reconcileIntervalMinutes": 5,
+                "freshnessWindow": 60,
+                "signingIntervalMinutes": 30,
+                "compliance": { "mode": "disabled", "frameworks": [] },
+            }
+        },
+        "rolloutPolicies": {
+            "default": {
+                "strategy": "waves",
+                "waves": [],
+                "healthGate": {},
+                "onHealthFailure": "halt",
+            }
+        },
+        "waves": {},
+        "edges": [],
+        "disruptionBudgets": [],
+        "meta": {
+            "schemaVersion": 1,
+            "signedAt": "2026-04-26T00:00:00Z",
+            "ciCommit": ci_commit,
+            "signatureAlgorithm": "ed25519",
+        },
+    });
+    let raw = serde_json::to_string(&json).unwrap();
+    let canonical = nixfleet_canonicalize::canonicalize(&raw).unwrap();
+    (raw, canonical.into_bytes())
+}
+
+/// Spawn `server::serve` and wait for its TCP listener to bind.
+pub async fn spawn_server(
+    args: nixfleet_control_plane::server::ServeArgs,
+) -> tokio::task::JoinHandle<anyhow::Result<()>> {
+    let port = args.listen.port();
+    let handle = tokio::spawn(nixfleet_control_plane::server::serve(args));
+    wait_for_listener_ready(port, &handle).await;
+    handle
+}

@@ -22,19 +22,9 @@ impl SignedArtifactPoller {
         self.spawn_with_kick(cancel, None, tick)
     }
 
-    /// Variant that also wakes on an external `kick` channel. The poll fn
-    /// fires on whichever of (cadence, kick, first wake) arrives first.
-    ///
-    /// Used by channel-refs polling: the reconciler kicks after
-    /// `Action::ConvergeRollout` / `SoakHost` so a freshly-released
-    /// channelEdges successor gets recorded in the rollouts table
-    /// immediately rather than waiting up to one `interval`. The cadence
-    /// stays as a safety net — if the kick is missed (sender dropped,
-    /// reconciler crash mid-stamp), polling catches up within `interval`.
-    ///
-    /// `watch::Receiver` semantics: latest-value, no backlog. A burst of
-    /// kicks coalesces to one wake — the poller doesn't need to drain a
-    /// queue.
+    /// Wakes on cadence OR the external `kick` (channel-refs uses this for
+    /// reconciler-side `ConvergeRollout`/`SoakHost` triggers; cadence is the
+    /// safety net). `watch::Receiver` semantics → kick bursts coalesce to one wake.
     pub fn spawn_with_kick<F, Fut>(
         self,
         cancel: CancellationToken,

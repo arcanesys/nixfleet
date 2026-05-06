@@ -1,12 +1,12 @@
 [package]
 name = "nixfleet-verify-artifact"
-version = "0.2.0"
-edition = "2021"
 description = "Offline verifier CLI: fleet.resolved artifacts + signed probe-output evidence"
-license = "MIT"
-repository = "https://github.com/arcanesys/nixfleet"
-homepage = "https://github.com/arcanesys/nixfleet"
-authors = ["nixfleet contributors"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [[bin]]
 name = "nixfleet-verify-artifact"

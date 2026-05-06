@@ -92,22 +92,18 @@ struct ServeFlags {
     #[arg(long, env = "NIXFLEET_CP_FLEET_CA_KEY")]
     fleet_ca_key: Option<PathBuf>,
 
-    /// TPM-backed issuance CA: path to the keyslots scope's `pubkey.raw`
-    /// (64 bytes raw P-256 X||Y) for the issuance CA's TPM key. Set
-    /// alongside `--tpm-ca-sign-wrapper` to switch issuance to TPM
-    /// signing. Mutually exclusive with `--fleet-ca-key` (TPM wins).
+    /// TPM-backed CA: 64-byte raw P-256 pubkey (`pubkey.raw` from the
+    /// keyslot scope). Pair with `--tpm-ca-sign-wrapper`; TPM wins over
+    /// `--fleet-ca-key` when both are set.
     #[arg(long, env = "NIXFLEET_CP_TPM_CA_PUBKEY_RAW")]
     tpm_ca_pubkey_raw: Option<PathBuf>,
 
-    /// TPM-backed issuance CA: path to the keyslots scope's
-    /// `tpm-sign-<keyname>` shell wrapper (typically
-    /// `/run/current-system/sw/bin/tpm-sign-issuanceCA`).
+    /// TPM-backed CA: `tpm-sign-<keyname>` wrapper from the keyslot scope.
     #[arg(long, env = "NIXFLEET_CP_TPM_CA_SIGN_WRAPPER")]
     tpm_ca_sign_wrapper: Option<PathBuf>,
 
-    /// FQDN suffix used to canonicalise agent cert CNs to
-    /// `agent-<machineId>.<suffix>` (D14: must match the issuance CA
-    /// cert's `dNSName` name constraint).
+    /// FQDN suffix for agent cert CNs (`agent-<machineId>.<suffix>`).
+    /// Must match the issuance CA's `dNSName` constraint (D14).
     #[arg(
         long,
         default_value = "fleet.lab.internal",
@@ -226,42 +222,49 @@ async fn main() -> ExitCode {
     }
 }
 
+/// Both flags Some → build; both None → None; mixed → bail with `name` in the message.
+fn paired_source<A, B, T, F>(name: &str, a: Option<A>, b: Option<B>, build: F) -> anyhow::Result<Option<T>>
+where
+    F: FnOnce(A, B) -> anyhow::Result<T>,
+{
+    match (a, b) {
+        (Some(a), Some(b)) => Ok(Some(build(a, b)?)),
+        (None, None) => Ok(None),
+        _ => anyhow::bail!(
+            "{name}: both URL flags must be passed together (or both omitted)."
+        ),
+    }
+}
+
 async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
     let listen = flags
         .listen
         .parse()
         .map_err(|e| anyhow::anyhow!("--listen {}: {e}", flags.listen))?;
 
-    let channel_refs = match (
+    let freshness_window = Duration::from_secs(flags.freshness_window_secs);
+
+    let channel_refs = paired_source(
+        "channel-refs poll",
         flags.channel_refs_artifact_url,
         flags.channel_refs_signature_url,
-    ) {
-        (Some(artifact_url), Some(signature_url)) => {
-            Some(
-                nixfleet_control_plane::polling::channel_refs_poll::ChannelRefsSource {
-                    artifact_url,
-                    signature_url,
-                    token_file: flags.channel_refs_token_file.clone(),
-                    // Re-read each poll so trust-root rotation propagates without restart.
-                    trust_path: flags.trust_file.clone(),
-                    freshness_window: Duration::from_secs(flags.freshness_window_secs),
-                },
-            )
-        }
-        (None, None) => None,
-        _ => {
-            anyhow::bail!(
-                "channel-refs poll: --channel-refs-artifact-url and \
-                 --channel-refs-signature-url must be passed together (or both omitted)."
-            );
-        }
-    };
+        |artifact_url, signature_url| {
+            Ok(nixfleet_control_plane::polling::channel_refs_poll::ChannelRefsSource {
+                artifact_url,
+                signature_url,
+                token_file: flags.channel_refs_token_file.clone(),
+                // Re-read each poll so trust-root rotation propagates without restart.
+                trust_path: flags.trust_file.clone(),
+                freshness_window,
+            })
+        },
+    )?;
 
-    let rollouts_source = match (
+    let rollouts_source = paired_source(
+        "rollouts source",
         flags.rollouts_source_artifact_url_template.clone(),
         flags.rollouts_source_signature_url_template.clone(),
-    ) {
-        (Some(artifact_tpl), Some(signature_tpl)) => Some(
+        |artifact_tpl, signature_tpl| {
             nixfleet_control_plane::rollouts_source::RolloutsSource::new(
                 artifact_tpl,
                 signature_tpl,
@@ -269,41 +272,26 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
                     .rollouts_source_token_file
                     .clone()
                     .or(flags.channel_refs_token_file.clone()),
-            )?,
-        ),
-        (None, None) => None,
-        _ => {
-            anyhow::bail!(
-                "rollouts source: --rollouts-source-artifact-url-template and \
-                 --rollouts-source-signature-url-template must be passed together \
-                 (or both omitted)."
-            );
-        }
-    };
+            )
+        },
+    )?;
 
-    let revocations = match (
+    let revocations = paired_source(
+        "revocations poll",
         flags.revocations_artifact_url,
         flags.revocations_signature_url,
-    ) {
-        (Some(artifact_url), Some(signature_url)) => Some(
-            nixfleet_control_plane::polling::revocations_poll::RevocationsSource {
+        |artifact_url, signature_url| {
+            Ok(nixfleet_control_plane::polling::revocations_poll::RevocationsSource {
                 artifact_url,
                 signature_url,
                 token_file: flags
                     .revocations_token_file
                     .or(flags.channel_refs_token_file.clone()),
                 trust_path: flags.trust_file.clone(),
-                freshness_window: Duration::from_secs(flags.freshness_window_secs),
-            },
-        ),
-        (None, None) => None,
-        _ => {
-            anyhow::bail!(
-                "revocations poll: --revocations-artifact-url and \
-                 --revocations-signature-url must be passed together (or both omitted)."
-            );
-        }
-    };
+                freshness_window,
+            })
+        },
+    )?;
 
     server::serve(server::ServeArgs {
         listen,

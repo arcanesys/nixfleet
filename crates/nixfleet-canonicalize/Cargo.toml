@@ -1,12 +1,12 @@
 [package]
 name = "nixfleet-canonicalize"
-version = "0.2.0"
-edition = "2021"
 description = "JCS (RFC 8785) canonicalizer for NixFleet signed artifacts"
-license = "MIT"
-repository = "https://github.com/arcanesys/nixfleet"
-homepage = "https://github.com/arcanesys/nixfleet"
-authors = ["nixfleet contributors"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [lib]
 name = "nixfleet_canonicalize"

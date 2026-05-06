@@ -1,12 +1,12 @@
 [package]
 name = "nixfleet-proto"
-version = "0.2.0"
-edition = "2021"
 description = "NixFleet v0.2 boundary-contract types (CONTRACTS.md §I)"
-license = "MIT"
-repository = "https://github.com/arcanesys/nixfleet"
-homepage = "https://github.com/arcanesys/nixfleet"
-authors = ["nixfleet contributors"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [lib]
 name = "nixfleet_proto"
@@ -16,11 +16,22 @@ path = "src/lib.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
+# Struct-level `#[skip_serializing_none]` to drop per-field
+# `skip_serializing_if = "Option::is_none"` boilerplate.
+serde_with = { version = "3", default-features = false, features = ["macros"] }
 # host_key module: OpenSSH ed25519 pubkey parser + PKCS#8 wrapper +
 # fingerprint helper. Both deps are pure-rust, no I/O. Avoids pulling
 # the heavier `ssh-key` crate into the boundary-contract surface.
 base64 = "0.22"
 sha2 = "0.10"
+# Optional: ToSql/FromSql for HostRolloutState — only the CP enables it.
+rusqlite = { version = "0.32", optional = true }
+
+[features]
+rusqlite = ["dep:rusqlite"]
+# `testing` exposes nixfleet_proto::testing::FleetBuilder and friends —
+# fluent fixture construction shared across reconciler/CP/release tests.
+testing = []
 
 [dev-dependencies]
 nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }

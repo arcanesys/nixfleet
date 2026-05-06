@@ -1,12 +1,12 @@
 [package]
 name = "nixfleet-release"
-version = "0.2.0"
-edition = "2021"
 description = "Producer for fleet.resolved.json (CONTRACTS §I #1) — orchestrates build → inject closureHash → stamp meta → canonicalize → sign → release"
-license = "MIT"
-repository = "https://github.com/arcanesys/nixfleet"
-homepage = "https://github.com/arcanesys/nixfleet"
-authors = ["nixfleet contributors"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [lib]
 name = "nixfleet_release"

@@ -6,12 +6,14 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 /// Sent in `X-Nixfleet-Protocol`; CP rejects mismatched majors with 426.
 pub const PROTOCOL_MAJOR_VERSION: u32 = 1;
 
 pub const PROTOCOL_VERSION_HEADER: &str = "x-nixfleet-protocol";
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckinRequest {
@@ -22,42 +24,37 @@ pub struct CheckinRequest {
     pub current_generation: GenerationRef,
 
     /// `/run/booted-system` when it differs from current.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub pending_generation: Option<PendingGeneration>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub last_evaluated_target: Option<EvaluatedTarget>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub last_fetch_outcome: Option<FetchOutcome>,
 
     /// Surfaces crash-loops that don't show up as offline.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub uptime_secs: Option<u64>,
 
-    /// Lets CP repopulate `last_healthy_since` after a rebuild.
-    /// Clamped to `min(now, last_confirmed_at)` so clock-skewed
-    /// agents can't fast-forward the soak gate.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// CP repopulates `last_healthy_since` after rebuild from this; clamped to
+    /// `min(now, last_confirmed_at)` so clock skew can't fast-forward soak.
+    #[serde(default)]
     pub last_confirmed_at: Option<DateTime<Utc>>,
 
-    /// Base64 ed25519 signature over the JCS bytes of
-    /// `LastConfirmedAtSignedPayload { hostname, rollout_id,
-    /// last_confirmed_at }`, produced with the host's SSH host key.
-    /// CP verifies against `hosts.<hostname>.pubkey` from
-    /// fleet.resolved before applying `last_confirmed_at` to soak
-    /// recovery. Without it the attested time is silently ignored
-    /// (clamp falls back to `now`) — a compromised host can't replay
-    /// an older confirmation to short-circuit soak.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Base64 ed25519 over JCS(`LastConfirmedAtSignedPayload`) signed with the
+    /// host's SSH key. Without it the attested time is silently ignored —
+    /// a compromised host can't replay an older confirmation to short-circuit soak.
+    #[serde(default)]
     pub attestation_signature: Option<String>,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationRef {
     pub closure_hash: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub channel_ref: Option<String>,
     pub boot_id: String,
 }
@@ -68,6 +65,7 @@ pub struct PendingGeneration {
     pub closure_hash: String,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EvaluatedTarget {
@@ -76,19 +74,17 @@ pub struct EvaluatedTarget {
     pub evaluated_at: DateTime<Utc>,
     /// Format: `<channel>@<short-ci-commit-or-closure>`.
     pub rollout_id: String,
-    /// 0-based index in `fleet.waves[host.channel]`. None for channels
-    /// without a wave plan (single-host channels).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// 0-based index in `fleet.waves[host.channel]`; `None` for single-host channels.
+    #[serde(default)]
     pub wave_index: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub activate: Option<ActivateBlock>,
-    /// `meta.signedAt` of the producing fleet.resolved — relayed so
-    /// the agent runs a defense-in-depth freshness check.
+    /// `meta.signedAt` of the producing fleet.resolved — relayed for the
+    /// agent's defense-in-depth freshness check.
     pub signed_at: DateTime<Utc>,
     pub freshness_window_secs: u32,
-    /// `disabled` | `permissive` | `enforce` | `auto`. None → agent
-    /// auto-detects via collector-unit presence.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `disabled` | `permissive` | `enforce` | `auto`. None → agent auto-detects.
+    #[serde(default)]
     pub compliance_mode: Option<String>,
 }
 
@@ -105,11 +101,12 @@ pub struct ActivateBlock {
     pub confirm_endpoint: String,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FetchOutcome {
     pub result: FetchResult,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub error: Option<String>,
 }
 
@@ -136,14 +133,15 @@ pub struct RollbackSignal {
     pub reason: String,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckinResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub target: Option<EvaluatedTarget>,
     /// Mutually exclusive with `target` in practice; if both set, the
     /// agent runs rollback synchronously before fetching `target`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub rollback: Option<RollbackSignal>,
     pub next_checkin_secs: u32,
 }
@@ -171,12 +169,13 @@ pub struct ReportRequest {
     pub hostname: String,
     pub agent_version: String,
     pub occurred_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub rollout: Option<String>,
     #[serde(flatten)]
     pub event: ReportEvent,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "details", rename_all = "kebab-case")]
 pub enum ReportEvent {
@@ -188,11 +187,11 @@ pub enum ReportEvent {
 
     ActivationFailed {
         phase: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         exit_code: Option<i32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         stderr_tail: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
@@ -200,7 +199,7 @@ pub enum ReportEvent {
     RealiseFailed {
         closure_hash: String,
         reason: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
@@ -208,13 +207,13 @@ pub enum ReportEvent {
     VerifyMismatch {
         expected: String,
         actual: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
     RollbackTriggered {
         reason: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
@@ -231,38 +230,36 @@ pub enum ReportEvent {
         reason: String,
     },
 
-    /// Substituter trust check rejected closure narinfo signature.
-    /// Distinct from `RealiseFailed` so dashboards can route trust
-    /// violations separately from transient fetch failures.
+    /// Substituter rejected closure narinfo signature. Distinct from
+    /// `RealiseFailed` for dashboard routing of trust vs transient failures.
     ClosureSignatureMismatch {
         closure_hash: String,
         stderr_tail: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
-    /// Agent refused to activate due to stale fleet.resolved. CP applies
-    /// the same gate; this event indicates clock-skew or CP gate failure.
+    /// Agent refused stale fleet.resolved. CP applies same gate; this fires on
+    /// clock-skew or CP gate failure.
     StaleTarget {
         closure_hash: String,
         channel_ref: String,
         signed_at: DateTime<Utc>,
         freshness_window_secs: u32,
         age_secs: i64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
-    /// Per-failing-control compliance probe negative. `evidence_snippet`
-    /// is the probe's `checks` JSON, truncated to ~1KB.
+    /// `evidence_snippet` is the probe's `checks` JSON truncated to ~1KB.
     ComplianceFailure {
         control_id: String,
         status: String,
         framework_articles: Vec<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         evidence_snippet: Option<serde_json::Value>,
         evidence_collected_at: DateTime<Utc>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
@@ -270,7 +267,7 @@ pub enum ReportEvent {
     ManifestMissing {
         rollout_id: String,
         reason: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
@@ -278,37 +275,35 @@ pub enum ReportEvent {
     ManifestVerifyFailed {
         rollout_id: String,
         reason: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
-    /// Manifest verified but content-address recompute / membership
-    /// / pinned-bytes check failed. Hard refuse-to-act.
+    /// Manifest verified but content/membership/pinned-bytes check failed.
     ManifestMismatch {
         rollout_id: String,
         reason: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
-    /// Runtime gate couldn't produce a verdict (collector failed, timed
-    /// out, or evidence stale). Distinct from `ComplianceFailure` — CP
-    /// treats this as a confirm-blocker.
+    /// Runtime gate couldn't produce a verdict (collector failed/timeout/stale).
+    /// Distinct from `ComplianceFailure` — CP treats this as a confirm-blocker.
     RuntimeGateError {
         reason: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         collector_exit_code: Option<i32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         evidence_collected_at: Option<DateTime<Utc>>,
         activation_completed_at: DateTime<Utc>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         signature: Option<String>,
     },
 
     /// Catch-all for events that don't yet have a typed variant.
     Other {
         kind: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         detail: Option<serde_json::Value>,
     },
 }

@@ -1,41 +1,77 @@
 //! Canonical `Observed` builder for fleet-level gate evaluation.
+//! Consumed by dispatch checkin, reconcile tick, and disruption-budget metrics.
 //!
-//! Sibling of `state_view` (per-host status view) and `deferrals_view`
-//! (per-channel deferral view). Three callers consume it:
+//! LOADBEARING source ordering: `rollouts.list_active()` (keeps terminal — gates
+//! need them to detect predecessor convergence) LEFT JOINed with
+//! `host_dispatch_state.active_rollouts_snapshot()`. Opposite ordering would
+//! drop freshly-opened rollouts and bypass host-edges/budget/compliance gates.
 //!
-//!   - `server::checkin_pipeline::dispatch_target` — per-checkin gate
-//!     evaluation (calls `build_for_gates`).
-//!   - `server::reconcile` — per-tick gate evaluation (calls
-//!     `list_active_rollouts` and feeds the result through
-//!     `observed_projection::project`).
-//!   - `metrics::record_disruption_budgets` — uses the same Observed
-//!     for `in_flight_count` so the metric and the gate verdict
-//!     never disagree.
-//!
-//! LOADBEARING source ordering: `db.rollouts().list_active()` first
-//! (filters superseded only; terminal rollouts stay visible so gates
-//! can detect predecessor convergence), then LEFT JOIN host states
-//! from `host_dispatch_state.active_rollouts_snapshot()`. The
-//! opposite ordering — building from host_dispatch_state — drops
-//! freshly-opened rollouts that have no dispatched hosts yet, and
-//! the first checkin on a new channel bypasses host-edges / budget
-//! / compliance because `input.rollout = None` short-circuits.
-//!
-//! `current_rollout_ids` filter applies asymmetrically: dispatch
-//! callers filter (gates only enforce on the active dispatch target),
-//! the reconciler caller does not (it must see non-current in-flight
-//! rollouts so `sweep_terminal_orphans` and ConvergeRollout fire on
-//! stragglers).
+//! `current_rollout_ids` filter: dispatch callers apply it (gates enforce on
+//! active dispatch target only), reconciler does not (needs non-current
+//! in-flight rollouts for `sweep_terminal_orphans` + `ConvergeRollout`).
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use nixfleet_proto::FleetResolved;
+use nixfleet_proto::{FleetResolved, RolloutBudget};
 use nixfleet_reconciler::observed::{Observed, Rollout};
 use nixfleet_reconciler::{HostRolloutState, RolloutState};
 
 use crate::db::{Db, RolloutDbSnapshot};
 use crate::server::AppState;
+
+/// What to do when a SQL `host_state` string isn't in `HostRolloutState`.
+/// Gate path uses `Drop` (default-permissive: gate no-ops on bad data);
+/// reconciler projection uses `Halt` (default-conservative: warn + halt
+/// the rollout via Failed fallback). The variance is intentional.
+#[derive(Debug, Clone, Copy)]
+pub enum ParseUnknown {
+    Drop,
+    Halt,
+}
+
+/// `RolloutDbSnapshot` → `Rollout`. Shared between the gate observed
+/// builder (`build_for_gates`) and the reconciler projection
+/// (`observed_projection::project`); they differ only in `parse` and
+/// in how budgets are sourced.
+pub fn snapshot_to_rollout(
+    snap: &RolloutDbSnapshot,
+    budgets: Vec<RolloutBudget>,
+    parse: ParseUnknown,
+) -> Rollout {
+    let host_states = snap
+        .host_states
+        .iter()
+        .filter_map(|(h, s)| match HostRolloutState::from_db_str(s) {
+            Ok(parsed) => Some((h.clone(), parsed)),
+            Err(_) => match parse {
+                ParseUnknown::Drop => None,
+                ParseUnknown::Halt => {
+                    tracing::warn!(
+                        rollout = %snap.rollout_id,
+                        hostname = %h,
+                        unknown_state = %s,
+                        "host_rollout_state value not in HostRolloutState enum — \
+                         halting rollout (Failed fallback). Likely a SQL CHECK \
+                         extension that wasn't propagated to the typed enum.",
+                    );
+                    Some((h.clone(), HostRolloutState::Failed))
+                }
+            },
+        })
+        .collect();
+    Rollout {
+        id: snap.rollout_id.clone(),
+        channel: snap.channel.clone(),
+        target_ref: snap.target_channel_ref.clone(),
+        state: RolloutState::Executing,
+        current_wave: snap.current_wave as usize,
+        host_states,
+        last_healthy_since: snap.last_healthy_since.clone(),
+        budgets,
+        terminal_at: snap.terminal_at,
+    }
+}
 
 /// `rollouts.list_active()` LEFT JOINed with `host_dispatch_state.active_rollouts_snapshot()`.
 ///
@@ -91,19 +127,9 @@ pub fn list_active_rollouts(db: &Db) -> Vec<RolloutDbSnapshot> {
         .collect()
 }
 
-/// Build the per-checkin / per-scrape `Observed` for fleet-level gate
-/// evaluation.
-///
-/// `rollouts_dir` is `state.rollouts_dir` — the directory CI writes
-/// signed rollout manifests into. When `Some`, each active rollout's
-/// `disruption_budgets` snapshot is loaded so the budget gate has the
-/// frozen membership the reconciler also sees. When `None` (test
-/// fixtures, CP without artifact dir, or scrape-time use that doesn't
-/// need budgets), budgets are empty and the budget gate no-ops — same
-/// permissive behaviour as `server::reconcile::load_rollout_budgets`.
-///
-/// Returns a default-empty `Observed` if any DB read fails; callers
-/// already handle the "no DB" / "no fleet" cases gracefully.
+/// `rollouts_dir = Some(d)` loads frozen `disruption_budgets` per rollout from
+/// signed manifests; `None` → budget gate no-ops (same as missing manifest).
+/// Permissive on DB read failure: callers handle "no DB" / "no fleet" upstream.
 pub async fn build_for_gates(
     db: &Db,
     fleet: &FleetResolved,
@@ -114,33 +140,11 @@ pub async fn build_for_gates(
         nixfleet_reconciler::current_rollout_ids(fleet, fleet_resolved_hash);
 
     // Filter to current rollouts (gates only enforce on the active
-    // dispatch target) and convert each snapshot to a typed `Rollout`.
+    // dispatch target).
     let mut active_rollouts: Vec<Rollout> = list_active_rollouts(db)
         .into_iter()
         .filter(|s| current_rollout_ids.contains(&s.rollout_id))
-        .map(|s| Rollout {
-            id: s.rollout_id,
-            channel: s.channel,
-            target_ref: s.target_channel_ref,
-            state: RolloutState::Executing,
-            current_wave: s.current_wave as usize,
-            // Unknown SQL strings drop silently here (gate-side); the
-            // reconciler-side projection logs and falls back to Failed.
-            // Same data, different recovery posture: gates default-
-            // permissive on parse failure, reconciler default-halt.
-            host_states: s
-                .host_states
-                .iter()
-                .filter_map(|(h, st)| {
-                    HostRolloutState::from_db_str(st)
-                        .ok()
-                        .map(|parsed| (h.clone(), parsed))
-                })
-                .collect(),
-            last_healthy_since: s.last_healthy_since,
-            budgets: vec![],
-            terminal_at: s.terminal_at,
-        })
+        .map(|s| snapshot_to_rollout(&s, Vec::new(), ParseUnknown::Drop))
         .collect();
 
     if let Some(dir) = rollouts_dir {
@@ -149,27 +153,15 @@ pub async fn build_for_gates(
         }
     }
 
-    // Outstanding compliance events aggregated by (rollout, host). Same
-    // DB query the reconciler tick uses, so the compliance_wave gate
-    // sees the same input at both call sites. Aggregates BOTH
-    // ComplianceFailure and RuntimeGateError events — kind is the SQL
-    // filter, not visible past this seam. Permissive on read failure:
-    // the gate then no-ops which matches `disabled` mode, preserving
-    // "missing data is silent" rather than surprising the operator
-    // with a hard block.
-    let outstanding_compliance_events_by_rollout = match db
+    // Same query as the reconciler tick — both call sites see identical input.
+    // Permissive on read failure: gate no-ops (matches `disabled` mode).
+    let outstanding_compliance_events_by_rollout = db
         .reports()
         .outstanding_compliance_events_by_rollout()
-    {
-        Ok(m) => m,
-        Err(err) => {
-            tracing::warn!(
-                error = %err,
-                "observed_view: outstanding_compliance_events_by_rollout failed; compliance gate no-ops",
-            );
+        .unwrap_or_else(|err| {
+            tracing::warn!(error = %err, "observed_view: outstanding_compliance_events_by_rollout failed; gate no-ops");
             std::collections::HashMap::new()
-        }
-    };
+        });
 
     Observed {
         active_rollouts,

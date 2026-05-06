@@ -38,63 +38,54 @@ impl SupersedeStatus {
 }
 
 impl Rollouts<'_> {
-    /// Idempotent insert + same-channel supersede in one txn.
-    ///
-    /// LOADBEARING:
-    /// 1. `INSERT OR IGNORE` ensures concurrent dispatches with the same
-    ///    `(rollout_id, channel)` don't fight — first writer wins, the rest
-    ///    no-op.
-    /// 2. The supersede UPDATE has `WHERE rollout_id != ?` so we never mark
-    ///    ourselves as superseded.
-    /// 3. Channels are namespaces — supersession is strictly intra-channel.
-    /// 4. Timestamps are RFC3339 strings to match the convention used by
-    ///    the rest of the schema (read paths use `parse::<DateTime<Utc>>()`).
+    /// Idempotent insert + same-channel supersede in one txn. LOADBEARING:
+    /// `INSERT OR IGNORE` (concurrent same-id dispatches no-op), supersede
+    /// `WHERE rollout_id != ?` (never self-supersede), supersession is
+    /// strictly intra-channel, RFC3339 timestamps (read paths parse them).
     pub fn record_active_rollout(&self, rollout_id: &str, channel: &str) -> Result<()> {
         let now_rfc = Utc::now().to_rfc3339();
-        let mut guard = super::lock_conn(self.conn)?;
-        let txn = guard.transaction().context("begin record_active_rollout")?;
-        txn.execute(
-            "INSERT OR IGNORE INTO rollouts(rollout_id, channel, created_at)
-             VALUES (?1, ?2, ?3)",
-            params![rollout_id, channel, now_rfc],
-        )
-        .context("INSERT OR IGNORE rollouts")?;
-        txn.execute(
-            "UPDATE rollouts
-             SET superseded_at = ?3,
-                 superseded_by = ?2
-             WHERE channel = ?1
-               AND rollout_id != ?2
-               AND superseded_at IS NULL",
-            params![channel, rollout_id, now_rfc],
-        )
-        .context("UPDATE rollouts supersede prior")?;
-        txn.commit().context("commit record_active_rollout")?;
-        Ok(())
+        super::txn(self.conn, "record_active_rollout", |t| {
+            t.execute(
+                "INSERT OR IGNORE INTO rollouts(rollout_id, channel, created_at)
+                 VALUES (?1, ?2, ?3)",
+                params![rollout_id, channel, now_rfc],
+            )
+            .context("INSERT OR IGNORE rollouts")?;
+            t.execute(
+                "UPDATE rollouts
+                 SET superseded_at = ?3,
+                     superseded_by = ?2
+                 WHERE channel = ?1
+                   AND rollout_id != ?2
+                   AND superseded_at IS NULL",
+                params![channel, rollout_id, now_rfc],
+            )
+            .context("UPDATE rollouts supersede prior")?;
+            Ok(())
+        })
     }
 
     /// `Ok(None)` when the rollout isn't tracked. Lifecycle endpoint
     /// returns 404 in that case — callers don't fabricate supersession
     /// state for unknown rids (no historical reconstruction).
     pub fn supersede_status(&self, rollout_id: &str) -> Result<Option<SupersedeStatus>> {
-        let guard = super::lock_conn(self.conn)?;
-        let row = guard
-            .query_row(
-                "SELECT superseded_at, superseded_by, terminal_at
-                 FROM rollouts
-                 WHERE rollout_id = ?1",
-                params![rollout_id],
-                |row| {
-                    let at: Option<String> = row.get(0)?;
-                    let by: Option<String> = row.get(1)?;
-                    let term: Option<String> = row.get(2)?;
-                    Ok((at, by, term))
-                },
-            )
-            .optional()
-            .context("query rollouts.supersede_status")?;
-        let parsed = row
-            .map(|(at_raw, by, term_raw)| -> Result<SupersedeStatus> {
+        super::read(self.conn, |c| {
+            let row = c
+                .query_row(
+                    "SELECT superseded_at, superseded_by, terminal_at
+                     FROM rollouts
+                     WHERE rollout_id = ?1",
+                    params![rollout_id],
+                    |row| {
+                        let at: Option<String> = row.get(0)?;
+                        let by: Option<String> = row.get(1)?;
+                        let term: Option<String> = row.get(2)?;
+                        Ok((at, by, term))
+                    },
+                )
+                .optional()
+                .context("query rollouts.supersede_status")?;
+            row.map(|(at_raw, by, term_raw)| -> Result<SupersedeStatus> {
                 let parse_ts = |raw: Option<String>, field: &str| -> Result<Option<DateTime<Utc>>> {
                     match raw {
                         Some(s) => Ok(Some(
@@ -110,78 +101,65 @@ impl Rollouts<'_> {
                     terminal_at: parse_ts(term_raw, "terminal_at")?,
                 })
             })
-            .transpose()?;
-        Ok(parsed)
+            .transpose()
+        })
     }
 
-    /// Mark a rollout as terminal — no longer in flight, won't appear in
-    /// `list_active` or in the gate observed. Idempotent: re-marking is
-    /// a no-op (returns 0) so the reconciler can call this every time
-    /// `Action::ConvergeRollout` fires without bookkeeping a "did we
-    /// already?" flag.
-    ///
-    /// Two trigger sites:
-    ///   1. `Action::ConvergeRollout` — every host on this rollout has
-    ///      reached terminal-for-ordering (Soaked/Converged/Reverted),
-    ///      and the wave is the last wave.
-    ///   2. Per-tick orphan sweep — the rollout's channel has zero
-    ///      expected hosts in the current fleet snapshot (the operator
-    ///      removed them from fleet.nix, or the closure_hash was
-    ///      stripped). Without this sweep the rollout sits "in flight"
-    ///      forever even with no hosts to converge.
+    /// Idempotent terminal stamp. Triggers: `Action::ConvergeRollout` (all
+    /// hosts terminal-for-ordering on the last wave) + per-tick orphan sweep
+    /// (channel has no expected hosts; without the sweep the rollout sits
+    /// "in flight" forever).
     pub fn mark_terminal(&self, rollout_id: &str, now: DateTime<Utc>) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "UPDATE rollouts
                  SET terminal_at = ?2
                  WHERE rollout_id = ?1 AND terminal_at IS NULL",
                 params![rollout_id, now.to_rfc3339()],
             )
-            .context("UPDATE rollouts terminal_at")?;
-        Ok(n)
+            .context("UPDATE rollouts terminal_at")
+        })
     }
 
     /// Monotonic wave-index advance. The `WHERE current_wave < ?2` guard
     /// ensures concurrent reconciler ticks can't race a rollout backwards;
     /// the second update is a no-op (returns 0).
     pub fn set_current_wave(&self, rollout_id: &str, wave: u32) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "UPDATE rollouts
                  SET current_wave = ?2
                  WHERE rollout_id = ?1 AND current_wave < ?2",
                 params![rollout_id, wave as i64],
             )
-            .context("set_current_wave")?;
-        Ok(n)
+            .context("set_current_wave")
+        })
     }
 
     pub fn current_wave(&self, rollout_id: &str) -> Result<Option<u32>> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .query_row(
+        super::read(self.conn, |c| {
+            c.query_row(
                 "SELECT current_wave FROM rollouts WHERE rollout_id = ?1",
                 params![rollout_id],
                 |row| row.get::<_, i64>(0).map(|w| w as u32),
             )
             .optional()
-            .context("query rollouts.current_wave")?;
-        Ok(n)
+            .context("query rollouts.current_wave")
+        })
     }
 
     /// Used by `active_rollouts_snapshot` to filter out superseded rollouts
     /// without joining (snapshot is grouped by rollout_id; this returns the
     /// set of superseded ids to exclude).
     pub fn superseded_rollout_ids(&self) -> Result<Vec<String>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt =
-            guard.prepare("SELECT rollout_id FROM rollouts WHERE superseded_at IS NOT NULL")?;
-        let rows = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        super::read(self.conn, |c| {
+            let mut stmt =
+                c.prepare("SELECT rollout_id FROM rollouts WHERE superseded_at IS NOT NULL")?;
+            let ids = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })
     }
 
     /// Returns rollout-ids no longer in flight — superseded OR terminal.
@@ -189,59 +167,35 @@ impl Rollouts<'_> {
     /// reconciler and dispatch path treat both states equivalently
     /// (don't advance, exclude from gate observed).
     pub fn finished_rollout_ids(&self) -> Result<Vec<String>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT rollout_id FROM rollouts
-             WHERE superseded_at IS NOT NULL OR terminal_at IS NOT NULL",
-        )?;
-        let rows = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT rollout_id FROM rollouts
+                 WHERE superseded_at IS NOT NULL OR terminal_at IS NOT NULL",
+            )?;
+            let ids = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })
     }
 
-    /// Canonical source for the dispatch + reconciler gate observed
-    /// builders. Filters superseded only — terminal rollouts MUST stay
-    /// visible to gates so channelEdges can find a converged predecessor
-    /// and release the successor (the rollout's `host_states` are all
-    /// terminal-for-ordering, so `Rollout::is_active_for_ordering()`
-    /// returns false → gate releases).
-    ///
-    /// Hiding terminal rollouts from gates was the regression that
-    /// surfaced after the lifecycle fix: dispatch endpoint with
-    /// `GateMode::Dispatch` falls into the
-    /// "fleet has hosts on predecessor → block" arm because the
-    /// predecessor disappeared from observed, while the reconciler
-    /// (non-conservative) allowed dispatch — asymmetric verdicts on
-    /// the same input, leaving krach stuck in dispatch_host loops
-    /// the dispatch endpoint then refused.
-    ///
-    /// UI consumers (/v1/rollouts list, deferrals view, metrics)
-    /// want "what's still in flight from the operator's perspective"
-    /// — those use `list_in_flight()` instead.
+    /// Gate-observed source. Filters superseded only — terminal rollouts MUST
+    /// stay visible so channelEdges can detect "predecessor converged" via
+    /// host_states inspection (hiding them was the dispatch/reconciler
+    /// asymmetry regression). UI consumers want `list_in_flight` instead.
     pub fn list_active(&self) -> Result<GateRollouts> {
         Ok(GateRollouts(self.list_filtered(false)?))
     }
 
-    /// "What's in flight" for UI: filters BOTH superseded AND terminal.
-    /// A converged rollout with no successor still gets removed once
-    /// `Action::ConvergeRollout` stamps terminal_at, matching the
-    /// operator mental model "this rollout is done, don't show it as
-    /// pending work."
-    ///
-    /// NOT used by the dispatch / reconciler gate observed builders
-    /// — those need terminal rollouts visible so channelEdges can
-    /// detect "predecessor converged" via host_states inspection.
-    /// See `list_active()` for that path.
+    /// UI source. Filters superseded AND terminal — `Action::ConvergeRollout`
+    /// stamps terminal_at and the rollout drops out (operator's "done" view).
+    /// Gates use `list_active` instead.
     pub fn list_in_flight(&self) -> Result<UiRollouts> {
         Ok(UiRollouts(self.list_filtered(true)?))
     }
 
     fn list_filtered(&self, exclude_terminal: bool) -> Result<Vec<ActiveRollout>> {
-        let guard = super::lock_conn(self.conn)?;
-        // SQL composed at compile time via two static strings — no
-        // user input interpolated, no injection risk. The terminal_at
-        // filter toggles the WHERE clause cleanly.
+        // SQL is compile-time-static so the WHERE toggle has no injection risk.
         let sql = if exclude_terminal {
             "SELECT rollout_id, channel, current_wave, created_at, terminal_at
              FROM rollouts
@@ -253,22 +207,25 @@ impl Rollouts<'_> {
              WHERE superseded_at IS NULL
              ORDER BY created_at DESC, rollout_id"
         };
-        let mut stmt = guard.prepare(sql)?;
-        let rows = stmt
-            .query_map([], |row| {
-                let terminal_at_raw: Option<String> = row.get(4)?;
-                Ok((
-                    ActiveRollout {
-                        rollout_id: row.get(0)?,
-                        channel: row.get(1)?,
-                        current_wave: row.get::<_, i64>(2)? as u32,
-                        created_at: row.get::<_, String>(3)?,
-                        terminal_at: None,
-                    },
-                    terminal_at_raw,
-                ))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let rows: Vec<(ActiveRollout, Option<String>)> = super::read(self.conn, |c| {
+            let mut stmt = c.prepare(sql)?;
+            let v = stmt
+                .query_map([], |row| {
+                    let terminal_at_raw: Option<String> = row.get(4)?;
+                    Ok((
+                        ActiveRollout {
+                            rollout_id: row.get(0)?,
+                            channel: row.get(1)?,
+                            current_wave: row.get::<_, i64>(2)? as u32,
+                            created_at: row.get::<_, String>(3)?,
+                            terminal_at: None,
+                        },
+                        terminal_at_raw,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(v)
+        })?;
         // Parse terminal_at outside the closure so error context is precise.
         rows.into_iter()
             .map(|(mut row, raw)| -> Result<ActiveRollout> {
@@ -284,58 +241,36 @@ impl Rollouts<'_> {
             .collect()
     }
 
-    /// Prune finished (superseded OR terminal) rollouts whose finish
-    /// timestamp is older than `max_age_hours`, AND the
-    /// `host_rollout_state` rows that reference them.
-    ///
-    /// Single transaction: host_rollout_state rows go first, then
-    /// the rollouts rows. SQLite has no FK on host_rollout_state
-    /// here, but ordering matters for crash safety — if we deleted
-    /// rollouts first and crashed before host_rollout_state, the
-    /// hrs rows would still reference deleted rollout_ids and the
-    /// snapshot's LEFT JOIN would surface stale state.
-    ///
-    /// Returns `(host_rollout_state_rows_pruned, rollouts_rows_pruned)`
-    /// for separate metric reporting.
-    ///
-    /// LOADBEARING: only `superseded_at` / `terminal_at` rollouts
-    /// are candidates. In-flight rollouts are never pruned no matter
-    /// how old `created_at` is — those are still operationally
-    /// active and the snapshot's LEFT JOIN would silently lose
-    /// state.
+    /// Prune finished (superseded OR terminal) rollouts past `max_age_hours`
+    /// + their hrs rows. Returns `(hrs_pruned, rollouts_pruned)`.
+    /// LOADBEARING: only finished rollouts are candidates — in-flight ones
+    /// are kept regardless of `created_at` age.
     pub fn prune_finished_rollouts(&self, max_age_hours: i64) -> Result<(usize, usize)> {
-        let cutoff = Utc::now() - chrono::Duration::hours(max_age_hours);
-        let cutoff_str = cutoff.to_rfc3339();
-        let mut guard = super::lock_conn(self.conn)?;
-        let txn = guard
-            .transaction()
-            .context("begin prune_finished_rollouts txn")?;
-
-        // 1. host_rollout_state rows for finished+old rollouts.
-        let hrs_pruned = txn
-            .execute(
-                "DELETE FROM host_rollout_state
-                 WHERE rollout_id IN (
-                     SELECT rollout_id FROM rollouts
+        let cutoff_str = (Utc::now() - chrono::Duration::hours(max_age_hours)).to_rfc3339();
+        super::txn(self.conn, "prune_finished_rollouts", |t| {
+            // hrs rows first, then rollouts: ordering matters for crash safety
+            // (deleted rollouts before hrs would leave dangling FK-less hrs rows).
+            let hrs_pruned = t
+                .execute(
+                    "DELETE FROM host_rollout_state
+                     WHERE rollout_id IN (
+                         SELECT rollout_id FROM rollouts
+                         WHERE (superseded_at IS NOT NULL AND superseded_at < ?1)
+                            OR (terminal_at IS NOT NULL AND terminal_at < ?1)
+                     )",
+                    params![&cutoff_str],
+                )
+                .context("DELETE host_rollout_state for finished rollouts")?;
+            let rollouts_pruned = t
+                .execute(
+                    "DELETE FROM rollouts
                      WHERE (superseded_at IS NOT NULL AND superseded_at < ?1)
-                        OR (terminal_at IS NOT NULL AND terminal_at < ?1)
-                 )",
-                params![&cutoff_str],
-            )
-            .context("DELETE host_rollout_state for finished rollouts")?;
-
-        // 2. The rollouts rows themselves.
-        let rollouts_pruned = txn
-            .execute(
-                "DELETE FROM rollouts
-                 WHERE (superseded_at IS NOT NULL AND superseded_at < ?1)
-                    OR (terminal_at IS NOT NULL AND terminal_at < ?1)",
-                params![&cutoff_str],
-            )
-            .context("DELETE rollouts (finished + past retention)")?;
-
-        txn.commit().context("commit prune_finished_rollouts")?;
-        Ok((hrs_pruned, rollouts_pruned))
+                        OR (terminal_at IS NOT NULL AND terminal_at < ?1)",
+                    params![&cutoff_str],
+                )
+                .context("DELETE rollouts (finished + past retention)")?;
+            Ok((hrs_pruned, rollouts_pruned))
+        })
     }
 }
 
@@ -345,37 +280,23 @@ pub struct ActiveRollout {
     pub channel: String,
     pub current_wave: u32,
     pub created_at: String,
-    /// Set when `Action::ConvergeRollout` fires or the orphan sweep
-    /// stamps a rollout whose channel has no expected hosts in the
-    /// current fleet. `None` while the rollout is still progressing
-    /// through waves. Plumbed through to the in-memory `Rollout`
-    /// (in nixfleet-reconciler) so `advance_rollout` short-circuits
-    /// instead of re-emitting `ConvergeRollout` every tick — and so
-    /// `channel_edges` can distinguish "predecessor converged" from
-    /// "predecessor unknown" without inferring it from absence.
+    /// Set on `ConvergeRollout` or orphan sweep; threaded into the in-memory
+    /// `Rollout` so `advance_rollout` short-circuits and `channel_edges` can
+    /// distinguish "predecessor converged" from "predecessor unknown".
     pub terminal_at: Option<DateTime<Utc>>,
 }
 
-/// Result of `list_active()` — the gate-observed view. Contains
-/// converged-but-not-superseded rollouts (terminal_at populated)
-/// because channel_edges needs to see them to detect "predecessor
-/// done" via host_states inspection. Functions that consume gate
-/// observed should accept `GateRollouts` so the wrong query result
-/// can't be passed at the type level.
+/// Gate-observed view (keeps terminal). Type-disjoint from `UiRollouts`
+/// so a wrong query result can't leak into a gate consumer.
 #[derive(Debug, Clone, Default)]
 pub struct GateRollouts(Vec<ActiveRollout>);
 
-/// Result of `list_in_flight()` — the operator/UI view. Excludes
-/// converged rollouts (terminal_at populated). Functions that drive
-/// dashboards / metrics / `/v1/rollouts` should accept `UiRollouts`.
+/// UI view (drops terminal). Drives `/v1/rollouts`, deferrals, metrics.
 #[derive(Debug, Clone, Default)]
 pub struct UiRollouts(Vec<ActiveRollout>);
 
-// Common API shape: iter / len / is_empty / into_iter / into_inner.
-// `into_inner` is the escape hatch — needed where downstream code
-// merges with `host_dispatch_state` snapshots and produces a fresh
-// `Vec<RolloutDbSnapshot>`. Outside the database layer, prefer the
-// typed view.
+// `into_inner` exists for the snapshot-merge path; downstream code
+// should otherwise stay in the typed view.
 macro_rules! rollout_view_api {
     ($t:ident) => {
         impl $t {
@@ -412,12 +333,8 @@ rollout_view_api!(GateRollouts);
 rollout_view_api!(UiRollouts);
 
 impl GateRollouts {
-    /// Demote to the UI view by filtering out terminal rollouts.
-    /// Asymmetric: there is NO `UiRollouts → GateRollouts` direction
-    /// because the UI view is a strict subset and re-fabricating
-    /// missing terminal entries would silently fix what should be a
-    /// type error. If a caller has `UiRollouts` and needs the gate
-    /// view, query `list_active()` directly.
+    /// One-way demotion (UI is a strict subset; reverse direction is a
+    /// type error so missing terminals can't be silently fabricated).
     pub fn into_ui(self) -> UiRollouts {
         UiRollouts(
             self.0

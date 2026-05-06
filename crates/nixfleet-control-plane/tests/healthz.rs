@@ -2,9 +2,10 @@
 
 mod common;
 
-use std::path::PathBuf;
-
-use common::{install_crypto_provider_once, pick_free_port, wait_for_listener_ready, write_pem};
+use common::{
+    install_crypto_provider_once, pick_free_port, wait_for_listener_ready,
+    write_phase2_input_stubs, write_pem,
+};
 use nixfleet_control_plane::server;
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use reqwest::Certificate;
@@ -17,22 +18,6 @@ struct HealthzBody {
     version: String,
     #[serde(rename = "lastTickAt")]
     last_tick_at: Option<String>,
-}
-
-fn write_phase2_input_stubs(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
-    let artifact = write_pem(dir, "fleet.resolved.json", "{}");
-    let signature = write_pem(dir, "fleet.resolved.json.sig", "");
-    let trust = write_pem(
-        dir,
-        "trust.json",
-        r#"{"ciReleaseKey":{"current":[],"rejectBefore":null}}"#,
-    );
-    let observed = write_pem(
-        dir,
-        "observed.json",
-        r#"{"channelRefs":{},"lastRolledRefs":{},"hostState":{},"activeRollouts":[]}"#,
-    );
-    (artifact, signature, trust, observed)
 }
 
 #[tokio::test]

@@ -1,6 +1,8 @@
-//! Typed enums for CP persistence rows; canonical SQL literals via `as_db_str`/`from_db_str`.
+//! Typed enums for CP persistence rows. ToSql/FromSql route through
+//! `as_db_str`/`from_db_str` so SQL boundaries stay strongly typed.
 
 use anyhow::{anyhow, Result};
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 /// Per-host activation lifecycle persisted in `host_dispatch_state.state`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -33,6 +35,19 @@ impl PendingConfirmState {
     }
 }
 
+impl ToSql for PendingConfirmState {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::Borrowed(self.as_db_str().into()))
+    }
+}
+
+impl FromSql for PendingConfirmState {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let s = value.as_str()?;
+        Self::from_db_str(s).map_err(|e| FromSqlError::Other(e.into()))
+    }
+}
+
 /// Terminal class on `dispatch_history.terminal_state`; distinct from operational state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TerminalState {
@@ -48,6 +63,12 @@ impl TerminalState {
             TerminalState::RolledBack => "rolled-back",
             TerminalState::Cancelled => "cancelled",
         }
+    }
+}
+
+impl ToSql for TerminalState {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::Borrowed(self.as_db_str().into()))
     }
 }
 

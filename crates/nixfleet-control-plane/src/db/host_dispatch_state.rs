@@ -1,45 +1,20 @@
 //! Operational dispatch row, one per host (soft state); orphan-confirm recovers from loss.
 //!
-//! LOADBEARING: paired with `dispatch_history` (append-only audit). This module
-//! UPSERTs one row per host (replaced on every new dispatch); audit trail must
-//! survive in `dispatch_history` even after the operational row is overwritten.
+//! LOADBEARING: paired with `dispatch_history` (append-only audit) — UPSERT replaces
+//! the operational row on every new dispatch; audit trail must survive in history.
 //!
-//! ## confirm_deadline — invariant across the four call sites
+//! `confirm_deadline` filtering convention across the four readers:
 //!
-//! Four code paths read `confirm_deadline` differently. They MUST stay
-//! consistent, or you get either zombie dispatches (expired rows
-//! treated as live) or premature rollbacks (deadline-violating
-//! confirms accepted late):
+//! | caller | filter | intent |
+//! |--------|--------|--------|
+//! | `confirm()` | `datetime(confirm_deadline) > now` | reject late confirms |
+//! | `pending_deadlines()` | `datetime(confirm_deadline) < now` | timer sweeps expired |
+//! | `pending_dispatch_exists()` | none | deadline-agnostic in-flight check |
+//! | `active_rollouts_snapshot()` | `state IN ('pending','confirmed')` | UI/gate view |
 //!
-//!   - `confirm()` rejects past-deadline confirms via
-//!     `datetime(confirm_deadline) > datetime('now')`. Late-arriving
-//!     agent confirms are silently dropped (audit row flagged
-//!     `rolled-back` when the timer eventually sweeps).
-//!
-//!   - `pending_deadlines()` returns past-deadline pending rows for the
-//!     rollback timer to flip via `datetime(confirm_deadline) < datetime('now')`.
-//!
-//!   - `pending_dispatch_exists()` does NOT filter by deadline —
-//!     past-deadline pending rows STILL count as in-flight.
-//!     Intentional: dispatch endpoint returns `Decision::InFlight`
-//!     for these so a new dispatch can't race the rollback timer
-//!     and overwrite the row before the audit stamp lands.
-//!
-//!   - `active_rollouts_snapshot()` filters by `state IN ('pending',
-//!     'confirmed')` only — same intent: past-deadline pending rows
-//!     project as `ConfirmWindow` until the timer fires, so the
-//!     reconciler / dashboard show the host as still settling.
-//!
-//! Eventual-consistency window: ROLLBACK_TIMER_INTERVAL (30s today).
-//! After deadline + 30s, the timer flips state to 'rolled-back', the
-//! row drops out of pending_dispatch_exists / active_rollouts_snapshot,
-//! and a fresh dispatch can be issued.
-//!
-//! Adding a fifth caller? Use `pending_dispatch_exists` (deadline-
-//! agnostic, "is the row in-flight from CP's bookkeeping standpoint?")
-//! or run a custom query with `datetime(confirm_deadline)` — never
-//! skip the `datetime(...)` wrapper, naked string compare ranks `'T'`
-//! after `' '` and breaks the timer.
+//! Eventual-consistency window = `ROLLBACK_TIMER_INTERVAL` (30s).
+//! New caller? Pick from the table above; never compare without `datetime(...)`
+//! (naked string compare ranks `'T'` after `' '` and breaks the timer).
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -102,42 +77,19 @@ impl HostDispatchState<'_> {
     /// LOADBEARING: operational UPSERT + history append in one txn — partial
     /// failure leaves audit trail aligned with operational state.
     pub fn record_dispatch(&self, row: &DispatchInsert<'_>) -> Result<()> {
-        let mut guard = super::lock_conn(self.conn)?;
-        let txn = guard.transaction().context("begin dispatch txn")?;
-        upsert_operational(&txn, row, PendingConfirmState::Pending, None)?;
-        super::dispatch_history::insert_history(&txn, row)?;
-        txn.commit().context("commit dispatch txn")?;
-        Ok(())
+        super::txn(self.conn, "dispatch", |t| {
+            upsert_operational(t, row, PendingConfirmState::Pending, None)?;
+            super::dispatch_history::insert_history(t, row)?;
+            Ok(())
+        })
     }
 
-    /// Canonical atomic "host_dispatch_state confirmed +
-    /// host_rollout_state row in `target_state`" — both rows written
-    /// in ONE transaction.
-    ///
-    /// Either both rows land or neither does. If the second write
-    /// fails the first rolls back; the next checkin re-runs the
-    /// caller's recovery path cleanly. Without atomicity, a
-    /// partial-write window leaves the operational row at `confirmed`
-    /// with no `host_rollout_state` row → snapshot LEFT JOIN projects
-    /// "Healthy with NULL last_healthy_since" → soak timer never
-    /// fires (the `if let Some(since) = last_healthy_since.get(host)`
-    /// in handle_wave) → host stuck in Healthy forever, blocks the
-    /// rollout's wave promotion.
-    ///
-    /// `target_state` is the host_rollout_state value to write.
-    /// Recovery paths use `Healthy` (host is freshly confirmed and
-    /// entering soak); converged-at-dispatch uses `Converged` (host
-    /// was already on target closure before any dispatch — soak
-    /// window does not apply).
-    ///
-    /// `confirmed_at` stamps the operational row (both `confirm_deadline`
-    /// and `confirmed_at` columns). `healthy_since` stamps the
-    /// host_rollout_state soak-timer anchor. Most callers pass the
-    /// same value for both (host newly confirmed = healthy from this
-    /// moment). Soak-state recovery from agent attestation passes
-    /// `confirmed_at = now` and `healthy_since = min(now, attested)` —
-    /// the host has been healthy since before this checkin, and the
-    /// soak window must anchor on that earlier moment.
+    /// Atomic confirm: operational + history + host_rollout_state in one txn.
+    /// Partial commit would leave hrs NULL → soak timer never fires → host
+    /// stuck Healthy → wave promotion blocks. `target_state` = `Healthy` for
+    /// freshly-confirmed (enters soak), `Converged` for converged-at-dispatch
+    /// (host was already on target). `healthy_since` may differ from
+    /// `confirmed_at` for attestation recovery (anchor on earlier moment).
     #[allow(clippy::too_many_arguments)]
     pub fn record_confirmed_dispatch_with_state(
         &self,
@@ -151,8 +103,6 @@ impl HostDispatchState<'_> {
         target_state: HostRolloutState,
         healthy_since: DateTime<Utc>,
     ) -> Result<()> {
-        let mut guard = super::lock_conn(self.conn)?;
-        let txn = guard.transaction().context("begin atomic-confirm txn")?;
         let row = DispatchInsert {
             hostname,
             rollout_id,
@@ -162,50 +112,43 @@ impl HostDispatchState<'_> {
             target_channel_ref,
             confirm_deadline: confirmed_at,
         };
-        upsert_operational(
-            &txn,
-            &row,
-            PendingConfirmState::Confirmed,
-            Some(confirmed_at),
-        )?;
-        super::dispatch_history::insert_history(&txn, &row)?;
-        // Single source of truth for the host_rollout_state UPSERT —
-        // shared with `RolloutState::transition_host_state` via the
-        // free fn. Operates on the live transaction handle so the
-        // whole confirm completes atomically. Fires the
-        // `nixfleet_host_state_transition_total{from_state, to_state}`
-        // counter from inside so this path shows up in observability.
-        super::rollout_state::transition_host_state_inner(
-            &txn,
-            hostname,
-            rollout_id,
-            target_state,
-            crate::state::HealthyMarker::Set(healthy_since),
-            None,
-        )?;
-        txn.commit().context("commit atomic-confirm txn")?;
-        Ok(())
+        super::txn(self.conn, "atomic-confirm", |t| {
+            upsert_operational(t, &row, PendingConfirmState::Confirmed, Some(confirmed_at))?;
+            super::dispatch_history::insert_history(t, &row)?;
+            // Shared with RolloutState::transition_host_state via the free fn so
+            // the host_rollout_state row lands in the same txn — partial commit
+            // would leave hrs NULL and the soak timer never fires.
+            super::rollout_state::transition_host_state_inner(
+                t,
+                hostname,
+                rollout_id,
+                target_state,
+                crate::state::HealthyMarker::Set(healthy_since),
+                None,
+            )?;
+            Ok(())
+        })
     }
 
     /// True if the host has a `'pending'` row.
     pub fn pending_dispatch_exists(&self, hostname: &str) -> Result<bool> {
-        let guard = super::lock_conn(self.conn)?;
-        let n: i64 = guard
-            .query_row(
-                "SELECT COUNT(*) FROM host_dispatch_state
-                 WHERE hostname = ?1 AND state = ?2",
-                params![hostname, PendingConfirmState::Pending.as_db_str()],
-                |row| row.get(0),
-            )
-            .context("count host_dispatch_state pending")?;
-        Ok(n > 0)
+        super::read(self.conn, |c| {
+            let n: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM host_dispatch_state
+                     WHERE hostname = ?1 AND state = ?2",
+                    params![hostname, PendingConfirmState::Pending],
+                    |row| row.get(0),
+                )
+                .context("count host_dispatch_state pending")?;
+            Ok(n > 0)
+        })
     }
 
     /// Flips pending → confirmed; deadline gate prevents late confirms bypassing rollback.
     pub fn confirm(&self, hostname: &str, rollout_id: &str) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "UPDATE host_dispatch_state
                  SET confirmed_at = datetime('now'),
                      state = ?3
@@ -216,34 +159,35 @@ impl HostDispatchState<'_> {
                 params![
                     hostname,
                     rollout_id,
-                    PendingConfirmState::Confirmed.as_db_str(),
-                    PendingConfirmState::Pending.as_db_str(),
+                    PendingConfirmState::Confirmed,
+                    PendingConfirmState::Pending,
                 ],
             )
-            .context("update host_dispatch_state confirmed")?;
-        Ok(n)
+            .context("update host_dispatch_state confirmed")
+        })
     }
 
     /// `datetime(...)` wrapper is required: naked string compare ranks 'T' > ' ' and breaks the timer.
     pub fn pending_deadlines(&self) -> Result<Vec<ExpiredDispatch>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT hostname, rollout_id, wave, target_closure_hash
-             FROM host_dispatch_state
-             WHERE state = ?1
-               AND datetime(confirm_deadline) < datetime('now')",
-        )?;
-        let rows = stmt
-            .query_map(params![PendingConfirmState::Pending.as_db_str()], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, u32>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT hostname, rollout_id, wave, target_closure_hash
+                 FROM host_dispatch_state
+                 WHERE state = ?1
+                   AND datetime(confirm_deadline) < datetime('now')",
+            )?;
+            let rows = stmt
+                .query_map(params![PendingConfirmState::Pending], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, u32>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok::<_, anyhow::Error>(rows)
+        })
     }
 
     /// Idempotent: only flips rows still in 'pending'.
@@ -251,11 +195,9 @@ impl HostDispatchState<'_> {
         if pairs.is_empty() {
             return Ok(0);
         }
-        let mut guard = super::lock_conn(self.conn)?;
-        let txn = guard.transaction().context("begin mark_rolled_back txn")?;
-        let mut updated = 0usize;
-        {
-            let mut stmt = txn.prepare(
+        super::txn(self.conn, "mark_rolled_back", |t| {
+            let mut updated = 0usize;
+            let mut stmt = t.prepare(
                 "UPDATE host_dispatch_state
                  SET state = ?3
                  WHERE hostname = ?1
@@ -266,13 +208,12 @@ impl HostDispatchState<'_> {
                 updated += stmt.execute(params![
                     hostname,
                     rollout_id,
-                    PendingConfirmState::RolledBack.as_db_str(),
-                    PendingConfirmState::Pending.as_db_str(),
+                    PendingConfirmState::RolledBack,
+                    PendingConfirmState::Pending,
                 ])?;
             }
-        }
-        txn.commit().context("commit mark_rolled_back txn")?;
-        Ok(updated)
+            Ok(updated)
+        })
     }
 
     /// Race-resistant: WHERE rollout_id guard makes a stale id a no-op when overwritten.
@@ -288,23 +229,21 @@ impl HostDispatchState<'_> {
             TerminalState::RolledBack => PendingConfirmState::RolledBack,
             TerminalState::Cancelled => PendingConfirmState::Cancelled,
         };
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "UPDATE host_dispatch_state
                  SET state = ?3
                  WHERE hostname = ?1
                    AND rollout_id = ?2",
-                params![hostname, rollout_id, new_state.as_db_str()],
+                params![hostname, rollout_id, new_state],
             )
-            .context("record_terminal host_dispatch_state")?;
-        Ok(n)
+            .context("record_terminal host_dispatch_state")
+        })
     }
 
     pub fn host_state(&self, hostname: &str) -> Result<Option<HostDispatchStateRow>> {
-        let guard = super::lock_conn(self.conn)?;
-        let row = guard
-            .query_row(
+        super::read(self.conn, |c| {
+            Ok(c.query_row(
                 "SELECT hostname, rollout_id, channel, wave,
                         target_closure_hash, target_channel_ref,
                         state, dispatched_at, confirm_deadline,
@@ -314,111 +253,108 @@ impl HostDispatchState<'_> {
                 params![hostname],
                 row_to_host_dispatch_state,
             )
-            .ok();
-        Ok(row)
+            .ok())
+        })
     }
 
     /// Filtering terminal rows prevents the reconciler defaulting absent host-states to Queued and re-dispatching.
     pub fn active_rollouts_snapshot(&self) -> Result<Vec<RolloutDbSnapshot>> {
         use std::collections::BTreeMap;
 
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT hds.rollout_id, hds.channel, hds.hostname,
-                    hds.target_closure_hash, hds.target_channel_ref,
-                    hds.state, hds.wave,
-                    hrs.host_state, hrs.last_healthy_since,
-                    COALESCE(r.current_wave, 0) AS current_wave
-             FROM host_dispatch_state hds
-             LEFT JOIN host_rollout_state hrs
-                    ON hrs.rollout_id = hds.rollout_id
-                   AND hrs.hostname = hds.hostname
-             LEFT JOIN rollouts r
-                    ON r.rollout_id = hds.rollout_id
-             WHERE hds.state IN (?1, ?2)
-             ORDER BY hds.rollout_id, hds.hostname",
-        )?;
-        let rows = stmt
-            .query_map(
-                params![
-                    PendingConfirmState::Pending.as_db_str(),
-                    PendingConfirmState::Confirmed.as_db_str(),
-                ],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, i64>(6)?,
-                        row.get::<_, Option<String>>(7)?,
-                        row.get::<_, Option<String>>(8)?,
-                        row.get::<_, i64>(9)?,
-                    ))
-                },
-            )?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT hds.rollout_id, hds.channel, hds.hostname,
+                        hds.target_closure_hash, hds.target_channel_ref,
+                        hds.state, hds.wave,
+                        hrs.host_state, hrs.last_healthy_since,
+                        COALESCE(r.current_wave, 0) AS current_wave
+                 FROM host_dispatch_state hds
+                 LEFT JOIN host_rollout_state hrs
+                        ON hrs.rollout_id = hds.rollout_id
+                       AND hrs.hostname = hds.hostname
+                 LEFT JOIN rollouts r
+                        ON r.rollout_id = hds.rollout_id
+                 WHERE hds.state IN (?1, ?2)
+                 ORDER BY hds.rollout_id, hds.hostname",
+            )?;
+            let rows = stmt
+                .query_map(
+                    params![
+                        PendingConfirmState::Pending,
+                        PendingConfirmState::Confirmed,
+                    ],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, i64>(6)?,
+                            row.get::<_, Option<String>>(7)?,
+                            row.get::<_, Option<String>>(8)?,
+                            row.get::<_, i64>(9)?,
+                        ))
+                    },
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        let mut by_rollout: BTreeMap<String, RolloutDbSnapshot> = BTreeMap::new();
-        for (
-            rollout_id,
-            row_channel,
-            hostname,
-            target_closure,
-            target_ref,
-            op_state,
-            host_wave,
-            hrs_state,
-            hrs_ts,
-            current_wave,
-        ) in rows
-        {
-            let host_state = match hrs_state {
-                Some(s) => HostRolloutState::from_db_str(&s)?.as_db_str().to_string(),
-                None => match PendingConfirmState::from_db_str(&op_state)? {
-                    PendingConfirmState::Pending => HostRolloutState::ConfirmWindow,
-                    PendingConfirmState::Confirmed => HostRolloutState::Healthy,
-                    PendingConfirmState::RolledBack | PendingConfirmState::Cancelled => {
-                        unreachable!(
-                            "filtered by WHERE hds.state IN ('pending','confirmed') in the SELECT",
-                        )
+            let mut by_rollout: BTreeMap<String, RolloutDbSnapshot> = BTreeMap::new();
+            for (
+                rollout_id,
+                row_channel,
+                hostname,
+                target_closure,
+                target_ref,
+                op_state,
+                host_wave,
+                hrs_state,
+                hrs_ts,
+                current_wave,
+            ) in rows
+            {
+                let host_state = match hrs_state {
+                    Some(s) => HostRolloutState::from_db_str(&s)?.as_db_str().to_string(),
+                    None => match PendingConfirmState::from_db_str(&op_state)? {
+                        PendingConfirmState::Pending => HostRolloutState::ConfirmWindow,
+                        PendingConfirmState::Confirmed => HostRolloutState::Healthy,
+                        PendingConfirmState::RolledBack | PendingConfirmState::Cancelled => {
+                            unreachable!(
+                                "filtered by WHERE hds.state IN ('pending','confirmed') in the SELECT",
+                            )
+                        }
                     }
+                    .as_db_str()
+                    .to_string(),
+                };
+
+                let entry = by_rollout
+                    .entry(rollout_id.clone())
+                    .or_insert_with(|| RolloutDbSnapshot {
+                        rollout_id: rollout_id.clone(),
+                        channel: row_channel.clone(),
+                        target_closure_hash: target_closure.clone(),
+                        target_channel_ref: target_ref.clone(),
+                        host_states: HashMap::new(),
+                        host_waves: HashMap::new(),
+                        last_healthy_since: HashMap::new(),
+                        current_wave: current_wave as u32,
+                        // terminal_at lives on the rollouts table; gate observed
+                        // builders merge from db.rollouts().list_active().
+                        terminal_at: None,
+                    });
+                entry.host_states.insert(hostname.clone(), host_state);
+                entry.host_waves.insert(hostname.clone(), host_wave as u32);
+                if let Some(ts) = hrs_ts {
+                    let parsed = ts
+                        .parse::<DateTime<Utc>>()
+                        .with_context(|| format!("parse last_healthy_since for {hostname}"))?;
+                    entry.last_healthy_since.insert(hostname, parsed);
                 }
-                .as_db_str()
-                .to_string(),
-            };
-
-            let channel = row_channel;
-
-            let entry = by_rollout
-                .entry(rollout_id.clone())
-                .or_insert_with(|| RolloutDbSnapshot {
-                    rollout_id: rollout_id.clone(),
-                    channel,
-                    target_closure_hash: target_closure.clone(),
-                    target_channel_ref: target_ref.clone(),
-                    host_states: HashMap::new(),
-                    host_waves: HashMap::new(),
-                    last_healthy_since: HashMap::new(),
-                    current_wave: current_wave as u32,
-                    // active_rollouts_snapshot is keyed off host_dispatch_state;
-                    // terminal_at lives on the rollouts table. Callers that
-                    // need it (gate observed builders) merge from
-                    // db.rollouts().list_active() and overwrite this field.
-                    terminal_at: None,
-                });
-            entry.host_states.insert(hostname.clone(), host_state);
-            entry.host_waves.insert(hostname.clone(), host_wave as u32);
-            if let Some(ts) = hrs_ts {
-                let parsed = ts
-                    .parse::<DateTime<Utc>>()
-                    .with_context(|| format!("parse last_healthy_since for {hostname}"))?;
-                entry.last_healthy_since.insert(hostname, parsed);
             }
-        }
-        Ok(by_rollout.into_values().collect())
+            Ok(by_rollout.into_values().collect())
+        })
     }
 }
 
@@ -482,7 +418,7 @@ fn upsert_operational(
             row.wave,
             row.target_closure_hash,
             row.target_channel_ref,
-            state.as_db_str(),
+            state,
             row.confirm_deadline.to_rfc3339(),
             confirmed_at_str,
         ],

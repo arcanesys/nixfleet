@@ -164,112 +164,46 @@ mod tests {
     use crate::host_state::HostRolloutState;
     use crate::observed::{Observed, Rollout};
     use chrono::Utc;
-    use nixfleet_proto::{
-        fleet_resolved::{
-            Channel, Compliance, HealthGate, Host, Meta, OnHealthFailure, PolicyWave,
-            RolloutPolicy, Selector, Wave,
-        },
-        FleetResolved,
-    };
+    use nixfleet_proto::testing::FleetBuilder;
+    use nixfleet_proto::{FleetResolved, Meta, PolicyWave, Selector};
     use std::collections::HashMap;
 
     fn fleet_two_waves(compliance_mode: &str) -> FleetResolved {
-        let mut hosts = HashMap::new();
-        hosts.insert(
-            "host-a".to_string(),
-            Host {
-                system: "x86_64-linux".into(),
-                tags: vec![],
-                channel: "stable".into(),
-                closure_hash: Some("c-a".into()),
-                pubkey: None,
-            },
-        );
-        hosts.insert(
-            "host-b".to_string(),
-            Host {
-                system: "x86_64-linux".into(),
-                tags: vec![],
-                channel: "stable".into(),
-                closure_hash: Some("c-b".into()),
-                pubkey: None,
-            },
-        );
-        let mut channels = HashMap::new();
-        channels.insert(
-            "stable".to_string(),
-            Channel {
-                rollout_policy: "default".into(),
-                reconcile_interval_minutes: 30,
-                freshness_window: 720,
-                signing_interval_minutes: 30,
-                compliance: Compliance {
-                    mode: compliance_mode.to_string(),
-                    frameworks: vec![],
-                },
-            },
-        );
-        let mut rollout_policies = HashMap::new();
-        rollout_policies.insert(
-            "default".to_string(),
-            RolloutPolicy {
-                strategy: "staged".into(),
-                waves: vec![
+        FleetBuilder::new()
+            .host("host-a", "stable")
+            .host_closure("host-a", "c-a")
+            .host("host-b", "stable")
+            .host_closure("host-b", "c-b")
+            .channel_compliance("stable", compliance_mode, &[])
+            .policy_strategy("p", "staged")
+            .policy_waves(
+                "p",
+                vec![
                     PolicyWave {
                         selector: Selector {
-                            tags: vec![],
-                            tags_any: vec![],
                             hosts: vec!["host-a".into()],
-                            channel: None,
-                            all: false,
+                            ..Default::default()
                         },
                         soak_minutes: 0,
                     },
                     PolicyWave {
                         selector: Selector {
-                            tags: vec![],
-                            tags_any: vec![],
                             hosts: vec!["host-b".into()],
-                            channel: None,
-                            all: false,
+                            ..Default::default()
                         },
                         soak_minutes: 0,
                     },
                 ],
-                health_gate: HealthGate::default(),
-                on_health_failure: OnHealthFailure::Halt,
-            },
-        );
-        let mut waves = HashMap::new();
-        waves.insert(
-            "stable".to_string(),
-            vec![
-                Wave {
-                    hosts: vec!["host-a".into()],
-                    soak_minutes: 0,
-                },
-                Wave {
-                    hosts: vec!["host-b".into()],
-                    soak_minutes: 0,
-                },
-            ],
-        );
-        FleetResolved {
-            schema_version: 1,
-            hosts,
-            channels,
-            rollout_policies,
-            waves,
-            edges: vec![],
-            channel_edges: vec![],
-            disruption_budgets: vec![],
-            meta: Meta {
+            )
+            .meta(Meta {
                 schema_version: 1,
                 signed_at: Some(Utc::now()),
                 ci_commit: Some("abc12345".into()),
                 signature_algorithm: Some("ed25519".into()),
-            },
-        }
+            })
+            .wave_with_soak("stable", &["host-a"], 0)
+            .wave_with_soak("stable", &["host-b"], 0)
+            .build()
     }
 
     fn rollout_at_wave_0_soaked(id: &str) -> Rollout {

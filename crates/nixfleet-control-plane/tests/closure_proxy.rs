@@ -7,28 +7,12 @@ use std::path::PathBuf;
 
 use common::{
     build_mtls_client, install_crypto_provider_once, mint_ca_and_certs, pick_free_port,
-    wait_for_listener_ready, write_pem,
+    wait_for_listener_ready, write_phase2_input_stubs,
 };
 use nixfleet_control_plane::server;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-
-fn write_phase2_input_stubs(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
-    let artifact = write_pem(dir, "fleet.resolved.json", "{}");
-    let signature = write_pem(dir, "fleet.resolved.json.sig", "");
-    let trust = write_pem(
-        dir,
-        "trust.json",
-        r#"{"ciReleaseKey":{"current":[],"rejectBefore":null}}"#,
-    );
-    let observed = write_pem(
-        dir,
-        "observed.json",
-        r#"{"channelRefs":{},"lastRolledRefs":{},"hostState":{},"activeRollouts":[]}"#,
-    );
-    (artifact, signature, trust, observed)
-}
 
 async fn spawn_cp(
     dir: &TempDir,

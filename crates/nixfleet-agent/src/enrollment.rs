@@ -1,8 +1,5 @@
-//! Bootstrap enrollment + cert renewal client. Both flows use the
-//! host's SSH host key as the CSR signing key (RFC-0003 §2). The
-//! `--client-key` runtime flag points at `/etc/ssh/ssh_host_ed25519_key`
-//! directly — no separate per-host agent key file is generated or
-//! written by the agent.
+//! Bootstrap enrollment + cert renewal. Both flows sign the CSR with the
+//! host's SSH ed25519 key (RFC-0003 §2); the agent never generates keys.
 
 use std::path::Path;
 
@@ -18,15 +15,10 @@ use reqwest::Client;
 use sha2::Digest;
 use x509_parser::prelude::*;
 
-/// Read the host's SSH ed25519 private key, extract the 32-byte seed,
-/// build a CSR signed by it. Returns `(PEM CSR, raw 32-byte pubkey)`.
-/// The pubkey matches what the operator declares as
-/// `hosts.<hostname>.pubkey` in fleet.nix; CP enroll/renew rejects the
-/// CSR if they don't match.
-///
-/// FOOTGUN: the file at `ssh_host_key_path` is OpenSSH PEM; rcgen wants
-/// PKCS#8 PEM. We decode OpenSSH → 32-byte seed → wrap in PKCS#8 PEM
-/// envelope via the proto helper → hand to `KeyPair::from_pem`.
+/// Builds a CSR signed by the SSH host key; returns `(PEM CSR, raw 32-byte
+/// pubkey)`. CP rejects if the pubkey doesn't match `hosts.<hostname>.pubkey`.
+/// FOOTGUN: SSH key is OpenSSH PEM; rcgen wants PKCS#8 — we rewrap via the
+/// proto helper before handing to `KeyPair::from_pem`.
 pub fn generate_csr_from_ssh_host_key(
     hostname: &str,
     ssh_host_key_path: &Path,
@@ -125,16 +117,9 @@ pub async fn renew(
     Ok(())
 }
 
-/// Post a pre-cert failure event to the CP via the bootstrap-token-authed
-/// `/v1/agent/bootstrap-report` endpoint. Designed for the two failure
-/// modes that fire before mTLS is available: `TrustError` (trust.json
-/// unparseable at startup) and `EnrollmentFailed` (`/v1/enroll` rejected
-/// or unreachable).
-///
-/// Best-effort by contract — the agent is already in a fatal failure path;
-/// we log and return Ok regardless so the operator-visible signal makes it
-/// out before the agent exits, but a posting failure doesn't mask the
-/// underlying error.
+/// Best-effort pre-mTLS failure post (`TrustError` / `EnrollmentFailed`) via
+/// `/v1/agent/bootstrap-report`. Always returns Ok — agent is already on a
+/// fatal path; a posting failure mustn't mask the underlying error.
 pub async fn post_bootstrap_event(
     client: &Client,
     cp_url: &str,

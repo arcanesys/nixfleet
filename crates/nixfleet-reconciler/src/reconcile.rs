@@ -156,54 +156,18 @@ mod channel_edge_tests {
     use super::*;
     use crate::host_state::HostRolloutState;
     use crate::observed::{HostState, Rollout};
-    use nixfleet_proto::{
-        Channel, ChannelEdge, Compliance, FleetResolved, Host, Meta, OnHealthFailure, RolloutPolicy,
-    };
+    use nixfleet_proto::testing::FleetBuilder;
+    use nixfleet_proto::{Channel, ChannelEdge, Compliance, FleetResolved, Host};
     use std::collections::HashMap;
 
     fn fleet_with_channel_edges(edges: Vec<ChannelEdge>) -> FleetResolved {
-        let mut channels = HashMap::new();
-        for ch in ["db", "app"] {
-            channels.insert(
-                ch.to_string(),
-                Channel {
-                    rollout_policy: "p".into(),
-                    reconcile_interval_minutes: 30,
-                    freshness_window: 1440,
-                    signing_interval_minutes: 60,
-                    compliance: Compliance {
-                        frameworks: vec![],
-                        mode: "disabled".into(),
-                    },
-                },
-            );
-        }
-        let mut rollout_policies = HashMap::new();
-        rollout_policies.insert(
-            "p".into(),
-            RolloutPolicy {
-                strategy: "all-at-once".into(),
-                waves: vec![],
-                health_gate: Default::default(),
-                on_health_failure: OnHealthFailure::Halt,
-            },
-        );
-        FleetResolved {
-            schema_version: 1,
-            hosts: HashMap::new(),
-            channels,
-            rollout_policies,
-            waves: HashMap::new(),
-            edges: vec![],
-            channel_edges: edges,
-            disruption_budgets: vec![],
-            meta: Meta {
-                schema_version: 1,
-                signed_at: None,
-                ci_commit: None,
-                signature_algorithm: Some("ed25519".into()),
-            },
-        }
+        let mut f = FleetBuilder::new()
+            .channel("db", "p")
+            .channel("app", "p")
+            .policy_waves("p", vec![])
+            .build();
+        f.channel_edges = edges;
+        f
     }
 
     fn observed_with_active_rollout_on(channel: &str) -> Observed {

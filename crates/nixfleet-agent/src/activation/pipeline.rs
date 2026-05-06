@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use nixfleet_proto::agent_wire::EvaluatedTarget;
 use tokio::process::Command;
 
-use super::backend::ActivationBackend;
-use super::outcome::ActivationOutcome;
+use super::types::ActivationBackend;
+use super::types::ActivationOutcome;
 use super::profile::self_correct_profile;
 use super::realise::{realise, RealiseError};
 use super::verify_poll::{read_current_system_basename, PollOutcome, VerifyPoll};

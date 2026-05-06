@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use common::{
-    build_mtls_client, install_crypto_provider_once, mint_ca_and_certs, pick_free_port,
-    wait_for_listener_ready, write_bytes, write_pem,
+    build_fleet_resolved_json, build_mtls_client, install_crypto_provider_once, mint_ca_and_certs,
+    pick_free_port, wait_for_listener_ready, write_bytes, write_pem,
 };
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_control_plane::server;
@@ -17,52 +17,6 @@ use nixfleet_proto::agent_wire::{
 };
 use rand::rngs::OsRng;
 use tempfile::TempDir;
-
-/// Returns `(raw_json_to_write, canonical_bytes_to_sign)`.
-fn build_fleet_resolved_json(declared_closure: &str, ci_commit: &str) -> (String, Vec<u8>) {
-    let signed_at = "2026-04-26T00:00:00Z";
-    let json = serde_json::json!({
-        "schemaVersion": 1,
-        "hosts": {
-            "test-host": {
-                "system": "x86_64-linux",
-                "tags": [],
-                "channel": "stable",
-                "closureHash": declared_closure,
-                "pubkey": null,
-            }
-        },
-        "channels": {
-            "stable": {
-                "rolloutPolicy": "default",
-                "reconcileIntervalMinutes": 5,
-                "freshnessWindow": 60,
-                "signingIntervalMinutes": 30,
-                "compliance": { "mode": "disabled", "frameworks": [] },
-            }
-        },
-        "rolloutPolicies": {
-            "default": {
-                "strategy": "waves",
-                "waves": [],
-                "healthGate": {},
-                "onHealthFailure": "halt",
-            }
-        },
-        "waves": {},
-        "edges": [],
-        "disruptionBudgets": [],
-        "meta": {
-            "schemaVersion": 1,
-            "signedAt": signed_at,
-            "ciCommit": ci_commit,
-            "signatureAlgorithm": "ed25519",
-        },
-    });
-    let raw = serde_json::to_string(&json).unwrap();
-    let canonical = nixfleet_canonicalize::canonicalize(&raw).unwrap();
-    (raw, canonical.into_bytes())
-}
 
 fn write_signed_fleet(
     dir: &TempDir,

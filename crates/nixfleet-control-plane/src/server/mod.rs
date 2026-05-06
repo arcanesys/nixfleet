@@ -3,6 +3,7 @@
 mod checkin_pipeline;
 mod middleware;
 mod reconcile;
+mod route_error;
 mod routes;
 mod state;
 
@@ -239,58 +240,14 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         trust_path: args.trust_path.clone(),
     };
 
-    // Build the CA signer once, ahead of any /enroll or /renew traffic.
-    // TPM mode requires `--fleet-ca-cert` (issuance CA cert PEM —
-    // signed by fleet root) AND both TPM flags. Otherwise falls back
-    // to file-backed (`--fleet-ca-cert` + `--fleet-ca-key`).
+    // CA signer built once; TPM (pubkey + wrapper) wins over file (fleet_ca_key).
     if let Some(cert_path) = args.fleet_ca_cert.as_ref() {
-        let signer: Option<std::sync::Arc<dyn crate::auth::issuance::CaSigner>> = match (
-            args.tpm_ca_pubkey_raw.as_ref(),
-            args.tpm_ca_sign_wrapper.as_ref(),
-            args.fleet_ca_key.as_ref(),
-        ) {
-            (Some(pub_raw), Some(wrapper), _) => {
-                match crate::auth::issuance::TpmCaSigner::from_paths(
-                    cert_path, pub_raw, wrapper,
-                ) {
-                    Ok(s) => {
-                        tracing::info!(
-                            cert = %cert_path.display(),
-                            pubkey_raw = %pub_raw.display(),
-                            wrapper = %wrapper.display(),
-                            "issuance CA signer: TPM-backed",
-                        );
-                        Some(std::sync::Arc::new(s))
-                    }
-                    Err(err) => {
-                        tracing::error!(error = %err, "failed to build TPM CA signer; enroll/renew will 500");
-                        None
-                    }
-                }
-            }
-            (None, None, Some(key_path)) => {
-                match crate::auth::issuance::FileCaSigner::from_paths(cert_path, key_path) {
-                    Ok(s) => {
-                        tracing::info!(
-                            cert = %cert_path.display(),
-                            key = %key_path.display(),
-                            "issuance CA signer: file-backed",
-                        );
-                        Some(std::sync::Arc::new(s))
-                    }
-                    Err(err) => {
-                        tracing::error!(error = %err, "failed to build file CA signer; enroll/renew will 500");
-                        None
-                    }
-                }
-            }
-            _ => {
-                tracing::warn!(
-                    "no CA signer flags satisfied (need either --fleet-ca-key OR --tpm-ca-pubkey-raw+--tpm-ca-sign-wrapper); enroll/renew will 500",
-                );
-                None
-            }
-        };
+        let signer = crate::auth::issuance::build_signer_from_args(
+            cert_path,
+            args.tpm_ca_pubkey_raw.as_deref(),
+            args.tpm_ca_sign_wrapper.as_deref(),
+            args.fleet_ca_key.as_deref(),
+        );
         *state.ca_signer.write().await = signer;
     }
 

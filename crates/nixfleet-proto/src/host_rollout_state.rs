@@ -100,6 +100,25 @@ impl HostRolloutState {
     }
 }
 
+#[cfg(feature = "rusqlite")]
+mod rusqlite_impls {
+    use super::*;
+    use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
+
+    impl ToSql for HostRolloutState {
+        fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+            Ok(ToSqlOutput::Borrowed(self.as_db_str().into()))
+        }
+    }
+
+    impl FromSql for HostRolloutState {
+        fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+            let s = value.as_str()?;
+            Self::from_db_str(s).map_err(|e| FromSqlError::Other(Box::new(e)))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

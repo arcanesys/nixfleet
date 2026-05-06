@@ -1,10 +1,9 @@
-//! Dispatch path: `process_dispatch_target` + the `DispatchHandler` family.
+//! Dispatch path: `process_dispatch_target` + per-outcome free-function handlers.
 //! Side-effects route through `&impl Reporter` for unit-testability.
 
 mod activate;
 pub(crate) mod compliance;
 mod confirm;
-mod handler;
 mod manifest_error;
 mod realise_failed;
 mod rollback;
@@ -12,6 +11,35 @@ mod verify_mismatch;
 
 pub(crate) use activate::process_dispatch_target;
 pub(crate) use rollback::handle_cp_rollback_signal;
+
+use std::sync::Arc;
+
+use nixfleet_proto::agent_wire::EvaluatedTarget;
+use serde::Serialize;
+
+use nixfleet_agent::comms::Reporter;
+use nixfleet_agent::evidence_signer::{try_sign, EvidenceSigner};
+
+use crate::Args;
+
+/// Shared dispatch context. Handlers are free functions in the sibling
+/// modules — telemetry-only, never propagate errors.
+pub(crate) struct DispatchCtx<'a, R: Reporter> {
+    pub target: &'a EvaluatedTarget,
+    pub reporter: &'a R,
+    pub args: &'a Args,
+    pub evidence_signer: &'a Arc<Option<EvidenceSigner>>,
+}
+
+impl<R: Reporter> DispatchCtx<'_, R> {
+    /// JCS-sign `payload` with the agent's evidence key, if configured.
+    pub(super) fn try_sign<T: Serialize>(&self, payload: &T) -> Option<String> {
+        self.evidence_signer
+            .as_ref()
+            .as_ref()
+            .and_then(|s| try_sign(s, payload))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -22,8 +50,8 @@ mod tests {
     use nixfleet_agent::evidence_signer::EvidenceSigner;
     use nixfleet_proto::agent_wire::{EvaluatedTarget, ReportEvent};
 
-    use super::handler::{DispatchCtx, DispatchHandler};
-    use super::realise_failed::{ClosureSignatureMismatchHandler, RealiseFailedHandler};
+    use super::DispatchCtx;
+    use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
     use crate::Args;
 
     #[derive(Default)]
@@ -98,11 +126,11 @@ mod tests {
         let args = sample_args();
         let signer: Arc<Option<EvidenceSigner>> = Arc::new(None);
 
-        ClosureSignatureMismatchHandler {
-            closure_hash: "abc123-bad-sig".to_string(),
-            stderr_tail: "error: lacks a valid signature".to_string(),
-        }
-        .handle(&ctx(&target, &fake, &args, &signer))
+        handle_closure_signature_mismatch(
+            &ctx(&target, &fake, &args, &signer),
+            "abc123-bad-sig".to_string(),
+            "error: lacks a valid signature".to_string(),
+        )
         .await;
 
         let calls = fake.calls();
@@ -133,10 +161,10 @@ mod tests {
         let args = sample_args();
         let signer: Arc<Option<EvidenceSigner>> = Arc::new(None);
 
-        RealiseFailedHandler {
-            reason: "network unreachable".to_string(),
-        }
-        .handle(&ctx(&target, &fake, &args, &signer))
+        handle_realise_failed(
+            &ctx(&target, &fake, &args, &signer),
+            "network unreachable".to_string(),
+        )
         .await;
 
         let calls = fake.calls();

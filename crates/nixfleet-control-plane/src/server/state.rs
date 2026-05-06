@@ -29,18 +29,11 @@ pub struct ServeArgs {
     pub client_ca: Option<PathBuf>,
     /// Often the same path as `client_ca`.
     pub fleet_ca_cert: Option<PathBuf>,
-    /// File-backed CA signer's private key PEM. Mutually exclusive with
-    /// `tpm_ca_sign_wrapper` — if both are set the TPM signer wins, the
-    /// file path is ignored.
+    /// File-backed CA signer's private key PEM. TPM (pubkey + wrapper) wins.
     pub fleet_ca_key: Option<PathBuf>,
-    /// TPM-backed CA signer: path to the keyslot scope's `pubkey.raw`
-    /// (64 bytes raw P-256 X||Y) for the issuance CA's TPM key.
-    /// Setting this AND `tpm_ca_sign_wrapper` switches the issuance
-    /// path to TPM signing; `fleet_ca_key` becomes unused.
+    /// TPM-backed CA signer: keyslot scope's `pubkey.raw` (64 raw P-256 X||Y).
     pub tpm_ca_pubkey_raw: Option<PathBuf>,
-    /// TPM-backed CA signer: path to the keyslot scope's
-    /// `tpm-sign-<keyname>` wrapper (typically
-    /// `/run/current-system/sw/bin/tpm-sign-issuanceCA`).
+    /// TPM-backed CA signer: keyslot scope's `tpm-sign-<keyname>` wrapper.
     pub tpm_ca_sign_wrapper: Option<PathBuf>,
     pub audit_log_path: Option<PathBuf>,
     pub artifact_path: PathBuf,
@@ -63,11 +56,8 @@ pub struct ServeArgs {
     pub rollouts_source: Option<crate::rollouts_source::RolloutsSource>,
     /// Refuse to start when any security-fallback flag is unset.
     pub strict: bool,
-    /// FQDN suffix appended when canonicalising agent cert CNs to
-    /// `agent-<machineId>.<suffix>`. Defaults to
-    /// `auth::issuance::DEFAULT_AGENT_CN_SUFFIX` ("fleet.lab.internal").
-    /// Must match the `dNSName` constraint baked into the issuance CA
-    /// cert at bootstrap time (D14).
+    /// `agent-<machineId>.<suffix>` for issued cert CNs. Must match the
+    /// issuance CA's `dNSName` name constraint (D14).
     pub agent_cn_suffix: String,
 }
 

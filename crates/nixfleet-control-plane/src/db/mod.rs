@@ -113,6 +113,32 @@ pub(crate) fn lock_conn(mu: &Mutex<Connection>) -> Result<MutexGuard<'_, Connect
         .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))
 }
 
+/// Lock + read. Closure receives a borrowed `Connection`; lock is held
+/// for the closure's duration.
+pub(crate) fn read<F, T>(mu: &Mutex<Connection>, f: F) -> Result<T>
+where
+    F: FnOnce(&Connection) -> Result<T>,
+{
+    let guard = lock_conn(mu)?;
+    f(&guard)
+}
+
+/// Lock + open txn + run closure + commit. `label` shapes the begin/commit
+/// error context. Closure errors abort the txn.
+pub(crate) fn txn<F, T>(mu: &Mutex<Connection>, label: &'static str, f: F) -> Result<T>
+where
+    F: FnOnce(&rusqlite::Transaction) -> Result<T>,
+{
+    let mut guard = lock_conn(mu)?;
+    let tx = guard
+        .transaction()
+        .with_context(|| format!("begin {label} txn"))?;
+    let v = f(&tx)?;
+    tx.commit()
+        .with_context(|| format!("commit {label} txn"))?;
+    Ok(v)
+}
+
 #[cfg(test)]
 pub(crate) mod test_helpers;
 

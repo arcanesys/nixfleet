@@ -3,6 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -189,13 +190,15 @@ impl Selector {
     }
 }
 
+// GOTCHA: Nix emits `"healthGate": {}` when no inner constraints set;
+// skip_serializing_none preserves that empty-object shape.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthGate {
-    // GOTCHA: Nix emits `"healthGate": {}` when no inner constraints set; skip-on-None preserves that empty-object shape (other Option fields here serialize None as null).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub systemd_failed_units: Option<SystemdFailedUnits>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub compliance_probes: Option<ComplianceProbes>,
 }
 
@@ -282,6 +285,9 @@ pub struct DisruptionBudget {
     pub max_in_flight_pct: Option<u32>,
 }
 
+// LOADBEARING: signed_at + ci_commit serialize as `null` (no skip) to match
+// the Nix evaluator's shape — JCS byte-identity round-trip depends on it.
+// Only `signature_algorithm` is genuinely optional in the wire format.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Meta {
@@ -290,10 +296,8 @@ pub struct Meta {
     pub signed_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub ci_commit: Option<String>,
-    /// Optional per CONTRACTS §V Pattern A — absent ≡ "ed25519" within
-    /// `schemaVersion: 1`. Pre-stamp eval emits absent (unsigned: no
-    /// algorithm decided yet); `stamp_meta` populates with the actual
-    /// signer's algorithm at signing time.
+    /// CONTRACTS §V Pattern A: absent ≡ "ed25519" at schemaVersion=1. Pre-stamp
+    /// eval emits absent; `stamp_meta` populates at signing time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature_algorithm: Option<String>,
 }

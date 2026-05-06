@@ -34,9 +34,8 @@ pub struct Reports<'a> {
 
 impl Reports<'_> {
     pub fn record_host_report(&self, row: &HostReportInsert<'_>) -> Result<()> {
-        let guard = super::lock_conn(self.conn)?;
-        guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "INSERT INTO host_reports
                    (hostname, event_id, received_at, event_kind,
                     rollout, signature_status, report_json)
@@ -52,7 +51,8 @@ impl Reports<'_> {
                 ],
             )
             .context("insert host_reports")?;
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Up to `limit_per_host` most-recent rows in chronological order (oldest first).
@@ -61,98 +61,101 @@ impl Reports<'_> {
         hostname: &str,
         limit_per_host: usize,
     ) -> Result<Vec<HostReportRow>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT event_id, received_at, event_kind, rollout, signature_status, report_json
-             FROM host_reports
-             WHERE hostname = ?1
-             ORDER BY received_at DESC
-             LIMIT ?2",
-        )?;
-        let rows: rusqlite::Result<Vec<HostReportRow>> = stmt
-            .query_map(params![hostname, limit_per_host as i64], |row| {
-                let received_str: String = row.get(1)?;
-                let received_at = received_str.parse::<DateTime<Utc>>().map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        1,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    )
-                })?;
-                Ok(HostReportRow {
-                    event_id: row.get::<_, String>(0)?,
-                    received_at,
-                    event_kind: row.get::<_, String>(2)?,
-                    rollout: row.get::<_, Option<String>>(3)?,
-                    signature_status: row.get::<_, Option<String>>(4)?,
-                    report_json: row.get::<_, String>(5)?,
-                })
-            })?
-            .collect();
-        let mut rows = rows.context("query host_reports")?;
-        // Reverse: DB returns newest-first, ring buffer wants oldest-first.
-        rows.reverse();
-        Ok(rows)
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT event_id, received_at, event_kind, rollout, signature_status, report_json
+                 FROM host_reports
+                 WHERE hostname = ?1
+                 ORDER BY received_at DESC
+                 LIMIT ?2",
+            )?;
+            let mut rows: Vec<HostReportRow> = stmt
+                .query_map(params![hostname, limit_per_host as i64], |row| {
+                    let received_str: String = row.get(1)?;
+                    let received_at = received_str.parse::<DateTime<Utc>>().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                    Ok(HostReportRow {
+                        event_id: row.get::<_, String>(0)?,
+                        received_at,
+                        event_kind: row.get::<_, String>(2)?,
+                        rollout: row.get::<_, Option<String>>(3)?,
+                        signature_status: row.get::<_, Option<String>>(4)?,
+                        report_json: row.get::<_, String>(5)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("query host_reports")?;
+            // DB DESC → ring buffer ASC.
+            rows.reverse();
+            Ok(rows)
+        })
     }
 
-    /// Fleet-wide most-recent rows in DESC chronological order. Used by the
-    /// `/v1/host-reports` endpoint to back the dashboard's "recent reports"
-    /// panel — the durable DB ring is authoritative regardless of journal
-    /// rotation / window. Returns `(hostname, report)` pairs.
+    /// Fleet-wide most-recent rows in DESC chronological order; backs
+    /// `/v1/host-reports` (durable ring authoritative across journal rotation).
     pub fn recent_across_hosts(&self, limit: usize) -> Result<Vec<(String, HostReportRow)>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT hostname, event_id, received_at, event_kind,
-                    rollout, signature_status, report_json
-             FROM host_reports
-             ORDER BY received_at DESC, id DESC
-             LIMIT ?1",
-        )?;
-        let rows: rusqlite::Result<Vec<(String, HostReportRow)>> = stmt
-            .query_map(params![limit as i64], |row| {
-                let hostname: String = row.get(0)?;
-                let received_str: String = row.get(2)?;
-                let received_at = received_str.parse::<DateTime<Utc>>().map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        2,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    )
-                })?;
-                Ok((
-                    hostname,
-                    HostReportRow {
-                        event_id: row.get::<_, String>(1)?,
-                        received_at,
-                        event_kind: row.get::<_, String>(3)?,
-                        rollout: row.get::<_, Option<String>>(4)?,
-                        signature_status: row.get::<_, Option<String>>(5)?,
-                        report_json: row.get::<_, String>(6)?,
-                    },
-                ))
-            })?
-            .collect();
-        rows.context("query host_reports recent_across_hosts")
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT hostname, event_id, received_at, event_kind,
+                        rollout, signature_status, report_json
+                 FROM host_reports
+                 ORDER BY received_at DESC, id DESC
+                 LIMIT ?1",
+            )?;
+            let rows = stmt
+                .query_map(params![limit as i64], |row| {
+                    let hostname: String = row.get(0)?;
+                    let received_str: String = row.get(2)?;
+                    let received_at = received_str.parse::<DateTime<Utc>>().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                    Ok((
+                        hostname,
+                        HostReportRow {
+                            event_id: row.get::<_, String>(1)?,
+                            received_at,
+                            event_kind: row.get::<_, String>(3)?,
+                            rollout: row.get::<_, Option<String>>(4)?,
+                            signature_status: row.get::<_, Option<String>>(5)?,
+                            report_json: row.get::<_, String>(6)?,
+                        },
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("query host_reports recent_across_hosts")?;
+            Ok(rows)
+        })
     }
 
     pub fn host_reports_known_hostnames(&self) -> Result<Vec<String>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare("SELECT DISTINCT hostname FROM host_reports")?;
-        let names: rusqlite::Result<Vec<String>> =
-            stmt.query_map([], |row| row.get::<_, String>(0))?.collect();
-        names.context("query host_reports hostnames")
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare("SELECT DISTINCT hostname FROM host_reports")?;
+            let names = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("query host_reports hostnames")?;
+            Ok(names)
+        })
     }
 
     pub fn prune_host_reports(&self, max_age_hours: i64) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "DELETE FROM host_reports
                  WHERE received_at < datetime('now', ?1)",
                 params![format!("-{max_age_hours} hours")],
             )
-            .context("prune host_reports")?;
-        Ok(n)
+            .context("prune host_reports")
+        })
     }
 
     /// Per-(rollout, host) counts; per-rollout grouping enforces resolution-by-replacement.
@@ -160,29 +163,30 @@ impl Reports<'_> {
     pub fn outstanding_compliance_events_by_rollout(
         &self,
     ) -> Result<HashMap<String, HashMap<String, usize>>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT rollout, hostname, COUNT(*) FROM host_reports
-             WHERE rollout IS NOT NULL
-               AND event_kind IN ('compliance-failure', 'runtime-gate-error')
-               AND COALESCE(signature_status, '') NOT IN ('mismatch', 'malformed')
-             GROUP BY rollout, hostname",
-        )?;
-        let mut out: HashMap<String, HashMap<String, usize>> = HashMap::new();
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)? as usize,
-                ))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .context("query outstanding_compliance_events_by_rollout")?;
-        for (rollout, host, n) in rows {
-            out.entry(rollout).or_default().insert(host, n);
-        }
-        Ok(out)
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT rollout, hostname, COUNT(*) FROM host_reports
+                 WHERE rollout IS NOT NULL
+                   AND event_kind IN ('compliance-failure', 'runtime-gate-error')
+                   AND COALESCE(signature_status, '') NOT IN ('mismatch', 'malformed')
+                 GROUP BY rollout, hostname",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)? as usize,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("query outstanding_compliance_events_by_rollout")?;
+            let mut out: HashMap<String, HashMap<String, usize>> = HashMap::new();
+            for (rollout, host, n) in rows {
+                out.entry(rollout).or_default().insert(host, n);
+            }
+            Ok(out)
+        })
     }
 }
 

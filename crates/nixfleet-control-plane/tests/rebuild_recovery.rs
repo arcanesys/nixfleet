@@ -12,10 +12,13 @@
 //!      converges to the same state as if the rebuild had never happened —
 //!      modulo the previous rid disappearing entirely (no historical state).
 
+mod common;
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
+use common::build_fleet_resolved_json;
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_control_plane::db::Db;
 use nixfleet_control_plane::polling::channel_refs_poll::{
@@ -27,44 +30,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-
-fn build_fleet_resolved_json(declared_closure: &str, ci_commit: &str) -> (String, Vec<u8>) {
-    let signed_at = "2026-04-26T00:00:00Z";
-    let json = serde_json::json!({
-        "schemaVersion": 1,
-        "hosts": {
-            "test-host": {
-                "system": "x86_64-linux",
-                "tags": [],
-                "channel": "stable",
-                "closureHash": declared_closure,
-                "pubkey": null,
-            }
-        },
-        "channels": {
-            "stable": {
-                "rolloutPolicy": "default",
-                "reconcileIntervalMinutes": 5,
-                "freshnessWindow": 60,
-                "signingIntervalMinutes": 30,
-                "compliance": { "mode": "disabled", "frameworks": [] },
-            }
-        },
-        "rolloutPolicies": {"default":{"strategy":"waves","waves":[],"healthGate":{},"onHealthFailure":"halt"}},
-        "waves": {},
-        "edges": [],
-        "disruptionBudgets": [],
-        "meta": {
-            "schemaVersion": 1,
-            "signedAt": signed_at,
-            "ciCommit": ci_commit,
-            "signatureAlgorithm": "ed25519",
-        },
-    });
-    let raw = serde_json::to_string(&json).unwrap();
-    let canonical = nixfleet_canonicalize::canonicalize(&raw).unwrap();
-    (raw, canonical.into_bytes())
-}
 
 /// Single-shot HTTP stub that serves whatever (artifact, signature) bytes it
 /// holds for any matching path. Closes the connection after each response so

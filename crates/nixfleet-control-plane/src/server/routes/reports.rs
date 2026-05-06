@@ -135,10 +135,12 @@ pub(in crate::server) async fn list_recent(
     use axum::response::IntoResponse as _;
     let db = state.db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let limit = params.limit.unwrap_or(15).clamp(1, 200);
-    let rows = db.reports().recent_across_hosts(limit).map_err(|err| {
-        tracing::warn!(error = %err, "list_recent host_reports failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let rows = db
+        .reports()
+        .recent_across_hosts(limit)
+        .map_err(super::super::route_error::internal_warn(
+            "list_recent host_reports failed",
+        ))?;
     let reports: Vec<serde_json::Value> = rows
         .into_iter()
         .map(|(host, r)| {

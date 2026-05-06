@@ -1,12 +1,12 @@
 [package]
 name = "nixfleet-reconciler"
-version = "0.2.0"
-edition = "2021"
 description = "Pure-function rollout decision procedure + RFC-0002 §4 step 0 verification"
-license = "MIT"
-repository = "https://github.com/arcanesys/nixfleet"
-homepage = "https://github.com/arcanesys/nixfleet"
-authors = ["nixfleet contributors"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [lib]
 name = "nixfleet_reconciler"
@@ -29,3 +29,5 @@ ssh-key = { version = "0.6", features = ["ed25519"] }
 
 [dev-dependencies]
 rand = "0.9"
+# Enable the shared FleetBuilder fixture API for tests.
+nixfleet-proto = { path = "../nixfleet-proto", features = ["testing"] }

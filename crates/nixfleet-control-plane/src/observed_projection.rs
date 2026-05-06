@@ -4,9 +4,11 @@ use std::collections::HashMap;
 
 use nixfleet_proto::RolloutBudget;
 use nixfleet_reconciler::observed::{DeferralRecord, HostState, Observed, Rollout};
+#[cfg(test)]
 use nixfleet_reconciler::{HostRolloutState, RolloutState};
 
 use crate::db::RolloutDbSnapshot;
+use crate::observed_view::{snapshot_to_rollout, ParseUnknown};
 use crate::server::HostCheckinRecord;
 
 /// `rollout_budgets`: per-rollout budget snapshot from the signed
@@ -21,64 +23,39 @@ pub fn project(
     last_deferrals: HashMap<String, DeferralRecord>,
     rollout_budgets: &HashMap<String, Vec<RolloutBudget>>,
 ) -> Observed {
-    let mut host_state: HashMap<String, HostState> = HashMap::new();
-    for (host, record) in host_checkins {
-        host_state.insert(
-            host.clone(),
-            HostState {
-                online: true,
-                current_generation: Some(record.checkin.current_generation.closure_hash.clone()),
-            },
-        );
-    }
-
-    let active_rollouts: Vec<Rollout> = rollouts
+    let host_state: HashMap<String, HostState> = host_checkins
         .iter()
-        .map(|snap| Rollout {
-            id: snap.rollout_id.clone(),
-            channel: snap.channel.clone(),
-            target_ref: snap.target_channel_ref.clone(),
-            state: RolloutState::Executing,
-            current_wave: snap.current_wave as usize,
-            // Unknown SQL strings fall back to Failed; Queued would re-dispatch every tick.
-            host_states: snap
-                .host_states
-                .iter()
-                .map(|(h, s)| {
-                    let parsed = HostRolloutState::from_db_str(s).unwrap_or_else(|_| {
-                        tracing::warn!(
-                            rollout = %snap.rollout_id,
-                            hostname = %h,
-                            unknown_state = %s,
-                            "host_rollout_state value not in HostRolloutState enum — \
-                             halting rollout (Failed fallback). Likely a SQL CHECK \
-                             extension that wasn't propagated to the typed enum.",
-                        );
-                        HostRolloutState::Failed
-                    });
-                    (h.clone(), parsed)
-                })
-                .collect(),
-            last_healthy_since: snap.last_healthy_since.clone(),
-            budgets: rollout_budgets
-                .get(&snap.rollout_id)
-                .cloned()
-                .unwrap_or_default(),
-            terminal_at: snap.terminal_at,
+        .map(|(host, record)| {
+            (
+                host.clone(),
+                HostState {
+                    online: true,
+                    current_generation: Some(
+                        record.checkin.current_generation.closure_hash.clone(),
+                    ),
+                },
+            )
         })
         .collect();
 
-    // last_rolled_refs reflects "what rollout(s) the CP has already
-    // recorded for each channel". Source: the rollouts table snapshot,
-    // mapping channel → target_channel_ref. Without this, the reconciler
-    // re-emits OpenRollout every tick because the channel_refs ↔ last_rolled_refs
-    // equality check never matches. Empty hashmap was a load-bearing
-    // bug — populating it makes the OpenRollout action fire once per
-    // ref change, not once per tick.
-    let mut last_rolled_refs: HashMap<String, String> = HashMap::new();
-    for snap in rollouts {
-        last_rolled_refs.insert(snap.channel.clone(), snap.target_channel_ref.clone());
-    }
+    let active_rollouts: Vec<Rollout> = rollouts
+        .iter()
+        .map(|snap| {
+            let budgets = rollout_budgets
+                .get(&snap.rollout_id)
+                .cloned()
+                .unwrap_or_default();
+            snapshot_to_rollout(snap, budgets, ParseUnknown::Halt)
+        })
+        .collect();
+
+    // last_rolled_refs: channel → recorded ref. LOADBEARING — without
+    // it the reconciler re-emits OpenRollout every tick (channel_refs ↔
+    // last_rolled_refs equality never matches with an empty map).
+    let last_rolled_refs: HashMap<String, String> = rollouts
+        .iter()
+        .map(|s| (s.channel.clone(), s.target_channel_ref.clone()))
+        .collect();
 
     Observed {
         channel_refs: channel_refs.clone(),

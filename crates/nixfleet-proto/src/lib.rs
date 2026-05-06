@@ -14,6 +14,9 @@ pub mod revocations;
 pub mod rollout_manifest;
 pub mod trust;
 
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
 pub use fleet_resolved::{
     Channel, ChannelEdge, Compliance, ComplianceProbes, DisruptionBudget, Edge, FleetResolved,
     HealthGate, Host, Meta, OnHealthFailure, PolicyWave, RolloutPolicy, Selector,

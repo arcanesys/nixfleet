@@ -18,9 +18,8 @@ impl Revocations<'_> {
         reason: Option<&str>,
         revoked_by: Option<&str>,
     ) -> Result<()> {
-        let guard = super::lock_conn(self.conn)?;
-        guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "INSERT INTO cert_revocations(hostname, not_before, reason, revoked_by)
                  VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(hostname) DO UPDATE SET
@@ -31,25 +30,26 @@ impl Revocations<'_> {
                 params![hostname, not_before.to_rfc3339(), reason, revoked_by],
             )
             .context("upsert cert_revocations")?;
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Caller compares against the presented cert's notBefore.
     pub fn cert_revoked_before(&self, hostname: &str) -> Result<Option<DateTime<Utc>>> {
-        let guard = super::lock_conn(self.conn)?;
-        let row: Result<String, _> = guard.query_row(
-            "SELECT not_before FROM cert_revocations WHERE hostname = ?1",
-            params![hostname],
-            |r| r.get(0),
-        );
-        match row {
-            Ok(s) => Ok(Some(
-                s.parse::<DateTime<Utc>>()
-                    .context("parse revocation timestamp")?,
-            )),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+        super::read(self.conn, |c| {
+            match c.query_row(
+                "SELECT not_before FROM cert_revocations WHERE hostname = ?1",
+                params![hostname],
+                |r| r.get::<_, String>(0),
+            ) {
+                Ok(s) => Ok(Some(
+                    s.parse::<DateTime<Utc>>()
+                        .context("parse revocation timestamp")?,
+                )),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(e.into()),
+            }
+        })
     }
 }
 

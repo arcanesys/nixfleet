@@ -8,6 +8,7 @@ use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 
+use super::super::route_error::internal_warn;
 use super::super::state::AppState;
 
 // LOADBEARING: 64-char-hex check blocks path-traversal smuggling (`..`, NUL fail the hex check).
@@ -175,17 +176,14 @@ pub(in crate::server) async fn list_active(
     // about (excludes both superseded and terminal). The gate observed
     // builders use `list_active()` directly so converged predecessors
     // stay visible to channel_edges.
-    let rollouts_meta = db.rollouts().list_in_flight().map_err(|err| {
-        tracing::warn!(error = %err, "list_in_flight rollouts query failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let rollouts_meta = db
+        .rollouts()
+        .list_in_flight()
+        .map_err(internal_warn("list_in_flight rollouts query failed"))?;
     let snap = db
         .host_dispatch_state()
         .active_rollouts_snapshot()
-        .map_err(|err| {
-            tracing::warn!(error = %err, "active_rollouts_snapshot query failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .map_err(internal_warn("active_rollouts_snapshot query failed"))?;
     // host_states keyed by rollout_id; rollouts not in the snapshot get an
     // empty map (no hosts dispatched yet — happens briefly after a CI sign
     // before agents check in).
@@ -231,10 +229,10 @@ pub(in crate::server) async fn lifecycle(
         return Err(StatusCode::BAD_REQUEST);
     }
     let db = state.db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let status = db.rollouts().supersede_status(&rollout_id).map_err(|err| {
-        tracing::warn!(error = %err, rollout = %rollout_id, "lifecycle: supersede_status query failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let status = db
+        .rollouts()
+        .supersede_status(&rollout_id)
+        .map_err(internal_warn("lifecycle: supersede_status query failed"))?;
     let status = status.ok_or(StatusCode::NOT_FOUND)?;
     let body = serde_json::json!({
         "rolloutId": rollout_id,
@@ -268,10 +266,10 @@ pub(in crate::server) async fn trace(
         return Err(StatusCode::BAD_REQUEST);
     }
     let db = state.db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let rows = db.dispatch_history().for_rollout(&rollout_id).map_err(|err| {
-        tracing::warn!(error = %err, rollout = %rollout_id, "trace: dispatch_history.for_rollout failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let rows = db
+        .dispatch_history()
+        .for_rollout(&rollout_id)
+        .map_err(internal_warn("trace: dispatch_history.for_rollout failed"))?;
     if rows.is_empty() {
         return Err(StatusCode::NOT_FOUND);
     }

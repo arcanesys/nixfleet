@@ -17,16 +17,13 @@ pub const LAST_CONFIRM_FILENAME: &str = "last_confirmed_at";
 /// confirm a self-killed mid-switch.
 pub const LAST_DISPATCH_FILENAME: &str = "last_dispatched";
 
-/// Written after a successful confirm — the breadcrumb the agent replays on
-/// every checkin so the CP knows which rollout the host belongs to. Distinct
-/// from `last_dispatched` (cleared on confirm); this one persists so the
-/// resolution-by-replacement logic in the wave-promotion gate and
-/// `outstandingComplianceFailures` filter have something to compare against.
+/// Confirm breadcrumb replayed on every checkin so the wave-promotion gate
+/// + outstandingComplianceFailures filter have something to compare against.
+/// Distinct from `last_dispatched` (cleared on confirm) — this one persists.
 pub const LAST_TARGET_FILENAME: &str = "last_target";
 
-/// Written after every manifest fetch attempt. CP reads it as a circuit
-/// breaker (`Decision::HoldAfterFailure`) so a host stuck on bad bytes
-/// stops getting re-dispatched until a clean fetch shows up.
+/// CP's circuit breaker (`Decision::HoldAfterFailure`): a host stuck on bad
+/// bytes stops being re-dispatched until a clean fetch shows up.
 pub const LAST_FETCH_OUTCOME_FILENAME: &str = "last_fetch_outcome";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -45,9 +42,7 @@ pub struct LastDispatchRecord {
     pub dispatched_at: DateTime<Utc>,
 }
 
-/// Atomic tempfile + rename. Used by every `write_last_*` so a crash mid-write
-/// can never leave a half-written state file. Body is raw bytes — JSON encoding
-/// happens in the typed wrapper.
+/// Atomic tempfile + rename so crash mid-write can't leave half-written state.
 fn write_atomic(state_dir: &Path, filename: &str, body: &[u8]) -> Result<()> {
     std::fs::create_dir_all(state_dir)
         .with_context(|| format!("create state dir {}", state_dir.display()))?;
@@ -122,11 +117,8 @@ pub fn read_last_fetch_outcome(state_dir: &Path) -> Result<Option<FetchOutcome>>
     read_atomic_json(state_dir, LAST_FETCH_OUTCOME_FILENAME)
 }
 
-/// Best-effort delete; absent file is success. Called when the agent
-/// observes it has settled (no pending dispatch + current matches an
-/// expected state) so the file doesn't keep reporting an outcome from
-/// a long-resolved fetch attempt — the dashboard's "verify-failed"
-/// badge would otherwise stick on hosts that have manually recovered.
+/// Best-effort delete on settled-state so the dashboard's "verify-failed"
+/// badge doesn't stick on hosts that have recovered.
 pub fn clear_last_fetch_outcome(state_dir: &Path) -> Result<()> {
     let path = state_dir.join(LAST_FETCH_OUTCOME_FILENAME);
     match std::fs::remove_file(&path) {
@@ -158,26 +150,18 @@ pub fn uptime_secs(started_at: Instant) -> u64 {
     started_at.elapsed().as_secs()
 }
 
-/// Plain-text format (`<closure_hash>\n<rfc3339>\n`) so a corrupt half-write
-/// is trivially readable; not JSON because the consumer is `read_last_confirmed`
-/// which does its own line-parsing + closure/skew checks.
+/// `<closure_hash>\n<rfc3339>\n` plain-text — `read_last_confirmed` does its
+/// own line parsing + closure/skew checks, so JSON would just add ceremony.
 pub fn write_last_confirmed(state_dir: &Path, closure_hash: &str, at: DateTime<Utc>) -> Result<()> {
     let body = format!("{closure_hash}\n{}\n", at.to_rfc3339());
     write_atomic(state_dir, LAST_CONFIRM_FILENAME, body.as_bytes())
 }
 
-/// LOADBEARING: the three persistence steps a successful confirm must do, in
-/// the same order, from BOTH dispatch (`dispatch/confirm.rs`) and boot-recovery
-/// (`recovery.rs`). Splitting them across two call sites previously caused the
-/// boot-recovery path to skip `write_last_target`, which silently broke the
-/// CP's `outstanding-failure` filter and `active-rollouts` panel for every
-/// host that confirmed via the recovery path — without `last_target`'s
-/// rollout_id breadcrumb on each checkin, every event ever recorded would
-/// look "outstanding" forever.
-///
-/// Each step is best-effort — failures are logged but never propagated; the
-/// next checkin re-converges. `clear_last_dispatched` runs last so a partial
-/// crash leaves the dispatch record around for retry.
+/// LOADBEARING: same three persistence steps in the same order from BOTH
+/// dispatch and boot-recovery — without `write_last_target` the CP's
+/// outstanding-failure filter sees every recorded event forever. Each step
+/// is best-effort; `clear_last_dispatched` runs last so a partial crash
+/// leaves the dispatch record around for retry.
 pub fn record_confirm_success(state_dir: &Path, target: &EvaluatedTarget, at: DateTime<Utc>) {
     if let Err(err) = write_last_confirmed(state_dir, &target.closure_hash, at) {
         tracing::warn!(

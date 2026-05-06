@@ -36,9 +36,8 @@ impl DispatchHistory<'_> {
         terminal: TerminalState,
         at: DateTime<Utc>,
     ) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "UPDATE dispatch_history
                  SET terminal_state = ?1, terminal_at = ?2
                  WHERE id = (
@@ -48,15 +47,10 @@ impl DispatchHistory<'_> {
                      ORDER BY dispatched_at DESC, id DESC
                      LIMIT 1
                  )",
-                params![
-                    terminal.as_db_str(),
-                    at.to_rfc3339(),
-                    rollout_id,
-                    hostname,
-                ],
+                params![terminal, at.to_rfc3339(), rollout_id, hostname],
             )
-            .context("mark_terminal_for_rollout_host")?;
-        Ok(n)
+            .context("mark_terminal_for_rollout_host")
+        })
     }
 
     /// Stamp every open row of a converged rollout with `terminal_state = 'converged'`.
@@ -65,48 +59,47 @@ impl DispatchHistory<'_> {
         rollout_id: &str,
         at: DateTime<Utc>,
     ) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "UPDATE dispatch_history
                  SET terminal_state = ?1, terminal_at = ?2
                  WHERE rollout_id = ?3 AND terminal_state IS NULL",
-                params![TerminalState::Converged.as_db_str(), at.to_rfc3339(), rollout_id],
+                params![TerminalState::Converged, at.to_rfc3339(), rollout_id],
             )
-            .context("mark_rollout_converged")?;
-        Ok(n)
+            .context("mark_rollout_converged")
+        })
     }
 
     /// Drop terminal rows older than `max_age_hours`; open rows never pruned.
     pub fn prune_history(&self, max_age_hours: i64) -> Result<usize> {
-        let guard = super::lock_conn(self.conn)?;
-        let n = guard
-            .execute(
+        super::read(self.conn, |c| {
+            c.execute(
                 "DELETE FROM dispatch_history
                  WHERE terminal_state IS NOT NULL
                    AND datetime(terminal_at) < datetime('now', ?1)",
                 params![format!("-{max_age_hours} hours")],
             )
-            .context("prune dispatch_history")?;
-        Ok(n)
+            .context("prune dispatch_history")
+        })
     }
 
     /// Wave-major, dispatched_at-ascending — operator reads top-to-bottom
     /// as the rollout progressed. Used by `/v1/rollouts/{id}/trace`.
     pub fn for_rollout(&self, rollout_id: &str) -> Result<Vec<DispatchHistoryRow>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT id, hostname, rollout_id, channel, wave,
-                    target_closure_hash, target_channel_ref,
-                    dispatched_at, terminal_state, terminal_at
-             FROM dispatch_history
-             WHERE rollout_id = ?1
-             ORDER BY wave ASC, dispatched_at ASC, id ASC",
-        )?;
-        let rows = stmt
-            .query_map(params![rollout_id], row_to_history_row)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT id, hostname, rollout_id, channel, wave,
+                        target_closure_hash, target_channel_ref,
+                        dispatched_at, terminal_state, terminal_at
+                 FROM dispatch_history
+                 WHERE rollout_id = ?1
+                 ORDER BY wave ASC, dispatched_at ASC, id ASC",
+            )?;
+            let rows = stmt
+                .query_map(params![rollout_id], row_to_history_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
     }
 
     /// Newest-first; ordering is part of the contract.
@@ -115,20 +108,21 @@ impl DispatchHistory<'_> {
         hostname: &str,
         limit: usize,
     ) -> Result<Vec<DispatchHistoryRow>> {
-        let guard = super::lock_conn(self.conn)?;
-        let mut stmt = guard.prepare(
-            "SELECT id, hostname, rollout_id, channel, wave,
-                    target_closure_hash, target_channel_ref,
-                    dispatched_at, terminal_state, terminal_at
-             FROM dispatch_history
-             WHERE hostname = ?1
-             ORDER BY dispatched_at DESC, id DESC
-             LIMIT ?2",
-        )?;
-        let rows = stmt
-            .query_map(params![hostname, limit as i64], row_to_history_row)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        super::read(self.conn, |c| {
+            let mut stmt = c.prepare(
+                "SELECT id, hostname, rollout_id, channel, wave,
+                        target_closure_hash, target_channel_ref,
+                        dispatched_at, terminal_state, terminal_at
+                 FROM dispatch_history
+                 WHERE hostname = ?1
+                 ORDER BY dispatched_at DESC, id DESC
+                 LIMIT ?2",
+            )?;
+            let rows = stmt
+                .query_map(params![hostname, limit as i64], row_to_history_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
     }
 }
 

@@ -7,8 +7,8 @@
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
-use super::backend::ActivationBackend;
-use super::outcome::RollbackOutcome;
+use super::types::ActivationBackend;
+use super::types::RollbackOutcome;
 use super::profile::resolve_profile_target;
 use super::verify_poll::{PollOutcome, VerifyPoll};
 
