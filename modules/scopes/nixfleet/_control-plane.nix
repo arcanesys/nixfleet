@@ -577,7 +577,18 @@ in {
           ProtectSystem = "strict";
           ProtectHome = true;
           PrivateTmp = true;
-          PrivateDevices = true;
+          # Bundle C: TPM signing needs /dev/tpmrm0 + abrmd dbus. The
+          # private-/dev namespace would hide the device. Drop the
+          # namespace when TPM is active and harden via DeviceAllow
+          # (cgroup BPF) + SupplementaryGroups instead — same posture
+          # as the gitea-runner's TPM access in the lab CI flow.
+          PrivateDevices = cfg.tpmCaSignWrapper == null;
+          DeviceAllow = lib.optionals (cfg.tpmCaSignWrapper != null) [
+            "/dev/tpmrm0 rw"
+          ];
+          SupplementaryGroups = lib.optionals (cfg.tpmCaSignWrapper != null) [
+            "tss"
+          ];
           ProtectKernelTunables = true;
           ProtectKernelModules = true;
           ProtectControlGroups = true;
