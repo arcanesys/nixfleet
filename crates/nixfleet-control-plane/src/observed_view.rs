@@ -1,40 +1,31 @@
 //! Canonical `Observed` builder for fleet-level gate evaluation.
 //!
 //! Sibling of `state_view` (per-host status view) and `deferrals_view`
-//! (per-channel deferral view). One module per "shared substrate the
-//! CP exposes to multiple consumers". Three callers today:
+//! (per-channel deferral view). Three callers consume it:
 //!
 //!   - `server::checkin_pipeline::dispatch_target` — per-checkin gate
 //!     evaluation (calls `build_for_gates`).
 //!   - `server::reconcile` — per-tick gate evaluation (calls
-//!     `list_active_rollouts_with_placeholders` and feeds the result
-//!     through `observed_projection::project`).
+//!     `list_active_rollouts` and feeds the result through
+//!     `observed_projection::project`).
 //!   - `metrics::record_disruption_budgets` — uses the same Observed
-//!     for `in_flight_count` so the metric and the gate verdict can
+//!     for `in_flight_count` so the metric and the gate verdict
 //!     never disagree.
 //!
-//! LOADBEARING: source `active_rollouts` from `db.rollouts().list_active()`
-//! (the canonical "in-flight" list, filters BOTH superseded_at AND
-//! terminal_at). Then LEFT JOIN host states from
-//! `host_dispatch_state.active_rollouts_snapshot()` for the per-host
-//! observable state. The opposite ordering — building from
-//! host_dispatch_state and excluding superseded — fails for freshly-
-//! opened channels: when channelEdges releases a new rollout, the
-//! rollouts table has the row but no host has been dispatched yet, so
-//! host_dispatch_state has nothing for that rollout. The dispatch path
-//! then sees `input.rollout = None`, the host-edges / budget /
-//! compliance gates short-circuit, and the first checkin on the new
-//! channel bypasses ordering. Reading from list_active first guarantees
-//! the rollout is visible to gates with `host_states = empty`, which
-//! correctly defaults all peers to `Queued` (not terminal-for-ordering).
+//! LOADBEARING source ordering: `db.rollouts().list_active()` first
+//! (filters superseded only; terminal rollouts stay visible so gates
+//! can detect predecessor convergence), then LEFT JOIN host states
+//! from `host_dispatch_state.active_rollouts_snapshot()`. The
+//! opposite ordering — building from host_dispatch_state — drops
+//! freshly-opened rollouts that have no dispatched hosts yet, and
+//! the first checkin on a new channel bypasses host-edges / budget
+//! / compliance because `input.rollout = None` short-circuits.
 //!
-//! `current_rollout_ids` filter still applies — a rollout can be in
-//! flight in the table but not in the *current* fleet snapshot (e.g.,
-//! mid-release race where the table caught up before the verified-
-//! fleet swap). Same filter as `record_rollouts_gated_by_channel_edges`
-//! in the polling layer. Applied by the dispatch caller, not the
-//! reconciler caller (which needs to see non-current rollouts to sweep
-//! them).
+//! `current_rollout_ids` filter applies asymmetrically: dispatch
+//! callers filter (gates only enforce on the active dispatch target),
+//! the reconciler caller does not (it must see non-current in-flight
+//! rollouts so `sweep_terminal_orphans` and ConvergeRollout fire on
+//! stragglers).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -53,9 +44,6 @@ use crate::server::AppState;
 /// freshly-opened rollouts that haven't dispatched yet — peers default Queued,
 /// gates fire correctly). Empty vec on DB read failure (caller's permissive
 /// path: gates no-op rather than hard-blocking).
-///
-/// Pair with `synthesize_polling_race_placeholders` when a verified-fleet
-/// snapshot is available, to close the channelEdges → polling-tick window.
 pub fn list_active_rollouts(db: &Db) -> Vec<RolloutDbSnapshot> {
     let in_flight = match db.rollouts().list_active() {
         Ok(v) => v.into_inner(),
@@ -101,56 +89,6 @@ pub fn list_active_rollouts(db: &Db) -> Vec<RolloutDbSnapshot> {
         .collect()
 }
 
-/// Synthesize empty-host_states placeholders for every current-fleet rollout
-/// not yet in `rollouts`.
-///
-/// Closes the ~30-60s polling-race window between channelEdges releasing
-/// a successor channel and the channel-refs poll recording the new rollout
-/// — see commit 37e8d07. Without it, host_edges / disruption_budget /
-/// compliance_wave silently bypass first-checkin on the just-opened channel.
-///
-/// Idempotent: skipping rollouts already present (whether from list_active or
-/// a prior synthesis pass).
-pub fn synthesize_polling_race_placeholders(
-    rollouts: &mut Vec<RolloutDbSnapshot>,
-    fleet: &FleetResolved,
-    fleet_resolved_hash: &str,
-) {
-    let known_ids: std::collections::HashSet<String> =
-        rollouts.iter().map(|r| r.rollout_id.clone()).collect();
-    for channel_name in fleet.channels.keys() {
-        let computed = match nixfleet_reconciler::compute_rollout_id_for_channel(
-            fleet,
-            fleet_resolved_hash,
-            channel_name,
-        ) {
-            Ok(Some(id)) => id,
-            Ok(None) => continue, // channel has no host with closureHash
-            Err(err) => {
-                tracing::warn!(
-                    channel = %channel_name,
-                    error = %err,
-                    "observed_view: compute_rollout_id_for_channel failed; skipping placeholder",
-                );
-                continue;
-            }
-        };
-        if known_ids.contains(&computed) {
-            continue;
-        }
-        rollouts.push(RolloutDbSnapshot {
-            rollout_id: computed.clone(),
-            channel: channel_name.clone(),
-            target_closure_hash: String::new(),
-            target_channel_ref: computed,
-            host_states: HashMap::new(),
-            last_healthy_since: HashMap::new(),
-            current_wave: 0,
-            terminal_at: None,
-        });
-    }
-}
-
 /// Build the per-checkin / per-scrape `Observed` for fleet-level gate
 /// evaluation.
 ///
@@ -173,40 +111,35 @@ pub async fn build_for_gates(
     let current_rollout_ids: std::collections::HashSet<String> =
         nixfleet_reconciler::current_rollout_ids(fleet, fleet_resolved_hash);
 
-    // Single shared substrate. The helpers do the list_active +
-    // host_dispatch_state LEFT JOIN and the polling-race placeholder
-    // synthesis; the dispatch path then filters to current rollouts
-    // (gates only enforce on the active dispatch target) and converts
-    // each snapshot to a typed `Rollout`.
-    let mut snapshots = list_active_rollouts(db);
-    synthesize_polling_race_placeholders(&mut snapshots, fleet, fleet_resolved_hash);
-    let mut active_rollouts: Vec<Rollout> = snapshots
+    // Filter to current rollouts (gates only enforce on the active
+    // dispatch target) and convert each snapshot to a typed `Rollout`.
+    let mut active_rollouts: Vec<Rollout> = list_active_rollouts(db)
         .into_iter()
-            .filter(|s| current_rollout_ids.contains(&s.rollout_id))
-            .map(|s| Rollout {
-                id: s.rollout_id,
-                channel: s.channel,
-                target_ref: s.target_channel_ref,
-                state: RolloutState::Executing,
-                current_wave: s.current_wave as usize,
-                // Unknown SQL strings drop silently here (gate-side); the
-                // reconciler-side projection logs and falls back to Failed.
-                // Same data, different recovery posture: gates default-
-                // permissive on parse failure, reconciler default-halt.
-                host_states: s
-                    .host_states
-                    .iter()
-                    .filter_map(|(h, st)| {
-                        HostRolloutState::from_db_str(st)
-                            .ok()
-                            .map(|parsed| (h.clone(), parsed))
-                    })
-                    .collect(),
-                last_healthy_since: s.last_healthy_since,
-                budgets: vec![],
-                terminal_at: s.terminal_at,
-            })
-            .collect();
+        .filter(|s| current_rollout_ids.contains(&s.rollout_id))
+        .map(|s| Rollout {
+            id: s.rollout_id,
+            channel: s.channel,
+            target_ref: s.target_channel_ref,
+            state: RolloutState::Executing,
+            current_wave: s.current_wave as usize,
+            // Unknown SQL strings drop silently here (gate-side); the
+            // reconciler-side projection logs and falls back to Failed.
+            // Same data, different recovery posture: gates default-
+            // permissive on parse failure, reconciler default-halt.
+            host_states: s
+                .host_states
+                .iter()
+                .filter_map(|(h, st)| {
+                    HostRolloutState::from_db_str(st)
+                        .ok()
+                        .map(|parsed| (h.clone(), parsed))
+                })
+                .collect(),
+            last_healthy_since: s.last_healthy_since,
+            budgets: vec![],
+            terminal_at: s.terminal_at,
+        })
+        .collect();
 
     if let Some(dir) = rollouts_dir {
         for r in active_rollouts.iter_mut() {

@@ -125,11 +125,12 @@ mod tests {
     /// because tick_count stays at 0/1 instead of rising on each
     /// kick.
     ///
-    /// Without this property, the polling-race window between
-    /// channelEdges releasing and the rollouts table catching up
-    /// re-opens. The placeholder synthesis (commit 37e8d07) defends
-    /// against that race; this test ensures we never *need* the
-    /// defense in the common path.
+    /// The kick is what closes the channelEdges → rollouts-table
+    /// timing gap structurally: when a predecessor goes terminal,
+    /// the reconciler kicks and the new successor rollout gets
+    /// recorded the same tick. Without this wakeup the gap reopens
+    /// on every cadence-period (60 s), and first checkins on a
+    /// freshly-released channel can slip past gates.
     #[tokio::test(start_paused = false)]
     async fn kick_fires_poll_well_before_cadence() {
         let cancel = CancellationToken::new();

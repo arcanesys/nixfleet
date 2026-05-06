@@ -81,30 +81,17 @@ pub(super) fn spawn_reconcile_loop(
             // baked-in artifact path.
             let live_fleet = state.verified_fleet.read().await.clone();
 
-            // Reconciler-side observed: same shared substrate as the
-            // dispatch endpoint via `observed_view::list_active_rollouts`
-            // + `synthesize_polling_race_placeholders` (commit 37e8d07).
-            // Reconciler does NOT filter by `current_rollout_ids` — it
-            // needs to see non-current in-flight rollouts so
-            // `sweep_terminal_orphans` and ConvergeRollout fire on
-            // stragglers. Dispatch path applies the filter inside
-            // `build_for_gates`. When the verified-fleet snapshot isn't
-            // primed yet (first boot, polling hasn't caught up), skip
-            // synthesis — the next tick closes the hole.
-            let rollouts: Vec<crate::db::RolloutDbSnapshot> = match state.db.as_deref() {
-                Some(db) => {
-                    let mut snapshots = crate::observed_view::list_active_rollouts(db);
-                    if let Some(snapshot) = live_fleet.as_ref() {
-                        crate::observed_view::synthesize_polling_race_placeholders(
-                            &mut snapshots,
-                            &snapshot.fleet,
-                            &snapshot.fleet_resolved_hash,
-                        );
-                    }
-                    snapshots
-                }
-                None => Vec::new(),
-            };
+            // Reconciler-side observed: same `observed_view::list_active_rollouts`
+            // substrate as the dispatch endpoint, but unfiltered by
+            // `current_rollout_ids`. The reconciler must see non-current
+            // in-flight rollouts so `sweep_terminal_orphans` and
+            // ConvergeRollout fire on stragglers; dispatch applies the
+            // current-rollout filter inside `build_for_gates`.
+            let rollouts: Vec<crate::db::RolloutDbSnapshot> = state
+                .db
+                .as_deref()
+                .map(crate::observed_view::list_active_rollouts)
+                .unwrap_or_default();
 
             let compliance_failures_by_rollout = match state
                 .db
