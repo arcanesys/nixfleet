@@ -60,6 +60,31 @@
           carry the old key's trust).
         '';
       };
+      successor = lib.mkOption {
+        type = lib.types.nullOr publicKeyType;
+        default = null;
+        description = ''
+          Pre-announced next CI release key (nixfleet#63). Accepted by
+          verifiers during the rotation overlap window (now < `retireAt`).
+          Past `retireAt`, the reconciler emits
+          `Action::RotateTrustRoot`; the operator's tooling rotates
+          `current → previous`, `successor → current` in the next
+          fleet commit.
+
+          Must be set together with `retireAt` (paired-options
+          assertion below). Set both to plan a rotation in advance;
+          remove both after the operator commits the rotation.
+        '';
+      };
+      retireAt = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          RFC 3339 deadline for the planned rotation declared in
+          `successor`. Drives the verifier's overlap-window check
+          AND the reconciler's rotation-due signal.
+        '';
+      };
     };
   };
 
@@ -88,6 +113,24 @@
           regardless of key. Used in compromise response when rolling out
           a new key is not sufficient (pre-compromise artifacts still
           carry the old key's trust).
+        '';
+      };
+      successor = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          Pre-announced next public key (nixfleet#63). Same semantics
+          as `ciReleaseKey.successor` — paired with `retireAt`,
+          accepted during the overlap window, drives
+          `Action::RotateTrustRoot` past the deadline.
+        '';
+      };
+      retireAt = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          RFC 3339 deadline for the planned rotation declared in
+          `successor`.
         '';
       };
     };
@@ -138,20 +181,31 @@ in {
     };
   };
 
-  config.assertions = [
-    {
-      assertion =
-        config.nixfleet.trust.ciReleaseKey.previous
-        == null
-        || config.nixfleet.trust.ciReleaseKey.current != null;
-      message = "nixfleet.trust.ciReleaseKey: cannot set .previous without .current";
-    }
-    {
-      assertion =
-        config.nixfleet.trust.orgRootKey.previous
-        == null
-        || config.nixfleet.trust.orgRootKey.current != null;
-      message = "nixfleet.trust.orgRootKey: cannot set .previous without .current";
-    }
-  ];
+  config.assertions = let
+    pairedSuccessor = slot: name: [
+      {
+        assertion =
+          (slot.successor == null) == (slot.retireAt == null);
+        message = "nixfleet.trust.${name}: `successor` and `retireAt` are paired — set both or neither (nixfleet#63 rotation declarative-pre-announcement)";
+      }
+    ];
+  in
+    [
+      {
+        assertion =
+          config.nixfleet.trust.ciReleaseKey.previous
+          == null
+          || config.nixfleet.trust.ciReleaseKey.current != null;
+        message = "nixfleet.trust.ciReleaseKey: cannot set .previous without .current";
+      }
+      {
+        assertion =
+          config.nixfleet.trust.orgRootKey.previous
+          == null
+          || config.nixfleet.trust.orgRootKey.current != null;
+        message = "nixfleet.trust.orgRootKey: cannot set .previous without .current";
+      }
+    ]
+    ++ (pairedSuccessor config.nixfleet.trust.ciReleaseKey "ciReleaseKey")
+    ++ (pairedSuccessor config.nixfleet.trust.orgRootKey "orgRootKey");
 }

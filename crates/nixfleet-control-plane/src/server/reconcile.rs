@@ -587,7 +587,7 @@ fn run_tick_with_projection(
         Err(e) => return (Err(e), None),
     };
     let (trusted_keys, reject_before) =
-        match crate::polling::signed_fetch::read_trust_roots(&inputs.trust_path) {
+        match crate::polling::signed_fetch::read_trust_roots(&inputs.trust_path, inputs.now) {
             Ok(t) => t,
             Err(e) => return (Err(e), None),
         };
@@ -703,7 +703,7 @@ pub(super) fn verify_fleet_only(inputs: &TickInputs) -> Option<(FleetResolved, V
     let artifact = std::fs::read(&inputs.artifact_path).ok()?;
     let signature = std::fs::read(&inputs.signature_path).ok()?;
     let (trusted_keys, reject_before) =
-        crate::polling::signed_fetch::read_trust_roots(&inputs.trust_path).ok()?;
+        crate::polling::signed_fetch::read_trust_roots(&inputs.trust_path, inputs.now).ok()?;
     let fleet = nixfleet_reconciler::verify_artifact(
         &artifact,
         &signature,

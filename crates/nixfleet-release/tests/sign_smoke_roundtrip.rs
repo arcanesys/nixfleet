@@ -76,6 +76,8 @@ fn end_to_end_sign_then_verify_artifact_accepts() {
             }),
             previous: None,
             reject_before: None,
+            successor: None,
+            retire_at: None,
         },
         cache_keys: vec![],
         org_root_key: None,

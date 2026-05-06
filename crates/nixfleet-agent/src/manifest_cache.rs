@@ -55,13 +55,14 @@ impl ManifestCache {
 
     fn load_trust_roots(
         &self,
+        now: chrono::DateTime<Utc>,
     ) -> Result<(Vec<nixfleet_proto::TrustedPubkey>, Option<chrono::DateTime<Utc>>)> {
         let raw = std::fs::read_to_string(&self.trust_path)
             .with_context(|| format!("read trust file {}", self.trust_path.display()))?;
         let trust: TrustConfig =
             serde_json::from_str(&raw).context("parse trust file")?;
         Ok((
-            trust.ci_release_key.active_keys(),
+            trust.ci_release_key.active_keys_at(now),
             trust.ci_release_key.reject_before,
         ))
     }
@@ -72,11 +73,11 @@ impl ManifestCache {
         signature_bytes: &[u8],
         advertised_rollout_id: &str,
     ) -> Result<RolloutManifest, ManifestError> {
-        let (trusted_keys, reject_before) = self.load_trust_roots().map_err(|err| {
-            ManifestError::VerifyFailed(format!("load trust roots: {err:#}"))
-        })?;
         // 1h window matches channel-refs poll posture.
         let now = Utc::now();
+        let (trusted_keys, reject_before) = self.load_trust_roots(now).map_err(|err| {
+            ManifestError::VerifyFailed(format!("load trust roots: {err:#}"))
+        })?;
         let window = std::time::Duration::from_secs(3600);
         let manifest = nixfleet_reconciler::verify_rollout_manifest(
             manifest_bytes,

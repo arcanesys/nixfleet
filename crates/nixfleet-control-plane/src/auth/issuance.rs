@@ -65,9 +65,16 @@ impl std::fmt::Display for TrustVerifyError {
 /// Loads trust.json fresh on every call so operator key rotations propagate
 /// without restart. ed25519-only — non-ed25519 candidates and base64-decode
 /// failures are logged and skipped, never fatal.
+///
+/// `now` lets the verifier accept the orgRootKey's `successor` during
+/// the rotation overlap window (`now < retire_at`). Without this, a
+/// declared successor would be ignored and operator-side rotation
+/// tooling would have to flip `current → previous` before any token
+/// minted by the new key could verify.
 pub fn verify_bootstrap_token_against_trust(
     trust_path: &Path,
     token: &BootstrapToken,
+    now: DateTime<Utc>,
 ) -> Result<(), TrustVerifyError> {
     let trust_raw =
         std::fs::read_to_string(trust_path).map_err(|source| TrustVerifyError::TrustFileRead {
@@ -80,7 +87,7 @@ pub fn verify_bootstrap_token_against_trust(
         .org_root_key
         .as_ref()
         .ok_or(TrustVerifyError::NoOrgRootKey)?;
-    let candidates = org_root.active_keys();
+    let candidates = org_root.active_keys_at(now);
     if candidates.is_empty() {
         return Err(TrustVerifyError::NoActiveKeys);
     }

@@ -83,7 +83,8 @@ async fn poll_once(
     )
     .await?;
 
-    let (trusted_keys, reject_before) = signed_fetch::read_trust_roots(&config.trust_path)?;
+    let (trusted_keys, reject_before) =
+        signed_fetch::read_trust_roots(&config.trust_path, chrono::Utc::now())?;
 
     nixfleet_reconciler::verify_revocations(
         &artifact_bytes,

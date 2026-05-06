@@ -40,6 +40,13 @@ impl TrustConfig {
 
 /// LOADBEARING: `reject_before` is the compromise kill-switch — artifacts
 /// signed before this timestamp are refused regardless of which key signed.
+///
+/// `successor` + `retire_at` declare a planned rotation in advance:
+/// while `now < retire_at`, signatures from `successor` are accepted
+/// (overlap window). Past `retire_at`, the reconciler emits
+/// `Action::RotateTrustRoot` so the operator's tooling can rotate
+/// `current → previous` and `successor → current` in the next fleet
+/// commit. Closes nixfleet#63.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeySlot {
@@ -51,11 +58,32 @@ pub struct KeySlot {
 
     #[serde(default)]
     pub reject_before: Option<DateTime<Utc>>,
+
+    /// Pre-announced next key. Accepted by verifiers when
+    /// `now < retire_at` (overlap window). Past `retire_at`, the
+    /// reconciler emits `Action::RotateTrustRoot` — the actual
+    /// promotion (`current → previous`, `successor → current`) is an
+    /// out-of-band tooling step in fleet.nix, not an automated CP
+    /// mutation. Paired with `retire_at` — both must be set together
+    /// (Nix-side assertion in contracts/trust.nix).
+    #[serde(default)]
+    pub successor: Option<TrustedPubkey>,
+
+    /// RFC 3339 deadline when the rotation should land. Drives both
+    /// the verifier's overlap-window check (`now < retire_at` →
+    /// successor accepted) and the reconciler's rotation-due signal
+    /// (`now >= retire_at` + `successor.is_some()` → emit
+    /// `Action::RotateTrustRoot`).
+    #[serde(default)]
+    pub retire_at: Option<DateTime<Utc>>,
 }
 
 impl KeySlot {
-    /// LOADBEARING: returns `[current, previous]` (newer first). Verifiers
-    /// iterate first-match-wins; reordering breaks the rotation grace window.
+    /// Time-less view: returns `[current, previous]` (newer first).
+    /// Use this from contexts that don't have a `now` parameter (test
+    /// fixtures, schema-only inspection). Verifiers should call
+    /// [`active_keys_at`] instead so the successor key is accepted
+    /// during the overlap window.
     pub fn active_keys(&self) -> Vec<TrustedPubkey> {
         let mut keys = Vec::with_capacity(2);
         if let Some(k) = &self.current {
@@ -63,6 +91,28 @@ impl KeySlot {
         }
         if let Some(k) = &self.previous {
             keys.push(k.clone());
+        }
+        keys
+    }
+
+    /// LOADBEARING: returns `[current, previous, successor (if
+    /// now < retire_at)]`. Verifiers iterate first-match-wins; the
+    /// order keeps the rotation grace window stable across calls,
+    /// AND lets the successor's signature verify during the overlap
+    /// window without requiring the operator to rotate `current`
+    /// before the deadline.
+    ///
+    /// Outside the overlap (no `retire_at` set, or `now >=
+    /// retire_at`), this is identical to [`active_keys`]. Once the
+    /// reconciler emits `RotateTrustRoot` and the operator updates
+    /// fleet.nix, the next tick sees the post-rotation slot and the
+    /// successor-during-overlap path is no longer needed.
+    pub fn active_keys_at(&self, now: DateTime<Utc>) -> Vec<TrustedPubkey> {
+        let mut keys = self.active_keys();
+        if let (Some(k), Some(retire_at)) = (&self.successor, self.retire_at) {
+            if now < retire_at {
+                keys.push(k.clone());
+            }
         }
         keys
     }

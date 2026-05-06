@@ -46,7 +46,7 @@ pub(in crate::server) async fn enroll(
     // LOADBEARING: re-read trust.json per enroll so operator key rotations propagate without restart.
     // Single source of truth — the daemon's --trust-file arg, plumbed through IssuancePaths.
     let trust_path = state.issuance_paths.read().await.trust_path.clone();
-    crate::auth::issuance::verify_bootstrap_token_against_trust(&trust_path, &req.token).map_err(
+    crate::auth::issuance::verify_bootstrap_token_against_trust(&trust_path, &req.token, now).map_err(
         |err| match err {
             crate::auth::issuance::TrustVerifyError::SignatureMismatch => {
                 tracing::warn!(

@@ -68,7 +68,10 @@ pub fn tick(inputs: &TickInputs) -> anyhow::Result<TickOutput> {
     let trust: TrustConfig = serde_json::from_str(&trust_raw)
         .map_err(|e| anyhow::anyhow!("parse trust {}: {e}", inputs.trust_path.display()))?;
 
-    let trusted_keys = trust.ci_release_key.active_keys();
+    // Time-aware: includes `successor` during the rotation overlap
+    // window (`now < retire_at`). Outside the window, identical to
+    // `active_keys()`.
+    let trusted_keys = trust.ci_release_key.active_keys_at(inputs.now);
     let reject_before = trust.ci_release_key.reject_before;
 
     let verify = match verify_artifact(
@@ -94,7 +97,14 @@ pub fn tick(inputs: &TickInputs) -> anyhow::Result<TickOutput> {
                 anyhow::anyhow!("parse observed {}: {e}", inputs.observed_path.display())
             })?;
 
-            let actions = reconcile(&fleet, &observed, inputs.now);
+            let mut actions = reconcile(&fleet, &observed, inputs.now);
+            // Append RotateTrustRoot informational signals when a slot's
+            // retire_at deadline has passed and a successor is declared.
+            // Pure function, idempotent across ticks until the operator
+            // mutates fleet.nix's trust block.
+            actions.extend(nixfleet_reconciler::check_trust_rotations(
+                &trust, inputs.now,
+            ));
 
             VerifyOutcome::Ok(Box::new(VerifyOk {
                 signed_at,

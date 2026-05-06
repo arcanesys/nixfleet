@@ -325,6 +325,7 @@ mod tests {
                 Action::Skip { .. } => "skip",
                 Action::WaveBlocked { .. } => "wave_blocked",
                 Action::RolloutDeferred { .. } => "rollout_deferred",
+                Action::RotateTrustRoot { .. } => "rotate_trust_root",
             })
             .collect()
     }

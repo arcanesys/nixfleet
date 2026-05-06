@@ -67,4 +67,19 @@ pub enum Action {
         blocked_by: String,
         reason: String,
     },
+    /// Declarative key rotation deadline reached: a trust slot's
+    /// `retire_at` is past `now` and a `successor` is declared, so
+    /// the operator's tooling should rotate `current → previous` and
+    /// `successor → current` in the next fleet commit. Emitted from
+    /// `check_trust_rotations`, NOT from the main reconcile loop —
+    /// the action is informational; trust mutations are out-of-band
+    /// (operator-driven git commits, not CP self-mutation). Once
+    /// the operator updates fleet.nix and CI signs the new release,
+    /// the slot's `successor` field clears and the action stops
+    /// firing on subsequent ticks.
+    RotateTrustRoot {
+        /// Which slot rotated — `"ciReleaseKey"` or `"orgRootKey"`.
+        which: String,
+        retire_at: chrono::DateTime<chrono::Utc>,
+    },
 }

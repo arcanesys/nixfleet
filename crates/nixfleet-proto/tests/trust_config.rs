@@ -65,6 +65,8 @@ fn key_slot_active_keys_returns_both_current_and_previous() {
             public: "BBBB".into(),
         }),
         reject_before: None,
+        successor: None,
+        retire_at: None,
     };
     let keys = slot.active_keys();
     assert_eq!(keys.len(), 2);
@@ -78,8 +80,60 @@ fn key_slot_active_keys_skips_absent() {
         current: None,
         previous: None,
         reject_before: None,
+        successor: None,
+        retire_at: None,
     };
     assert!(slot.active_keys().is_empty());
+}
+
+#[test]
+fn key_slot_active_keys_at_includes_successor_during_overlap() {
+    let now = chrono::Utc::now();
+    let retire_at = now + chrono::Duration::hours(24); // overlap window OPEN
+    let slot = KeySlot {
+        current: Some(TrustedPubkey { algorithm: "ed25519".into(), public: "AAAA".into() }),
+        previous: None,
+        reject_before: None,
+        successor: Some(TrustedPubkey { algorithm: "ed25519".into(), public: "CCCC".into() }),
+        retire_at: Some(retire_at),
+    };
+    let keys = slot.active_keys_at(now);
+    assert_eq!(keys.len(), 2, "current + successor in overlap");
+    assert_eq!(keys[0].public, "AAAA", "current first");
+    assert_eq!(keys[1].public, "CCCC", "successor last");
+}
+
+#[test]
+fn key_slot_active_keys_at_excludes_successor_post_retire() {
+    let now = chrono::Utc::now();
+    let retire_at = now - chrono::Duration::hours(1); // overlap window CLOSED
+    let slot = KeySlot {
+        current: Some(TrustedPubkey { algorithm: "ed25519".into(), public: "AAAA".into() }),
+        previous: None,
+        reject_before: None,
+        successor: Some(TrustedPubkey { algorithm: "ed25519".into(), public: "CCCC".into() }),
+        retire_at: Some(retire_at),
+    };
+    let keys = slot.active_keys_at(now);
+    assert_eq!(keys.len(), 1, "successor must NOT be trusted past retire_at");
+    assert_eq!(keys[0].public, "AAAA");
+}
+
+#[test]
+fn key_slot_active_keys_at_treats_no_retire_at_as_no_overlap() {
+    // Successor declared without retire_at — defensive: don't trust it.
+    // The Nix-side schema asserts paired-options, so this state is
+    // unreachable from the operator path; this test pins runtime
+    // behaviour if a malformed trust.json sneaks in.
+    let slot = KeySlot {
+        current: Some(TrustedPubkey { algorithm: "ed25519".into(), public: "AAAA".into() }),
+        previous: None,
+        reject_before: None,
+        successor: Some(TrustedPubkey { algorithm: "ed25519".into(), public: "CCCC".into() }),
+        retire_at: None,
+    };
+    let keys = slot.active_keys_at(chrono::Utc::now());
+    assert_eq!(keys.len(), 1, "no retire_at → no overlap window → ignore successor");
 }
 
 #[test]

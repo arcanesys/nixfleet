@@ -183,13 +183,14 @@ async fn poll_once(
     )
     .await?;
 
-    let (trusted_keys, reject_before) = signed_fetch::read_trust_roots(&config.trust_path)?;
+    let now = chrono::Utc::now();
+    let (trusted_keys, reject_before) = signed_fetch::read_trust_roots(&config.trust_path, now)?;
 
     let fleet_resolved = nixfleet_reconciler::verify_artifact(
         &artifact_bytes,
         &signature_bytes,
         &trusted_keys,
-        chrono::Utc::now(),
+        now,
         config.freshness_window,
         reject_before,
     )

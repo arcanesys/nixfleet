@@ -9,9 +9,11 @@ pub mod manifest;
 pub mod observed;
 pub mod reconcile;
 pub mod rollout_state;
+pub mod trust_rotation;
 pub mod verify;
 
 pub use action::Action;
+pub use trust_rotation::check_trust_rotations;
 pub use host_state::HostRolloutState;
 pub use nixfleet_proto::FleetResolved;
 pub use observed::{HostState, Observed, Rollout};

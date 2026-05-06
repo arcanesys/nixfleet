@@ -135,7 +135,7 @@ fn run_rollout_manifest(
     let manifest = match verify_rollout_manifest(
         &manifest_bytes,
         &signature_bytes,
-        &trust.ci_release_key.active_keys(),
+        &trust.ci_release_key.active_keys_at(now),
         now,
         Duration::from_secs(freshness_window_secs),
         trust.ci_release_key.reject_before,
@@ -211,7 +211,7 @@ fn run_artifact(
     match verify_artifact(
         &artifact_bytes,
         &signature_bytes,
-        &trust.ci_release_key.active_keys(),
+        &trust.ci_release_key.active_keys_at(now),
         now,
         Duration::from_secs(freshness_window_secs),
         trust.ci_release_key.reject_before,
