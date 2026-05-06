@@ -97,11 +97,15 @@ rand = "0.8"
 # router so it shares mTLS with /v1/hosts. `default-features = false`
 # drops the bundled HTTP listener (we don't need a second server).
 metrics = "0.24"
-metrics-exporter-prometheus = { version = "0.16", default-features = false }
+# 0.16's idle_timeout did not actually evict gauges in real-time — the
+# only effective recency path landed in 0.18 (paired with metrics-util
+# 0.20). Confirmed via reproducer: with 0.16+0.19, untouched gauge series
+# stick around indefinitely; with 0.18+0.20, they drop after the timeout.
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 # `MetricKindMask` for `idle_timeout(...)` — drops gauge series that
 # haven't been updated within the timeout, eliminating stale state/
 # closure/rollout series that linger after a host transitions.
-metrics-util = "0.19"
+metrics-util = "0.20"
 
 [dev-dependencies]
 tempfile = "3"
