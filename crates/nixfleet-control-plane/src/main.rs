@@ -155,7 +155,12 @@ fn install_crypto_provider() {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // `with_ansi(false)` — stdout under systemd is not a tty, but
+    // tracing-subscriber emits ANSI by default. ANSI codes confuse
+    // log shippers (Vector → Loki) downstream of journald and force
+    // every consumer to `decolorize` on read. Strip at the source.
     tracing_subscriber::fmt()
+        .with_ansi(false)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
