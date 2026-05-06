@@ -12,6 +12,7 @@ doesn't match the host's declared `nixfleet.fleetSchema.hosts.<hostname>.pubkey`
 | Agent enrollment CSR | rcgen-generated fresh ed25519 keypair | OpenSSH host key, decoded → PKCS#8 PEM → `KeyPair::from_pem` |
 | Agent renewal CSR | Fresh keypair every 30 days | Same SSH host key — pubkey unchanged across renewals |
 | `--client-key` flag | Pointed at agenix-deployed `agents/<host>-key.age` | Defaults to `/etc/ssh/ssh_host_ed25519_key`; agenix path no longer needed |
+| `--client-cert` flag | Pointed at agenix-deployed `agents/<host>-cert.age` (tmpfs) | Defaults to `/var/lib/nixfleet/agent-cert.pem` — writable + persistent under `nixfleet.persistence.directories` |
 | CP `/v1/enroll` | Validated bootstrap token + nonce + CN/fingerprint | Above PLUS: CSR pubkey must equal `hosts.<hostname>.pubkey` from verified fleet snapshot |
 | CP `/v1/agent/renew` | Validated mTLS, signed cert | Above PLUS: same fleet-pubkey binding check |
 | Soak attestation (`last_confirmed_at`) | Trusted on its face | Signed by SSH host key; CP verifies before applying. Unsigned attestations silently ignored. |

@@ -61,9 +61,22 @@
 
       clientCert = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
-        default = null;
-        example = "/run/secrets/agent-cert.pem";
-        description = "Path to client certificate PEM file for mTLS authentication.";
+        default = "/var/lib/nixfleet/agent-cert.pem";
+        example = "/var/lib/nixfleet/agent-cert.pem";
+        description = ''
+          Path to the client certificate PEM file for mTLS
+          authentication. Defaults to `/var/lib/nixfleet/agent-cert.pem`
+          — a writable, persistent location under the agent's
+          stateDir (already in `nixfleet.persistence.directories`).
+
+          Post-RFC-0003-§2 (closed nixfleet#43): the cert is ISSUED
+          by `/v1/enroll` and WRITTEN by the agent. It is not
+          operator-deployed, so the path must be writable + survive
+          reboots. tmpfs paths (e.g. `/run/agenix/...`) break the
+          agent's enrollment loop because the bootstrap token is
+          one-shot — losing the cert on reboot means the agent can't
+          re-enroll on its own.
+        '';
       };
 
       clientKey = lib.mkOption {
