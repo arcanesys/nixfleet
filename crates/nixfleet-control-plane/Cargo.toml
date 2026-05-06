@@ -103,6 +103,14 @@ rand = "0.8"
 # (`auth::issuance::TpmCaSigner`); cleaned on drop so the message
 # isn't left readable on disk after issuance.
 tempfile = "3"
+# Prometheus counters for alerting — `/metrics` endpoint scraped by
+# the lab Prometheus job. Counters-only (no state-as-label gauges);
+# see `src/metrics.rs`. 0.18 + metrics-util 0.20 are the only
+# combination where idle_timeout works against a real-time clock,
+# verified by reproducer; we don't currently use idle_timeout but
+# the version pinning prevents accidental downgrade.
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 
 [dev-dependencies]
 # `tokio::time::pause` + `start_paused` are gated on test-util; the

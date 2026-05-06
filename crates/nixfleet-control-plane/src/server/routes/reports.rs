@@ -33,6 +33,17 @@ pub(in crate::server) async fn report(
     let event_str = req.event.discriminator();
     let rollout_str = req.rollout.clone().unwrap_or_else(|| "<none>".to_string());
 
+    // Bump per-event counters before any further work. Bounded label set:
+    // control_id is from the closed compliance crate; runtime_gate_error
+    // is unlabeled. Counters drive Alertmanager rules — `rate()` queries
+    // are cheaper than LogQL `count_over_time()` on the same data.
+    use nixfleet_proto::agent_wire::ReportEvent;
+    if let ReportEvent::ComplianceFailure { control_id, .. } = &req.event {
+        crate::metrics::record_compliance_event(control_id, &req.hostname);
+    } else if matches!(req.event, ReportEvent::RuntimeGateError { .. }) {
+        crate::metrics::record_runtime_gate_error();
+    }
+
     // Best-effort: we always store the record (mTLS already authenticated); verdict shapes gating.
     let signature_status = compute_signature_status(&state, &req).await;
 

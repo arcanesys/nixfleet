@@ -147,14 +147,28 @@ async fn apply_verified_refs(
         .await;
     }
 
-    tracing::info!(
-        count = refs.len(),
-        changed = changed,
-        signed_at = ?new_signed_at,
-        ci_commit = ?new_ci_commit,
-        active_rollouts_recorded = channel_rollouts.len(),
-        "channel-refs poll: verified-fleet snapshot refreshed",
-    );
+    // INFO only when the artifact actually changed (new CI release or a
+    // signed_at advance). DEBUG for the no-op cycles — every minute would
+    // otherwise drown the dashboard's "Channel-refs poll" panel in
+    // identical "no change" lines. Operators wanting raw cadence still get
+    // it via DEBUG.
+    if changed {
+        tracing::info!(
+            target: "channel_refs_poll",
+            count = refs.len(),
+            changed = changed,
+            signed_at = ?new_signed_at,
+            ci_commit = ?new_ci_commit,
+            active_rollouts_recorded = channel_rollouts.len(),
+            "channel-refs poll: verified-fleet snapshot refreshed",
+        );
+    } else {
+        tracing::debug!(
+            target: "channel_refs_poll",
+            count = refs.len(),
+            "channel-refs poll: no change",
+        );
+    }
 }
 
 /// One-shot fetch+verify at boot; without it dispatch uses the stale build-time artifact.
