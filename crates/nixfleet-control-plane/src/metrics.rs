@@ -388,7 +388,9 @@ async fn record_rollout_overview(
             .map(|m| m.compliance_frameworks.join(", "))
             .unwrap_or_default();
 
+        let rollout_row_key = format!("rollout:{}:", short_id(Some(&r.rollout_id)));
         let rollout_labels = [
+            ("row_key", rollout_row_key),
             ("kind", "rollout".to_string()),
             ("rollout_id", short_id(Some(&r.rollout_id))),
             ("channel", r.channel.clone()),
@@ -474,7 +476,9 @@ async fn record_rollout_overview(
                 0.0
             };
             let remaining = (window - elapsed).max(0);
+            let host_row_key = format!("host:{}:{}", short_id(Some(&r.rollout_id)), host);
             let host_labels = [
+                ("row_key", host_row_key),
                 ("kind", "host".to_string()),
                 ("rollout_id", short_id(Some(&r.rollout_id))),
                 ("channel", r.channel.clone()),
