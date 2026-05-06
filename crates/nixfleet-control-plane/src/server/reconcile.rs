@@ -554,7 +554,18 @@ fn run_tick_with_projection(
             last_deferrals,
             rollout_budgets,
         );
-        let actions = nixfleet_reconciler::reconcile(&fleet, &observed, inputs.now);
+        let mut actions = nixfleet_reconciler::reconcile(&fleet, &observed, inputs.now);
+        // Append RotateTrustRoot informational signals when a slot's
+        // retire_at deadline has passed and a successor is declared.
+        // Mirrors lib.rs::tick(); idempotent across ticks until the
+        // operator commits the rotation in fleet.nix.
+        if let Ok(trust) =
+            crate::polling::signed_fetch::read_trust_config(&inputs.trust_path)
+        {
+            actions.extend(nixfleet_reconciler::check_trust_rotations(
+                &trust, inputs.now,
+            ));
+        }
         // Snapshot already verified — no fresh bytes; caller's None case
         // preserves the live snapshot's existing fleet_resolved_hash.
         return (
@@ -586,11 +597,12 @@ fn run_tick_with_projection(
         Ok(b) => b,
         Err(e) => return (Err(e), None),
     };
-    let (trusted_keys, reject_before) =
-        match crate::polling::signed_fetch::read_trust_roots(&inputs.trust_path, inputs.now) {
-            Ok(t) => t,
-            Err(e) => return (Err(e), None),
-        };
+    let trust = match crate::polling::signed_fetch::read_trust_config(&inputs.trust_path) {
+        Ok(t) => t,
+        Err(e) => return (Err(e), None),
+    };
+    let trusted_keys = trust.ci_release_key.active_keys_at(inputs.now);
+    let reject_before = trust.ci_release_key.reject_before;
 
     let (verify, fleet) = match nixfleet_reconciler::verify_artifact(
         &artifact,
@@ -621,7 +633,10 @@ fn run_tick_with_projection(
                 last_deferrals.clone(),
             rollout_budgets,
         );
-            let actions = nixfleet_reconciler::reconcile(&fleet, &observed, inputs.now);
+            let mut actions = nixfleet_reconciler::reconcile(&fleet, &observed, inputs.now);
+            actions.extend(nixfleet_reconciler::check_trust_rotations(
+                &trust, inputs.now,
+            ));
             (
                 crate::VerifyOutcome::Ok(Box::new(crate::VerifyOk {
                     signed_at,

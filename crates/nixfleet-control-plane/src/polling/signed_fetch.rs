@@ -17,16 +17,20 @@ pub fn build_client() -> reqwest::Client {
 }
 
 /// Re-read each call so trust.json rotation propagates without restart.
+pub fn read_trust_config(path: &Path) -> Result<nixfleet_proto::TrustConfig> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read trust file {}", path.display()))?;
+    serde_json::from_str(&raw).context("parse trust file")
+}
+
+/// Re-read each call so trust.json rotation propagates without restart.
 /// `now` lets the verifier accept successor keys during the rotation
 /// overlap window (`now < retire_at`).
 pub fn read_trust_roots(
     path: &Path,
     now: DateTime<Utc>,
 ) -> Result<(Vec<TrustedPubkey>, Option<DateTime<Utc>>)> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read trust file {}", path.display()))?;
-    let trust: nixfleet_proto::TrustConfig =
-        serde_json::from_str(&raw).context("parse trust file")?;
+    let trust = read_trust_config(path)?;
     Ok((
         trust.ci_release_key.active_keys_at(now),
         trust.ci_release_key.reject_before,
