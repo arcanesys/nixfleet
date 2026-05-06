@@ -178,9 +178,10 @@ mod tests {
             target_closure_hash: "system-r1".to_string(),
             target_channel_ref: "stable@deadbeef".to_string(),
             host_states,
+            host_waves: HashMap::new(),
             last_healthy_since: HashMap::new(),
             current_wave: 0,
-        terminal_at: None,
+            terminal_at: None,
         };
         let observed = project(
             &HashMap::new(),
@@ -206,9 +207,10 @@ mod tests {
             target_closure_hash: "system-r1".to_string(),
             target_channel_ref: "stable@deadbeef".to_string(),
             host_states,
+            host_waves: HashMap::new(),
             last_healthy_since: HashMap::new(),
             current_wave: 0,
-        terminal_at: None,
+            terminal_at: None,
         };
         let observed = project(
             &HashMap::new(),
@@ -239,9 +241,10 @@ mod tests {
             target_closure_hash: "system-r1".to_string(),
             target_channel_ref: "stable@abc12345".to_string(),
             host_states,
+            host_waves: HashMap::new(),
             last_healthy_since: last_healthy,
             current_wave: 0,
-        terminal_at: None,
+            terminal_at: None,
         };
         let observed = project(
             &HashMap::new(),

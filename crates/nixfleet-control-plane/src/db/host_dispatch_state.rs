@@ -70,6 +70,11 @@ pub struct RolloutDbSnapshot {
     pub target_channel_ref: String,
     /// `host_rollout_state` wins when present; otherwise derived from operational state.
     pub host_states: HashMap<String, String>,
+    /// `hds.wave` per host — the wave the host was dispatched into. Stays
+    /// constant once dispatched; distinct from rollout-level `current_wave`
+    /// which advances as PromoteWave fires. Read by the dashboard's
+    /// per-host detail rows.
+    pub host_waves: HashMap<String, u32>,
     /// Excludes hosts not currently Healthy.
     pub last_healthy_since: HashMap<String, DateTime<Utc>>,
     /// Persisted wave index from the rollouts table; advanced by `apply_actions`
@@ -321,7 +326,7 @@ impl HostDispatchState<'_> {
         let mut stmt = guard.prepare(
             "SELECT hds.rollout_id, hds.channel, hds.hostname,
                     hds.target_closure_hash, hds.target_channel_ref,
-                    hds.state,
+                    hds.state, hds.wave,
                     hrs.host_state, hrs.last_healthy_since,
                     COALESCE(r.current_wave, 0) AS current_wave
              FROM host_dispatch_state hds
@@ -347,9 +352,10 @@ impl HostDispatchState<'_> {
                         row.get::<_, String>(3)?,
                         row.get::<_, String>(4)?,
                         row.get::<_, String>(5)?,
-                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, i64>(6)?,
                         row.get::<_, Option<String>>(7)?,
-                        row.get::<_, i64>(8)?,
+                        row.get::<_, Option<String>>(8)?,
+                        row.get::<_, i64>(9)?,
                     ))
                 },
             )?
@@ -363,6 +369,7 @@ impl HostDispatchState<'_> {
             target_closure,
             target_ref,
             op_state,
+            host_wave,
             hrs_state,
             hrs_ts,
             current_wave,
@@ -393,6 +400,7 @@ impl HostDispatchState<'_> {
                     target_closure_hash: target_closure.clone(),
                     target_channel_ref: target_ref.clone(),
                     host_states: HashMap::new(),
+                    host_waves: HashMap::new(),
                     last_healthy_since: HashMap::new(),
                     current_wave: current_wave as u32,
                     // active_rollouts_snapshot is keyed off host_dispatch_state;
@@ -402,6 +410,7 @@ impl HostDispatchState<'_> {
                     terminal_at: None,
                 });
             entry.host_states.insert(hostname.clone(), host_state);
+            entry.host_waves.insert(hostname.clone(), host_wave as u32);
             if let Some(ts) = hrs_ts {
                 let parsed = ts
                     .parse::<DateTime<Utc>>()

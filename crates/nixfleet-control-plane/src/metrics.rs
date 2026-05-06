@@ -1,6 +1,6 @@
 //! Prometheus metrics surface — minimum needed for the operator dashboard.
 //!
-//! Three info gauges drive the bulk of the dashboard:
+//! Five info gauges drive the bulk of the dashboard:
 //!   - `nixfleet_host_info{host, channel, state, convergence,
 //!                         current_closure, declared_closure, rollout_id}=1`
 //!     One series per declared host. Labels carry the operator-visible state
@@ -9,10 +9,23 @@
 //!     Cardinality bound: O(hosts) — each host has exactly one active series;
 //!     stale series age out via Prometheus staleness when any label changes.
 //!
-//!   - `nixfleet_active_rollout_info{rollout_id, channel,
-//!                                   target_ref, current_wave}=1`
+//!   - `nixfleet_active_rollout_age_seconds{rollout_id, channel,
+//!                                          target_ref, current_wave}`
 //!     One series per in-flight rollout (excludes superseded + terminal).
 //!     Cardinality bound: O(active rollouts) — small per channel.
+//!
+//!   - `nixfleet_rollout_host_state{rollout_id, channel, host, wave,
+//!                                  state, target_closure}=1`
+//!     One row per (in-flight rollout × dispatched host) — the per-rollout
+//!     detail rows under each rollout summary in the dashboard. Cardinality
+//!     bound: O(active rollouts × hosts in those rollouts).
+//!
+//!   - `nixfleet_channel_status{channel, status, rollout_id, target_ref,
+//!                              blocked_by, reason}=1`
+//!     One row per declared channel. `status="active"` for channels with
+//!     an in-flight rollout (then `rollout_id` carries it); `status="deferred"`
+//!     when held by a fleet-level gate (then `blocked_by` + `reason` carry
+//!     the operator-visible explanation). Cardinality bound: O(channels).
 //!
 //!   - `nixfleet_fleet_meta_info{ci_commit, signed_at, signature_algorithm,
 //!                               schema_version}=1`
@@ -149,6 +162,8 @@ pub async fn record_fleet_metrics(state: &AppState) -> Result<(), StateViewError
 
     record_fleet_meta_info(&snapshot.fleet);
     record_active_rollouts_info(state, now).await;
+    record_rollout_host_state(state).await;
+    record_channel_status(state, &snapshot.fleet).await;
 
     Ok(())
 }
@@ -277,6 +292,126 @@ async fn record_active_rollouts_info(state: &AppState, now: chrono::DateTime<Utc
             "current_wave" => r.current_wave.to_string(),
         )
         .set(age as f64);
+    }
+}
+
+/// Per-(in-flight rollout, dispatched host) info gauge. Drives the
+/// dashboard's per-rollout host-detail rows (one row per host under
+/// each rollout's summary line). Reads
+/// `db.host_dispatch_state().active_rollouts_snapshot()`, the same
+/// source `/v1/rollouts.hostStates` returns — one truth, two surfaces.
+///
+/// `wave` is the dispatch wave from `host_dispatch_state.wave` (frozen
+/// at dispatch time) — distinct from rollout-level `current_wave` which
+/// advances on `Action::PromoteWave`.
+///
+/// `state` is the parsed `HostRolloutState` (Queued, ConfirmWindow,
+/// Healthy, Soaked, Converged, Failed, Reverted) — the same value the
+/// info gauge `nixfleet_host_info.state` carries when the host is in
+/// the channel's current rollout.
+async fn record_rollout_host_state(state: &AppState) {
+    let Some(db) = state.db.as_deref() else {
+        return;
+    };
+    let snap = match db.host_dispatch_state().active_rollouts_snapshot() {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::warn!(error = %err, "metrics: rollout_host_state snapshot failed");
+            return;
+        }
+    };
+    for r in &snap {
+        for (host, host_state) in &r.host_states {
+            let wave = r.host_waves.get(host).copied().unwrap_or(r.current_wave);
+            gauge!(
+                "nixfleet_rollout_host_state",
+                "rollout_id" => short_id(Some(&r.rollout_id)),
+                "channel" => r.channel.clone(),
+                "host" => host.clone(),
+                "wave" => wave.to_string(),
+                "state" => host_state.clone(),
+                "target_closure" => short_id(Some(&r.target_closure_hash)),
+            )
+            .set(1.0);
+        }
+    }
+}
+
+/// Per-channel info gauge merging "running a rollout" and "deferred by
+/// a fleet-level gate" into one row per channel. Drives the dashboard's
+/// channel-status table; one source of truth for both `/v1/rollouts`
+/// (active) and `/v1/deferrals` (deferred) operator surfaces.
+///
+/// `status="active"`: channel has an in-flight rollout; `rollout_id` +
+/// `target_ref` carry it; `blocked_by` + `reason` are empty.
+/// `status="deferred"`: channel is held by `channel_edges`; `blocked_by`
+/// + `reason` carry the predecessor + operator-visible explanation;
+/// `rollout_id` is empty.
+/// `status="idle"`: declared channel with no active rollout and no
+/// deferral — the steady-state of a converged channel.
+async fn record_channel_status(state: &AppState, fleet: &nixfleet_proto::FleetResolved) {
+    let Some(db) = state.db.as_deref() else {
+        return;
+    };
+    let in_flight = match db.rollouts().list_in_flight() {
+        Ok(rs) => rs,
+        Err(err) => {
+            tracing::warn!(error = %err, "metrics: channel_status list_in_flight failed");
+            return;
+        }
+    };
+    let mut active_by_channel: std::collections::HashMap<String, &crate::db::rollouts::ActiveRollout> =
+        std::collections::HashMap::new();
+    for r in in_flight.iter() {
+        active_by_channel.insert(r.channel.clone(), r);
+    }
+    let deferrals = crate::deferrals_view::compute_channel_deferrals(state).await;
+    let deferred_by_channel: std::collections::HashMap<String, &crate::deferrals_view::ChannelDeferral> =
+        deferrals.iter().map(|d| (d.channel.clone(), d)).collect();
+
+    for channel_name in fleet.channels.keys() {
+        if let Some(r) = active_by_channel.get(channel_name) {
+            let target_ref = match db.host_dispatch_state().active_rollouts_snapshot() {
+                Ok(v) => v
+                    .iter()
+                    .find(|s| s.rollout_id == r.rollout_id)
+                    .map(|s| s.target_channel_ref.clone())
+                    .unwrap_or_default(),
+                Err(_) => String::new(),
+            };
+            gauge!(
+                "nixfleet_channel_status",
+                "channel" => channel_name.clone(),
+                "status" => "active".to_string(),
+                "rollout_id" => short_id(Some(&r.rollout_id)),
+                "target_ref" => short_id(Some(&target_ref)),
+                "blocked_by" => String::new(),
+                "reason" => String::new(),
+            )
+            .set(1.0);
+        } else if let Some(d) = deferred_by_channel.get(channel_name) {
+            gauge!(
+                "nixfleet_channel_status",
+                "channel" => channel_name.clone(),
+                "status" => "deferred".to_string(),
+                "rollout_id" => String::new(),
+                "target_ref" => short_id(Some(&d.target_ref)),
+                "blocked_by" => d.blocked_by.clone(),
+                "reason" => d.reason.clone(),
+            )
+            .set(1.0);
+        } else {
+            gauge!(
+                "nixfleet_channel_status",
+                "channel" => channel_name.clone(),
+                "status" => "idle".to_string(),
+                "rollout_id" => String::new(),
+                "target_ref" => String::new(),
+                "blocked_by" => String::new(),
+                "reason" => String::new(),
+            )
+            .set(1.0);
+        }
     }
 }
 
