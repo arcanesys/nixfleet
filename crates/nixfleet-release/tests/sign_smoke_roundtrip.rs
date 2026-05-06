@@ -81,6 +81,8 @@ fn end_to_end_sign_then_verify_artifact_accepts() {
         },
         cache_keys: vec![],
         org_root_key: None,
+        root_ca_pem: None,
+        issuance_ca_pems: vec![],
     };
     let trusted_keys = trust.ci_release_key.active_keys();
     let parsed = nixfleet_reconciler::verify_artifact(

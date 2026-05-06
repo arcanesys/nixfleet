@@ -88,6 +88,8 @@ mod tests {
             ci_release_key: ci,
             cache_keys: vec![],
             org_root_key: org,
+            root_ca_pem: None,
+            issuance_ca_pems: vec![],
         }
     }
 

@@ -169,6 +169,7 @@ pub(in crate::server) async fn enroll(
         signer.as_ref(),
         crate::auth::issuance::AGENT_CERT_VALIDITY,
         now,
+        &state.agent_cn_suffix,
     )
     .map_err(|err| {
         tracing::error!(error = %err, "enroll: issue_cert failed");
@@ -237,8 +238,11 @@ pub(in crate::server) async fn renew(
             tracing::warn!("renew: no verified fleet snapshot — refusing");
             StatusCode::SERVICE_UNAVAILABLE
         })?;
-    let host_decl = snap.fleet.hosts.get(&cn).ok_or_else(|| {
-        tracing::warn!(host = %cn, "renew: host not declared in fleet.nix");
+    // Verified mTLS CN may be canonical (`agent-<id>.<suffix>`, post-C.3)
+    // or bare machineId (legacy). Strip to bare for the fleet.hosts lookup.
+    let machine_id = crate::auth::issuance::extract_machine_id(&cn, &state.agent_cn_suffix);
+    let host_decl = snap.fleet.hosts.get(&machine_id).ok_or_else(|| {
+        tracing::warn!(host = %cn, machine_id, "renew: host not declared in fleet.nix");
         StatusCode::UNAUTHORIZED
     })?;
     if let Err(err) = crate::auth::issuance::validate_csr_against_fleet_host(
@@ -260,6 +264,7 @@ pub(in crate::server) async fn renew(
         signer.as_ref(),
         crate::auth::issuance::AGENT_CERT_VALIDITY,
         now,
+        &state.agent_cn_suffix,
     )
     .map_err(|err| {
         tracing::error!(error = %err, "renew: issue_cert failed");

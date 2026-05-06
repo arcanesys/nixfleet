@@ -105,6 +105,16 @@ struct ServeFlags {
     #[arg(long, env = "NIXFLEET_CP_TPM_CA_SIGN_WRAPPER")]
     tpm_ca_sign_wrapper: Option<PathBuf>,
 
+    /// FQDN suffix used to canonicalise agent cert CNs to
+    /// `agent-<machineId>.<suffix>` (D14: must match the issuance CA
+    /// cert's `dNSName` name constraint).
+    #[arg(
+        long,
+        default_value = "fleet.lab.internal",
+        env = "NIXFLEET_CP_AGENT_CN_SUFFIX"
+    )]
+    agent_cn_suffix: String,
+
     /// JSON-lines per issuance; best-effort writes.
     #[arg(
         long,
@@ -282,6 +292,7 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
         fleet_ca_key: flags.fleet_ca_key,
         tpm_ca_pubkey_raw: flags.tpm_ca_pubkey_raw,
         tpm_ca_sign_wrapper: flags.tpm_ca_sign_wrapper,
+        agent_cn_suffix: flags.agent_cn_suffix,
         audit_log_path: Some(flags.audit_log),
         artifact_path: flags.artifact,
         signature_path: flags.signature,

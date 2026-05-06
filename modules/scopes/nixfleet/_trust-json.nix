@@ -22,4 +22,9 @@ in {
     successor = wrapEd25519 trust.orgRootKey.successor;
     retireAt = trust.orgRootKey.retireAt;
   };
+  # Bundle C / nixfleet#41: cert chain emitted only when configured.
+  # Pre-bootstrap deployments emit `null` / empty list — proto
+  # `#[serde(default)]` parses both shapes seamlessly.
+  rootCAPem = trust.rootCAPem;
+  issuanceCAPems = trust.issuanceCAPems;
 }

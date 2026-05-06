@@ -142,6 +142,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         rollouts_dir: args.rollouts_dir.clone(),
         rollouts_source: args.rollouts_source.clone(),
         strict: args.strict,
+        agent_cn_suffix: args.agent_cn_suffix.clone(),
         ..Default::default()
     };
     let state = Arc::new(app_state);

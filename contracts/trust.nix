@@ -179,6 +179,33 @@ in {
         §II #3.
       '';
     };
+
+    rootCAPem = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        PEM-encoded fleet root CA certificate (Bundle C / nixfleet#41).
+        Offline-signed on the operator workstation (file or Yubikey per
+        D12); embedded in trust.json so verifiers can anchor cert
+        chains at a key the CP never holds at rest. `null` until the
+        operator runs `nixfleet-cp-bootstrap`; pre-bootstrap
+        deployments use the legacy single-tier `fleet-ca.pem` instead.
+      '';
+    };
+
+    issuanceCAPems = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = ''
+        PEM-encoded issuance CA chain (Bundle C / nixfleet#41). Each
+        entry is signed by `rootCAPem` and represents an issuance CA
+        the fleet currently trusts to mint agent certs. Multiple
+        entries during a rotation overlap window — agents accept any
+        cert chain anchored at one of these intermediates. The
+        TPM-bound issuance CA on the CP host appears here once it's
+        bootstrapped.
+      '';
+    };
   };
 
   config.assertions = let

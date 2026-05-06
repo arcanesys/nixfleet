@@ -32,6 +32,24 @@ pub struct TrustConfig {
 
     #[serde(default)]
     pub org_root_key: Option<KeySlot>,
+
+    /// PEM-encoded fleet root CA cert (Bundle C / #41). Offline-signed
+    /// (operator workstation, file or Yubikey per D12) and embedded in
+    /// trust.json so verifiers can anchor cert chains at a key the CP
+    /// never holds at rest. `None` until the operator runs
+    /// `nixfleet-cp-bootstrap`; pre-bootstrap deployments use the
+    /// legacy single-tier `fleet-ca.pem` instead.
+    #[serde(default)]
+    pub root_ca_pem: Option<String>,
+
+    /// PEM-encoded issuance CA chain (Bundle C / #41). Each entry is
+    /// signed by `root_ca_pem` and represents an issuance CA the
+    /// fleet currently trusts to mint agent certs. Multiple entries
+    /// during a rotation overlap window — agents accept any cert
+    /// chain anchored at one of these intermediates. The TPM-bound
+    /// issuance CA on the CP host appears here once it's bootstrapped.
+    #[serde(default)]
+    pub issuance_ca_pems: Vec<String>,
 }
 
 impl TrustConfig {

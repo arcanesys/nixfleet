@@ -16,6 +16,35 @@ use sha2::{Digest, Sha256};
 /// 30 days; agents self-pace renewal at 50% via `/v1/agent/renew`.
 pub const AGENT_CERT_VALIDITY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
+/// Default agent CN FQDN suffix. Issued cert CNs are canonicalised to
+/// `agent-<machineId>.<suffix>` so they fall under the issuance CA's
+/// `dNSName` name constraint (D14: `*.fleet.lab.internal` + EKU
+/// clientAuth). Operator-overridable via `--agent-cn-suffix`.
+pub const DEFAULT_AGENT_CN_SUFFIX: &str = "fleet.lab.internal";
+
+/// Build the canonical CN for an agent cert: `agent-<machineId>.<suffix>`.
+pub fn canonical_agent_cn(machine_id: &str, suffix: &str) -> String {
+    format!("agent-{machine_id}.{suffix}")
+}
+
+/// Extract the bare machine_id from an agent cert CN. Accepts both:
+///   * canonical form `agent-<machineId>.<suffix>` (post-C.3)
+///   * legacy bare-machineId form (pre-C.3 issued certs)
+///
+/// During the migration window, agents holding legacy certs present
+/// bare CNs at /renew; CP issues canonical certs going forward. Once
+/// the fleet has rotated through one /renew cycle, all CNs are
+/// canonical and the legacy fallback can be dropped.
+pub fn extract_machine_id(cn: &str, suffix: &str) -> String {
+    let trailer = format!(".{suffix}");
+    if let Some(rest) = cn.strip_prefix("agent-") {
+        if let Some(machine_id) = rest.strip_suffix(&trailer) {
+            return machine_id.to_string();
+        }
+    }
+    cn.to_string()
+}
+
 #[derive(Debug, Clone)]
 pub enum AuditContext {
     Enroll { token_nonce: String },
@@ -490,18 +519,25 @@ fn der_encode_int(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Issues an agent cert (clientAuth EKU + SAN dNSName=CN); caller pre-validates CN.
+/// Issues an agent cert with `clientAuth` EKU and canonical CN
+/// `agent-<machineId>.<agent_cn_suffix>` (CSR CN is interpreted as
+/// the bare machineId — legacy form). SAN `dNSName=<CN>` is set so
+/// the cert satisfies the issuance CA's name constraint and rustls/
+/// webpki will accept it (CN-only certs are rejected). Caller
+/// validates the CSR pubkey ↔ host pubkey binding before reaching
+/// here.
 pub fn issue_cert(
     csr_pem: &str,
     signer: &dyn CaSigner,
     validity: Duration,
     now: DateTime<Utc>,
+    agent_cn_suffix: &str,
 ) -> Result<(String, DateTime<Utc>)> {
     let ca_key = signer.make_key_pair()?;
     let ca = signer.issuer();
 
     let csr_params = CertificateSigningRequestParams::from_pem(csr_pem).context("parse CSR PEM")?;
-    let cn = csr_params
+    let csr_cn = csr_params
         .params
         .distinguished_name
         .iter()
@@ -514,19 +550,39 @@ pub fn issue_cert(
         })
         .context("CSR has no CN")?;
 
-    let mut params = csr_params.params;
-    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-    // FOOTGUN: rustls/webpki rejects CN-only certs — SAN dNSName=CN is required for mTLS to work.
-    let cn_str = match &cn {
+    let csr_cn_str = match &csr_cn {
         rcgen::DnValue::PrintableString(s) => s.to_string(),
         rcgen::DnValue::Utf8String(s) => s.to_string(),
-        _ => format!("{:?}", cn),
+        _ => format!("{:?}", csr_cn),
     };
+    // Treat the CSR CN as the bare machineId — agents emit CSRs with
+    // CN=<machineId> and the CP rewrites the issued cert's CN to the
+    // canonical FQDN so it falls under the issuance CA's name
+    // constraint (D14: `*.fleet.lab.internal`). `extract_machine_id`
+    // is idempotent on already-canonical CNs.
+    let machine_id = extract_machine_id(&csr_cn_str, agent_cn_suffix);
+    let canonical_cn = canonical_agent_cn(&machine_id, agent_cn_suffix);
+
+    let mut params = csr_params.params;
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+
+    // Rebuild the DN with the canonical CN, preserving any other
+    // attributes (O, OU, C) the CSR carried.
+    let mut new_dn = rcgen::DistinguishedName::new();
+    for (t, v) in params.distinguished_name.iter() {
+        if !matches!(t, DnType::CommonName) {
+            new_dn.push(t.clone(), v.clone());
+        }
+    }
+    new_dn.push(DnType::CommonName, &*canonical_cn);
+    params.distinguished_name = new_dn;
+
+    // FOOTGUN: rustls/webpki rejects CN-only certs — SAN dNSName=CN is required for mTLS to work.
     params.subject_alt_names = vec![rcgen::SanType::DnsName(
-        cn_str
+        canonical_cn
             .clone()
             .try_into()
-            .context("CN is not a valid dNSName")?,
+            .context("canonical CN is not a valid dNSName")?,
     )];
 
     let not_before_sys = SystemTime::UNIX_EPOCH + Duration::from_secs(now.timestamp() as u64);
@@ -576,6 +632,58 @@ pub fn audit_log(
         })
     {
         tracing::warn!(error = %err, path = %path.display(), "failed to append audit log");
+    }
+}
+
+#[cfg(test)]
+mod cn_helpers_tests {
+    use super::*;
+
+    #[test]
+    fn canonicalises_bare_machine_id() {
+        assert_eq!(
+            canonical_agent_cn("krach", "fleet.lab.internal"),
+            "agent-krach.fleet.lab.internal"
+        );
+    }
+
+    #[test]
+    fn extracts_machine_id_from_canonical_cn() {
+        assert_eq!(
+            extract_machine_id("agent-krach.fleet.lab.internal", "fleet.lab.internal"),
+            "krach"
+        );
+    }
+
+    #[test]
+    fn extract_passes_through_legacy_bare_cn() {
+        // Pre-C.3 cert: CN=<machineId>, no FQDN. Must pass through
+        // unchanged so the renew handler's fleet.hosts lookup still
+        // works during the migration window.
+        assert_eq!(extract_machine_id("krach", "fleet.lab.internal"), "krach");
+    }
+
+    #[test]
+    fn extract_passes_through_when_suffix_does_not_match() {
+        // CN under an unexpected suffix → treat as opaque, return as-is.
+        // Defensive: prevents accidental machineId collisions across
+        // suffixes (operator running two fleets with overlapping IDs).
+        assert_eq!(
+            extract_machine_id("agent-krach.other.example", "fleet.lab.internal"),
+            "agent-krach.other.example"
+        );
+    }
+
+    #[test]
+    fn canonicalisation_roundtrips_through_extract() {
+        for id in ["krach", "ohm", "pixel", "machine-with-dashes"] {
+            let canonical = canonical_agent_cn(id, "fleet.lab.internal");
+            assert_eq!(
+                extract_machine_id(&canonical, "fleet.lab.internal"),
+                id,
+                "round-trip failed for {id}"
+            );
+        }
     }
 }
 
@@ -688,13 +796,14 @@ mod ca_signer_tests {
         let signer =
             FileCaSigner::from_paths(&cert_path, &key_path).expect("build FileCaSigner");
 
-        // Build a CSR for an agent with a fresh keypair.
+        // Build a CSR for an agent with a fresh keypair. Agents emit
+        // CSRs with CN = bare machineId; the CP rewrites to canonical.
         let agent_key = RcgenKeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
             .expect("agent keypair");
-        let mut agent_params = CertificateParams::new(vec!["agent-test".to_string()]).unwrap();
+        let mut agent_params = CertificateParams::new(vec!["krach".to_string()]).unwrap();
         agent_params
             .distinguished_name
-            .push(rcgen::DnType::CommonName, "agent-test");
+            .push(rcgen::DnType::CommonName, "krach");
         let csr = agent_params
             .serialize_request(&agent_key)
             .expect("serialize CSR");
@@ -705,10 +814,12 @@ mod ca_signer_tests {
             &signer,
             std::time::Duration::from_secs(3600),
             now,
+            "fleet.lab.internal",
         )
         .expect("issue agent cert");
 
-        // Verify the issued PEM parses as an X.509 cert + has agent CN.
+        // Verify the issued PEM parses as an X.509 cert + CN was
+        // canonicalised to `agent-<machineId>.<suffix>` (D14).
         let parsed = rcgen::CertificateParams::from_ca_cert_pem(&cert_pem)
             .expect("parse issued cert");
         let cn = parsed
@@ -727,7 +838,7 @@ mod ca_signer_tests {
             rcgen::DnValue::Utf8String(s) => s.to_string(),
             _ => panic!("unexpected CN type"),
         };
-        assert_eq!(cn_str, "agent-test");
+        assert_eq!(cn_str, "agent-krach.fleet.lab.internal");
     }
 }
 

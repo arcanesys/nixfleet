@@ -63,6 +63,12 @@ pub struct ServeArgs {
     pub rollouts_source: Option<crate::rollouts_source::RolloutsSource>,
     /// Refuse to start when any security-fallback flag is unset.
     pub strict: bool,
+    /// FQDN suffix appended when canonicalising agent cert CNs to
+    /// `agent-<machineId>.<suffix>`. Defaults to
+    /// `auth::issuance::DEFAULT_AGENT_CN_SUFFIX` ("fleet.lab.internal").
+    /// Must match the `dNSName` constraint baked into the issuance CA
+    /// cert at bootstrap time (D14).
+    pub agent_cn_suffix: String,
 }
 
 impl Default for ServeArgs {
@@ -90,6 +96,7 @@ impl Default for ServeArgs {
             rollouts_dir: None,
             rollouts_source: None,
             strict: false,
+            agent_cn_suffix: crate::auth::issuance::DEFAULT_AGENT_CN_SUFFIX.to_string(),
         }
     }
 }
@@ -176,6 +183,10 @@ pub struct AppState {
     pub rollouts_dir: Option<PathBuf>,
     pub rollouts_source: Option<crate::rollouts_source::RolloutsSource>,
     pub strict: bool,
+    /// See `ServeArgs::agent_cn_suffix`. Captured into AppState so the
+    /// enroll/renew handlers can canonicalise CNs without going
+    /// through `issuance_paths`.
+    pub agent_cn_suffix: String,
 }
 
 impl Default for AppState {
@@ -198,6 +209,7 @@ impl Default for AppState {
             rollouts_dir: None,
             rollouts_source: None,
             strict: false,
+            agent_cn_suffix: crate::auth::issuance::DEFAULT_AGENT_CN_SUFFIX.to_string(),
         }
     }
 }
