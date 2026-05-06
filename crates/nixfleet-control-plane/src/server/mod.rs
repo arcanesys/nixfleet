@@ -4,7 +4,6 @@ mod checkin_pipeline;
 mod middleware;
 mod reconcile;
 mod routes;
-mod startup_invariants;
 mod state;
 
 pub use state::{
