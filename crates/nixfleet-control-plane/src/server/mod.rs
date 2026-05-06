@@ -310,8 +310,9 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
 
     // Install Prometheus recorder before any request handler can call
     // gauge!/counter! macros. Idempotent — first install wins per process.
+    // `cp_build_info` is re-emitted from `record_fleet_metrics` each scrape
+    // so the gauge idle-timeout doesn't evict it.
     crate::metrics::install_recorder();
-    crate::metrics::record_build_info(env!("CARGO_PKG_VERSION"), option_env!("GIT_COMMIT"));
 
     let app = build_router(state);
 

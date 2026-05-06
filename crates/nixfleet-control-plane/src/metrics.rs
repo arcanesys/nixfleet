@@ -40,10 +40,12 @@
 //! handle. Tests can spin multiple test servers without colliding.
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use chrono::Utc;
 use metrics::{counter, gauge};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use metrics_util::MetricKindMask;
 use nixfleet_proto::HostStatusEntry;
 
 use crate::server::AppState;
@@ -51,11 +53,23 @@ use crate::state_view::{fleet_state_view, StateViewError};
 
 static METRICS_HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
+/// Idle timeout for gauges. Series that aren't re-emitted within this
+/// window get dropped from the registry — eliminates stale label sets
+/// after host state / closure / rollout-id transitions. Counters are
+/// excluded (cumulative; mustn't be reset).
+///
+/// Tuned ≥ 2× scrape interval (15s on lab) so a transient scrape gap
+/// doesn't drop the metric. Every gauge is refreshed by
+/// `record_fleet_metrics` each scrape, so steady-state series stay
+/// alive indefinitely.
+const GAUGE_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
+
 /// Install the process-global Prometheus recorder. Idempotent — safe to
 /// call from each test's server-spawn helper.
 pub fn install_recorder() -> &'static PrometheusHandle {
     METRICS_HANDLE.get_or_init(|| {
         PrometheusBuilder::new()
+            .idle_timeout(MetricKindMask::GAUGE, Some(GAUGE_IDLE_TIMEOUT))
             .install_recorder()
             .expect("install Prometheus recorder")
     })
@@ -90,13 +104,15 @@ pub fn record_gate_block(gate_kind: &str) {
     .increment(1);
 }
 
-/// Set once at server boot. `cp_build_info{version,git_commit}=1` is the
-/// standard Prometheus pattern for tracking running version across scrapes.
-pub fn record_build_info(version: &str, git_commit: Option<&str>) {
+/// `cp_build_info{version,git_commit}=1` — standard Prometheus pattern
+/// for tracking running version across scrapes. Re-emitted every scrape
+/// (constants resolve at compile time) so the idle-timeout doesn't evict
+/// it.
+fn record_build_info() {
     gauge!(
         "nixfleet_cp_build_info",
-        "version" => version.to_string(),
-        "git_commit" => git_commit.unwrap_or("unknown").to_string(),
+        "version" => env!("CARGO_PKG_VERSION").to_string(),
+        "git_commit" => option_env!("GIT_COMMIT").unwrap_or("unknown").to_string(),
     )
     .set(1.0);
 }
@@ -113,6 +129,7 @@ pub async fn record_fleet_metrics(state: &AppState) -> Result<(), StateViewError
         .ok_or(StateViewError::FleetNotPrimed)?;
 
     let now = Utc::now();
+    record_build_info();
     for view in &views {
         record_host_gauges(view, now);
         record_host_info(view);
@@ -209,10 +226,16 @@ fn record_host_info(view: &HostStatusEntry) {
     .set(1.0);
 }
 
-/// Per-active-rollout info gauge + age. Drives the `Active Rollouts`
-/// dashboard table. Reads `db.rollouts().list_in_flight()` (the UI surface
-/// that excludes both superseded and terminal rollouts) joined with
-/// `host_dispatch_state.active_rollouts_snapshot()` for `target_ref`.
+/// Per-active-rollout numeric gauge — the value is the rollout's
+/// wall-clock age in seconds, the labels carry every operator-visible
+/// field. The dashboard reads this as a single-query Table panel with
+/// `labelsToFields` (no joinByLabels needed); each in-flight rollout
+/// gets one row.
+///
+/// Reads `db.rollouts().list_in_flight()` (the UI surface — excludes
+/// both superseded and terminal rollouts) joined in-process with
+/// `host_dispatch_state.active_rollouts_snapshot()` to enrich
+/// `target_ref`.
 async fn record_active_rollouts_info(state: &AppState, now: chrono::DateTime<Utc>) {
     let Some(db) = state.db.as_deref() else {
         return;
@@ -239,26 +262,21 @@ async fn record_active_rollouts_info(state: &AppState, now: chrono::DateTime<Utc
             .get(&r.rollout_id)
             .map(|s| s.target_channel_ref.clone())
             .unwrap_or_default();
+        let age = chrono::DateTime::parse_from_rfc3339(&r.created_at)
+            .map(|ts| {
+                now.signed_duration_since(ts.with_timezone(&Utc))
+                    .num_seconds()
+                    .max(0)
+            })
+            .unwrap_or(0);
         gauge!(
-            "nixfleet_active_rollout_info",
+            "nixfleet_active_rollout_age_seconds",
             "rollout_id" => short_id(Some(&r.rollout_id)),
             "channel" => r.channel.clone(),
             "target_ref" => short_id(Some(&target_ref)),
             "current_wave" => r.current_wave.to_string(),
         )
-        .set(1.0);
-        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&r.created_at) {
-            let age = now
-                .signed_duration_since(ts.with_timezone(&Utc))
-                .num_seconds()
-                .max(0);
-            gauge!(
-                "nixfleet_active_rollout_age_seconds",
-                "rollout_id" => short_id(Some(&r.rollout_id)),
-                "channel" => r.channel.clone(),
-            )
-            .set(age as f64);
-        }
+        .set(age as f64);
     }
 }
 

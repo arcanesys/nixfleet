@@ -98,6 +98,10 @@ rand = "0.8"
 # drops the bundled HTTP listener (we don't need a second server).
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.16", default-features = false }
+# `MetricKindMask` for `idle_timeout(...)` — drops gauge series that
+# haven't been updated within the timeout, eliminating stale state/
+# closure/rollout series that linger after a host transitions.
+metrics-util = "0.19"
 
 [dev-dependencies]
 tempfile = "3"
