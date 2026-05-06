@@ -99,21 +99,6 @@ refinery = { version = "0.8", features = ["rusqlite"] }
 # Already in the workspace lockfile via agent + cli prod deps and this
 # crate's dev-deps.
 rand = "0.8"
-# Prometheus metrics surface — `/metrics` endpoint scraped by the lab
-# Prometheus job (modules/infra/monitoring-prometheus.nix). The recorder
-# is process-global; we mount the render endpoint on the existing axum
-# router so it shares mTLS with /v1/hosts. `default-features = false`
-# drops the bundled HTTP listener (we don't need a second server).
-metrics = "0.24"
-# 0.16's idle_timeout did not actually evict gauges in real-time — the
-# only effective recency path landed in 0.18 (paired with metrics-util
-# 0.20). Confirmed via reproducer: with 0.16+0.19, untouched gauge series
-# stick around indefinitely; with 0.18+0.20, they drop after the timeout.
-metrics-exporter-prometheus = { version = "0.18", default-features = false }
-# `MetricKindMask` for `idle_timeout(...)` — drops gauge series that
-# haven't been updated within the timeout, eliminating stale state/
-# closure/rollout series that linger after a host transitions.
-metrics-util = "0.20"
 
 [dev-dependencies]
 tempfile = "3"
@@ -134,8 +119,3 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 hex = "0.4"
 sha2 = "0.10"
-# Real text-format parser for the /metrics integration test — replaces
-# fragile `body.contains(...)` substring assertions and label-order
-# branches. Adding a metric that violates cardinality discipline trips
-# the parsed-label denylist instead of slipping past a substring check.
-prometheus-parse = "0.2"
