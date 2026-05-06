@@ -235,6 +235,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         fleet_ca_cert: args.fleet_ca_cert.clone(),
         fleet_ca_key: args.fleet_ca_key.clone(),
         audit_log: args.audit_log_path.clone(),
+        trust_path: args.trust_path.clone(),
     };
 
     // Pre-listener prime: bundled artifact is always older than upstream (CI commits release after build).

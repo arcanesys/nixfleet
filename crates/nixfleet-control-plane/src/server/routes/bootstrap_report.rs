@@ -34,14 +34,7 @@ pub(in crate::server) async fn bootstrap_report(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let trust_path = crate::auth::issuance::trust_json_path(
-        state
-            .issuance_paths
-            .read()
-            .await
-            .fleet_ca_cert
-            .as_deref(),
-    );
+    let trust_path = state.issuance_paths.read().await.trust_path.clone();
     crate::auth::issuance::verify_bootstrap_token_against_trust(&trust_path, &req.token).map_err(
         |err| match err {
             crate::auth::issuance::TrustVerifyError::SignatureMismatch => {

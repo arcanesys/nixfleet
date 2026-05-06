@@ -22,16 +22,6 @@ pub enum AuditContext {
     Renew { previous_cert_serial: String },
 }
 
-/// LOADBEARING: trust.json is sibling to fleet_ca_cert. Falls back to
-/// `/etc/nixfleet/cp/trust.json` when the cert path is unset (test/dev).
-pub fn trust_json_path(fleet_ca_cert: Option<&Path>) -> PathBuf {
-    fleet_ca_cert
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("/etc/nixfleet/cp"))
-        .join("trust.json")
-}
-
 /// Verifying a bootstrap-token signature involves: read trust.json, parse
 /// TrustConfig, walk current+previous orgRootKey candidates, and try ed25519
 /// verification against each. Splitting the stages into separate error

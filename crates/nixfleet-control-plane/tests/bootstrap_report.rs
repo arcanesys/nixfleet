@@ -109,11 +109,20 @@ async fn spawn_server(
     write(&artifact, "{}");
     let signature = obs_dir.path().join("fleet.resolved.json.sig");
     write(&signature, "");
-    let trust = obs_dir.path().join("trust-stub.json");
-    write(
-        &trust,
-        r#"{"ciReleaseKey":{"current":null,"previous":null,"rejectBefore":null}}"#,
-    );
+    // The proper trust.json (orgRootKey populated) is written by each test
+    // via write_trust_json at obs_dir/trust.json; ServeArgs.trust_path
+    // points at the same file so the bootstrap-report handler reads the
+    // operator-configured trust roots, not a stub.
+    let trust = obs_dir.path().join("trust.json");
+    if !trust.exists() {
+        // Default stub for tests that don't call write_trust_json before
+        // spawn_server (e.g. the rejects_disallowed_event_variant test
+        // hits trust verification before reaching the variant check).
+        write(
+            &trust,
+            r#"{"schemaVersion":1,"ciReleaseKey":{"current":null,"previous":null,"rejectBefore":null},"cacheKeys":[],"orgRootKey":null}"#,
+        );
+    }
     let observed = obs_dir.path().join("observed.json");
     write(
         &observed,

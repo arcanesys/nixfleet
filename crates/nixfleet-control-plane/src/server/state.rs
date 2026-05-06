@@ -113,6 +113,15 @@ pub struct IssuancePaths {
     pub fleet_ca_cert: Option<PathBuf>,
     pub fleet_ca_key: Option<PathBuf>,
     pub audit_log: Option<PathBuf>,
+    /// Path to the daemon-configured trust.json (the `--trust-file`
+    /// flag). Both `/v1/enroll` (orgRootKey signature verify) and
+    /// `/v1/agent/bootstrap-report` (same) read this. The polling
+    /// loops have their own copy via `ChannelRefsSource.trust_path`
+    /// — they all point at the same file in production. ONE source
+    /// of truth for the daemon's trust roots, not derived from
+    /// fleet_ca_cert (which broke when operators placed
+    /// fleet-ca.pem outside `/etc/nixfleet/cp/`).
+    pub trust_path: PathBuf,
 }
 
 pub struct AppState {
