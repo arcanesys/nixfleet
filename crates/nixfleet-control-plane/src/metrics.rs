@@ -1,6 +1,6 @@
 //! Prometheus metrics surface — minimum needed for the operator dashboard.
 //!
-//! Six info gauges + one numeric pair drive the bulk of the dashboard:
+//! Four info-gauge surfaces drive the bulk of the dashboard:
 //!   - `nixfleet_host_info{host, channel, state, convergence,
 //!                         current_closure, declared_closure, rollout_id}=1`
 //!     One series per declared host. Labels carry the operator-visible state
@@ -9,29 +9,31 @@
 //!     Cardinality bound: O(hosts) — each host has exactly one active series;
 //!     stale series age out via Prometheus staleness when any label changes.
 //!
-//!   - `nixfleet_active_rollout_age_seconds{rollout_id, channel,
-//!                                          target_ref, current_wave}`
-//!     One series per in-flight rollout (excludes superseded + terminal).
-//!     Cardinality bound: O(active rollouts) — small per channel.
+//!   - `nixfleet_rollout_view{kind, rollout_id, channel, target_ref,
+//!                            current_wave, host, wave, state, target_closure,
+//!                            soak_window_minutes}` (0..100)
+//!     and `nixfleet_rollout_view_time_seconds{...same labels...}` (seconds).
+//!     Unified master/detail surface — one row per rollout summary
+//!     (`kind=rollout`) and one row per dispatched host within each
+//!     in-flight rollout (`kind=host`). Identical label schemas → a
+//!     single `joinByField` in Grafana folds the two metrics into one
+//!     logical row each. Source filtering excludes terminal + superseded
+//!     rollouts entirely (no zombie host rows). Cardinality bound:
+//!     O(in-flight rollouts × hosts in those rollouts).
 //!
-//!   - `nixfleet_rollout_host_state{rollout_id, channel, host, wave,
-//!                                  state, target_closure}=1`
-//!     One row per (in-flight rollout × dispatched host) — the per-rollout
-//!     detail rows under each rollout summary in the dashboard. Cardinality
-//!     bound: O(active rollouts × hosts in those rollouts).
+//!     Value semantics:
+//!       - kind=rollout: `view` = (converged+soaked) / total dispatched × 100;
+//!         `time_seconds` = wall-clock age.
+//!       - kind=host: `view` = soak progress 0..100;
+//!         `time_seconds` = soak remaining (0 once past window).
 //!
 //!   - `nixfleet_channel_status{channel, status, rollout_id, target_ref,
 //!                              blocked_by, reason}=1`
 //!     One row per declared channel. `status="active"` for channels with
 //!     an in-flight rollout (then `rollout_id` carries it); `status="deferred"`
 //!     when held by a fleet-level gate (then `blocked_by` + `reason` carry
-//!     the operator-visible explanation). Cardinality bound: O(channels).
-//!
-//!   - `nixfleet_host_soak_progress_pct{rollout_id, channel, host, wave}` (0..100)
-//!     and `nixfleet_host_soak_remaining_seconds{rollout_id, channel, host, wave}`.
-//!     Drive the soak progress bar + countdown on the per-host detail rows.
-//!     Soaked/Converged pin to (100, 0); Healthy uses elapsed since
-//!     `last_healthy_since`; other states pin to (0, full window).
+//!     the operator-visible explanation); `status="idle"` for converged
+//!     channels with no work. Cardinality bound: O(channels).
 //!
 //!   - `nixfleet_fleet_meta_info{ci_commit, signed_at, signature_algorithm,
 //!                               schema_version}=1`
@@ -167,10 +169,8 @@ pub async fn record_fleet_metrics(state: &AppState) -> Result<(), StateViewError
     }
 
     record_fleet_meta_info(&snapshot.fleet);
-    record_active_rollouts_info(state, now).await;
-    record_rollout_host_state(state).await;
+    record_rollout_overview(state, &snapshot.fleet, now).await;
     record_channel_status(state, &snapshot.fleet).await;
-    record_soak_progress(state, &snapshot.fleet, now).await;
 
     Ok(())
 }
@@ -248,24 +248,39 @@ fn record_host_info(view: &HostStatusEntry) {
     .set(1.0);
 }
 
-/// Per-active-rollout numeric gauge — the value is the rollout's
-/// wall-clock age in seconds, the labels carry every operator-visible
-/// field. The dashboard reads this as a single-query Table panel with
-/// `labelsToFields` (no joinByLabels needed); each in-flight rollout
-/// gets one row.
+/// Unified rollout/host overview — drives the dashboard's master/detail
+/// Rollouts panel. Two metrics emitted per row, identical label schemas:
 ///
-/// Reads `db.rollouts().list_in_flight()` (the UI surface — excludes
-/// both superseded and terminal rollouts) joined in-process with
-/// `host_dispatch_state.active_rollouts_snapshot()` to enrich
-/// `target_ref`.
-async fn record_active_rollouts_info(state: &AppState, now: chrono::DateTime<Utc>) {
+///   - `nixfleet_rollout_view{...}` = progress percent (0..100)
+///   - `nixfleet_rollout_view_time_seconds{...}` = age (rollout) / remaining (host)
+///
+/// Source filtering excludes terminal + superseded rollouts entirely:
+/// rows are emitted only for `db.rollouts().list_in_flight()` — no
+/// zombie host rows from rollouts whose host_dispatch_state hasn't been
+/// orphan-swept yet. Same data path the `/v1/rollouts` HTTP route uses.
+///
+/// Per in-flight rollout R: one `kind=rollout` row carrying rollout-side
+/// fields (target_ref, current_wave) with host-side labels empty; one
+/// `kind=host` row per dispatched host carrying host-side fields with
+/// rollout-side labels empty. Sort `[rollout_id ASC, kind DESC]` in the
+/// dashboard puts each rollout summary above its host detail rows.
+///
+/// Soak math mirrors fleet-status's `soak_status_for_host` (render.sh):
+/// elapsed comes straight from `host_rollout_state.last_healthy_since`,
+/// soak window from `policy.waves[wave].soak_minutes`. Soaked/Converged
+/// pin to progress=100 / remaining=0.
+async fn record_rollout_overview(
+    state: &AppState,
+    fleet: &nixfleet_proto::FleetResolved,
+    now: chrono::DateTime<Utc>,
+) {
     let Some(db) = state.db.as_deref() else {
         return;
     };
     let rollouts = match db.rollouts().list_in_flight() {
         Ok(rs) => rs,
         Err(err) => {
-            tracing::warn!(error = %err, "metrics: list_in_flight failed");
+            tracing::warn!(error = %err, "metrics: rollout_overview list_in_flight failed");
             return;
         }
     };
@@ -275,129 +290,116 @@ async fn record_active_rollouts_info(state: &AppState, now: chrono::DateTime<Utc
     {
         Ok(v) => v.into_iter().map(|s| (s.rollout_id.clone(), s)).collect(),
         Err(err) => {
-            tracing::warn!(error = %err, "metrics: active_rollouts_snapshot failed");
+            tracing::warn!(error = %err, "metrics: rollout_overview snapshot failed");
             std::collections::HashMap::new()
         }
     };
+
     for r in rollouts.iter() {
-        let target_ref = snap_by_id
-            .get(&r.rollout_id)
-            .map(|s| s.target_channel_ref.clone())
-            .unwrap_or_default();
-        let age = chrono::DateTime::parse_from_rfc3339(&r.created_at)
+        let snap = snap_by_id.get(&r.rollout_id);
+        let target_ref = snap.map(|s| s.target_channel_ref.clone()).unwrap_or_default();
+
+        // Rollout summary row. Progress = (converged + soaked) / total
+        // dispatched. Empty host_states (rollout opened but no dispatch
+        // yet) yields progress=0, which renders as a 0% bar — accurate
+        // signal that the rollout is just sitting there.
+        let (done, total) = snap
+            .map(|s| {
+                let total = s.host_states.len();
+                let done = s
+                    .host_states
+                    .values()
+                    .filter(|st| matches!(st.as_str(), "Soaked" | "Converged"))
+                    .count();
+                (done, total)
+            })
+            .unwrap_or((0, 0));
+        let rollout_progress = if total > 0 {
+            done as f64 / total as f64 * 100.0
+        } else {
+            0.0
+        };
+        let rollout_age = chrono::DateTime::parse_from_rfc3339(&r.created_at)
             .map(|ts| {
                 now.signed_duration_since(ts.with_timezone(&Utc))
                     .num_seconds()
                     .max(0)
             })
             .unwrap_or(0);
+        let rollout_labels = [
+            ("kind", "rollout".to_string()),
+            ("rollout_id", short_id(Some(&r.rollout_id))),
+            ("channel", r.channel.clone()),
+            ("target_ref", short_id(Some(&target_ref))),
+            ("current_wave", r.current_wave.to_string()),
+            ("host", String::new()),
+            ("wave", String::new()),
+            ("state", String::new()),
+            ("target_closure", String::new()),
+            ("soak_window_minutes", String::new()),
+        ];
+        gauge!("nixfleet_rollout_view", &rollout_labels[..]).set(rollout_progress);
         gauge!(
-            "nixfleet_active_rollout_age_seconds",
-            "kind" => "rollout".to_string(),
-            "rollout_id" => short_id(Some(&r.rollout_id)),
-            "channel" => r.channel.clone(),
-            "target_ref" => short_id(Some(&target_ref)),
-            "current_wave" => r.current_wave.to_string(),
+            "nixfleet_rollout_view_time_seconds",
+            &rollout_labels[..]
         )
-        .set(age as f64);
-    }
-}
+        .set(rollout_age as f64);
 
-/// Per-(in-flight rollout, dispatched host) info gauge. Drives the
-/// dashboard's per-rollout host-detail rows (one row per host under
-/// each rollout's summary line). Reads
-/// `db.host_dispatch_state().active_rollouts_snapshot()`, the same
-/// source `/v1/rollouts.hostStates` returns — one truth, two surfaces.
-///
-/// `wave` is the dispatch wave from `host_dispatch_state.wave` (frozen
-/// at dispatch time) — distinct from rollout-level `current_wave` which
-/// advances on `Action::PromoteWave`.
-///
-/// `state` is the parsed `HostRolloutState` (Queued, ConfirmWindow,
-/// Healthy, Soaked, Converged, Failed, Reverted) — the same value the
-/// info gauge `nixfleet_host_info.state` carries when the host is in
-/// the channel's current rollout.
-async fn record_rollout_host_state(state: &AppState) {
-    let Some(db) = state.db.as_deref() else {
-        return;
-    };
-    let snap = match db.host_dispatch_state().active_rollouts_snapshot() {
-        Ok(v) => v,
-        Err(err) => {
-            tracing::warn!(error = %err, "metrics: rollout_host_state snapshot failed");
-            return;
-        }
-    };
-    for r in &snap {
-        for (host, host_state) in &r.host_states {
-            let wave = r.host_waves.get(host).copied().unwrap_or(r.current_wave);
-            gauge!(
-                "nixfleet_rollout_host_state",
-                "kind" => "host".to_string(),
-                "rollout_id" => short_id(Some(&r.rollout_id)),
-                "channel" => r.channel.clone(),
-                "host" => host.clone(),
-                "wave" => wave.to_string(),
-                "state" => host_state.clone(),
-                "target_closure" => short_id(Some(&r.target_closure_hash)),
-            )
-            .set(1.0);
-        }
-    }
-}
+        // Per-host detail rows. No snap (rollout opened but pre-dispatch)
+        // → no host rows; the rollout summary still renders above.
+        let Some(snap) = snap else { continue };
+        let policy = fleet
+            .channels
+            .get(&r.channel)
+            .and_then(|c| fleet.rollout_policies.get(&c.rollout_policy));
 
-/// Per-(rollout, host) soak progress. Same shape as fleet-status's
-/// `soak_status_for_host` (render.sh) — but the elapsed input comes
-/// straight from `host_rollout_state.last_healthy_since` instead of
-/// re-grepping the journal.
-async fn record_soak_progress(
-    state: &AppState,
-    fleet: &nixfleet_proto::FleetResolved,
-    now: chrono::DateTime<Utc>,
-) {
-    let Some(db) = state.db.as_deref() else {
-        return;
-    };
-    let Ok(snap) = db.host_dispatch_state().active_rollouts_snapshot() else {
-        return;
-    };
-    for r in &snap {
-        let Some(c) = fleet.channels.get(&r.channel) else {
-            continue;
-        };
-        let Some(p) = fleet.rollout_policies.get(&c.rollout_policy) else {
-            continue;
-        };
-        for (host, host_state) in &r.host_states {
-            let wave = r
+        for (host, host_state) in &snap.host_states {
+            let wave = snap
                 .host_waves
                 .get(host)
                 .copied()
                 .unwrap_or(r.current_wave) as usize;
-            let Some(w) = p.waves.get(wave) else { continue };
-            let window = i64::from(w.soak_minutes) * 60;
+            let wave_def = policy.and_then(|p| p.waves.get(wave));
+            let window = wave_def
+                .map(|w| i64::from(w.soak_minutes) * 60)
+                .unwrap_or(0);
             let elapsed = match host_state.as_str() {
                 "Soaked" | "Converged" => window,
-                "Healthy" => r
+                "Healthy" => snap
                     .last_healthy_since
                     .get(host)
                     .map(|t| now.signed_duration_since(*t).num_seconds().clamp(0, window))
                     .unwrap_or(0),
                 _ => 0,
             };
-            let pct = if window > 0 {
+            let host_progress = if window > 0 {
                 elapsed as f64 / window as f64 * 100.0
-            } else {
+            } else if matches!(host_state.as_str(), "Soaked" | "Converged") {
                 100.0
+            } else {
+                0.0
             };
-            let labels = [
+            let remaining = (window - elapsed).max(0);
+            let host_labels = [
+                ("kind", "host".to_string()),
                 ("rollout_id", short_id(Some(&r.rollout_id))),
+                ("channel", r.channel.clone()),
+                ("target_ref", String::new()),
+                ("current_wave", String::new()),
                 ("host", host.clone()),
                 ("wave", wave.to_string()),
+                ("state", host_state.clone()),
+                ("target_closure", short_id(Some(&snap.target_closure_hash))),
+                (
+                    "soak_window_minutes",
+                    wave_def
+                        .map(|w| w.soak_minutes.to_string())
+                        .unwrap_or_default(),
+                ),
             ];
-            gauge!("nixfleet_host_soak_progress_pct", &labels[..]).set(pct);
-            gauge!("nixfleet_host_soak_remaining_seconds", &labels[..])
-                .set((window - elapsed) as f64);
+            gauge!("nixfleet_rollout_view", &host_labels[..]).set(host_progress);
+            gauge!("nixfleet_rollout_view_time_seconds", &host_labels[..])
+                .set(remaining as f64);
         }
     }
 }
