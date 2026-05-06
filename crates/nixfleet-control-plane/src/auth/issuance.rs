@@ -513,4 +513,41 @@ SECOND
         let extracted = extract_private_key_pem_block(&pem).expect("rcgen pem");
         let _reparsed = KeyPair::from_pem(&extracted).expect("rcgen round-trip");
     }
+
+    /// LOADBEARING: an actual OpenSSL-generated `prime256v1` SEC1 PEM
+    /// (multi-block: EC PARAMETERS + EC PRIVATE KEY) must extract to a
+    /// single-block SEC1 PEM that rcgen accepts. This is the shape lab's
+    /// `fleet-ca-key.age` had — pre-fix, rcgen's `from_pem` (on the
+    /// default `ring` feature) rejected it. The fix combines: extract
+    /// the SEC1 block here + rcgen built with `aws_lc_rs` feature
+    /// (Cargo.toml) so SEC1 is accepted natively.
+    ///
+    /// Key bytes are throwaway test material (no secrets) — generated
+    /// with `openssl ecparam -genkey -name prime256v1` for this test.
+    /// Wrapped with the `EC PARAMETERS` block to match the shape
+    /// `-text` mode emits — same as lab's pre-fix `fleet-ca-key.age`.
+    #[test]
+    fn handles_openssl_generated_multi_block_sec1() {
+        use rcgen::KeyPair;
+        let openssl_pem = "\
+-----BEGIN EC PARAMETERS-----
+BggqhkjOPQMBBw==
+-----END EC PARAMETERS-----
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIKVWabY7MNGUf1iYmLXO8Jf8Z2Dyt3wqIGzKzr+VPvvjoAoGCCqGSM49
+AwEHoUQDQgAEm9EgwijVZ1xORnA9p5crCZ60IGnjUJ4LZIXzk2hlxYeiifsnGk7H
+QzkM5XocGuChmeKIaGD20dCxzEIuW+HP4Q==
+-----END EC PRIVATE KEY-----
+";
+        let extracted = extract_private_key_pem_block(openssl_pem)
+            .expect("multi-block SEC1 extraction");
+        // Must extract just the EC PRIVATE KEY block.
+        assert!(extracted.starts_with("-----BEGIN EC PRIVATE KEY-----"));
+        assert!(!extracted.contains("EC PARAMETERS"));
+        // And rcgen (on aws_lc_rs feature) must parse the result.
+        let _key = KeyPair::from_pem(&extracted).expect(
+            "rcgen on aws_lc_rs must accept SEC1 — if this fails, \
+             check the rcgen feature flags in Cargo.toml",
+        );
+    }
 }

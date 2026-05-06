@@ -67,7 +67,15 @@ base64 = "0.22"
 # `x509-parser` feature gates `CertificateParams::from_ca_cert_pem` and
 # `CertificateSigningRequestParams::from_pem`, which we need to load
 # the operator-supplied fleet CA cert + the agent CSR from disk.
-rcgen = { version = "0.13", features = ["x509-parser"] }
+#
+# `aws_lc_rs` over the default `ring` so `KeyPair::from_pem` accepts
+# SEC1 (`BEGIN EC PRIVATE KEY`) and PKCS#1 (`BEGIN RSA PRIVATE KEY`)
+# in addition to PKCS#8. Operators routinely supply OpenSSL-generated
+# EC CA keys (SEC1) and the framework should consume them without
+# requiring an offline `openssl pkcs8 -topk8 -nocrypt` step. aws-lc-rs
+# is already in the dep tree (rustls/aws-lc-rs path); switching rcgen
+# to it is a feature toggle, no new transitive deps.
+rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-parser", "aws_lc_rs", "crypto"] }
 ed25519-dalek = "2"
 sha2 = "0.10"
 nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }
@@ -116,7 +124,8 @@ tokio = { version = "1", features = ["full", "test-util"] }
 # /healthz integration test: rcgen mints a self-signed server cert,
 # reqwest hits the listener over TLS, asserts 200 + JSON. Same testing
 # stack v0.1's CP used (crates/control-plane/Cargo.toml on v0.1.1).
-rcgen = { version = "0.13", features = ["x509-parser"] }
+# Match the prod-dep feature set (aws_lc_rs, no ring).
+rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-parser", "aws_lc_rs", "crypto"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 # /v1/enroll signature-verification test: mint a real ed25519 keypair
 # operator-side, sign claims, post the token. Mirrors what
