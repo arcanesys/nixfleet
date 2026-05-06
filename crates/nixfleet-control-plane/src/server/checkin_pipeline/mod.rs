@@ -24,9 +24,15 @@ pub(super) async fn checkin(
     Json(req): Json<CheckinRequest>,
 ) -> Result<Json<CheckinResponse>, StatusCode> {
     let cn = cn.into_string();
-    if cn != req.hostname {
+    // Bundle C: cert CN may be canonical (`agent-<machineId>.<suffix>`)
+    // while the agent still sends bare `machineId` in the body. Strip
+    // back to bare for the equality check; legacy bare CNs pass
+    // through unchanged.
+    let machine_id = crate::auth::issuance::extract_machine_id(&cn, &state.agent_cn_suffix);
+    if machine_id != req.hostname {
         tracing::warn!(
             cert_cn = %cn,
+            machine_id = %machine_id,
             body_hostname = %req.hostname,
             "checkin rejected: cert CN does not match body hostname"
         );
@@ -85,9 +91,11 @@ pub(super) async fn confirm(
     Json(req): Json<ConfirmRequest>,
 ) -> Result<Response, StatusCode> {
     let cn = cn.into_string();
-    if cn != req.hostname {
+    let machine_id = crate::auth::issuance::extract_machine_id(&cn, &state.agent_cn_suffix);
+    if machine_id != req.hostname {
         tracing::warn!(
             cert_cn = %cn,
+            machine_id = %machine_id,
             body_hostname = %req.hostname,
             "confirm rejected: cert CN does not match body hostname"
         );

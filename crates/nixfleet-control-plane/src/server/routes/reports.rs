@@ -18,9 +18,11 @@ pub(in crate::server) async fn report(
     Json(req): Json<ReportRequest>,
 ) -> Result<Json<ReportResponse>, StatusCode> {
     let cn = cn.into_string();
-    if cn != req.hostname {
+    let machine_id = crate::auth::issuance::extract_machine_id(&cn, &state.agent_cn_suffix);
+    if machine_id != req.hostname {
         tracing::warn!(
             cert_cn = %cn,
+            machine_id = %machine_id,
             body_hostname = %req.hostname,
             "report rejected: cert CN does not match body hostname"
         );
