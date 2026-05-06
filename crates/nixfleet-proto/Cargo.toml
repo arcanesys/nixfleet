@@ -16,6 +16,11 @@ path = "src/lib.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
+# host_key module: OpenSSH ed25519 pubkey parser + PKCS#8 wrapper +
+# fingerprint helper. Both deps are pure-rust, no I/O. Avoids pulling
+# the heavier `ssh-key` crate into the boundary-contract surface.
+base64 = "0.22"
+sha2 = "0.10"
 
 [dev-dependencies]
 nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }

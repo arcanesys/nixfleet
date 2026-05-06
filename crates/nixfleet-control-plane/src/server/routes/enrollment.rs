@@ -104,6 +104,45 @@ pub(in crate::server) async fn enroll(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
+    // RFC-0003 §2 binding: CSR pubkey MUST equal the host's declared
+    // SSH host pubkey from fleet.resolved. Closes #43 (cert ←→ host key
+    // bond) and #9 (declarative-enrollment fingerprint match) in one
+    // call site. Fail-closed when no fleet snapshot is verified yet
+    // (cold-start race) or when the host has no declared pubkey.
+    let snap = state
+        .verified_fleet
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| {
+            tracing::warn!("enroll: no verified fleet snapshot — refusing");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+    let host_decl = snap.fleet.hosts.get(&csr_cn).ok_or_else(|| {
+        tracing::warn!(host = %csr_cn, "enroll: host not declared in fleet.nix");
+        StatusCode::UNAUTHORIZED
+    })?;
+    // FOOTGUN: rcgen 0.13's `PublicKeyData::der_bytes()` returns the
+    // raw 32-byte ed25519 pubkey for ed25519 CSRs (not a 44-byte SPKI
+    // wrapper as RFC 5280 SubjectPublicKeyInfo would suggest). Existing
+    // fingerprint computation already relies on this — pass the bytes
+    // straight to the binding check.
+    if csr_pubkey_der.len() != 32 {
+        tracing::warn!(
+            host = %csr_cn,
+            len = csr_pubkey_der.len(),
+            "enroll: CSR pubkey is not 32 raw bytes (non-ed25519 CSR rejected)",
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if let Err(err) = crate::auth::issuance::validate_csr_against_fleet_host(
+        csr_pubkey_der,
+        host_decl.pubkey.as_deref(),
+    ) {
+        tracing::warn!(host = %csr_cn, error = %err, "enroll: fleet-pubkey binding check failed");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
     // LOADBEARING: plain INSERT closes the TOCTOU between token_seen() and cert issuance via PK conflict.
     match db
         .tokens()
@@ -176,6 +215,46 @@ pub(in crate::server) async fn renew(
 ) -> Result<Json<RenewResponse>, StatusCode> {
     let cn = cn.into_string();
     let now = chrono::Utc::now();
+
+    // RFC-0003 §2 binding: renewal CSR's pubkey MUST equal the host's
+    // declared SSH host pubkey, identical predicate to enroll. Without
+    // this, renewal would silently let the agent rotate to a fresh
+    // (non-host-bound) keypair — defeating the binding the operator
+    // declared in fleet.nix.
+    let renew_csr_params = rcgen::CertificateSigningRequestParams::from_pem(&req.csr_pem)
+        .map_err(|err| {
+            tracing::warn!(error = %err, "renew: parse CSR PEM");
+            StatusCode::BAD_REQUEST
+        })?;
+    let csr_pubkey_der = renew_csr_params.public_key.der_bytes();
+    if csr_pubkey_der.len() != 32 {
+        tracing::warn!(
+            host = %cn,
+            len = csr_pubkey_der.len(),
+            "renew: CSR pubkey is not 32 raw bytes (non-ed25519 CSR rejected)",
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let snap = state
+        .verified_fleet
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| {
+            tracing::warn!("renew: no verified fleet snapshot — refusing");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+    let host_decl = snap.fleet.hosts.get(&cn).ok_or_else(|| {
+        tracing::warn!(host = %cn, "renew: host not declared in fleet.nix");
+        StatusCode::UNAUTHORIZED
+    })?;
+    if let Err(err) = crate::auth::issuance::validate_csr_against_fleet_host(
+        csr_pubkey_der,
+        host_decl.pubkey.as_deref(),
+    ) {
+        tracing::warn!(host = %cn, error = %err, "renew: fleet-pubkey binding check failed");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
 
     let paths = state.issuance_paths.read().await.clone();
     let (ca_cert, ca_key, audit_log_path) = match (&paths.fleet_ca_cert, &paths.fleet_ca_key) {

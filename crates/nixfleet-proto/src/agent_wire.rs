@@ -40,6 +40,17 @@ pub struct CheckinRequest {
     /// agents can't fast-forward the soak gate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_confirmed_at: Option<DateTime<Utc>>,
+
+    /// Base64 ed25519 signature over the JCS bytes of
+    /// `LastConfirmedAtSignedPayload { hostname, rollout_id,
+    /// last_confirmed_at }`, produced with the host's SSH host key.
+    /// CP verifies against `hosts.<hostname>.pubkey` from
+    /// fleet.resolved before applying `last_confirmed_at` to soak
+    /// recovery. Without it the attested time is silently ignored
+    /// (clamp falls back to `now`) — a compromised host can't replay
+    /// an older confirmation to short-circuit soak.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

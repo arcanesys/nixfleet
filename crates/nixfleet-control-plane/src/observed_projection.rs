@@ -112,6 +112,7 @@ mod tests {
                 last_fetch_outcome: None,
                 uptime_secs: Some(1),
                 last_confirmed_at: None,
+                attestation_signature: None,
             },
         }
     }

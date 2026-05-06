@@ -174,6 +174,41 @@ pub fn fingerprint(pubkey_bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(digest)
 }
 
+/// Validates that the CSR's raw ed25519 pubkey matches the host's
+/// declared SSH host pubkey (`hosts.<hostname>.pubkey` from
+/// fleet.resolved.json). Closes RFC-0003 §2: agent identity is bound
+/// to the SSH host key, not a fresh keypair.
+///
+/// Fail-closed: a host with no `pubkey` declared in fleet.nix CANNOT
+/// enroll. The expected workflow is "operator declares host (with
+/// pubkey) in fleet.nix → CI signs new fleet.resolved → agent enrols"
+/// — there's no permissive fallback.
+pub fn validate_csr_against_fleet_host(
+    csr_pubkey_raw: &[u8],
+    declared_openssh_pubkey: Option<&str>,
+) -> Result<()> {
+    let openssh = declared_openssh_pubkey.ok_or_else(|| {
+        anyhow::anyhow!(
+            "host has no `pubkey` declared in fleet.nix — \
+             enrollment refused (declarative-enrollment policy)"
+        )
+    })?;
+    let declared_raw =
+        nixfleet_proto::host_key::ed25519_pubkey_raw_from_openssh(openssh)
+            .with_context(|| {
+                format!("parse declared OpenSSH pubkey for fleet host: {openssh}")
+            })?;
+    if csr_pubkey_raw != declared_raw {
+        anyhow::bail!(
+            "CSR pubkey does not match host's declared SSH host pubkey \
+             (CSR fingerprint: {}, declared fingerprint: {})",
+            fingerprint(csr_pubkey_raw),
+            fingerprint(&declared_raw),
+        );
+    }
+    Ok(())
+}
+
 /// Issues an agent cert (clientAuth EKU + SAN dNSName=CN); caller pre-validates CN.
 pub fn issue_cert(
     csr_pem: &str,
@@ -269,5 +304,60 @@ pub fn audit_log(
         })
     {
         tracing::warn!(error = %err, path = %path.display(), "failed to append audit log");
+    }
+}
+
+#[cfg(test)]
+mod validate_csr_tests {
+    use super::*;
+    use base64::Engine;
+
+    /// Build a valid OpenSSH ed25519 pubkey line wrapping `raw`.
+    fn openssh_line(raw: &[u8; 32]) -> String {
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&(b"ssh-ed25519".len() as u32).to_be_bytes());
+        blob.extend_from_slice(b"ssh-ed25519");
+        blob.extend_from_slice(&(raw.len() as u32).to_be_bytes());
+        blob.extend_from_slice(raw);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&blob);
+        format!("ssh-ed25519 {b64} test@host")
+    }
+
+    #[test]
+    fn accepts_when_csr_pubkey_matches_declared() {
+        let raw = [0x42u8; 32];
+        let declared = openssh_line(&raw);
+        validate_csr_against_fleet_host(&raw, Some(&declared)).expect("should accept match");
+    }
+
+    #[test]
+    fn rejects_when_csr_pubkey_differs() {
+        let csr_raw = [0x42u8; 32];
+        let declared_raw = [0x43u8; 32];
+        let declared = openssh_line(&declared_raw);
+        let err = validate_csr_against_fleet_host(&csr_raw, Some(&declared)).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("does not match"), "msg = {msg}");
+    }
+
+    #[test]
+    fn rejects_when_no_pubkey_declared() {
+        let csr_raw = [0x42u8; 32];
+        let err = validate_csr_against_fleet_host(&csr_raw, None).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("declarative-enrollment policy"),
+            "msg = {msg}",
+        );
+    }
+
+    #[test]
+    fn rejects_when_declared_pubkey_unparseable() {
+        let csr_raw = [0x42u8; 32];
+        let err =
+            validate_csr_against_fleet_host(&csr_raw, Some("ssh-rsa garbage")).unwrap_err();
+        let msg = format!("{err}");
+        // The error chain mentions the parse failure context.
+        assert!(msg.contains("parse declared"), "msg = {msg}");
     }
 }

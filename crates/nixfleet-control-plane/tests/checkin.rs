@@ -81,6 +81,7 @@ async fn checkin_records_request_and_returns_null_target() {
         }),
         uptime_secs: Some(42),
         last_confirmed_at: None,
+        attestation_signature: None,
     };
 
     let resp: CheckinResponse = client
@@ -138,6 +139,7 @@ async fn checkin_rejects_cn_hostname_mismatch() {
         last_fetch_outcome: None,
         uptime_secs: None,
         last_confirmed_at: None,
+        attestation_signature: None,
     };
 
     let resp = client

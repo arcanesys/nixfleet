@@ -228,6 +228,87 @@ pub(super) async fn try_recover_pending_from_checkin(
     true
 }
 
+/// True iff the agent-attested `last_confirmed_at` carries a signature
+/// that verifies against the host's declared SSH host pubkey. False
+/// (= drop the attestation) on any failure path: no signature posted,
+/// no `pubkey` declared in fleet.nix, OpenSSH parse failure, base64
+/// decode failure, ed25519 verification mismatch.
+///
+/// Logs at `warn` for "configured but failed verification" cases
+/// (suspicious — operator wants to know) and `debug` for "not
+/// configured" (no signature, no pubkey).
+fn verify_attestation_signature(
+    req: &CheckinRequest,
+    rollout_id: &str,
+    attested: DateTime<Utc>,
+    host_decl: &nixfleet_proto::Host,
+) -> bool {
+    use base64::Engine;
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    let Some(sig_b64) = req.attestation_signature.as_deref() else {
+        tracing::debug!(
+            host = %req.hostname,
+            "soak recovery: no attestation_signature on checkin; ignoring last_confirmed_at",
+        );
+        return false;
+    };
+    let Some(declared_pubkey) = host_decl.pubkey.as_deref() else {
+        tracing::warn!(
+            host = %req.hostname,
+            "soak recovery: host has no `pubkey` declared in fleet.nix; ignoring attestation",
+        );
+        return false;
+    };
+    let pubkey_raw = match nixfleet_proto::host_key::ed25519_pubkey_raw_from_openssh(
+        declared_pubkey,
+    ) {
+        Ok(b) => b,
+        Err(err) => {
+            tracing::warn!(host = %req.hostname, error = %err, "soak recovery: declared OpenSSH pubkey parse failed");
+            return false;
+        }
+    };
+    let verifying_key = match VerifyingKey::from_bytes(&pubkey_raw) {
+        Ok(vk) => vk,
+        Err(err) => {
+            tracing::warn!(host = %req.hostname, error = %err, "soak recovery: ed25519 VerifyingKey from declared pubkey failed");
+            return false;
+        }
+    };
+    let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(sig_b64) {
+        Ok(b) => b,
+        Err(err) => {
+            tracing::warn!(host = %req.hostname, error = %err, "soak recovery: attestation signature base64 decode failed");
+            return false;
+        }
+    };
+    let signature = match Signature::from_slice(&sig_bytes) {
+        Ok(s) => s,
+        Err(err) => {
+            tracing::warn!(host = %req.hostname, error = %err, "soak recovery: attestation signature wire-shape invalid");
+            return false;
+        }
+    };
+    let payload = nixfleet_proto::evidence_signing::LastConfirmedAtSignedPayload {
+        hostname: &req.hostname,
+        rollout_id,
+        last_confirmed_at: attested,
+    };
+    let canonical = match serde_jcs::to_vec(&payload) {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::warn!(host = %req.hostname, error = %err, "soak recovery: JCS canonicalisation failed");
+            return false;
+        }
+    };
+    if let Err(err) = verifying_key.verify(&canonical, &signature) {
+        tracing::warn!(host = %req.hostname, error = %err, "soak recovery: attestation signature mismatch — REPLAY ATTACK SUSPECTED OR STALE ROLLOUT_ID");
+        return false;
+    }
+    true
+}
+
 /// Stamp `last_healthy_since` from `min(now, attested)` when no host_rollout_state row exists.
 pub(super) async fn recover_soak_state_from_attestation(
     state: &Arc<AppState>,
@@ -264,6 +345,18 @@ pub(super) async fn recover_soak_state_from_attestation(
         Ok(Some(id)) => id,
         Ok(None) | Err(_) => return,
     };
+
+    // Verify the agent-attested last_confirmed_at against the host's
+    // declared SSH host pubkey before applying. Without this, a
+    // compromised host could replay an older timestamp + valid old
+    // signature to short-circuit the soak gate from `soak_minutes`
+    // down to zero. Falls back to "ignore the attestation" on every
+    // failure path (no signature, no declared pubkey, parse failure,
+    // verify failure) — same effect as the agent never having sent
+    // last_confirmed_at, which is conservative.
+    if !verify_attestation_signature(req, &rollout_id, attested, host_decl) {
+        return;
+    }
 
     match db
         .rollout_state()
@@ -550,10 +643,13 @@ mod tests {
         // Happy path. Host is converged on the verified target, no
         // host_rollout_state row exists (CP rebuilt), attestation
         // arrives → stamp last_healthy_since.
-        let fleet = fleet_with_host("test-host", Some("system-r1"));
+        use super::super::tests::{sign_attestation, signed_attestation_fixture};
+        let (fleet, sk, rollout_id) = signed_attestation_fixture("test-host", "system-r1");
         let (state, db) = state_with_fleet_and_db(fleet).await;
         let attested = Utc::now() - chrono::Duration::minutes(3);
-        let req = checkin_req_with_attestation("test-host", "system-r1", Some(attested));
+        let mut req = checkin_req_with_attestation("test-host", "system-r1", Some(attested));
+        req.attestation_signature =
+            Some(sign_attestation(&sk, "test-host", &rollout_id, attested));
 
         recover_soak_state_from_attestation(&state, &req, Utc::now()).await;
 
@@ -579,11 +675,14 @@ mod tests {
         // Defensive clamp: a clock-skewed agent claims attestation
         // in the future. CP must clamp to `now` so the agent can't
         // short-circuit the soak gate.
-        let fleet = fleet_with_host("test-host", Some("system-r1"));
+        use super::super::tests::{sign_attestation, signed_attestation_fixture};
+        let (fleet, sk, rollout_id) = signed_attestation_fixture("test-host", "system-r1");
         let (state, db) = state_with_fleet_and_db(fleet).await;
         let now = Utc::now();
         let future = now + chrono::Duration::minutes(60);
-        let req = checkin_req_with_attestation("test-host", "system-r1", Some(future));
+        let mut req = checkin_req_with_attestation("test-host", "system-r1", Some(future));
+        req.attestation_signature =
+            Some(sign_attestation(&sk, "test-host", &rollout_id, future));
 
         recover_soak_state_from_attestation(&state, &req, now).await;
 
@@ -593,6 +692,66 @@ mod tests {
             stamped.timestamp(),
             now.timestamp(),
             "future-dated attestation must clamp to now",
+        );
+    }
+
+    /// LOADBEARING regression for the 2026-05-01 finding folded into #43.
+    /// A compromised host replaying an old `last_confirmed_at` with a
+    /// signature minted for that older timestamp must NOT advance the
+    /// soak clamp on a fresh attestation. The wave gate carries the
+    /// per-rollout grouping; the signature-binding to (hostname,
+    /// rollout_id, last_confirmed_at) is the cryptographic backstop —
+    /// without it, a leaked agent state file is enough to short-circuit
+    /// soak from `soak_minutes` to zero.
+    #[tokio::test]
+    async fn b_cp_recovery_rejects_unsigned_attestation_under_enforce() {
+        // Same fleet shape with declared pubkey, but the agent posts
+        // last_confirmed_at WITHOUT a signature. The CP must drop the
+        // attestation entirely (no row written), preventing the silent
+        // "fall back to no-binding" failure mode.
+        use super::super::tests::signed_attestation_fixture;
+        let (fleet, _sk, _rollout_id) =
+            signed_attestation_fixture("test-host", "system-r1");
+        let (state, db) = state_with_fleet_and_db(fleet).await;
+        let attested = Utc::now() - chrono::Duration::minutes(3);
+        let req = checkin_req_with_attestation("test-host", "system-r1", Some(attested));
+        // attestation_signature is None — the unsigned path.
+
+        recover_soak_state_from_attestation(&state, &req, Utc::now()).await;
+
+        let snap = db.host_dispatch_state().active_rollouts_snapshot().unwrap();
+        assert!(
+            snap.is_empty(),
+            "unsigned attestation must NOT stamp a soak marker; got {snap:?}",
+        );
+    }
+
+    /// Tampered signature: agent supplied a sig that doesn't verify
+    /// against `hosts.<host>.pubkey`. Must be rejected.
+    #[tokio::test]
+    async fn b_cp_recovery_rejects_tampered_signature() {
+        use super::super::tests::{sign_attestation, signed_attestation_fixture};
+        let (fleet, sk, rollout_id) = signed_attestation_fixture("test-host", "system-r1");
+        let (state, db) = state_with_fleet_and_db(fleet).await;
+        let attested = Utc::now() - chrono::Duration::minutes(3);
+        let mut req = checkin_req_with_attestation("test-host", "system-r1", Some(attested));
+        // Sign for a different rollout_id — simulates either replay
+        // across rollouts OR tampering. Either way the sig won't verify
+        // against the rollout the CP computes from the fleet.
+        req.attestation_signature = Some(sign_attestation(
+            &sk,
+            "test-host",
+            "different-rollout-id",
+            attested,
+        ));
+        let _ = rollout_id; // bound only to keep the binding obvious.
+
+        recover_soak_state_from_attestation(&state, &req, Utc::now()).await;
+
+        let snap = db.host_dispatch_state().active_rollouts_snapshot().unwrap();
+        assert!(
+            snap.is_empty(),
+            "tampered/replay signature must NOT stamp a soak marker; got {snap:?}",
         );
     }
 

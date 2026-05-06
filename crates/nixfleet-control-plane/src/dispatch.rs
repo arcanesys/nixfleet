@@ -253,6 +253,7 @@ mod tests {
             }),
             uptime_secs: None,
             last_confirmed_at: None,
+            attestation_signature: None,
         }
     }
 

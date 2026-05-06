@@ -68,9 +68,21 @@
 
       clientKey = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
-        default = null;
-        example = "/run/secrets/agent-key.pem";
-        description = "Path to client private key PEM file for mTLS authentication.";
+        default = "/etc/ssh/ssh_host_ed25519_key";
+        example = "/etc/ssh/ssh_host_ed25519_key";
+        description = ''
+          Path to the private key the agent uses to mint CSRs at
+          `/v1/enroll` and `/v1/agent/renew`. Defaults to the host's
+          SSH ed25519 host key (RFC-0003 §2 binding).
+
+          The CP rejects any CSR whose pubkey doesn't match the host's
+          declared `nixfleet.fleetSchema.hosts.<hostname>.pubkey` —
+          declare it in `fleet.nix` BEFORE first enrollment. Operators
+          previously deploying per-host agent keys via agenix should
+          drop those entries (`agents/<host>-key.age` from
+          fleet-secrets) once all hosts have rotated to host-key-bound
+          certs at their next 30-day renewal cycle.
+        '';
       };
     };
 

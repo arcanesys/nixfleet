@@ -8,6 +8,7 @@ pub mod enroll_wire;
 pub mod evidence_signing;
 pub mod fleet_resolved;
 pub mod fleet_view;
+pub mod host_key;
 pub mod host_rollout_state;
 pub mod revocations;
 pub mod rollout_manifest;

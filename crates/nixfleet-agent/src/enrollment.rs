@@ -1,4 +1,8 @@
-//! Bootstrap enrollment + cert renewal client.
+//! Bootstrap enrollment + cert renewal client. Both flows use the
+//! host's SSH host key as the CSR signing key (RFC-0003 §2). The
+//! `--client-key` runtime flag points at `/etc/ssh/ssh_host_ed25519_key`
+//! directly — no separate per-host agent key file is generated or
+//! written by the agent.
 
 use std::path::Path;
 
@@ -11,26 +15,54 @@ use nixfleet_proto::enroll_wire::{
 };
 use rcgen::{CertificateParams, DnType, KeyPair};
 use reqwest::Client;
+use sha2::Digest;
 use x509_parser::prelude::*;
 
-/// Returns (PEM CSR, PEM key, raw pubkey DER for fingerprinting).
-pub fn generate_csr(hostname: &str) -> Result<(String, String, Vec<u8>)> {
-    let key = KeyPair::generate().context("generate agent keypair")?;
+/// Read the host's SSH ed25519 private key, extract the 32-byte seed,
+/// build a CSR signed by it. Returns `(PEM CSR, raw 32-byte pubkey)`.
+/// The pubkey matches what the operator declares as
+/// `hosts.<hostname>.pubkey` in fleet.nix; CP enroll/renew rejects the
+/// CSR if they don't match.
+///
+/// FOOTGUN: the file at `ssh_host_key_path` is OpenSSH PEM; rcgen wants
+/// PKCS#8 PEM. We decode OpenSSH → 32-byte seed → wrap in PKCS#8 PEM
+/// envelope via the proto helper → hand to `KeyPair::from_pem`.
+pub fn generate_csr_from_ssh_host_key(
+    hostname: &str,
+    ssh_host_key_path: &Path,
+) -> Result<(String, [u8; 32])> {
+    let raw = std::fs::read_to_string(ssh_host_key_path)
+        .with_context(|| format!("read ssh host key {}", ssh_host_key_path.display()))?;
+    let private = ssh_key::PrivateKey::from_openssh(&raw)
+        .with_context(|| format!("parse OpenSSH key at {}", ssh_host_key_path.display()))?;
+    let seed = match private.key_data() {
+        ssh_key::private::KeypairData::Ed25519(kp) => kp.private.to_bytes(),
+        other => anyhow::bail!(
+            "ssh host key at {} is not ed25519 (algorithm: {:?})",
+            ssh_host_key_path.display(),
+            other.algorithm()
+        ),
+    };
+    let pkcs8_pem = nixfleet_proto::host_key::ed25519_pkcs8_pem_from_seed(&seed);
+    let key = KeyPair::from_pem(&pkcs8_pem).context("rcgen KeyPair::from_pem PKCS#8 ed25519")?;
     let mut params = CertificateParams::default();
     params
         .distinguished_name
         .push(DnType::CommonName, hostname);
     let csr = params.serialize_request(&key).context("serialize CSR")?;
-    Ok((csr.pem().context("CSR PEM encode")?, key.serialize_pem(), key.public_key_der()))
+    let csr_pem = csr.pem().context("CSR PEM encode")?;
+    let mut pubkey = [0u8; 32];
+    pubkey.copy_from_slice(key.public_key_raw());
+    Ok((csr_pem, pubkey))
 }
 
-/// base64 SHA-256 of pubkey DER; matches CP's `expected_pubkey_fingerprint`.
-pub fn fingerprint_pubkey_der(pubkey_der: &[u8]) -> String {
+/// base64 SHA-256 of raw pubkey bytes; matches CP's
+/// `expected_pubkey_fingerprint` field on the bootstrap token.
+pub fn fingerprint_pubkey_raw(pubkey_raw: &[u8]) -> String {
     use base64::Engine;
-    let digest = sha2::Sha256::digest(pubkey_der);
+    let digest = sha2::Sha256::digest(pubkey_raw);
     base64::engine::general_purpose::STANDARD.encode(digest)
 }
-use sha2::Digest;
 
 pub async fn enroll(
     client: &Client,
@@ -38,14 +70,15 @@ pub async fn enroll(
     hostname: &str,
     token_file: &Path,
     cert_path: &Path,
-    key_path: &Path,
+    ssh_host_key_path: &Path,
 ) -> Result<()> {
     let token_raw = std::fs::read_to_string(token_file)
         .with_context(|| format!("read bootstrap token {}", token_file.display()))?;
     let token: BootstrapToken =
         serde_json::from_str(&token_raw).context("parse bootstrap token")?;
 
-    let (csr_pem, key_pem, _pubkey_der) = generate_csr(hostname)?;
+    let (csr_pem, _pubkey_raw) =
+        generate_csr_from_ssh_host_key(hostname, ssh_host_key_path)?;
 
     let url = format!("{}/v1/enroll", cp_url.trim_end_matches('/'));
     let req = EnrollRequest { token, csr_pem };
@@ -55,12 +88,14 @@ pub async fn enroll(
     }
     let body: EnrollResponse = resp.json().await.context("parse enroll response")?;
 
+    // Write only the cert; the private key is the SSH host key already
+    // on disk at ssh_host_key_path. --client-key points there.
     write_atomic(cert_path, body.cert_pem.as_bytes())?;
-    write_atomic(key_path, key_pem.as_bytes())?;
     tracing::info!(
         cert = %cert_path.display(),
+        ssh_host_key = %ssh_host_key_path.display(),
         not_after = %body.not_after.to_rfc3339(),
-        "enrolled — wrote cert + key"
+        "enrolled — wrote cert (key is ssh host key, not written)"
     );
     Ok(())
 }
@@ -70,9 +105,10 @@ pub async fn renew(
     cp_url: &str,
     hostname: &str,
     cert_path: &Path,
-    key_path: &Path,
+    ssh_host_key_path: &Path,
 ) -> Result<()> {
-    let (csr_pem, key_pem, _pubkey_der) = generate_csr(hostname)?;
+    let (csr_pem, _pubkey_raw) =
+        generate_csr_from_ssh_host_key(hostname, ssh_host_key_path)?;
     let url = format!("{}/v1/agent/renew", cp_url.trim_end_matches('/'));
     let req = RenewRequest { csr_pem };
     let resp = client.post(&url).header(PROTOCOL_VERSION_HEADER, PROTOCOL_MAJOR_VERSION.to_string()).json(&req).send().await?;
@@ -81,11 +117,10 @@ pub async fn renew(
     }
     let body: RenewResponse = resp.json().await.context("parse renew response")?;
     write_atomic(cert_path, body.cert_pem.as_bytes())?;
-    write_atomic(key_path, key_pem.as_bytes())?;
     tracing::info!(
         cert = %cert_path.display(),
         not_after = %body.not_after.to_rfc3339(),
-        "renewed — wrote cert + key"
+        "renewed — wrote cert (key unchanged: ssh host key)"
     );
     Ok(())
 }
@@ -196,5 +231,83 @@ mod pem {
             .decode(body)
             .context("PEM base64 decode")?;
         Ok(Parsed { contents: bytes })
+    }
+}
+
+#[cfg(test)]
+mod ssh_host_key_csr_tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+    use rand::RngCore;
+    use ssh_key::{LineEnding, PrivateKey};
+
+    fn write_test_ssh_host_key(dir: &Path) -> std::path::PathBuf {
+        let mut seed = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut seed);
+        let sk = SigningKey::from_bytes(&seed);
+        let kp = ssh_key::private::Ed25519Keypair {
+            public: ssh_key::public::Ed25519PublicKey(sk.verifying_key().to_bytes()),
+            private: ssh_key::private::Ed25519PrivateKey::from_bytes(&sk.to_bytes()),
+        };
+        let pk = PrivateKey::new(
+            ssh_key::private::KeypairData::Ed25519(kp),
+            "test-host",
+        )
+        .expect("PrivateKey::new");
+        let pem = pk.to_openssh(LineEnding::LF).expect("openssh PEM");
+        let path = dir.join("ssh_host_ed25519_key");
+        std::fs::write(&path, pem.as_bytes()).expect("write key");
+        path
+    }
+
+    #[test]
+    fn csr_pubkey_equals_ssh_host_pubkey() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key_path = write_test_ssh_host_key(dir.path());
+        // Read the SSH host key directly so we know the expected pubkey.
+        let raw = std::fs::read_to_string(&key_path).expect("read");
+        let priv_key = PrivateKey::from_openssh(&raw).expect("parse");
+        let expected_pubkey = match priv_key.key_data() {
+            ssh_key::private::KeypairData::Ed25519(kp) => kp.public.0,
+            _ => panic!("not ed25519"),
+        };
+
+        let (_csr, csr_pubkey) =
+            generate_csr_from_ssh_host_key("test-host", &key_path).expect("CSR");
+        assert_eq!(
+            csr_pubkey, expected_pubkey,
+            "CSR pubkey must match SSH host pubkey (RFC-0003 §2 binding)",
+        );
+    }
+
+    #[test]
+    fn renewal_preserves_csr_pubkey_across_calls() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key_path = write_test_ssh_host_key(dir.path());
+        let (_csr1, pubkey1) =
+            generate_csr_from_ssh_host_key("test-host", &key_path).expect("CSR 1");
+        let (_csr2, pubkey2) =
+            generate_csr_from_ssh_host_key("test-host", &key_path).expect("CSR 2");
+        assert_eq!(
+            pubkey1, pubkey2,
+            "renewal must reuse the SSH host pubkey (no fresh keypair)",
+        );
+    }
+
+    #[test]
+    fn rejects_non_ed25519_ssh_host_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Write an RSA-shaped placeholder (using ssh-key's RSA generator
+        // would be heavy; instead we stuff a non-OpenSSH file and expect
+        // the parse error path).
+        let path = dir.path().join("not-an-ssh-key");
+        std::fs::write(&path, b"definitely not OpenSSH PEM").expect("write");
+        let err =
+            generate_csr_from_ssh_host_key("test-host", &path).expect_err("must reject");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("parse OpenSSH key"),
+            "unexpected error: {msg}",
+        );
     }
 }

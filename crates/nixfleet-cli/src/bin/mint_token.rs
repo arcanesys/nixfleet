@@ -21,8 +21,19 @@ struct Args {
     hostname: String,
 
     /// base64 SHA-256 of the CSR's pubkey; binds the token to the key.
+    /// Mutually exclusive with `--fleet-resolved`: pass one or the other,
+    /// not both. The flag-driven path is for dev/test; declarative
+    /// fleets should use `--fleet-resolved`.
+    #[arg(long, conflicts_with = "fleet_resolved")]
+    csr_pubkey_fingerprint: Option<String>,
+
+    /// Path to the signed `releases/fleet.resolved.json`. When set, the
+    /// fingerprint is derived from `hosts.<hostname>.pubkey` —
+    /// guarantees the token is scoped to whatever the operator
+    /// declared in fleet.nix, no manual SHA-256 dance. Closes #9's
+    /// "fingerprint binding declared in flake" ergonomics.
     #[arg(long)]
-    csr_pubkey_fingerprint: String,
+    fleet_resolved: Option<PathBuf>,
 
     /// Org root ed25519 private key: PKCS#8 PEM, 32 raw bytes, or hex.
     #[arg(long)]
@@ -132,14 +143,43 @@ fn random_nonce() -> String {
     hex::encode(buf)
 }
 
+fn fingerprint_from_fleet(fleet_path: &PathBuf, hostname: &str) -> Result<String> {
+    let raw = std::fs::read_to_string(fleet_path)
+        .with_context(|| format!("read fleet.resolved.json {}", fleet_path.display()))?;
+    let fleet: nixfleet_proto::FleetResolved = serde_json::from_str(&raw)
+        .with_context(|| format!("parse fleet.resolved.json {}", fleet_path.display()))?;
+    let host = fleet.hosts.get(hostname).ok_or_else(|| {
+        anyhow::anyhow!(
+            "host {hostname} not declared in {}",
+            fleet_path.display()
+        )
+    })?;
+    let openssh = host.pubkey.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "host {hostname} has no `pubkey` declared in fleet.nix — set it before minting"
+        )
+    })?;
+    nixfleet_proto::host_key::fingerprint_openssh_pubkey(openssh)
+        .map_err(|err| anyhow::anyhow!("derive fingerprint from declared pubkey: {err}"))
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     let signing_key = read_signing_key(&args.org_root_key)?;
 
+    let fingerprint = match (&args.csr_pubkey_fingerprint, &args.fleet_resolved) {
+        (Some(fp), None) => fp.clone(),
+        (None, Some(fleet_path)) => fingerprint_from_fleet(fleet_path, &args.hostname)?,
+        (None, None) => anyhow::bail!(
+            "must pass --csr-pubkey-fingerprint OR --fleet-resolved (declarative path)",
+        ),
+        (Some(_), Some(_)) => unreachable!("clap's `conflicts_with` rejects this combo"),
+    };
+
     let now = Utc::now();
     let claims = TokenClaims {
         hostname: args.hostname,
-        expected_pubkey_fingerprint: args.csr_pubkey_fingerprint,
+        expected_pubkey_fingerprint: fingerprint,
         issued_at: now,
         expires_at: now + ChronoDuration::hours(args.validity_hours as i64),
         nonce: random_nonce(),
@@ -161,4 +201,134 @@ fn main() -> Result<()> {
     println!("{out}");
     eprintln!("nonce: {}", token.claims.nonce);
     Ok(())
+}
+
+#[cfg(test)]
+mod fleet_resolved_tests {
+    use super::*;
+
+    #[test]
+    fn fingerprint_from_fleet_matches_proto_helper() {
+        // Build a tiny fleet.resolved.json declaring "test-host" with a
+        // known OpenSSH ed25519 pubkey; assert the derived fingerprint
+        // equals the proto helper's direct computation.
+        let raw_pubkey = [0x42u8; 32];
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&(b"ssh-ed25519".len() as u32).to_be_bytes());
+        blob.extend_from_slice(b"ssh-ed25519");
+        blob.extend_from_slice(&(raw_pubkey.len() as u32).to_be_bytes());
+        blob.extend_from_slice(&raw_pubkey);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&blob);
+        let openssh = format!("ssh-ed25519 {b64} test@host");
+
+        let fleet_json = serde_json::json!({
+            "schemaVersion": 1,
+            "hosts": {
+                "test-host": {
+                    "system": "x86_64-linux",
+                    "tags": [],
+                    "channel": "stable",
+                    "closureHash": null,
+                    "pubkey": openssh,
+                }
+            },
+            "channels": {
+                "stable": {
+                    "rolloutPolicy": "default",
+                    "reconcileIntervalMinutes": 5,
+                    "freshnessWindow": 60,
+                    "signingIntervalMinutes": 30,
+                    "compliance": { "frameworks": [], "mode": "disabled" },
+                }
+            },
+            "rolloutPolicies": {
+                "default": {
+                    "strategy": "waves",
+                    "waves": [],
+                    "healthGate": {},
+                    "onHealthFailure": "halt",
+                }
+            },
+            "waves": {},
+            "edges": [],
+            "disruptionBudgets": [],
+            "meta": {
+                "schemaVersion": 1,
+                "signedAt": null,
+                "ciCommit": null,
+                "signatureAlgorithm": null,
+            }
+        });
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        use std::io::Write;
+        tmp.write_all(fleet_json.to_string().as_bytes()).unwrap();
+
+        let got = fingerprint_from_fleet(&tmp.path().to_path_buf(), "test-host").unwrap();
+        let expected =
+            nixfleet_proto::host_key::fingerprint_openssh_pubkey(&openssh).unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn fingerprint_from_fleet_errors_when_host_missing() {
+        let fleet_json = serde_json::json!({
+            "schemaVersion": 1,
+            "hosts": {},
+            "channels": {},
+            "rolloutPolicies": {},
+            "waves": {},
+            "edges": [],
+            "disruptionBudgets": [],
+            "meta": { "schemaVersion": 1, "signedAt": null, "ciCommit": null, "signatureAlgorithm": null }
+        });
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        use std::io::Write;
+        tmp.write_all(fleet_json.to_string().as_bytes()).unwrap();
+
+        let err = fingerprint_from_fleet(&tmp.path().to_path_buf(), "test-host").unwrap_err();
+        assert!(format!("{err:#}").contains("not declared"), "msg = {err:#}");
+    }
+
+    #[test]
+    fn fingerprint_from_fleet_errors_when_pubkey_missing() {
+        let fleet_json = serde_json::json!({
+            "schemaVersion": 1,
+            "hosts": {
+                "test-host": {
+                    "system": "x86_64-linux",
+                    "tags": [],
+                    "channel": "stable",
+                    "closureHash": null,
+                    "pubkey": null,
+                }
+            },
+            "channels": {
+                "stable": {
+                    "rolloutPolicy": "default",
+                    "reconcileIntervalMinutes": 5,
+                    "freshnessWindow": 60,
+                    "signingIntervalMinutes": 30,
+                    "compliance": { "frameworks": [], "mode": "disabled" },
+                }
+            },
+            "rolloutPolicies": {
+                "default": {
+                    "strategy": "waves",
+                    "waves": [],
+                    "healthGate": {},
+                    "onHealthFailure": "halt",
+                }
+            },
+            "waves": {},
+            "edges": [],
+            "disruptionBudgets": [],
+            "meta": { "schemaVersion": 1, "signedAt": null, "ciCommit": null, "signatureAlgorithm": null }
+        });
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        use std::io::Write;
+        tmp.write_all(fleet_json.to_string().as_bytes()).unwrap();
+
+        let err = fingerprint_from_fleet(&tmp.path().to_path_buf(), "test-host").unwrap_err();
+        assert!(format!("{err:#}").contains("no `pubkey`"), "msg = {err:#}");
+    }
 }

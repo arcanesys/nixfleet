@@ -80,22 +80,131 @@ fn mint_pki(dir: &TempDir, agent_cn: &str) -> TestPki {
     }
 }
 
-fn write_phase2_input_stubs(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+/// Write a signed fleet.resolved.json declaring `hostname` with
+/// `host_pubkey` so the renew handler's fleet-pubkey binding check
+/// passes. Trust.json carries the matching ciReleaseKey for polling
+/// loop verification. Returns (artifact, signature, trust, observed).
+fn write_signed_fleet_inputs(
+    dir: &TempDir,
+    hostname: &str,
+    host_pubkey: Option<&str>,
+) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    use base64::Engine;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let mut rng = rand::thread_rng();
+    let ci_signing_key = SigningKey::generate(&mut rng);
+    let public_b64 = base64::engine::general_purpose::STANDARD
+        .encode(ci_signing_key.verifying_key());
+
+    let signed_at = "2026-04-26T00:00:00Z";
+    let json = serde_json::json!({
+        "schemaVersion": 1,
+        "hosts": {
+            hostname: {
+                "system": "x86_64-linux",
+                "tags": [],
+                "channel": "stable",
+                "closureHash": "test-closure",
+                "pubkey": host_pubkey,
+            }
+        },
+        "channels": {
+            "stable": {
+                "rolloutPolicy": "default",
+                "reconcileIntervalMinutes": 5,
+                "freshnessWindow": 60,
+                "signingIntervalMinutes": 30,
+                "compliance": { "frameworks": [], "mode": "disabled" },
+            }
+        },
+        "rolloutPolicies": {
+            "default": {
+                "strategy": "waves",
+                "waves": [],
+                "healthGate": {},
+                "onHealthFailure": "halt",
+            }
+        },
+        "waves": {},
+        "edges": [],
+        "disruptionBudgets": [],
+        "meta": {
+            "schemaVersion": 1,
+            "signedAt": signed_at,
+            "ciCommit": "abc12345deadbeef",
+            "signatureAlgorithm": "ed25519",
+        },
+    });
+    let raw = serde_json::to_string(&json).unwrap();
+    let canonical = nixfleet_canonicalize::canonicalize(&raw).unwrap();
+    let signature = ci_signing_key.sign(canonical.as_bytes());
+
     let artifact = dir.path().join("fleet.resolved.json");
-    write_pem(&artifact, "{}");
-    let signature = dir.path().join("fleet.resolved.json.sig");
-    write_pem(&signature, "");
-    let trust = dir.path().join("trust-stub.json");
-    write_pem(
-        &trust,
-        r#"{"schemaVersion":1,"ciReleaseKey":{"current":null,"previous":null,"rejectBefore":null}}"#,
-    );
+    std::fs::write(&artifact, &raw).unwrap();
+    let signature_path = dir.path().join("fleet.resolved.json.sig");
+    std::fs::write(&signature_path, signature.to_bytes()).unwrap();
+    // trust.json carries ciReleaseKey for poll-loop verify; orgRootKey
+    // is null because renew is mTLS-authenticated (no bootstrap token).
+    let trust = dir.path().join("trust.json");
+    let trust_json = serde_json::json!({
+        "schemaVersion": 1,
+        "ciReleaseKey": {
+            "current": { "algorithm": "ed25519", "public": public_b64 },
+            "previous": null,
+            "rejectBefore": null,
+        },
+        "cacheKeys": [],
+        "orgRootKey": null,
+    });
+    std::fs::write(&trust, trust_json.to_string()).unwrap();
+
     let observed = dir.path().join("observed.json");
-    write_pem(
+    std::fs::write(
         &observed,
         r#"{"channelRefs":{},"lastRolledRefs":{},"hostState":{},"activeRollouts":[]}"#,
-    );
-    (artifact, signature, trust, observed)
+    )
+    .unwrap();
+
+    (artifact, signature_path, trust, observed)
+}
+
+/// Build the OpenSSH-format pubkey line from a 32-byte ed25519 seed.
+fn openssh_pubkey_from_seed(seed: &[u8; 32]) -> String {
+    use base64::Engine;
+    let dalek_sk = ed25519_dalek::SigningKey::from_bytes(seed);
+    let pubkey_raw = dalek_sk.verifying_key().to_bytes();
+    let mut blob = Vec::new();
+    blob.extend_from_slice(&(b"ssh-ed25519".len() as u32).to_be_bytes());
+    blob.extend_from_slice(b"ssh-ed25519");
+    blob.extend_from_slice(&(pubkey_raw.len() as u32).to_be_bytes());
+    blob.extend_from_slice(&pubkey_raw);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&blob);
+    format!("ssh-ed25519 {b64} test@host")
+}
+
+/// Wait until the CP has primed its verified_fleet snapshot.
+async fn wait_for_fleet_primed(port: u16, ca_pem: &[u8]) {
+    let ca_cert = reqwest::Certificate::from_pem(ca_pem).unwrap();
+    let client = reqwest::Client::builder()
+        .use_rustls_tls()
+        .add_root_certificate(ca_cert)
+        .build()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while std::time::Instant::now() < deadline {
+        if let Ok(r) = client
+            .get(format!("https://localhost:{port}/healthz"))
+            .send()
+            .await
+        {
+            if r.status().is_success() {
+                return;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("verified_fleet did not prime within 15s");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -108,8 +217,11 @@ async fn spawn_server(
     fleet_ca_key: Option<PathBuf>,
     db_path: Option<PathBuf>,
     port: u16,
+    declared_host: &str,
+    host_pubkey: Option<&str>,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
-    let (artifact, signature, trust, observed) = write_phase2_input_stubs(args_dir);
+    let (artifact, signature, trust, observed) =
+        write_signed_fleet_inputs(args_dir, declared_host, host_pubkey);
     let audit_log = args_dir.path().join("issuance.log");
     let listen: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
     let args = server::ServeArgs {
@@ -124,6 +236,7 @@ async fn spawn_server(
         signature_path: signature,
         trust_path: trust,
         observed_path: observed,
+        freshness_window: std::time::Duration::from_secs(86400 * 365 * 5),
         confirm_deadline_secs: 120,
         db_path,
         ..Default::default()
@@ -161,12 +274,24 @@ fn build_no_cert_client(ca_pem_path: &std::path::Path) -> reqwest::Client {
         .unwrap()
 }
 
-fn mint_csr(hostname: &str) -> String {
-    let key = KeyPair::generate().unwrap();
+/// Mint a CSR using a caller-supplied 32-byte ed25519 seed (matching
+/// the SSH host key the agent would use post #43). Caller declares the
+/// matching `pubkey` in fleet.nix; CP renew handler validates the
+/// match before issuing the cert.
+fn mint_csr_from_seed(hostname: &str, seed: &[u8; 32]) -> String {
+    let pkcs8_pem = nixfleet_proto::host_key::ed25519_pkcs8_pem_from_seed(seed);
+    let key = KeyPair::from_pem(&pkcs8_pem).unwrap();
     let mut params = CertificateParams::default();
     params.distinguished_name.push(DnType::CommonName, hostname);
     let csr: CertificateSigningRequest = params.serialize_request(&key).unwrap();
     csr.pem().unwrap()
+}
+
+fn mint_csr(hostname: &str) -> (String, [u8; 32]) {
+    use rand::RngCore;
+    let mut seed = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut seed);
+    (mint_csr_from_seed(hostname, &seed), seed)
 }
 
 #[tokio::test]
@@ -175,6 +300,9 @@ async fn renew_happy_path_signs_fresh_cert() {
 
     let dir = TempDir::new().unwrap();
     let pki = mint_pki(&dir, "test-host");
+    let (csr_pem, seed) = mint_csr("test-host");
+    let openssh = openssh_pubkey_from_seed(&seed);
+
     let port = pick_free_port().await;
     let handle = spawn_server(
         &dir,
@@ -185,10 +313,13 @@ async fn renew_happy_path_signs_fresh_cert() {
         Some(pki.ca_key.clone()),
         None,
         port,
+        "test-host",
+        Some(&openssh),
     )
     .await;
+    let ca_pem = std::fs::read(&pki.ca_cert).unwrap();
+    wait_for_fleet_primed(port, &ca_pem).await;
 
-    let csr_pem = mint_csr("test-host");
     let req = RenewRequest { csr_pem };
     let client = build_mtls_client(&pki.ca_cert, &pki.agent_cert_pem, &pki.agent_key_pem);
 
@@ -219,6 +350,9 @@ async fn renew_rejects_request_without_client_cert() {
 
     let dir = TempDir::new().unwrap();
     let pki = mint_pki(&dir, "test-host");
+    let (csr_pem, seed) = mint_csr("test-host");
+    let openssh = openssh_pubkey_from_seed(&seed);
+
     let port = pick_free_port().await;
     let handle = spawn_server(
         &dir,
@@ -229,10 +363,11 @@ async fn renew_rejects_request_without_client_cert() {
         Some(pki.ca_key.clone()),
         None,
         port,
+        "test-host",
+        Some(&openssh),
     )
     .await;
 
-    let csr_pem = mint_csr("test-host");
     let req = RenewRequest { csr_pem };
     let client = build_no_cert_client(&pki.ca_cert);
 
@@ -256,6 +391,8 @@ async fn renew_rejects_revoked_cert() {
     let dir = TempDir::new().unwrap();
     let pki = mint_pki(&dir, "test-host");
     let db_path = dir.path().join("state.db");
+    let (csr_pem, seed) = mint_csr("test-host");
+    let openssh = openssh_pubkey_from_seed(&seed);
 
     {
         let db = Db::open(&db_path).unwrap();
@@ -281,10 +418,11 @@ async fn renew_rejects_revoked_cert() {
         Some(pki.ca_key.clone()),
         Some(db_path),
         port,
+        "test-host",
+        Some(&openssh),
     )
     .await;
 
-    let csr_pem = mint_csr("test-host");
     let req = RenewRequest { csr_pem };
     let client = build_mtls_client(&pki.ca_cert, &pki.agent_cert_pem, &pki.agent_key_pem);
 
@@ -305,6 +443,9 @@ async fn renew_returns_500_when_ca_not_configured() {
 
     let dir = TempDir::new().unwrap();
     let pki = mint_pki(&dir, "test-host");
+    let (csr_pem, seed) = mint_csr("test-host");
+    let openssh = openssh_pubkey_from_seed(&seed);
+
     let port = pick_free_port().await;
     let handle = spawn_server(
         &dir,
@@ -315,10 +456,13 @@ async fn renew_returns_500_when_ca_not_configured() {
         None,
         None,
         port,
+        "test-host",
+        Some(&openssh),
     )
     .await;
+    let ca_pem = std::fs::read(&pki.ca_cert).unwrap();
+    wait_for_fleet_primed(port, &ca_pem).await;
 
-    let csr_pem = mint_csr("test-host");
     let req = RenewRequest { csr_pem };
     let client = build_mtls_client(&pki.ca_cert, &pki.agent_cert_pem, &pki.agent_key_pem);
 
@@ -332,6 +476,66 @@ async fn renew_returns_500_when_ca_not_configured() {
         resp.status(),
         500,
         "no CA configured must surface 500, not silent success",
+    );
+
+    handle.abort();
+}
+
+/// RFC-0003 §2 binding at the renewal seam: an mTLS-authenticated
+/// agent that submits a CSR signed by a different keypair than the
+/// host's declared SSH host key is rejected. Without this, an attacker
+/// with control of the agent process (but not the SSH host key) could
+/// silently rotate the cert binding to a fresh keypair, breaking the
+/// "compromise of cert ⇔ compromise of host key" equivalence the RFC
+/// promises.
+#[tokio::test]
+async fn renew_rejects_csr_pubkey_mismatch_with_declared_host() {
+    install_crypto_provider_once();
+
+    let dir = TempDir::new().unwrap();
+    let pki = mint_pki(&dir, "test-host");
+
+    use rand::RngCore;
+    let mut declared_seed = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut declared_seed);
+    let declared_openssh = openssh_pubkey_from_seed(&declared_seed);
+
+    // CSR signed with a DIFFERENT seed than what fleet.nix declares.
+    let mut imposter_seed = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut imposter_seed);
+    assert_ne!(declared_seed, imposter_seed);
+    let csr_pem = mint_csr_from_seed("test-host", &imposter_seed);
+
+    let port = pick_free_port().await;
+    let handle = spawn_server(
+        &dir,
+        pki.server_cert.clone(),
+        pki.server_key.clone(),
+        Some(pki.ca_cert.clone()),
+        Some(pki.ca_cert.clone()),
+        Some(pki.ca_key.clone()),
+        None,
+        port,
+        "test-host",
+        Some(&declared_openssh),
+    )
+    .await;
+    let ca_pem = std::fs::read(&pki.ca_cert).unwrap();
+    wait_for_fleet_primed(port, &ca_pem).await;
+
+    let req = RenewRequest { csr_pem };
+    let client = build_mtls_client(&pki.ca_cert, &pki.agent_cert_pem, &pki.agent_key_pem);
+
+    let resp = client
+        .post(format!("https://localhost:{port}/v1/agent/renew"))
+        .json(&req)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        401,
+        "CSR-vs-declared mismatch must reject (RFC-0003 §2 binding)",
     );
 
     handle.abort();

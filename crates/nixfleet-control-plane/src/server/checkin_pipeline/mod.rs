@@ -269,7 +269,67 @@ pub(super) mod tests {
             last_fetch_outcome: None,
             uptime_secs: None,
             last_confirmed_at: attested,
+            attestation_signature: None,
         }
+    }
+
+    /// Signed-attestation fixture for soak-recovery tests.
+    ///
+    /// Returns `(fleet_with_pubkey, signing_key, rollout_id)`. The fleet
+    /// has `hosts.<hostname>.pubkey` populated with the OpenSSH-format
+    /// pubkey of `signing_key`. Callers can then build a CheckinRequest,
+    /// sign `LastConfirmedAtSignedPayload` against the returned key, and
+    /// pass through `recover_soak_state_from_attestation` — closing the
+    /// real binding (not a `pubkey: None` test escape hatch).
+    pub(super) fn signed_attestation_fixture(
+        hostname: &str,
+        closure: &str,
+    ) -> (
+        nixfleet_proto::FleetResolved,
+        ed25519_dalek::SigningKey,
+        String,
+    ) {
+        use base64::Engine;
+        use rand::RngCore;
+
+        let mut seed = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut seed);
+        let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let pubkey_raw = sk.verifying_key().to_bytes();
+
+        // Build the OpenSSH pubkey line: `ssh-ed25519 <base64> test@host`.
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&(b"ssh-ed25519".len() as u32).to_be_bytes());
+        blob.extend_from_slice(b"ssh-ed25519");
+        blob.extend_from_slice(&(pubkey_raw.len() as u32).to_be_bytes());
+        blob.extend_from_slice(&pubkey_raw);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&blob);
+        let openssh = format!("ssh-ed25519 {b64} test@host");
+
+        let mut fleet = fleet_with_host(hostname, Some(closure));
+        fleet.hosts.get_mut(hostname).unwrap().pubkey = Some(openssh);
+
+        let rollout_id = expected_rollout_id_for(&fleet, "stable");
+        (fleet, sk, rollout_id)
+    }
+
+    /// Sign a `LastConfirmedAtSignedPayload` and return base64 string.
+    pub(super) fn sign_attestation(
+        sk: &ed25519_dalek::SigningKey,
+        hostname: &str,
+        rollout_id: &str,
+        last_confirmed_at: DateTime<Utc>,
+    ) -> String {
+        use base64::Engine;
+        use ed25519_dalek::Signer;
+        let payload = nixfleet_proto::evidence_signing::LastConfirmedAtSignedPayload {
+            hostname,
+            rollout_id,
+            last_confirmed_at,
+        };
+        let canonical = serde_jcs::to_vec(&payload).unwrap();
+        let sig = sk.sign(&canonical);
+        base64::engine::general_purpose::STANDARD.encode(sig.to_bytes())
     }
 
     pub(super) fn confirm_req(hostname: &str, rollout: &str, closure: &str) -> ConfirmRequest {

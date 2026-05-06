@@ -48,6 +48,22 @@ pub struct RollbackTriggeredSignedPayload<'a> {
     pub reason: &'a str,
 }
 
+/// Soak-state attestation. Bound to (hostname, rollout) so a stale
+/// signature can't replay across rollouts; `last_confirmed_at` is what
+/// the CP clamps `last_healthy_since` against during rebuild recovery.
+///
+/// Without this signature the CP cannot trust the agent's claimed
+/// confirmation time — a compromised host could replay an older
+/// timestamp to short-circuit the soak gate. Verified against
+/// `hosts.<hostname>.pubkey` from fleet.resolved.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastConfirmedAtSignedPayload<'a> {
+    pub hostname: &'a str,
+    pub rollout_id: &'a str,
+    pub last_confirmed_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RealiseFailedSignedPayload<'a> {

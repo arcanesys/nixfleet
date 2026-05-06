@@ -270,7 +270,7 @@ async fn run_poll_loop(
             reporter.replace_client(client_handle.clone());
         }
 
-        match send_checkin(&client_handle, args, started_at).await {
+        match send_checkin(&client_handle, args, started_at, &evidence_signer).await {
             Ok(resp) => {
                 consecutive_failures = 0;
                 // LOADBEARING: process CP rollback before new dispatch — host must step away from failed gen first.
@@ -371,6 +371,7 @@ async fn send_checkin(
     client: &reqwest::Client,
     args: &Args,
     started_at: Instant,
+    evidence_signer: &std::sync::Arc<Option<nixfleet_agent::evidence_signer::EvidenceSigner>>,
 ) -> anyhow::Result<nixfleet_proto::agent_wire::CheckinResponse> {
     let current_generation = nixfleet_agent::host_facts::current_generation_ref()?;
     let pending_generation = nixfleet_agent::host_facts::pending_generation()?;
@@ -439,6 +440,36 @@ async fn send_checkin(
         None
     };
 
+    // Sign last_confirmed_at against (hostname, rollout_id) using the
+    // SSH host key. CP verifies against hosts.<host>.pubkey before
+    // applying the attested timestamp to soak recovery — without the
+    // signature the timestamp is silently ignored (clamp falls back
+    // to `now`), so a compromised host can't replay an older confirm
+    // to short-circuit the soak gate.
+    //
+    // Sig requires a rollout_id; we use last_evaluated_target.rollout_id
+    // (the rollout the agent thinks it's on). CP recovery computes
+    // rollout_id from the host's channel + fleet hash; both sides match
+    // in steady state. A rollout rotation between agent-side sign and
+    // CP-side verify causes mismatch → CP falls back to unattested
+    // clamp, which is the correct conservative behaviour.
+    let attestation_signature = match (
+        last_confirmed_at,
+        last_evaluated_target.as_ref().map(|t| t.rollout_id.clone()),
+        evidence_signer.as_ref().as_ref(),
+    ) {
+        (Some(lc), Some(rid), Some(signer)) => {
+            let payload =
+                nixfleet_proto::evidence_signing::LastConfirmedAtSignedPayload {
+                    hostname: args.machine_id.as_str(),
+                    rollout_id: rid.as_str(),
+                    last_confirmed_at: lc,
+                };
+            nixfleet_agent::evidence_signer::try_sign(signer, &payload)
+        }
+        _ => None,
+    };
+
     let req = CheckinRequest {
         hostname: args.machine_id.clone(),
         agent_version: AGENT_VERSION.to_string(),
@@ -448,6 +479,7 @@ async fn send_checkin(
         last_fetch_outcome,
         uptime_secs: Some(uptime_secs),
         last_confirmed_at,
+        attestation_signature,
     };
 
     comms::checkin(client, &args.control_plane_url, &req).await

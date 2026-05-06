@@ -146,6 +146,7 @@ fn checkin_request(current: &str) -> CheckinRequest {
         }),
         uptime_secs: None,
         last_confirmed_at: None,
+        attestation_signature: None,
     }
 }
 
