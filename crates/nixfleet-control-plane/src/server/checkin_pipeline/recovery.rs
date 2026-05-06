@@ -97,17 +97,10 @@ async fn validate_orphan_recovery(
 
 /// Returns true iff operational + Healthy-marker rows landed atomically.
 ///
-/// Pre-fix (split into two transactions): a failure between the
-/// operational UPSERT and the host_rollout_state Healthy-marker
-/// INSERT left host_dispatch_state at `confirmed` with NO matching
-/// host_rollout_state row. The snapshot's LEFT JOIN then projected
-/// the absence as "Healthy with NULL last_healthy_since"; the soak
-/// timer in handle_wave (`if let Some(since) = last_healthy_since.get(host)`)
-/// never fires; the host stayed Healthy forever and blocked the
-/// whole rollout's wave promotion.
-///
-/// Now: one transaction. Either both rows land or neither — the
-/// next checkin re-runs orphan-confirm cleanly.
+/// Single transaction via `record_confirmed_dispatch_with_state`:
+/// either both rows land or neither does. The orphan-confirm path
+/// writes target_state = Healthy with healthy_since = now (the host
+/// is healthy from this confirm).
 fn synthesise_orphan_confirm_rows(
     db: &crate::db::Db,
     req: &ConfirmRequest,
@@ -117,13 +110,15 @@ fn synthesise_orphan_confirm_rows(
     let now = Utc::now();
     if let Err(err) = db
         .host_dispatch_state()
-        .record_confirmed_dispatch_with_healthy_marker(
+        .record_confirmed_dispatch_with_state(
             &req.hostname,
             &req.rollout,
             channel,
             req.wave,
             target_closure,
             &req.rollout,
+            now,
+            crate::state::HostRolloutState::Healthy,
             now,
         )
     {
@@ -199,36 +194,28 @@ pub(super) async fn try_recover_pending_from_checkin(
     }
 
     let now = Utc::now();
-    if let Err(err) = db.host_dispatch_state().record_confirmed_dispatch(
-        &req.hostname,
-        &row.rollout_id,
-        &host_decl.channel,
-        row.wave,
-        target_closure,
-        &row.target_channel_ref,
-        now,
-    ) {
+    if let Err(err) = db
+        .host_dispatch_state()
+        .record_confirmed_dispatch_with_state(
+            &req.hostname,
+            &row.rollout_id,
+            &host_decl.channel,
+            row.wave,
+            target_closure,
+            &row.target_channel_ref,
+            now,
+            crate::state::HostRolloutState::Healthy,
+            now,
+        )
+    {
         tracing::warn!(
             hostname = %req.hostname,
             rollout = %row.rollout_id,
             error = %err,
-            "checkin-orphan recovery: record_confirmed_dispatch failed",
+            "checkin-orphan recovery: atomic operational+Healthy write failed; \
+             no rows committed (next checkin retries)",
         );
         return false;
-    }
-    if let Err(err) = db.rollout_state().transition_host_state(
-        &req.hostname,
-        &row.rollout_id,
-        crate::state::HostRolloutState::Healthy,
-        crate::state::HealthyMarker::Set(now),
-        None,
-    ) {
-        tracing::warn!(
-            hostname = %req.hostname,
-            rollout = %row.rollout_id,
-            error = %err,
-            "checkin-orphan recovery: transition to Healthy failed (operational row already revived)",
-        );
     }
     tracing::info!(
         target: "confirm",
@@ -304,35 +291,26 @@ pub(super) async fn recover_soak_state_from_attestation(
         .and_then(|t| t.wave_index)
         .unwrap_or(0);
 
-    if let Err(err) = db.host_dispatch_state().record_confirmed_dispatch(
-        &req.hostname,
-        &rollout_id,
-        &host_decl.channel,
-        recovered_wave,
-        target_closure,
-        &rollout_id,
-        now,
-    ) {
+    if let Err(err) = db
+        .host_dispatch_state()
+        .record_confirmed_dispatch_with_state(
+            &req.hostname,
+            &rollout_id,
+            &host_decl.channel,
+            recovered_wave,
+            target_closure,
+            &rollout_id,
+            now,
+            crate::state::HostRolloutState::Healthy,
+            stamp,
+        )
+    {
         tracing::warn!(
             hostname = %req.hostname,
             rollout = %rollout_id,
             error = %err,
-            "soak-state recovery: record_confirmed_dispatch failed",
-        );
-        return;
-    }
-    if let Err(err) = db.rollout_state().transition_host_state(
-        &req.hostname,
-        &rollout_id,
-        crate::state::HostRolloutState::Healthy,
-        crate::state::HealthyMarker::Set(stamp),
-        None,
-    ) {
-        tracing::warn!(
-            hostname = %req.hostname,
-            rollout = %rollout_id,
-            error = %err,
-            "soak-state recovery: transition to Healthy failed (synthetic confirmed row already inserted)",
+            "soak-state recovery: atomic operational+Healthy write failed; \
+             no rows committed (next checkin retries)",
         );
         return;
     }
@@ -451,15 +429,18 @@ mod tests {
         let expected_id = expected_rollout_id_for(&fleet, "stable");
         let (state, db) = state_with_fleet_and_db(fleet).await;
 
+        let confirmed_at = Utc::now() - chrono::Duration::minutes(5);
         db.host_dispatch_state()
-            .record_confirmed_dispatch(
+            .record_confirmed_dispatch_with_state(
                 "test-host",
                 &expected_id,
                 "stable",
                 0,
                 "system-r1",
                 &expected_id,
-                Utc::now() - chrono::Duration::minutes(5),
+                confirmed_at,
+                crate::state::HostRolloutState::Healthy,
+                confirmed_at,
             )
             .unwrap();
 

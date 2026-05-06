@@ -16,7 +16,7 @@ pub struct RolloutState<'a> {
 /// `&Connection` so it composes inside a `Transaction` (rusqlite
 /// `Transaction` derefs to `Connection`) — used both by
 /// `RolloutState::transition_host_state` (lock-and-delegate) and by
-/// `host_dispatch_state::record_confirmed_dispatch_with_healthy_marker`'s
+/// `host_dispatch_state::record_confirmed_dispatch_with_state`'s
 /// atomic txn. One SQL definition for both paths.
 ///
 /// `expected_from = Some(prev)` is the state-machine guard — concurrent

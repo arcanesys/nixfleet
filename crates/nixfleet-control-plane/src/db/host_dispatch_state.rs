@@ -105,9 +105,36 @@ impl HostDispatchState<'_> {
         Ok(())
     }
 
-    /// Orphan-confirm recovery: synthesises a row directly in `'confirmed'`.
+    /// Canonical atomic "host_dispatch_state confirmed +
+    /// host_rollout_state row in `target_state`" — both rows written
+    /// in ONE transaction.
+    ///
+    /// Either both rows land or neither does. If the second write
+    /// fails the first rolls back; the next checkin re-runs the
+    /// caller's recovery path cleanly. Without atomicity, a
+    /// partial-write window leaves the operational row at `confirmed`
+    /// with no `host_rollout_state` row → snapshot LEFT JOIN projects
+    /// "Healthy with NULL last_healthy_since" → soak timer never
+    /// fires (the `if let Some(since) = last_healthy_since.get(host)`
+    /// in handle_wave) → host stuck in Healthy forever, blocks the
+    /// rollout's wave promotion.
+    ///
+    /// `target_state` is the host_rollout_state value to write.
+    /// Recovery paths use `Healthy` (host is freshly confirmed and
+    /// entering soak); converged-at-dispatch uses `Converged` (host
+    /// was already on target closure before any dispatch — soak
+    /// window does not apply).
+    ///
+    /// `confirmed_at` stamps the operational row (both `confirm_deadline`
+    /// and `confirmed_at` columns). `healthy_since` stamps the
+    /// host_rollout_state soak-timer anchor. Most callers pass the
+    /// same value for both (host newly confirmed = healthy from this
+    /// moment). Soak-state recovery from agent attestation passes
+    /// `confirmed_at = now` and `healthy_since = min(now, attested)` —
+    /// the host has been healthy since before this checkin, and the
+    /// soak window must anchor on that earlier moment.
     #[allow(clippy::too_many_arguments)]
-    pub fn record_confirmed_dispatch(
+    pub fn record_confirmed_dispatch_with_state(
         &self,
         hostname: &str,
         rollout_id: &str,
@@ -116,65 +143,11 @@ impl HostDispatchState<'_> {
         target_closure_hash: &str,
         target_channel_ref: &str,
         confirmed_at: DateTime<Utc>,
+        target_state: HostRolloutState,
+        healthy_since: DateTime<Utc>,
     ) -> Result<()> {
         let mut guard = super::lock_conn(self.conn)?;
-        let txn = guard.transaction().context("begin confirmed dispatch txn")?;
-        let row = DispatchInsert {
-            hostname,
-            rollout_id,
-            channel,
-            wave,
-            target_closure_hash,
-            target_channel_ref,
-            confirm_deadline: confirmed_at,
-        };
-        upsert_operational(
-            &txn,
-            &row,
-            PendingConfirmState::Confirmed,
-            Some(confirmed_at),
-        )?;
-        super::dispatch_history::insert_history(&txn, &row)?;
-        txn.commit().context("commit confirmed dispatch txn")?;
-        Ok(())
-    }
-
-    /// Atomic "host_dispatch_state confirmed + Healthy host_rollout_state
-    /// marker" — the orphan-confirm recovery operation, written in ONE
-    /// transaction.
-    ///
-    /// Why this exists as a single method: `record_confirmed_dispatch` +
-    /// `rollout_state().transition_host_state(..., Healthy, …)` were
-    /// previously called in sequence by `recovery::synthesise_orphan_confirm_rows`.
-    /// Each took its own lock + transaction. A failure between the two
-    /// (DB lock contention, process kill, schema drift on the second
-    /// call) left the operational row at `confirmed` with NO matching
-    /// `host_rollout_state` row — which projects via the snapshot's
-    /// LEFT JOIN to "Healthy with NULL last_healthy_since" → the soak
-    /// timer never fires (`if let Some(since) = last_healthy_since.get(host)`
-    /// in handle_wave) → host stuck in Healthy forever, blocks wave
-    /// promotion for the whole rollout.
-    ///
-    /// One txn = either both rows land or neither does. If the second
-    /// write fails, the first is rolled back; the next checkin re-runs
-    /// orphan-confirm cleanly.
-    ///
-    /// Argument count matches `record_confirmed_dispatch` for parity
-    /// at the call site — they're conceptual siblings (same input
-    /// shape, one txn vs two).
-    #[allow(clippy::too_many_arguments)]
-    pub fn record_confirmed_dispatch_with_healthy_marker(
-        &self,
-        hostname: &str,
-        rollout_id: &str,
-        channel: &str,
-        wave: u32,
-        target_closure_hash: &str,
-        target_channel_ref: &str,
-        confirmed_at: DateTime<Utc>,
-    ) -> Result<()> {
-        let mut guard = super::lock_conn(self.conn)?;
-        let txn = guard.transaction().context("begin orphan-confirm txn")?;
+        let txn = guard.transaction().context("begin atomic-confirm txn")?;
         let row = DispatchInsert {
             hostname,
             rollout_id,
@@ -194,19 +167,18 @@ impl HostDispatchState<'_> {
         // Single source of truth for the host_rollout_state UPSERT —
         // shared with `RolloutState::transition_host_state` via the
         // free fn. Operates on the live transaction handle so the
-        // whole orphan-confirm still completes atomically. Also fires
+        // whole confirm completes atomically. Fires the
         // `nixfleet_host_state_transition_total{from_state, to_state}`
-        // from inside, so the orphan-confirm path shows up in
-        // observability.
+        // counter from inside so this path shows up in observability.
         super::rollout_state::transition_host_state_inner(
             &txn,
             hostname,
             rollout_id,
-            crate::state::HostRolloutState::Healthy,
-            crate::state::HealthyMarker::Set(confirmed_at),
+            target_state,
+            crate::state::HealthyMarker::Set(healthy_since),
             None,
         )?;
-        txn.commit().context("commit orphan-confirm txn")?;
+        txn.commit().context("commit atomic-confirm txn")?;
         Ok(())
     }
 
@@ -513,7 +485,7 @@ fn upsert_operational(
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::{dispatch_insert, fresh_db, mark_healthy};
-    use crate::state::TerminalState;
+    use crate::state::{HostRolloutState, TerminalState};
     use chrono::Utc;
 
     #[test]
@@ -678,17 +650,19 @@ mod tests {
     }
 
     #[test]
-    fn record_confirmed_dispatch_writes_confirmed_state() {
+    fn atomic_confirm_writes_confirmed_state() {
         let db = fresh_db();
         let now = Utc::now();
         db.host_dispatch_state()
-            .record_confirmed_dispatch(
+            .record_confirmed_dispatch_with_state(
                 "ohm",
                 "stable@orphan",
                 "stable",
                 0,
                 "target-system",
                 "stable@orphan",
+                now,
+                HostRolloutState::Healthy,
                 now,
             )
             .unwrap();
@@ -795,38 +769,38 @@ mod tests {
         );
     }
 
-    /// **Regression guard**: orphan-confirm must land BOTH the
-    /// host_dispatch_state operational row and the host_rollout_state
+    /// **Regression guard**: the recovery path must land BOTH the
+    /// host_dispatch_state operational row AND the host_rollout_state
     /// Healthy marker — never one without the other.
     ///
-    /// Pre-fix: the two writes were in separate transactions; a
-    /// second-write failure left the operational row at `confirmed`
-    /// with NO host_rollout_state row → snapshot LEFT JOIN projects
-    /// "Healthy with NULL last_healthy_since" → soak timer never
-    /// fires → host stuck Healthy forever, blocks wave promotion.
+    /// If the two writes ever split into separate transactions, a
+    /// second-write failure leaves the operational row at `confirmed`
+    /// with NO host_rollout_state row. The snapshot LEFT JOIN then
+    /// projects "Healthy with NULL last_healthy_since"; the soak
+    /// timer never fires; the host sticks at Healthy and blocks
+    /// wave promotion for the whole rollout.
     ///
-    /// Post-fix: single transaction. This test pins the happy path
-    /// (both rows present after success); the atomic-rollback
-    /// property is enforced by SQLite at the engine level — we can't
-    /// inject a partial failure in unit tests without a fault
-    /// injector, but if a future refactor splits the txn this test's
-    /// assertion (`hrs row exists with last_healthy_since populated`)
-    /// catches the regression on the happy path that was always green
-    /// before — because the bug only triggered when the SECOND write
-    /// failed under DB lock contention or process kill.
+    /// This test pins the happy path (both rows present after
+    /// success). The atomic-rollback property is enforced by SQLite
+    /// at the engine level; we can't inject partial failure without
+    /// a fault injector. If a future refactor splits the txn the
+    /// `last_healthy_since populated` assertion catches the
+    /// regression — because the bug only triggers when the SECOND
+    /// write fails under DB lock contention or process kill.
     #[test]
     fn orphan_confirm_lands_both_rows_atomically() {
-        use crate::state::HostRolloutState;
         let db = fresh_db();
         let now = Utc::now();
         db.host_dispatch_state()
-            .record_confirmed_dispatch_with_healthy_marker(
+            .record_confirmed_dispatch_with_state(
                 "ohm",
                 "stable@r1",
                 "stable",
                 0,
                 "system-r1",
                 "stable@r1",
+                now,
+                HostRolloutState::Healthy,
                 now,
             )
             .unwrap();
@@ -849,6 +823,89 @@ mod tests {
             r.last_healthy_since.contains_key("ohm"),
             "last_healthy_since must populate or soak timer never fires; got {:?}",
             r.last_healthy_since,
+        );
+    }
+
+    /// Pins the `healthy_since != confirmed_at` shape used by soak-state
+    /// recovery from agent attestation. The agent reports it has been
+    /// healthy since some moment BEFORE this checkin; the soak timer
+    /// must anchor on that earlier moment, not on `now`. A regression
+    /// that collapses the two parameters back into one would force
+    /// recovered hosts to restart their soak from scratch on every CP
+    /// rebuild.
+    #[test]
+    fn atomic_confirm_with_distinct_healthy_since_anchors_on_healthy_since() {
+        let db = fresh_db();
+        let confirmed_at = Utc::now();
+        let healthy_since = confirmed_at - chrono::Duration::minutes(7);
+        db.host_dispatch_state()
+            .record_confirmed_dispatch_with_state(
+                "ohm",
+                "stable@r1",
+                "stable",
+                0,
+                "system-r1",
+                "stable@r1",
+                confirmed_at,
+                HostRolloutState::Healthy,
+                healthy_since,
+            )
+            .unwrap();
+
+        let snap = db.host_dispatch_state().active_rollouts_snapshot().unwrap();
+        let r = snap.iter().find(|r| r.rollout_id == "stable@r1").unwrap();
+        let stamped = r
+            .last_healthy_since
+            .get("ohm")
+            .expect("soak anchor must populate");
+        assert_eq!(
+            stamped.timestamp(),
+            healthy_since.timestamp(),
+            "soak anchor must use healthy_since (the agent-reported earlier moment), \
+             not confirmed_at (the recovery moment)",
+        );
+    }
+
+    /// Pins the `target_state = Converged` shape used by
+    /// converged-at-dispatch (case 3 in dispatch_target.rs: host
+    /// already on target closure before any dispatch attempt).
+    /// Both rows must land atomically with the host_rollout_state
+    /// row directly in Converged. A regression that hardcodes
+    /// Healthy back into the helper would land a Converged-named
+    /// caller in Healthy state, leaking soak-window behaviour into
+    /// what should be terminal.
+    #[test]
+    fn atomic_confirm_with_converged_state_writes_both_rows() {
+        let db = fresh_db();
+        let now = Utc::now();
+        db.host_dispatch_state()
+            .record_confirmed_dispatch_with_state(
+                "ohm",
+                "stable@r1",
+                "stable",
+                0,
+                "system-r1",
+                "stable@r1",
+                now,
+                HostRolloutState::Converged,
+                now,
+            )
+            .unwrap();
+
+        let op = db.host_dispatch_state().host_state("ohm").unwrap().unwrap();
+        assert_eq!(op.state, "confirmed");
+        assert_eq!(op.rollout_id, "stable@r1");
+
+        let snap = db.host_dispatch_state().active_rollouts_snapshot().unwrap();
+        let r = snap.iter().find(|r| r.rollout_id == "stable@r1").unwrap();
+        assert_eq!(
+            r.host_states.get("ohm").map(|s| s.as_str()),
+            Some(HostRolloutState::Converged.as_db_str()),
+            "target_state=Converged must produce a Converged hrs row",
+        );
+        assert!(
+            r.last_healthy_since.contains_key("ohm"),
+            "last_healthy_since stamps even on Converged (audit-trail nicety)",
         );
     }
 }

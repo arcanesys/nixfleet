@@ -262,58 +262,45 @@ fn record_converged_at_dispatch(
 
     // Case 2 (existing row, NOT Converged): the host went through a
     // real dispatch → activation cycle. host_state is currently
-    // Dispatched/Activating/ConfirmWindow/Healthy/etc. Letting this
-    // path jump straight to Converged would silently bypass the
-    // operator's `soakMinutes` window — the entire point of wave-
-    // staging. Leave the existing state alone; the reconciler's
-    // SoakHost (Healthy → Soaked after soak window) and
-    // ConvergeRollout (Soaked → Converged when wave_all_soaked + last
-    // wave) will run the natural progression.
-    //
-    // Pre-fix behaviour: case 2 unconditionally upserted to Converged
-    // on every post-activation checkin. Effect: every successful
-    // deploy reached Converged on the first post-activation checkin
-    // (~1s after activation), wave-staging soak was zero, and
-    // channelEdges held nothing in practice.
+    // Dispatched/Activating/ConfirmWindow/Healthy/etc. Jumping
+    // straight to Converged would silently bypass the operator's
+    // `soakMinutes` window — the entire point of wave-staging.
+    // Leave the existing state alone; the reconciler's SoakHost
+    // (Healthy → Soaked after soak window) and ConvergeRollout
+    // (Soaked → Converged when wave_all_soaked + last wave) run the
+    // natural progression.
     if existing_state.is_some() {
         return;
     }
 
     // Case 3: no row → host was on the target closure BEFORE any
     // dispatch attempt (steady-state, or post-state.db-wipe with a
-    // host that's been stable). Full materialisation including
-    // Converged is correct: there's no transient state to ride out.
-    if let Err(err) = db.host_dispatch_state().record_confirmed_dispatch(
-        &req.hostname,
-        &rollout_id,
-        &host_decl.channel,
-        wave,
-        target_closure,
-        &target_channel_ref,
-        now,
-    ) {
+    // host that's been stable). Full atomic materialisation directly
+    // to Converged is correct: there's no transient state to ride
+    // out. `last_healthy_since = now` is an audit-trail nicety —
+    // gates don't read the soak anchor on Converged hosts.
+    if let Err(err) = db
+        .host_dispatch_state()
+        .record_confirmed_dispatch_with_state(
+            &req.hostname,
+            &rollout_id,
+            &host_decl.channel,
+            wave,
+            target_closure,
+            &target_channel_ref,
+            now,
+            crate::state::HostRolloutState::Converged,
+            now,
+        )
+    {
         tracing::warn!(
             hostname = %req.hostname,
             rollout = %rollout_id,
             error = %err,
-            "converged-at-dispatch: record_confirmed_dispatch failed",
+            "converged-at-dispatch: atomic operational+Converged write failed; \
+             no rows committed (next checkin retries)",
         );
         return;
-    }
-
-    if let Err(err) = db.rollout_state().transition_host_state(
-        &req.hostname,
-        &rollout_id,
-        crate::state::HostRolloutState::Converged,
-        crate::state::HealthyMarker::Set(now),
-        None,
-    ) {
-        tracing::warn!(
-            hostname = %req.hostname,
-            rollout = %rollout_id,
-            error = %err,
-            "converged-at-dispatch: host_rollout_state transition failed",
-        );
     }
 
     tracing::info!(
