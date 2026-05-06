@@ -164,6 +164,61 @@ pub fn fingerprint(pubkey_bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(digest)
 }
 
+/// Extract the first private-key PEM block from a (possibly multi-block)
+/// PEM document. Re-emits as a single-block PEM string suitable for
+/// `rcgen::KeyPair::from_pem`.
+///
+/// Why this exists: OpenSSL-generated EC keys (`openssl ecparam
+/// -genkey`) write TWO blocks — a leading `EC PARAMETERS` block (just
+/// the curve OID) and the actual `EC PRIVATE KEY`. rcgen's
+/// `KeyPair::from_pem` reads only the first block, sees the parameters
+/// block, fails. PKCS#8-formatted keys (`BEGIN PRIVATE KEY`) and
+/// rcgen-generated keys are single-block and work without this
+/// helper, but operators routinely supply OpenSSL-generated CAs in
+/// production. Accepting the wider PEM shape keeps the framework
+/// robust to whatever shape the operator's offline CA tooling emits.
+///
+/// Accepted labels (in priority order): `PRIVATE KEY` (PKCS#8),
+/// `EC PRIVATE KEY` (SEC1), `RSA PRIVATE KEY` (PKCS#1).
+pub fn extract_private_key_pem_block(pem_text: &str) -> Result<String> {
+    const ACCEPTED: &[&str] = &["PRIVATE KEY", "EC PRIVATE KEY", "RSA PRIVATE KEY"];
+
+    let mut current_label: Option<String> = None;
+    let mut current_body = String::new();
+
+    for line in pem_text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed
+            .strip_prefix("-----BEGIN ")
+            .and_then(|s| s.strip_suffix("-----"))
+        {
+            current_label = Some(rest.to_string());
+            current_body.clear();
+        } else if let Some(rest) = trimmed
+            .strip_prefix("-----END ")
+            .and_then(|s| s.strip_suffix("-----"))
+        {
+            if let Some(start) = current_label.take() {
+                if start == rest && ACCEPTED.iter().any(|&l| l == start) {
+                    return Ok(format!(
+                        "-----BEGIN {start}-----\n{body}-----END {start}-----\n",
+                        body = current_body,
+                    ));
+                }
+            }
+            current_body.clear();
+        } else if current_label.is_some() {
+            current_body.push_str(line);
+            current_body.push('\n');
+        }
+    }
+
+    anyhow::bail!(
+        "no PEM block matching {ACCEPTED:?} found — supply a PKCS#8 \
+         (`BEGIN PRIVATE KEY`) or SEC1 (`BEGIN EC PRIVATE KEY`) key",
+    )
+}
+
 /// Validates that the CSR's raw ed25519 pubkey matches the host's
 /// declared SSH host pubkey (`hosts.<hostname>.pubkey` from
 /// fleet.resolved.json). Closes RFC-0003 §2: agent identity is bound
@@ -209,8 +264,13 @@ pub fn issue_cert(
 ) -> Result<(String, DateTime<Utc>)> {
     let ca_cert_pem = std::fs::read_to_string(ca_cert_path)
         .with_context(|| format!("read fleet CA cert {}", ca_cert_path.display()))?;
-    let ca_key_pem = std::fs::read_to_string(ca_key_path)
+    let ca_key_pem_raw = std::fs::read_to_string(ca_key_path)
         .with_context(|| format!("read fleet CA key {}", ca_key_path.display()))?;
+    // FOOTGUN: rcgen's `from_pem` reads only the first block. OpenSSL
+    // EC keys ship `EC PARAMETERS` first and `EC PRIVATE KEY` second —
+    // strip the parameters block before handing to rcgen.
+    let ca_key_pem = extract_private_key_pem_block(&ca_key_pem_raw)
+        .context("extract private-key block from fleet CA key PEM")?;
     let ca_key = KeyPair::from_pem(&ca_key_pem).context("parse fleet CA key PEM")?;
     let ca_params =
         CertificateParams::from_ca_cert_pem(&ca_cert_pem).context("parse fleet CA cert PEM")?;
@@ -349,5 +409,108 @@ mod validate_csr_tests {
         let msg = format!("{err}");
         // The error chain mentions the parse failure context.
         assert!(msg.contains("parse declared"), "msg = {msg}");
+    }
+}
+
+#[cfg(test)]
+mod extract_pem_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_single_block_pkcs8() {
+        // PKCS#8 PEM produced by rcgen / mkcert / openssl pkcs8 -topk8.
+        // Body is opaque to the extractor — it just needs the labels.
+        let input = "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n";
+        let got = extract_private_key_pem_block(input).expect("PKCS#8 single block");
+        assert!(got.contains("-----BEGIN PRIVATE KEY-----"));
+        assert!(got.contains("AAAA"));
+    }
+
+    #[test]
+    fn accepts_single_block_sec1() {
+        let input = "-----BEGIN EC PRIVATE KEY-----\nBBBB\n-----END EC PRIVATE KEY-----\n";
+        let got = extract_private_key_pem_block(input).expect("SEC1 single block");
+        assert!(got.starts_with("-----BEGIN EC PRIVATE KEY-----"));
+    }
+
+    #[test]
+    fn extracts_key_block_from_multi_block_openssl_ec() {
+        // Shape of `openssl ecparam -genkey -name prime256v1` output:
+        // EC PARAMETERS first (curve OID), then EC PRIVATE KEY.
+        let input = "\
+-----BEGIN EC PARAMETERS-----
+BggqhkjOPQMBBw==
+-----END EC PARAMETERS-----
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIBoldKey...
+-----END EC PRIVATE KEY-----
+";
+        let got = extract_private_key_pem_block(input).expect("multi-block extract");
+        assert!(got.starts_with("-----BEGIN EC PRIVATE KEY-----"));
+        assert!(!got.contains("EC PARAMETERS"), "must drop the parameters block");
+        assert!(got.contains("MHcCAQEEIBoldKey"));
+    }
+
+    #[test]
+    fn rejects_pem_with_no_key_block() {
+        let input = "\
+-----BEGIN EC PARAMETERS-----
+BggqhkjOPQMBBw==
+-----END EC PARAMETERS-----
+";
+        let err = extract_private_key_pem_block(input).expect_err("no key block");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("PRIVATE KEY"),
+            "msg should mention accepted labels: {msg}",
+        );
+    }
+
+    #[test]
+    fn rejects_garbage_input() {
+        let err = extract_private_key_pem_block("not a pem file at all").expect_err("not PEM");
+        let msg = format!("{err}");
+        assert!(msg.contains("PRIVATE KEY"));
+    }
+
+    #[test]
+    fn ignores_unrelated_block_types() {
+        // `BEGIN CERTIFICATE` is a non-key block. Must not be returned
+        // as if it were a key.
+        let input = "\
+-----BEGIN CERTIFICATE-----
+ZHVtbXk=
+-----END CERTIFICATE-----
+";
+        let err = extract_private_key_pem_block(input).expect_err("certificate is not a key");
+        assert!(format!("{err}").contains("PRIVATE KEY"));
+    }
+
+    #[test]
+    fn returns_first_matching_block_when_multiple_keys_present() {
+        // Defensive: file with two PRIVATE KEY blocks (would be unusual
+        // but possible). Take the first.
+        let input = "\
+-----BEGIN PRIVATE KEY-----
+FIRST
+-----END PRIVATE KEY-----
+-----BEGIN PRIVATE KEY-----
+SECOND
+-----END PRIVATE KEY-----
+";
+        let got = extract_private_key_pem_block(input).expect("first key");
+        assert!(got.contains("FIRST"));
+        assert!(!got.contains("SECOND"));
+    }
+
+    #[test]
+    fn round_trips_rcgen_generated_pkcs8() {
+        // Sanity: keys produced by rcgen still parse after going
+        // through the extractor (round-trip).
+        use rcgen::KeyPair;
+        let key = KeyPair::generate().expect("rcgen generate");
+        let pem = key.serialize_pem();
+        let extracted = extract_private_key_pem_block(&pem).expect("rcgen pem");
+        let _reparsed = KeyPair::from_pem(&extracted).expect("rcgen round-trip");
     }
 }
