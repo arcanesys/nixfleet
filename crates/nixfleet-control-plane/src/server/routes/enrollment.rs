@@ -123,7 +123,7 @@ pub(in crate::server) async fn enroll(
     // straight to the binding check.
     if csr_pubkey_der.len() != 32 {
         tracing::warn!(
-            host = %csr_cn,
+            hostname = %csr_cn,
             len = csr_pubkey_der.len(),
             "enroll: CSR pubkey is not 32 raw bytes (non-ed25519 CSR rejected)",
         );
@@ -223,7 +223,7 @@ pub(in crate::server) async fn renew(
     let csr_pubkey_der = renew_csr_params.public_key.der_bytes();
     if csr_pubkey_der.len() != 32 {
         tracing::warn!(
-            host = %cn,
+            hostname = %cn,
             len = csr_pubkey_der.len(),
             "renew: CSR pubkey is not 32 raw bytes (non-ed25519 CSR rejected)",
         );

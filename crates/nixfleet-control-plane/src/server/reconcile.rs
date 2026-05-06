@@ -281,7 +281,7 @@ async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
                     Ok(0) => {
                         tracing::debug!(
                             target: "soak",
-                            host = %host,
+                            hostname = %host,
                             rollout = %rollout,
                             "soak: transition Healthy → Soaked no-op (host not in Healthy)",
                         );
@@ -290,7 +290,7 @@ async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
                         // metric fires from inside transition_host_state.
                         tracing::info!(
                             target: "soak",
-                            host = %host,
+                            hostname = %host,
                             rollout = %rollout,
                             "soak: host transitioned Healthy → Soaked",
                         );
@@ -302,7 +302,7 @@ async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
                     }
                     Err(err) => {
                         tracing::warn!(
-                            host = %host,
+                            hostname = %host,
                             rollout = %rollout,
                             error = %err,
                             "soak: transition Healthy → Soaked failed",

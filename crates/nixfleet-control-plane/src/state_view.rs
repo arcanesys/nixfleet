@@ -139,7 +139,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                     Err(e) => {
                         warn!(
                             target: "state_view",
-                            host = %hostname,
+                            hostname = %hostname,
                             rollout_id = %rid,
                             error = %e,
                             "rollout_state DB lookup failed; rendering host as None",
@@ -153,7 +153,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                     Err(e) => {
                         warn!(
                             target: "state_view",
-                            host = %hostname,
+                            hostname = %hostname,
                             rollout_id = %rid,
                             raw = %s,
                             error = %e,

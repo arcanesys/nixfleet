@@ -178,12 +178,34 @@ fn install_crypto_provider() {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // `with_ansi(false)` — stdout under systemd is not a tty, but
-    // tracing-subscriber emits ANSI by default. ANSI codes confuse
-    // log shippers (Vector → Loki) downstream of journald and force
-    // every consumer to `decolorize` on read. Strip at the source.
+    // `.json()` — one structured JSON object per log entry. Downstream
+    // Loki/Grafana panels consume `target`, `level`, `fields.hostname`,
+    // `fields.rollout` directly — no regex on free-text. For direct
+    // ops use: `journalctl --output=cat -u nixfleet-control-plane.service | jq`.
+    //
+    // Tracing-target contract for log-based dashboards (modules/scopes/
+    // server/grafana-dashboards/nixfleet-events.json depends on these
+    // names being stable):
+    //   - `dispatch`           — per-host dispatch decisions (target
+    //                            issued, held by gate)
+    //   - `confirm`            — agent-side confirms acknowledged at CP
+    //   - `soak`               — Healthy → Soaked transitions
+    //   - `converge`           — final stamp per rollout
+    //   - `promote`            — wave promotions
+    //   - `rollback`           — rollback timer firings (WARN)
+    //   - `closure_proxy`      — manifest fetch / signature anomalies
+    //   - `report`             — agent compliance + runtime-gate reports
+    //   - `checkin`            — agent checkins arriving at CP
+    //   - `channel_refs_poll`  — CP detects new signed artifact
+    //
+    // Renaming any of these breaks the corresponding dashboard panel
+    // silently; add a new target alongside, then migrate panels.
+    //
+    // Field convention: `hostname = %h` (NEVER `host = ...`) so the
+    // Grafana `$hostname` filter matches uniformly. Every host-scoped
+    // tracing call must use this name.
     tracing_subscriber::fmt()
-        .with_ansi(false)
+        .json()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),

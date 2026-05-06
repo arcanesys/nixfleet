@@ -48,7 +48,7 @@ pub fn project(
                     let parsed = HostRolloutState::from_db_str(s).unwrap_or_else(|_| {
                         tracing::warn!(
                             rollout = %snap.rollout_id,
-                            host = %h,
+                            hostname = %h,
                             unknown_state = %s,
                             "host_rollout_state value not in HostRolloutState enum — \
                              halting rollout (Failed fallback). Likely a SQL CHECK \

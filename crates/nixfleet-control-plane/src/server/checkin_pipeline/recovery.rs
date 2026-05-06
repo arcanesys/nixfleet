@@ -248,14 +248,14 @@ fn verify_attestation_signature(
 
     let Some(sig_b64) = req.attestation_signature.as_deref() else {
         tracing::debug!(
-            host = %req.hostname,
+            hostname = %req.hostname,
             "soak recovery: no attestation_signature on checkin; ignoring last_confirmed_at",
         );
         return false;
     };
     let Some(declared_pubkey) = host_decl.pubkey.as_deref() else {
         tracing::warn!(
-            host = %req.hostname,
+            hostname = %req.hostname,
             "soak recovery: host has no `pubkey` declared in fleet.nix; ignoring attestation",
         );
         return false;
