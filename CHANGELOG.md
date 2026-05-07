@@ -4,6 +4,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [Semantic V
 
 ## [Unreleased]
 
+### Per-host VM memory size in `mkVmApps` (2026-05-07)
+
+Closes #92. `mkVmApps`' `start-vm` and `build-vm` defaulted `RAM` to script-level constants (1024 MiB and 4096 MiB respectively); operators wanting more memory had to remember to pass `--ram N` on every invocation. There was no declarative per-host way to express "forge needs 4 GiB because its in-VM CI compiles Rust." Mirrors the #87 `hostSpec.vmPortForwards` pattern.
+
+#### Added
+
+- **`hostSpec.vmRam: nullOr ints.unsigned`** in `contracts/host-spec.nix` — per-host VM memory in MiB. Defaults to `null` (use the script-level default). Only consumed when the host runs as a VM via `mkVmApps`; ignored on bare-metal installs.
+- **`compute_vm_ram` helper** in `lib/vm-helpers.sh` — fetches the option via `nix eval ... --apply 'r: if r == null then "" else toString r'`. Silent fail-open on eval errors — RAM keeps its script-level default.
+- **`lib/vm-scripts/start.nix`** and **`lib/vm-scripts/build.nix`** invoke the helper after `assign_port` (with their respective script defaults `1024` / `4096`).
+
+#### Behavior
+
+CLI override > `hostSpec.vmRam` > script default. The helper only consults `hostSpec.vmRam` when `RAM` still equals the script-level default — i.e. the operator did NOT pass `--ram N`. Passing `--ram <default-value>` is honored as "use the default" (indistinguishable from no flag, which is fine — same outcome).
+
+#### Notes
+
+- Out of scope: `test-vm` (smoke-test path); the per-host knob doesn't pay for itself there.
+- Fleet-side adoption is the consumer's responsibility (typical: a forge host running an in-VM CI workflow that compiles Rust).
+
 ### Per-host declarative health probes (2026-05-07)
 
 Closes #86. Operators had no way to declaratively gate wave promotion on application-level liveness — `rolloutPolicies.<name>.healthGate` only covered fleet-policy systemd-failed-units / compliance-evidence checks. Adding a per-host probe primitive that runs in-agent (no external collector required) and gates the soak transition load-bearingly.

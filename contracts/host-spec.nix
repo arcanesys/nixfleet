@@ -93,6 +93,20 @@
       '';
     };
 
+    vmRam = lib.mkOption {
+      type = lib.types.nullOr lib.types.ints.unsigned;
+      default = null;
+      example = 4096;
+      description = ''
+        Memory in MiB for `mkVmApps`-driven QEMU runs (issue #92). When
+        null (default), `mkVmApps`' script-level default of 1024 MiB
+        applies. When set, `start-vm` and `build-vm` use this value
+        unless the operator overrides with `--ram N` on the command line.
+        Only consumed when the host runs as a VM via mkVmApps; ignored
+        on bare-metal installs.
+      '';
+    };
+
     secretsPath = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;

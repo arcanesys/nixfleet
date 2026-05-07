@@ -117,6 +117,28 @@ compute_vlan_args() {
   fi
 }
 
+# Issue #92: resolve QEMU memory size from `hostSpec.vmRam`.
+# Mirrors `compute_extra_hostfwd_args` (#87): consulted only when the
+# operator did NOT pass `--ram N` (i.e. RAM still equals the script-level
+# default). When the option is null/unset/eval fails, RAM keeps its
+# script-level default — silent fail-open matches `assign_port`'s posture.
+# CLI override > hostSpec.vmRam > script default.
+compute_vm_ram() {
+  local host="$1"
+  local default_ram="$2"
+  # Only consult hostSpec when the operator hasn't overridden via --ram.
+  # We can't distinguish "operator passed --ram 1024" from "default
+  # 1024" — both are honored as "use the script default", which is the
+  # expected fallback behavior anyway.
+  if [ -z "${RAM:-}" ] || [ "$RAM" = "$default_ram" ]; then
+    local declared
+    declared=$(nix eval ".#nixosConfigurations.${host}.config.hostSpec.vmRam" --apply 'r: if r == null then "" else toString r' --raw 2>/dev/null) || return 0
+    if [ -n "$declared" ]; then
+      RAM="$declared"
+    fi
+  fi
+}
+
 # Issue #87: extra qemu hostfwd segments from `hostSpec.vmPortForwards`.
 # Emits a leading-comma string that gets concatenated onto the -nic
 # argument's hostfwd= chain. Empty when the host declares no extras or

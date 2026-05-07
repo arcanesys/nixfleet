@@ -58,6 +58,7 @@ in
       echo -e "''${YELLOW}==> Building VM for host: $host''${NC}"
 
       assign_port "$host"
+      compute_vm_ram "$host" 4096
       compute_vlan_args
       echo -e "''${GREEN}SSH port: ''$SSH_PORT''${NC}"
 

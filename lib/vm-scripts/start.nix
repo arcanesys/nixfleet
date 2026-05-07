@@ -44,6 +44,7 @@ in
     start_one() {
       local host="$1"
       assign_port "$host"
+      compute_vm_ram "$host" 1024
       compute_vlan_args
       compute_extra_hostfwd_args "$host"
       compute_display_args
