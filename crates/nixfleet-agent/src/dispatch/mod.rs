@@ -4,6 +4,7 @@
 mod activate;
 pub(crate) mod compliance;
 mod confirm;
+mod deferred;
 mod manifest_error;
 mod realise_failed;
 mod rollback;
@@ -51,6 +52,7 @@ mod tests {
     use nixfleet_proto::agent_wire::{EvaluatedTarget, ReportEvent};
 
     use super::DispatchCtx;
+    use super::deferred::handle_deferred_pending_reboot;
     use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
     use crate::Args;
 
@@ -179,6 +181,37 @@ mod tests {
                 assert_eq!(reason, "network unreachable");
             }
             other => panic!("expected RealiseFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn deferred_pending_reboot_handler_posts_activation_deferred_event() {
+        let fake = FakeReporter::new();
+        let target = sample_target();
+        let args = sample_args();
+        let signer: Arc<Option<EvidenceSigner>> = Arc::new(None);
+
+        handle_deferred_pending_reboot(
+            &ctx(&target, &fake, &args, &signer),
+            "dbus".to_string(),
+        )
+        .await;
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1, "expected exactly one post; got {:?}", calls);
+        let (rollout, event) = &calls[0];
+        assert_eq!(rollout.as_deref(), Some("stable@feedface"));
+        match event {
+            ReportEvent::ActivationDeferred {
+                closure_hash,
+                channel_ref,
+                component,
+            } => {
+                assert_eq!(closure_hash, "abc123-test");
+                assert_eq!(channel_ref, "stable@feedface");
+                assert_eq!(component, "dbus");
+            }
+            other => panic!("expected ActivationDeferred, got {other:?}"),
         }
     }
 }

@@ -112,6 +112,9 @@ pub(in crate::server) async fn report(
     // LOADBEARING: flips Failed → Reverted so compute_rollback_signal stops re-emitting forever.
     if let Some(db) = state.db.as_ref() {
         apply_rollback_state_transition(db, &req);
+        // Parks the dispatch row so the rollback timer's 360s sweep skips it
+        // (issue #56's deferred lifecycle is human-paced, not agent-paced).
+        apply_deferred_pending_reboot_transition(db, &req);
     }
 
     let mut reports = state.host_reports.write().await;
@@ -244,6 +247,58 @@ fn apply_rollback_state_transition(db: &crate::db::Db, req: &ReportRequest) {
                 rollout = %rollout,
                 error = %err,
                 "RollbackTriggered: Failed → Reverted transition failed; report still persisted",
+            );
+        }
+    }
+}
+
+/// Park the operational dispatch row in `DeferredPendingReboot` so the 360s
+/// rollback timer skips it. Issue #56's switch-inhibitor carve-out means the
+/// dispatch lifecycle is now bound to the operator's reboot — not the agent's
+/// 360s confirm window. `mark_deferred` is idempotent: a re-posted
+/// `ActivationDeferred` for the same closure_hash leaves the row untouched.
+fn apply_deferred_pending_reboot_transition(db: &crate::db::Db, req: &ReportRequest) {
+    use nixfleet_proto::agent_wire::ReportEvent;
+    if !matches!(req.event, ReportEvent::ActivationDeferred { .. }) {
+        return;
+    }
+    let Some(rollout) = req.rollout.as_deref() else {
+        // Defensive: ActivationDeferred without a rollout is malformed (the
+        // agent always carries channel_ref → rollout). Log and skip.
+        tracing::warn!(
+            target: "report",
+            hostname = %req.hostname,
+            "ActivationDeferred without rollout; skipping dispatch-state transition",
+        );
+        return;
+    };
+    match db.host_dispatch_state().mark_deferred(&req.hostname, rollout) {
+        Ok(0) => {
+            // Row not in Pending — could be already-deferred (re-post on a
+            // re-poll), Confirmed (a race), or absent (dispatch row missing).
+            // Re-post is the common case; debug, not warn.
+            tracing::debug!(
+                target: "report",
+                hostname = %req.hostname,
+                rollout = %rollout,
+                "ActivationDeferred: no Pending row to park (already deferred or absent)",
+            );
+        }
+        Ok(_) => {
+            tracing::info!(
+                target: "report",
+                hostname = %req.hostname,
+                rollout = %rollout,
+                "ActivationDeferred: host_dispatch_state Pending → DeferredPendingReboot",
+            );
+        }
+        Err(err) => {
+            tracing::warn!(
+                target: "report",
+                hostname = %req.hostname,
+                rollout = %rollout,
+                error = %err,
+                "ActivationDeferred: mark_deferred failed; report still persisted",
             );
         }
     }
@@ -481,7 +536,14 @@ async fn compute_signature_status(
             ))
         }
 
+        // UNSIGNED: ActivationDeferred is operator-surface only — it parks the
+        // dispatch row but no fleet-level gate reads its signature. If a
+        // future reconciler rule starts gating wave promotion on the
+        // pending_reboot signal, promote this to a SignedPayload + verify
+        // arm above. Unsigned today is consistent with ActivationStarted
+        // (also a non-gating observability event).
         ReportEvent::ActivationStarted { .. }
+        | ReportEvent::ActivationDeferred { .. }
         | ReportEvent::EnrollmentFailed { .. }
         | ReportEvent::RenewalFailed { .. }
         | ReportEvent::TrustError { .. }

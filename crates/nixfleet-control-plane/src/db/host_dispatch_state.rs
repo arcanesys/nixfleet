@@ -7,14 +7,25 @@
 //!
 //! | caller | filter | intent |
 //! |--------|--------|--------|
-//! | `confirm()` | `datetime(confirm_deadline) > now` | reject late confirms |
-//! | `pending_deadlines()` | `datetime(confirm_deadline) < now` | timer sweeps expired |
-//! | `pending_dispatch_exists()` | none | deadline-agnostic in-flight check |
-//! | `active_rollouts_snapshot()` | `state IN ('pending','confirmed')` | UI/gate view |
+//! | `confirm()` | `(state='pending' AND deadline > now) OR state='deferred-pending-reboot'` | accept timely confirms + post-reboot confirms |
+//! | `pending_deadlines()` | `state='pending' AND deadline < now` | timer sweeps expired |
+//! | `pending_dispatch_exists()` | `state='pending'` only | deadline-agnostic in-flight check; deferred is NOT counted so CP can overwrite with a fresher target |
+//! | `active_rollouts_snapshot()` | `state IN ('pending','confirmed','deferred-pending-reboot')` | UI/gate view |
+//! | `mark_deferred()` | `state='pending'` | only Pending rows transition to DeferredPendingReboot |
 //!
 //! Eventual-consistency window = `ROLLBACK_TIMER_INTERVAL` (30s).
 //! New caller? Pick from the table above; never compare without `datetime(...)`
 //! (naked string compare ranks `'T'` after `' '` and breaks the timer).
+//!
+//! `DeferredPendingReboot` is the human-paced state for issue #56's switch-
+//! inhibitor carve-out: the agent ran `nix-env --set` but skipped live
+//! activation because a critical-component swap (dbus impl, systemd, kernel,
+//! init) requires a reboot. The 360s rollback timer must NOT sweep these
+//! rows — `pending_deadlines()` filters them out via `state='pending'`. The
+//! confirm endpoint accepts post-reboot confirms against deferred rows
+//! without the deadline check (`confirm()` above). When the operator finally
+//! reboots, the agent's boot-recovery POSTs confirm and the row transitions
+//! `DeferredPendingReboot → Confirmed`.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -145,7 +156,14 @@ impl HostDispatchState<'_> {
         })
     }
 
-    /// Flips pending → confirmed; deadline gate prevents late confirms bypassing rollback.
+    /// Flips → confirmed. Two acceptable source states:
+    ///   - `Pending` with deadline still in the future (normal live-switch confirm)
+    ///   - `DeferredPendingReboot` (post-reboot confirm; deadline is irrelevant
+    ///     because the lifecycle was paused waiting for the operator's reboot)
+    ///
+    /// The deadline gate continues to reject late `Pending` confirms — that
+    /// safety property is what ensures the rollback timer can't be raced by a
+    /// stale confirm. The deferred branch explicitly opts out of the gate.
     pub fn confirm(&self, hostname: &str, rollout_id: &str) -> Result<usize> {
         super::read(self.conn, |c| {
             c.execute(
@@ -154,16 +172,43 @@ impl HostDispatchState<'_> {
                      state = ?3
                  WHERE hostname = ?1
                    AND rollout_id = ?2
-                   AND state = ?4
-                   AND datetime(confirm_deadline) > datetime('now')",
+                   AND (
+                         (state = ?4 AND datetime(confirm_deadline) > datetime('now'))
+                      OR state = ?5
+                   )",
                 params![
                     hostname,
                     rollout_id,
                     PendingConfirmState::Confirmed,
                     PendingConfirmState::Pending,
+                    PendingConfirmState::DeferredPendingReboot,
                 ],
             )
             .context("update host_dispatch_state confirmed")
+        })
+    }
+
+    /// Flips pending → deferred-pending-reboot. Idempotent: only Pending rows
+    /// transition. A row already in DeferredPendingReboot stays put (the agent
+    /// re-posting `ActivationDeferred` for the same closure_hash should be a
+    /// no-op, not a state-machine cycle). Mismatched rollout / non-Pending
+    /// state returns 0.
+    pub fn mark_deferred(&self, hostname: &str, rollout_id: &str) -> Result<usize> {
+        super::read(self.conn, |c| {
+            c.execute(
+                "UPDATE host_dispatch_state
+                 SET state = ?3
+                 WHERE hostname = ?1
+                   AND rollout_id = ?2
+                   AND state = ?4",
+                params![
+                    hostname,
+                    rollout_id,
+                    PendingConfirmState::DeferredPendingReboot,
+                    PendingConfirmState::Pending,
+                ],
+            )
+            .context("update host_dispatch_state deferred-pending-reboot")
         })
     }
 
@@ -274,7 +319,7 @@ impl HostDispatchState<'_> {
                        AND hrs.hostname = hds.hostname
                  LEFT JOIN rollouts r
                         ON r.rollout_id = hds.rollout_id
-                 WHERE hds.state IN (?1, ?2)
+                 WHERE hds.state IN (?1, ?2, ?3)
                  ORDER BY hds.rollout_id, hds.hostname",
             )?;
             let rows = stmt
@@ -282,6 +327,7 @@ impl HostDispatchState<'_> {
                     params![
                         PendingConfirmState::Pending,
                         PendingConfirmState::Confirmed,
+                        PendingConfirmState::DeferredPendingReboot,
                     ],
                     |row| {
                         Ok((
@@ -319,9 +365,16 @@ impl HostDispatchState<'_> {
                     None => match PendingConfirmState::from_db_str(&op_state)? {
                         PendingConfirmState::Pending => HostRolloutState::ConfirmWindow,
                         PendingConfirmState::Confirmed => HostRolloutState::Healthy,
+                        // Deferred maps to ConfirmWindow for reconciler purposes:
+                        // the host is still "in the confirm window" — just paused
+                        // waiting for the operator's reboot. Wave promotion treats
+                        // it as in-flight, which is correct (we don't want to
+                        // promote past a host whose new gen hasn't actually
+                        // activated yet).
+                        PendingConfirmState::DeferredPendingReboot => HostRolloutState::ConfirmWindow,
                         PendingConfirmState::RolledBack | PendingConfirmState::Cancelled => {
                             unreachable!(
-                                "filtered by WHERE hds.state IN ('pending','confirmed') in the SELECT",
+                                "filtered by WHERE hds.state IN ('pending','confirmed','deferred-pending-reboot') in the SELECT",
                             )
                         }
                     }
@@ -697,6 +750,109 @@ mod tests {
         let snap = db.host_dispatch_state().active_rollouts_snapshot().unwrap();
         assert_eq!(snap.len(), 1);
         assert_eq!(snap[0].channel, "edge-slow");
+    }
+
+    #[test]
+    fn mark_deferred_flips_pending_only() {
+        let db = fresh_db();
+        let deadline = Utc::now() + chrono::Duration::seconds(120);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert("ohm", "stable@r1", "system-r1", deadline))
+            .unwrap();
+        let n = db
+            .host_dispatch_state()
+            .mark_deferred("ohm", "stable@r1")
+            .unwrap();
+        assert_eq!(n, 1);
+        let row = db.host_dispatch_state().host_state("ohm").unwrap().unwrap();
+        assert_eq!(row.state, "deferred-pending-reboot");
+        // Idempotent: a second mark_deferred is a no-op (the row is no longer Pending).
+        let n = db
+            .host_dispatch_state()
+            .mark_deferred("ohm", "stable@r1")
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn mark_deferred_no_op_on_non_pending_states() {
+        let db = fresh_db();
+        let deadline = Utc::now() + chrono::Duration::seconds(120);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert("ohm", "stable@r1", "system-r1", deadline))
+            .unwrap();
+        db.host_dispatch_state().confirm("ohm", "stable@r1").unwrap();
+        // Confirmed → not flipped to deferred.
+        let n = db
+            .host_dispatch_state()
+            .mark_deferred("ohm", "stable@r1")
+            .unwrap();
+        assert_eq!(n, 0);
+        let row = db.host_dispatch_state().host_state("ohm").unwrap().unwrap();
+        assert_eq!(row.state, "confirmed");
+    }
+
+    #[test]
+    fn confirm_accepts_deferred_state_without_deadline_check() {
+        // The whole point of the deferred state: a stale confirm-deadline
+        // (which would block a Pending confirm) does NOT block a confirm
+        // against a DeferredPendingReboot row.
+        let db = fresh_db();
+        let past_deadline = Utc::now() - chrono::Duration::seconds(7200);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert("ohm", "stable@r1", "system-r1", past_deadline))
+            .unwrap();
+        db.host_dispatch_state()
+            .mark_deferred("ohm", "stable@r1")
+            .unwrap();
+        // Two hours after deadline, the host finally reboots and confirms.
+        let n = db.host_dispatch_state().confirm("ohm", "stable@r1").unwrap();
+        assert_eq!(n, 1, "deferred confirm must succeed despite stale deadline");
+        let row = db.host_dispatch_state().host_state("ohm").unwrap().unwrap();
+        assert_eq!(row.state, "confirmed");
+        assert!(row.confirmed_at.is_some());
+    }
+
+    #[test]
+    fn pending_deadlines_skips_deferred_rows() {
+        // Rollback timer must NEVER sweep deferred rows — that's the whole
+        // correctness guarantee for issue #56's human-paced lifecycle.
+        let db = fresh_db();
+        let past = Utc::now() - chrono::Duration::seconds(7200);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert("ohm", "stable@deferred", "system-r1", past))
+            .unwrap();
+        db.host_dispatch_state()
+            .mark_deferred("ohm", "stable@deferred")
+            .unwrap();
+        // Also seed a genuinely-expired Pending row to confirm the sweep
+        // still picks up that one (sanity check).
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert("krach", "stable@pending", "system-r1", past))
+            .unwrap();
+        let expired = db.host_dispatch_state().pending_deadlines().unwrap();
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].0, "krach", "deferred ohm must not appear in expired set");
+    }
+
+    #[test]
+    fn active_rollouts_snapshot_includes_deferred_as_confirmwindow() {
+        // Reconciler must see deferred hosts as in-flight so wave promotion
+        // doesn't skip past a host whose new gen hasn't actually activated.
+        let db = fresh_db();
+        let deadline = Utc::now() + chrono::Duration::seconds(120);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert("ohm", "stable@r1", "system-r1", deadline))
+            .unwrap();
+        db.host_dispatch_state()
+            .mark_deferred("ohm", "stable@r1")
+            .unwrap();
+        let snap = db.host_dispatch_state().active_rollouts_snapshot().unwrap();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(
+            snap[0].host_states.get("ohm").map(String::as_str),
+            Some("ConfirmWindow"),
+        );
     }
 
     #[test]

@@ -26,6 +26,25 @@ pub const LAST_TARGET_FILENAME: &str = "last_target";
 /// bytes stops being re-dispatched until a clean fetch shows up.
 pub const LAST_FETCH_OUTCOME_FILENAME: &str = "last_fetch_outcome";
 
+/// Written when `fire_switch` returns `DeferredPendingReboot` (issue #56);
+/// suppresses redundant `ActivationDeferred` re-posts on every poll cycle.
+/// The dispatch loop short-circuits when the next target's `closure_hash`
+/// matches the recorded value — same closure, same inhibitor, no point
+/// re-detecting + re-posting. Cleared by `record_confirm_success` (after
+/// the operator reboots and boot-recovery confirms) and naturally bypassed
+/// when a fresher `closure_hash` arrives (match check fails, dispatch
+/// proceeds normally — and a new `last_deferred` lands if the new closure
+/// also trips the inhibitor).
+pub const LAST_DEFERRED_FILENAME: &str = "last_deferred";
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct LastDeferredRecord {
+    pub closure_hash: String,
+    pub channel_ref: String,
+    pub component: String,
+    pub deferred_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct LastDispatchRecord {
     pub closure_hash: String,
@@ -128,6 +147,33 @@ pub fn clear_last_fetch_outcome(state_dir: &Path) -> Result<()> {
     }
 }
 
+/// `Ok(None)` for absent or malformed records.
+pub fn read_last_deferred(state_dir: &Path) -> Result<Option<LastDeferredRecord>> {
+    read_atomic_json(state_dir, LAST_DEFERRED_FILENAME)
+}
+
+/// Idempotent overwrite — re-posting `ActivationDeferred` for the same
+/// `closure_hash` happens at most once now (the dispatch suppression check
+/// short-circuits before reaching here), so this is the on-first-defer
+/// write path only.
+pub fn write_last_deferred(state_dir: &Path, record: &LastDeferredRecord) -> Result<()> {
+    write_atomic_json(state_dir, LAST_DEFERRED_FILENAME, record)
+}
+
+/// Cleared on `record_confirm_success` (post-reboot retroactive confirm).
+/// Stale records for non-current `closure_hash` values are inert — the
+/// dispatch suppression check only matches when hashes are equal — so we
+/// don't bother clearing on closure_hash advance; the next defer just
+/// overwrites.
+pub fn clear_last_deferred(state_dir: &Path) -> Result<()> {
+    let path = state_dir.join(LAST_DEFERRED_FILENAME);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(anyhow::anyhow!("remove {}: {err}", path.display())),
+    }
+}
+
 // FOOTGUN: closure_hash is the FULL store basename, not the 32-char hash — wire-equality trap.
 const CURRENT_SYSTEM: &str = "/run/current-system";
 
@@ -157,11 +203,12 @@ pub fn write_last_confirmed(state_dir: &Path, closure_hash: &str, at: DateTime<U
     write_atomic(state_dir, LAST_CONFIRM_FILENAME, body.as_bytes())
 }
 
-/// LOADBEARING: same three persistence steps in the same order from BOTH
+/// LOADBEARING: same persistence steps in the same order from BOTH
 /// dispatch and boot-recovery — without `write_last_target` the CP's
 /// outstanding-failure filter sees every recorded event forever. Each step
-/// is best-effort; `clear_last_dispatched` runs last so a partial crash
-/// leaves the dispatch record around for retry.
+/// is best-effort; `clear_last_dispatched` and `clear_last_deferred` run
+/// last so a partial crash leaves the dispatch + defer records around for
+/// retry.
 pub fn record_confirm_success(state_dir: &Path, target: &EvaluatedTarget, at: DateTime<Utc>) {
     if let Err(err) = write_last_confirmed(state_dir, &target.closure_hash, at) {
         tracing::warn!(
@@ -178,6 +225,14 @@ pub fn record_confirm_success(state_dir: &Path, target: &EvaluatedTarget, at: Da
     }
     if let Err(err) = clear_last_dispatched(state_dir) {
         tracing::warn!(error = %err, "clear_last_dispatched failed (non-fatal)");
+    }
+    // Issue #56: confirm succeeded → the deferred dispatch landed via reboot,
+    // so the suppression sentinel is stale. Failure here is harmless: a
+    // stale record only triggers suppression when closure_hash matches, and
+    // confirm just changed the live state — next dispatch will be a different
+    // closure.
+    if let Err(err) = clear_last_deferred(state_dir) {
+        tracing::warn!(error = %err, "clear_last_deferred failed (non-fatal)");
     }
 }
 
@@ -367,6 +422,55 @@ mod write_read_tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join(LAST_DISPATCH_FILENAME), "{not-json").unwrap();
         assert!(read_last_dispatched(dir.path()).unwrap().is_none());
+    }
+
+    fn sample_deferred() -> LastDeferredRecord {
+        LastDeferredRecord {
+            closure_hash: "abc-nixos-system-test".into(),
+            channel_ref: "stable@deadbeef".into(),
+            component: "dbus".into(),
+            deferred_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn last_deferred_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let r = sample_deferred();
+        write_last_deferred(dir.path(), &r).unwrap();
+        let got = read_last_deferred(dir.path()).unwrap().expect("present");
+        assert_eq!(got.closure_hash, r.closure_hash);
+        assert_eq!(got.channel_ref, r.channel_ref);
+        assert_eq!(got.component, r.component);
+    }
+
+    #[test]
+    fn last_deferred_absent_returns_none() {
+        let dir = TempDir::new().unwrap();
+        assert!(read_last_deferred(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn clear_last_deferred_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        clear_last_deferred(dir.path()).unwrap();
+        write_last_deferred(dir.path(), &sample_deferred()).unwrap();
+        clear_last_deferred(dir.path()).unwrap();
+        assert!(read_last_deferred(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn record_confirm_success_clears_last_deferred() {
+        // Issue #56: post-reboot retroactive confirm must wipe the
+        // suppression sentinel so a subsequent activation isn't silently
+        // suppressed by a stale entry.
+        let dir = TempDir::new().unwrap();
+        write_last_deferred(dir.path(), &sample_deferred()).unwrap();
+        record_confirm_success(dir.path(), &sample_target(), Utc::now());
+        assert!(
+            read_last_deferred(dir.path()).unwrap().is_none(),
+            "record_confirm_success must clear last_deferred",
+        );
     }
 
     #[test]

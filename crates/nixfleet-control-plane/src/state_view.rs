@@ -84,6 +84,11 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
             };
 
             let host_buf = reports.get(hostname);
+            // GOTCHA: cur_rollout uses agent-reported `last_rollout_id`, not
+            // the fleet's current rollout. After a fresh deploy this can lag
+            // by one tick — pre-existing pattern, applies to all event-buffer
+            // counters here. `pending_reboot` is DB-backed below, so it's not
+            // affected by this drift.
             let cur_rollout = last_rollout_id.as_deref();
             let mut compliance_failures = 0usize;
             let mut runtime_gate_errors = 0usize;
@@ -116,6 +121,32 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                     }
                 }
             }
+            // pending_reboot is DB-backed: the durable `host_dispatch_state`
+            // row is the single source of truth. Survives CP restart, doesn't
+            // depend on the in-memory ring's eviction policy. The agent-side
+            // `apply_deferred_pending_reboot_transition` parks the row when
+            // `ActivationDeferred` arrives; `confirm()` (post-reboot) flips
+            // it to Confirmed which clears the signal here naturally.
+            //
+            // Falls back to false on absent DB or read failure — same shape
+            // as `rollout_state` below; metrics rather than crash semantics.
+            let pending_reboot = state
+                .db
+                .as_ref()
+                .and_then(|db| match db.host_dispatch_state().host_state(hostname) {
+                    Ok(Some(row)) => Some(row.state == "deferred-pending-reboot"),
+                    Ok(None) => Some(false),
+                    Err(e) => {
+                        warn!(
+                            target: "state_view",
+                            hostname = %hostname,
+                            error = %e,
+                            "host_dispatch_state read for pending_reboot failed; rendering as false",
+                        );
+                        None
+                    }
+                })
+                .unwrap_or(false);
 
             let last_uptime_secs = checkin.and_then(|c| c.checkin.uptime_secs);
 
@@ -178,6 +209,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                 verified_event_count: verified_count,
                 last_uptime_secs,
                 rollout_state,
+                pending_reboot,
             }
         })
         .collect();

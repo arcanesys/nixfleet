@@ -39,3 +39,9 @@ The agent sends a `"applying"` report to the control plane before firing the swi
 **Trade-offs accepted:**
 - Slower lock contention detection (rare during agent-driven deploys - the common case is the agent being the only process switching).
 - Fire-and-forget means the agent trusts systemd to manage the transient unit lifecycle. If systemd itself has issues, the agent has no recourse.
+
+## Amendments
+
+### Switch-inhibitor carve-out (#56, 2026-05-07)
+
+Bypassing `nixos-rebuild` also skipped its switchInhibitors check, so swaps the operator-side guard refuses (dbus implementation, systemd, kernel, init) were happening live. The agent now runs an inline detection pass before `systemd-run --unit=nixfleet-switch` (`crates/nixfleet-agent/src/activation/linux.rs::detect_switch_inhibitors`); on detection it runs `nix-env --set` only and posts `ReportEvent::ActivationDeferred`, leaving the new generation to activate on next reboot. The fire-and-forget invariant is preserved for non-inhibited switches. CONTRACTS.md §I.7 documents the carve-out and the operator surface (`pendingReboot` in `/v1/hosts`).

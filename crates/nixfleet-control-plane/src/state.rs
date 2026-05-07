@@ -11,6 +11,14 @@ pub enum PendingConfirmState {
     Confirmed,
     RolledBack,
     Cancelled,
+    /// Profile is set on the host but live activation was skipped because a
+    /// critical-component swap (dbus impl, systemd, kernel, init) would have
+    /// been refused by `nixos-rebuild`'s switchInhibitors check (issue #56).
+    /// New generation activates on next reboot. Distinct from `Pending` so
+    /// the rollback timer's 360s deadline doesn't apply — the lifecycle is
+    /// human-paced. Confirm POST after reboot transitions this directly to
+    /// `Confirmed`, bypassing the deadline gate.
+    DeferredPendingReboot,
 }
 
 impl PendingConfirmState {
@@ -20,6 +28,7 @@ impl PendingConfirmState {
             PendingConfirmState::Confirmed => "confirmed",
             PendingConfirmState::RolledBack => "rolled-back",
             PendingConfirmState::Cancelled => "cancelled",
+            PendingConfirmState::DeferredPendingReboot => "deferred-pending-reboot",
         }
     }
 
@@ -30,6 +39,7 @@ impl PendingConfirmState {
             "confirmed" => Ok(PendingConfirmState::Confirmed),
             "rolled-back" => Ok(PendingConfirmState::RolledBack),
             "cancelled" => Ok(PendingConfirmState::Cancelled),
+            "deferred-pending-reboot" => Ok(PendingConfirmState::DeferredPendingReboot),
             other => Err(anyhow!("unknown host_dispatch_state.state: {other:?}")),
         }
     }

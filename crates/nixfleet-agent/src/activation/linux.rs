@@ -77,11 +77,59 @@ async fn read_unit_exit_code(unit_name: &str) -> Option<i32> {
     trimmed.parse::<i32>().ok()
 }
 
+/// Critical components whose live-swap nixos-rebuild's switchInhibitors check
+/// refuses. Tuples are `(component_name, store-relative path inside the system
+/// closure)`. Detection is path-canonicalize equality on the symlink target —
+/// if the canonicalised targets differ between current and new, the live swap
+/// is unsafe and we defer to next boot.
+const SWITCH_INHIBITORS: &[(&str, &str)] = &[
+    // dbus.service is the unit symlink — broker→dbus and dbus→broker swaps
+    // both surface as a different canonicalised target inside the new closure.
+    ("dbus", "etc/systemd/system/dbus.service"),
+    ("systemd", "sw/lib/systemd/systemd"),
+    ("kernel", "kernel"),
+    ("init", "init"),
+];
+
+/// Returns `Some(component)` when a critical-component swap is detected
+/// between the running system and the new closure. Either side missing the
+/// path is out-of-scope (returns `None` for that component) — we only flag
+/// genuine swaps, not absences.
+fn detect_switch_inhibitors(current_system: &Path, new_store_path: &Path) -> Option<&'static str> {
+    for (name, rel_path) in SWITCH_INHIBITORS {
+        let cur = current_system.join(rel_path);
+        let new = new_store_path.join(rel_path);
+        match (std::fs::canonicalize(&cur), std::fs::canonicalize(&new)) {
+            (Ok(c), Ok(n)) if c != n => return Some(name),
+            _ => {}
+        }
+    }
+    None
+}
+
+const CURRENT_SYSTEM_PATH: &str = "/run/current-system";
+
 // FOOTGUN: --scope / --pipe --wait inherit caller's cgroup — agent SIGTERM kills the switch. Use --unit.
 async fn fire_switch(
     target: &EvaluatedTarget,
     store_path: &str,
 ) -> Result<Option<ActivationOutcome>> {
+    // LOADBEARING: profile is already set in pipeline.rs, so deferring just
+    // means "skip systemd-run" — next reboot picks up the new gen via the
+    // bootloader entry the activation script writes for the system profile.
+    if let Some(component) =
+        detect_switch_inhibitors(Path::new(CURRENT_SYSTEM_PATH), Path::new(store_path))
+    {
+        tracing::warn!(
+            target_closure = %target.closure_hash,
+            component = component,
+            "agent: deferring live switch — critical-component swap requires reboot",
+        );
+        return Ok(Some(ActivationOutcome::DeferredPendingReboot {
+            component: component.to_string(),
+        }));
+    }
+
     let _ = Command::new("systemctl")
         .arg("reset-failed")
         .arg("nixfleet-switch.service")
@@ -174,5 +222,104 @@ mod tests {
     fn linux_backend_default_is_unit_struct() {
         let _b: LinuxBackend = LinuxBackend;
         let _: LinuxBackend = LinuxBackend::default();
+    }
+
+    /// Build a fake system tree at `root` where each `rel_path` is a symlink
+    /// pointing to a uniquely-named file under `root.targets/`. Same targets
+    /// across two trees → canonicalize-equal; different `tag` → unequal.
+    fn make_fake_system(root: &Path, rel_paths: &[&str], tag: &str) {
+        let targets_dir = root.join(format!("targets-{tag}"));
+        std::fs::create_dir_all(&targets_dir).unwrap();
+        for rel in rel_paths {
+            let target = targets_dir.join(rel.replace('/', "_"));
+            std::fs::write(&target, b"").unwrap();
+            let link = root.join(rel);
+            if let Some(parent) = link.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+        }
+    }
+
+    fn share_targets(src_root: &Path, dst_root: &Path, rel_paths: &[&str]) {
+        // Make dst symlinks resolve to the same canonical paths as src — the
+        // identical-systems case.
+        for rel in rel_paths {
+            let src_link = src_root.join(rel);
+            let canonical = std::fs::canonicalize(&src_link).unwrap();
+            let dst_link = dst_root.join(rel);
+            if let Some(parent) = dst_link.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::os::unix::fs::symlink(&canonical, &dst_link).unwrap();
+        }
+    }
+
+    #[test]
+    fn detect_returns_none_when_systems_are_identical() {
+        let dir = tempfile::tempdir().unwrap();
+        let cur = dir.path().join("current");
+        let new = dir.path().join("new");
+        let rels: Vec<&str> = SWITCH_INHIBITORS.iter().map(|(_, p)| *p).collect();
+        make_fake_system(&cur, &rels, "shared");
+        share_targets(&cur, &new, &rels);
+        assert_eq!(detect_switch_inhibitors(&cur, &new), None);
+    }
+
+    #[test]
+    fn detect_returns_dbus_when_dbus_service_target_differs() {
+        let dir = tempfile::tempdir().unwrap();
+        let cur = dir.path().join("current");
+        let new = dir.path().join("new");
+        let rels: Vec<&str> = SWITCH_INHIBITORS.iter().map(|(_, p)| *p).collect();
+        // Same targets except dbus.service — only dbus should fire.
+        make_fake_system(&cur, &rels, "cur");
+        share_targets(&cur, &new, &rels);
+        // Overwrite the dbus link in `new` to point somewhere else.
+        let dbus_rel = "etc/systemd/system/dbus.service";
+        let new_dbus_target = dir.path().join("targets-new-dbus");
+        std::fs::create_dir_all(&new_dbus_target).unwrap();
+        let new_dbus_file = new_dbus_target.join("dbus.service");
+        std::fs::write(&new_dbus_file, b"").unwrap();
+        let new_dbus_link = new.join(dbus_rel);
+        std::fs::remove_file(&new_dbus_link).unwrap();
+        std::os::unix::fs::symlink(&new_dbus_file, &new_dbus_link).unwrap();
+        assert_eq!(detect_switch_inhibitors(&cur, &new), Some("dbus"));
+    }
+
+    #[test]
+    fn detect_returns_none_when_one_side_missing_a_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let cur = dir.path().join("current");
+        let new = dir.path().join("new");
+        // Only populate cur — new is empty, every canonicalize on new fails.
+        let rels: Vec<&str> = SWITCH_INHIBITORS.iter().map(|(_, p)| *p).collect();
+        make_fake_system(&cur, &rels, "cur");
+        std::fs::create_dir_all(&new).unwrap();
+        // Per the contract: missing path on one side is out-of-scope, returns None.
+        assert_eq!(detect_switch_inhibitors(&cur, &new), None);
+    }
+
+    #[test]
+    fn detect_returns_kernel_when_kernel_differs_first() {
+        // Kernel is at index 2 in SWITCH_INHIBITORS (after dbus, systemd).
+        // This test seeds matching dbus/systemd and a differing kernel, and
+        // asserts kernel is the variant that fires — catches re-ordering or
+        // accidental short-circuit regressions if the constant is reshuffled.
+        let dir = tempfile::tempdir().unwrap();
+        let cur = dir.path().join("current");
+        let new = dir.path().join("new");
+        let rels: Vec<&str> = SWITCH_INHIBITORS.iter().map(|(_, p)| *p).collect();
+        make_fake_system(&cur, &rels, "cur");
+        share_targets(&cur, &new, &rels);
+        let kernel_rel = "kernel";
+        let new_kernel_target = dir.path().join("targets-new-kernel");
+        std::fs::create_dir_all(&new_kernel_target).unwrap();
+        let new_kernel_file = new_kernel_target.join("bzImage");
+        std::fs::write(&new_kernel_file, b"").unwrap();
+        let new_kernel_link = new.join(kernel_rel);
+        std::fs::remove_file(&new_kernel_link).unwrap();
+        std::os::unix::fs::symlink(&new_kernel_file, &new_kernel_link).unwrap();
+        assert_eq!(detect_switch_inhibitors(&cur, &new), Some("kernel"));
     }
 }

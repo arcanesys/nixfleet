@@ -12,6 +12,7 @@ use nixfleet_agent::manifest_cache::ManifestError;
 use crate::Args;
 
 use super::confirm::handle_fired_and_polled;
+use super::deferred::handle_deferred_pending_reboot;
 use super::DispatchCtx;
 use super::manifest_error;
 use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
@@ -146,6 +147,30 @@ pub(crate) async fn process_dispatch_target(
         }
     }
 
+    // Issue #56: suppress redundant activate-and-defer cycles. If the previous
+    // attempt for THIS exact closure_hash already deferred (profile is set,
+    // awaiting reboot), there's no point re-running realise + nix-env --set +
+    // inhibitor detection on every poll — the outcome won't change until
+    // either reboot or a fresher closure_hash supersedes. Cleared by
+    // `record_confirm_success` (post-reboot retroactive confirm). A different
+    // closure_hash naturally bypasses the match — dispatch proceeds normally.
+    //
+    // Read failure is fail-open (don't suppress): the CP-side
+    // `apply_deferred_pending_reboot_transition` is idempotent, so a re-post
+    // is harmless if the sentinel is unreadable.
+    let suppress_due_to_prior_defer = matches!(
+        nixfleet_agent::checkin_state::read_last_deferred(&args.state_dir),
+        Ok(Some(ref rec)) if rec.closure_hash == target.closure_hash,
+    );
+    if suppress_due_to_prior_defer {
+        tracing::debug!(
+            target_closure = %target.closure_hash,
+            channel_ref = %target.channel_ref,
+            "agent: skipping dispatch — already deferred for this closure (awaiting reboot)",
+        );
+        return;
+    }
+
     reporter
         .post_report(
             Some(&target.channel_ref),
@@ -178,6 +203,9 @@ async fn handle_activation_outcome<R: Reporter>(
         }
         Ok(ActivationOutcome::VerifyMismatch { expected, actual }) => {
             handle_verify_mismatch(ctx, expected, actual).await
+        }
+        Ok(ActivationOutcome::DeferredPendingReboot { component }) => {
+            handle_deferred_pending_reboot(ctx, component).await
         }
         Err(err) => handle_activation_spawn_error(ctx, err).await,
     }

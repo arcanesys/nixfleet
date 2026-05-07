@@ -4,6 +4,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [Semantic V
 
 ## [Unreleased]
 
+### Switch-inhibitor carve-out for live activation (2026-05-07)
+
+Closes #56. `nixos-rebuild switch` refuses to live-swap critical components (dbus implementation, systemd, kernel, init) on a running system because the swap can hang processes or require kernel cooperation. The fire-and-forget agent (ADR-011) bypassed `nixos-rebuild`'s wrapper, so the same swap the operator-side guard refuses was happening silently via the gitops loop.
+
+#### Added
+
+- **`detect_switch_inhibitors`** in `crates/nixfleet-agent/src/activation/linux.rs` — canonicalize-equality compare on four store-relative paths (`etc/systemd/system/dbus.service`, `sw/lib/systemd/systemd`, `kernel`, `init`) between `/run/current-system` and the new closure. Mismatch → live switch unsafe; defer to next boot.
+- **`ActivationOutcome::DeferredPendingReboot { component }`** — distinct from `SwitchFailed`; profile is set, no rollback fires, boot-recovery confirms post-reboot.
+- **`ReportEvent::ActivationDeferred { closure_hash, channel_ref, component }`** — additive wire variant, unsigned (observability-flavor matching `ActivationStarted`). Discriminator: `activation-deferred`.
+- **`PendingConfirmState::DeferredPendingReboot`** — new variant on the `host_dispatch_state.state` SQL CHECK constraint (migration `V005__pending_confirms_deferred_state.sql`). The 360s rollback timer's partial index is `WHERE state = 'pending'` so deferred rows are naturally excluded — no special-case timer code path. The confirm endpoint accepts `(Pending AND deadline > now) OR DeferredPendingReboot` as valid pre-Confirmed states; post-reboot confirms succeed regardless of deadline (the deferred lifecycle is human-paced, not agent-paced).
+- **`apply_deferred_pending_reboot_transition`** in `crates/nixfleet-control-plane/src/server/routes/reports.rs` — CP-side state-driving handler. On `ActivationDeferred` event receipt, calls `host_dispatch_state.mark_deferred(host, rollout)` to park the row (Pending → DeferredPendingReboot). Mirrors the existing `apply_rollback_state_transition` shape.
+- **`HostStatusEntry.pendingReboot: bool`** — set when the host's `host_dispatch_state` row is `DeferredPendingReboot`. **DB-backed**, not event-ring derived: durable across CP restart, single source of truth, doesn't depend on the in-memory ring's eviction policy. Cleared automatically when the row transitions to `Confirmed` (post-reboot retroactive confirm).
+- **`nixfleet status`** shows `⟳ pending reboot` ahead of `✓ converged`, between `failed` and `stale` in priority.
+- **Agent state-dir `last_deferred` sentinel** (`crates/nixfleet-agent/src/checkin_state.rs::LastDeferredRecord`) — written by `handle_deferred_pending_reboot`. Suppresses redundant activate-and-defer cycles: the dispatch loop short-circuits before `activate()` when the next target's `closure_hash` matches the recorded value, so re-posts of `ActivationDeferred` are O(1) per closure rather than O(poll-interval) until reboot. Cleared by `record_confirm_success` on both the live-switch and boot-recovery paths.
+
+#### Behavior
+
+When a deploy hits a switch-inhibitor: agent runs `nix-env --profile … --set <store_path>` (bootloader entry written for the new gen), skips `systemd-run --unit=nixfleet-switch`, and posts `ActivationDeferred`. CP parks the dispatch row in `DeferredPendingReboot`; the rollback timer's 360s sweep skips it. Operator sees `pendingReboot: true` in `/v1/hosts`. After the operator reboots — at any point, hours or days later — boot-recovery POSTs confirm; CP's confirm endpoint accepts the deferred row without the deadline gate and transitions it to `Confirmed`. Wave promotion / channel edges / disruption budget all see the deferred host as `ConfirmWindow` (in-flight, not terminal-for-ordering), so successor waves and channel-edge crossings correctly wait for the reboot.
+
+#### Out of scope
+
+- Glibc major-version swaps (requires walking `<store>/sw/lib/libc.so` symlink chain).
+- `boot.loader.systemd-boot` ↔ `grub` swaps (post-activation hook, not pre-switch).
+- Operator override flag for ops who want to opt out.
+- Long-window escalation (e.g. alarm if the row has been deferred >7 days). Operator is responsible for rebooting; CP refuses to time out the lifecycle, but does not yet escalate.
+
+#### Tests
+
+- 4 unit tests for `detect_switch_inhibitors` (identical, dbus-differs, kernel-differs, missing-path).
+- Dispatch handler test asserts `ActivationDeferred` payload + no rollback.
+- CLI test asserts `⟳ pending reboot` priority.
+- Existing `outcome_kinds_are_distinct` and `discriminator_matches_serde_event_tag` extended for the new variants.
+
+#### Notes
+
+- ADR-011's fire-and-forget invariant is preserved for non-inhibited switches. CONTRACTS.md §I.7 documents the carve-out as a sub-section.
+- A NixOS VM harness scenario (`tests/harness/scenarios/switch-inhibitor.nix`) is the natural follow-up for end-to-end coverage.
+
 ### Cross-channel rollout ordering + tag-driven disruption budgets (2026-05-04)
 
 Closes RFC-0002 §4.3's cross-channel coordination punt (#65). Two coordinated changes shipped together because both move budget/edge resolution from fleet-eval time to reconcile time.

@@ -97,6 +97,13 @@ fn status_label(
         }
     }
 
+    // Pending-reboot is operator-actionable: agent set the new profile but a
+    // critical-component swap forced a reboot. Surface louder than in-progress
+    // states so it doesn't get lost in the noise.
+    if host.pending_reboot {
+        return "\u{27F3} pending reboot".to_string();
+    }
+
     if host.converged {
         return "\u{2713} converged".to_string();
     }
@@ -236,6 +243,7 @@ mod tests {
             verified_event_count: 0,
             last_uptime_secs: None,
             rollout_state: None,
+            pending_reboot: false,
         }
     }
 
@@ -288,6 +296,25 @@ mod tests {
             "fell through to in-progress without a window: {out}"
         );
         assert!(!out.contains("stale"), "shouldn't be stale without window: {out}");
+    }
+
+    #[test]
+    fn pending_reboot_renders_distinctly_when_not_converged() {
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", false, Some(1), 0);
+        h.pending_reboot = true;
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        assert!(
+            out.contains("\u{27F3} pending reboot"),
+            "expected pending-reboot label: {out}",
+        );
+        assert!(!out.contains("converged"), "should not show converged: {out}");
+        assert!(!out.contains("in progress"), "pending-reboot is louder than in-progress: {out}");
     }
 
     #[test]

@@ -119,6 +119,16 @@ Where:
 
 The CP enforces nothing here — operators that violate the invariant get the chaos cascade described above. Future versions may add a runtime warning at CP startup when `--confirm-deadline-secs` is below the documented minimum.
 
+**Switch-inhibitor carve-out (issue #56).** The agent skips `switch-to-configuration` when a critical component (dbus implementation, systemd, kernel, init) differs between `/run/current-system` and the new closure — `nixos-rebuild switch` would refuse the same. The new generation is still bound to the system profile (`nix-env --set` runs unconditionally before fire), so the next reboot completes activation. The agent posts `ReportEvent::ActivationDeferred { component }` instead of running the live switch; this is NOT a `SwitchFailed` outcome and triggers no rollback.
+
+The deferred lifecycle is **human-paced, not agent-paced**, so it explicitly opts out of the 360s confirm-deadline rollback timer documented above. CP receipt of `ActivationDeferred` parks the `host_dispatch_state` row in `DeferredPendingReboot`; the rollback timer's partial index `WHERE state = 'pending'` naturally excludes it. The confirm endpoint accepts post-reboot confirms against deferred rows without the deadline gate (`(Pending AND deadline > now) OR DeferredPendingReboot`). Wave promotion + channel-edge gates see deferred hosts as `ConfirmWindow` (in-flight, not terminal-for-ordering), so successor waves and channel crossings correctly wait for the operator's reboot.
+
+Operator surfaces:
+- `/v1/hosts` exposes `pendingReboot: true` for hosts whose `host_dispatch_state` row is `DeferredPendingReboot`. DB-backed, so the signal survives CP restart. Cleared when the row transitions to `Confirmed` (post-reboot retroactive confirm).
+- `nixfleet status` shows `⟳ pending reboot` ahead of the `✓ converged` label so operators see deferred hosts at a glance.
+
+Detection is canonicalize-equality on four store-relative paths: `etc/systemd/system/dbus.service`, `sw/lib/systemd/systemd`, `kernel`, `init`. Any mismatch defers; either side missing a path is out-of-scope and does not defer (see `crates/nixfleet-agent/src/activation/linux.rs::detect_switch_inhibitors`). The agent persists a `last_deferred` sentinel in its state-dir to suppress redundant activate-and-defer cycles for the same `closure_hash`; the suppression is cleared on `record_confirm_success` (post-reboot). Out of scope for this carve-out: glibc major-version swaps, `boot.loader.systemd-boot` ↔ `grub` swaps.
+
 ### 8. Rollout manifest
 
 | | |

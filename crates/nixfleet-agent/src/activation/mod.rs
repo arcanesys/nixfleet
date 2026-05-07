@@ -214,6 +214,12 @@ mod tests {
                     actual: "a".into(),
                 }
             ),
+            format!(
+                "{:?}",
+                ActivationOutcome::DeferredPendingReboot {
+                    component: "dbus".into(),
+                }
+            ),
         ];
         let unique: std::collections::HashSet<_> = outcomes.iter().collect();
         assert_eq!(unique.len(), outcomes.len(), "outcome variants collide on Debug");

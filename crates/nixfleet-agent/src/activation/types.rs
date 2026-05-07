@@ -34,6 +34,13 @@ pub enum ActivationOutcome {
         expected: String,
         actual: String,
     },
+    /// Profile flipped via `nix-env --set` but live switch was skipped because
+    /// activating component `component` (dbus, systemd, kernel, init) on a
+    /// running system is unsafe — nixos-rebuild refuses the same. New gen
+    /// activates on next boot.
+    DeferredPendingReboot {
+        component: String,
+    },
 }
 
 #[derive(Debug)]

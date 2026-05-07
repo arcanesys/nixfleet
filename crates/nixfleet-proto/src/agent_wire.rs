@@ -185,6 +185,17 @@ pub enum ReportEvent {
         channel_ref: String,
     },
 
+    /// Profile flipped via `nix-env --set` but live switch was skipped because
+    /// a critical-component swap (dbus impl, systemd, kernel, init) would have
+    /// been refused by `nixos-rebuild`'s switchInhibitors check. New generation
+    /// activates on next boot. Operator surface: `pending_reboot` in /v1/hosts.
+    ActivationDeferred {
+        closure_hash: String,
+        channel_ref: String,
+        /// Component that triggered the inhibitor (e.g. "dbus", "systemd").
+        component: String,
+    },
+
     ActivationFailed {
         phase: String,
         #[serde(default)]
@@ -315,6 +326,7 @@ impl ReportEvent {
     pub fn discriminator(&self) -> &'static str {
         match self {
             Self::ActivationStarted { .. } => "activation-started",
+            Self::ActivationDeferred { .. } => "activation-deferred",
             Self::ActivationFailed { .. } => "activation-failed",
             Self::RealiseFailed { .. } => "realise-failed",
             Self::VerifyMismatch { .. } => "verify-mismatch",
@@ -349,6 +361,11 @@ mod report_event_discriminator_tests {
             ReportEvent::ActivationStarted {
                 closure_hash: "x".into(),
                 channel_ref: "y".into(),
+            },
+            ReportEvent::ActivationDeferred {
+                closure_hash: "x".into(),
+                channel_ref: "y".into(),
+                component: "dbus".into(),
             },
             ReportEvent::ActivationFailed {
                 phase: "x".into(),

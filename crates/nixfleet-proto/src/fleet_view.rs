@@ -39,6 +39,11 @@ pub struct HostStatusEntry {
     /// opened rollout shows None until the host transitions.
     #[serde(default)]
     pub rollout_state: Option<HostRolloutState>,
+    /// Agent posted `ActivationDeferred` for the host's current rollout —
+    /// profile is set, but a critical-component swap forced a reboot to
+    /// finish activation. Cleared once the host converges (post-reboot).
+    #[serde(default)]
+    pub pending_reboot: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
