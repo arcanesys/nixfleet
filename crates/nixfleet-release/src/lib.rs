@@ -83,6 +83,13 @@ pub struct ReleaseConfig {
     /// signs `revocations.json` alongside `fleet.resolved.json` via
     /// the same `sign_cmd`. When `None`, no revocations artifact.
     pub revocations_attr: Option<String>,
+    /// Source URL for building pinned hosts at non-current commits
+    /// (issue #88). Used as `nix build "<url>?rev=<commit>#nixosConfigurations.<host>.config.system.build.toplevel"`.
+    /// Optional at the type level; required at runtime iff any
+    /// non-expired host pin specifies a commit different from the
+    /// current release commit. Validation fires after eval (where
+    /// pins are visible) — see `validate_pin_source_url`.
+    pub pin_source_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -118,7 +125,18 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
     let host_names: Vec<&str> = hosts.iter().map(|(n, _)| n.as_str()).collect();
     tracing::info!(count = hosts.len(), hosts = ?host_names, "enumerated");
 
-    let built = build_hosts(config, &hosts)?;
+    // Issue #88: eval BEFORE build so pin metadata can branch the build
+    // path per host. Pre-#88 this happened after build because eval was
+    // only used to inject closure_hashes; pins make eval load-bearing for
+    // the build itself. The reorder is safe — eval is its own nix
+    // invocation with no build-output dependency.
+    let mut resolved = eval_fleet_resolved(config)?;
+    let current_commit = git_head_sha(&config.flake_dir).ok();
+    let now = Utc::now();
+    filter_expired_pins(&mut resolved, now);
+    validate_pin_source_url(config, &resolved, current_commit.as_deref())?;
+
+    let built = build_hosts(config, &hosts, &resolved, current_commit.as_deref())?;
     tracing::info!(built = built.len(), total = hosts.len(), "build done");
 
     if let Some(cmd) = &config.push_cmd {
@@ -127,8 +145,6 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
             push_one(cmd, host, path, &hash)?;
         }
     }
-
-    let mut resolved = eval_fleet_resolved(config)?;
 
     let hashes: BTreeMap<String, String> = built
         .iter()
@@ -145,7 +161,9 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
     };
 
     let signed_at = preserved_signed_at.unwrap_or_else(Utc::now);
-    let ci_commit = git_head_sha(&config.flake_dir).ok();
+    // Issue #88: `current_commit` was already captured before build to
+    // drive pin-source validation; reuse here for `meta.ciCommit`.
+    let ci_commit = current_commit.clone();
     stamp_meta(&mut resolved, signed_at, ci_commit.clone(), &config.signature_algorithm);
 
     let canonical = canonicalize_resolved(&resolved)?;
@@ -430,29 +448,66 @@ fn list_attr_optional(flake_dir: &Path, attr_path: &str) -> Result<Vec<String>> 
     Ok(names)
 }
 
-/// Sequential build of each host's
-/// `<prefix>.<host>.config.system.build.toplevel`. Failures abort
-/// the run before any push. Cross-platform builds rely on the
-/// operator's `nix.buildMachines` config.
+/// Sequential build. Per-host branch on `resolved.hosts[host].pin`
+/// (issue #88): no pin OR pin.commit == current_commit → existing local
+/// build path; non-current commit → flake-ref build via
+/// `<pin_source_url>?rev=<commit>`. Failures abort before any push.
+/// Cross-platform builds rely on the operator's `nix.buildMachines` config.
 fn build_hosts(
     config: &ReleaseConfig,
     hosts: &[(String, HostKind)],
+    resolved: &FleetResolved,
+    current_commit: Option<&str>,
 ) -> Result<BTreeMap<String, PathBuf>> {
     let mut out = BTreeMap::new();
     for (host, kind) in hosts {
-        let attr = format!(
-            ".#{}.{host}.config.system.build.toplevel",
-            kind.attr_prefix()
-        );
-        let path = build_one(&config.flake_dir, &attr)
-            .with_context(|| format!("build host {host}"))?;
+        let pinned_commit = pin_target_commit(resolved, host, current_commit);
+        let path = match pinned_commit {
+            None => {
+                let attr = format!(
+                    ".#{}.{host}.config.system.build.toplevel",
+                    kind.attr_prefix()
+                );
+                build_local(&config.flake_dir, &attr)
+                    .with_context(|| format!("build host {host}"))?
+            }
+            Some(commit) => {
+                let url = config.pin_source_url.as_deref().ok_or_else(|| {
+                    // Should be unreachable — `validate_pin_source_url`
+                    // catches this earlier. Defensive bail keeps the path
+                    // honest in case the validation is bypassed in tests.
+                    anyhow::anyhow!(
+                        "host '{host}' is pinned to commit '{commit}' but \
+                         --pin-source-url is unset"
+                    )
+                })?;
+                build_pinned(url, commit, *kind, host)
+                    .with_context(|| format!("build pinned host {host} @ {commit}"))?
+            }
+        };
         tracing::info!(host = %host, kind = ?kind, path, "built");
         out.insert(host.clone(), PathBuf::from(path));
     }
     Ok(out)
 }
 
-fn build_one(flake_dir: &Path, attr: &str) -> Result<String> {
+/// `Some(commit)` iff host has a pin AND `pin.commit ≠ current_commit`.
+/// `None` for unpinned hosts and for pins that target the same commit
+/// we're already releasing (the local build path is correct in that
+/// case — no point invoking the flake-ref machinery).
+fn pin_target_commit<'a>(
+    resolved: &'a FleetResolved,
+    host: &str,
+    current_commit: Option<&str>,
+) -> Option<&'a str> {
+    let pin = resolved.hosts.get(host)?.pin.as_ref()?;
+    if Some(pin.commit.as_str()) == current_commit {
+        return None;
+    }
+    Some(pin.commit.as_str())
+}
+
+fn build_local(flake_dir: &Path, attr: &str) -> Result<String> {
     let output = Command::new("nix")
         .args([
             "build",
@@ -464,6 +519,37 @@ fn build_one(flake_dir: &Path, attr: &str) -> Result<String> {
         .current_dir(flake_dir)
         .output()
         .with_context(|| format!("invoke `nix build {attr}`"))?;
+    interpret_build_output(attr, output)
+}
+
+/// Build via flake-ref at a different commit. The `url?rev=<commit>` form
+/// lets Nix handle checkout + caching; we don't manage a worktree
+/// ourselves. The host attr path mirrors the local build (Nix vs Darwin
+/// is consumed identically at the pinned source).
+fn build_pinned(
+    pin_source_url: &str,
+    commit: &str,
+    kind: HostKind,
+    host: &str,
+) -> Result<String> {
+    let attr = format!(
+        "{pin_source_url}?rev={commit}#{}.{host}.config.system.build.toplevel",
+        kind.attr_prefix()
+    );
+    tracing::info!(
+        host = %host,
+        commit = %commit,
+        url = %pin_source_url,
+        "building pinned host via flake-ref",
+    );
+    let output = Command::new("nix")
+        .args(["build", "--no-link", "--print-out-paths", "--no-warn-dirty", &attr])
+        .output()
+        .with_context(|| format!("invoke `nix build {attr}`"))?;
+    interpret_build_output(&attr, output)
+}
+
+fn interpret_build_output(attr: &str, output: std::process::Output) -> Result<String> {
     if !output.status.success() {
         bail!(
             "nix build {attr}: {}",
@@ -475,6 +561,62 @@ fn build_one(flake_dir: &Path, attr: &str) -> Result<String> {
         bail!("nix build {attr}: empty output");
     }
     Ok(path)
+}
+
+/// Drop expired pins from the resolved fleet (issue #88). Pins past
+/// their `expires_at` are silently removed; affected hosts fall back to
+/// the current-commit build path. Pins with no `expires_at` always
+/// remain. Same eval-time semantics regardless of host kind.
+pub fn filter_expired_pins(resolved: &mut FleetResolved, now: DateTime<Utc>) {
+    for (host_name, host) in resolved.hosts.iter_mut() {
+        if let Some(pin) = host.pin.as_ref() {
+            if let Some(expires) = pin.expires_at {
+                if expires <= now {
+                    tracing::info!(
+                        host = %host_name,
+                        expired_at = %expires,
+                        commit = %pin.commit,
+                        "pin expired — falling back to current-commit build",
+                    );
+                    host.pin = None;
+                }
+            }
+        }
+    }
+}
+
+/// Errors when any host has a non-current-commit pin but `--pin-source-url`
+/// is unset. Run AFTER `filter_expired_pins` so expired pins are not
+/// counted (they fall back to the current commit anyway).
+fn validate_pin_source_url(
+    config: &ReleaseConfig,
+    resolved: &FleetResolved,
+    current_commit: Option<&str>,
+) -> Result<()> {
+    if config.pin_source_url.is_some() {
+        return Ok(());
+    }
+    let needs: Vec<&str> = resolved
+        .hosts
+        .iter()
+        .filter_map(|(name, host)| {
+            host.pin.as_ref().and_then(|p| {
+                if Some(p.commit.as_str()) != current_commit {
+                    Some(name.as_str())
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+    if !needs.is_empty() {
+        bail!(
+            "--pin-source-url is required: hosts with non-current-commit pins ({}) \
+             can't be built without a source URL",
+            needs.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn closure_hash(path: &Path) -> String {
@@ -607,6 +749,7 @@ mod tests {
                 channel: "stable".into(),
                 closure_hash: None,
                 pubkey: None,
+                pin: None,
             },
         );
         hosts.insert(
@@ -617,6 +760,7 @@ mod tests {
                 channel: "stable".into(),
                 closure_hash: None,
                 pubkey: None,
+                pin: None,
             },
         );
         let mut channels = std::collections::HashMap::new();
@@ -718,6 +862,7 @@ mod tests {
                 channel: "stable".into(),
                 closure_hash: Some("aaaa-host-b".into()),
                 pubkey: None,
+                pin: None,
             },
         );
         hosts.insert(
@@ -728,6 +873,7 @@ mod tests {
                 channel: "stable".into(),
                 closure_hash: Some("aaaa-host-a".into()),
                 pubkey: None,
+                pin: None,
             },
         );
         hosts.insert(
@@ -738,6 +884,7 @@ mod tests {
                 channel: "stable".into(),
                 closure_hash: None,
                 pubkey: None,
+                pin: None,
             },
         );
         let mut channels = std::collections::HashMap::new();
@@ -904,6 +1051,7 @@ mod tests {
             smoke_verify: true,
             reuse_unchanged_signature: false,
             revocations_attr: None,
+            pin_source_url: None,
         }
     }
 
@@ -911,5 +1059,123 @@ mod tests {
     fn host_kind_attr_prefix_matches_flake_convention() {
         assert_eq!(HostKind::Nixos.attr_prefix(), "nixosConfigurations");
         assert_eq!(HostKind::Darwin.attr_prefix(), "darwinConfigurations");
+    }
+
+    fn pin_resolved(host_pin: Option<nixfleet_proto::Pin>) -> FleetResolved {
+        let mut r = dummy_resolved();
+        r.hosts.get_mut("test-host").unwrap().pin = host_pin;
+        r
+    }
+
+    fn fresh_pin(commit: &str, expires_at: Option<DateTime<Utc>>) -> nixfleet_proto::Pin {
+        nixfleet_proto::Pin {
+            commit: commit.to_string(),
+            reason: "test".to_string(),
+            expires_at,
+        }
+    }
+
+    #[test]
+    fn filter_expired_drops_past_expiry_and_keeps_future() {
+        let now = Utc::now();
+        let past = now - chrono::Duration::days(1);
+        let future = now + chrono::Duration::days(1);
+
+        let mut r = pin_resolved(Some(fresh_pin("c1", Some(past))));
+        filter_expired_pins(&mut r, now);
+        assert!(
+            r.hosts["test-host"].pin.is_none(),
+            "expired pin must be dropped",
+        );
+
+        let mut r = pin_resolved(Some(fresh_pin("c2", Some(future))));
+        filter_expired_pins(&mut r, now);
+        assert!(
+            r.hosts["test-host"].pin.is_some(),
+            "fresh pin must survive",
+        );
+
+        let mut r = pin_resolved(Some(fresh_pin("c3", None)));
+        filter_expired_pins(&mut r, now);
+        assert!(
+            r.hosts["test-host"].pin.is_some(),
+            "pin with no expiry must always survive",
+        );
+    }
+
+    #[test]
+    fn filter_expired_treats_exact_now_as_expired() {
+        // `<=` boundary: a pin whose expiresAt is exactly now is past
+        // its window and should be dropped (the operator's window
+        // closed at that instant).
+        let now = Utc::now();
+        let mut r = pin_resolved(Some(fresh_pin("c", Some(now))));
+        filter_expired_pins(&mut r, now);
+        assert!(r.hosts["test-host"].pin.is_none());
+    }
+
+    #[test]
+    fn pin_target_commit_none_for_unpinned_host() {
+        let r = pin_resolved(None);
+        assert!(pin_target_commit(&r, "test-host", Some("abc")).is_none());
+    }
+
+    #[test]
+    fn pin_target_commit_none_when_pin_matches_release_commit() {
+        let r = pin_resolved(Some(fresh_pin("abc1234", None)));
+        assert!(
+            pin_target_commit(&r, "test-host", Some("abc1234")).is_none(),
+            "same-commit pin must hit the local build path, not flake-ref",
+        );
+    }
+
+    #[test]
+    fn pin_target_commit_some_when_pin_diverges_from_release_commit() {
+        let r = pin_resolved(Some(fresh_pin("frozen-abc", None)));
+        assert_eq!(
+            pin_target_commit(&r, "test-host", Some("current-def")),
+            Some("frozen-abc"),
+        );
+    }
+
+    #[test]
+    fn validate_pin_source_url_errors_when_needed_and_unset() {
+        let mut c = base_config();
+        c.pin_source_url = None;
+        let r = pin_resolved(Some(fresh_pin("frozen-abc", None)));
+        let err = validate_pin_source_url(&c, &r, Some("current-def")).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("--pin-source-url is required"),
+            "error must mention the missing flag: {msg}",
+        );
+        assert!(
+            msg.contains("test-host"),
+            "error must list the offending host: {msg}",
+        );
+    }
+
+    #[test]
+    fn validate_pin_source_url_ok_when_no_pins() {
+        let c = base_config();
+        let r = dummy_resolved();
+        validate_pin_source_url(&c, &r, Some("any-commit")).unwrap();
+    }
+
+    #[test]
+    fn validate_pin_source_url_ok_when_pin_matches_release_commit() {
+        // Pin that targets the SAME commit being released doesn't need a
+        // source URL — the local build path handles it.
+        let c = base_config();
+        let r = pin_resolved(Some(fresh_pin("matching-commit", None)));
+        validate_pin_source_url(&c, &r, Some("matching-commit")).unwrap();
+    }
+
+    #[test]
+    fn validate_pin_source_url_ok_when_url_is_set() {
+        let mut c = base_config();
+        c.pin_source_url = Some("git+ssh://example/fleet".into());
+        let r = pin_resolved(Some(fresh_pin("frozen-abc", None)));
+        validate_pin_source_url(&c, &r, Some("current-def")).unwrap();
     }
 }

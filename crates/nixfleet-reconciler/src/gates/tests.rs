@@ -625,6 +625,7 @@ fn compliance_wave_blocks_transitively_across_three_waves_under_enforce() {
             channel: "stable".into(),
             closure_hash: Some("pixel-closure".into()),
             pubkey: None,
+            pin: None,
         },
     );
     fleet

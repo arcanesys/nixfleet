@@ -52,6 +52,13 @@ pub struct HostStatusEntry {
     /// closure_hash (the agent's suppression check stops matching).
     #[serde(default)]
     pub quarantined_closure: Option<String>,
+    /// Active operator pin for this host (issue #88). Populated from
+    /// the fleet snapshot's `hosts.<name>.pin`, which mkFleet emitted
+    /// from the most-specific declaration in the host > tag > channel
+    /// chain. Pre-filtered by `nixfleet-release`'s expiry sweep, so
+    /// what's here is by construction non-expired at signing time.
+    #[serde(default)]
+    pub pin: Option<crate::Pin>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

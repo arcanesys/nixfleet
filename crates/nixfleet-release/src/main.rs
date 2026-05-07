@@ -75,6 +75,12 @@ struct Cli {
     #[arg(long)]
     revocations_attr: Option<String>,
 
+    /// Source URL the pinned-host build path uses as `nix build "<url>?rev=<commit>#..."`.
+    /// Required iff any non-expired host pin specifies a commit different from
+    /// the current release commit (issue #88). Typical: `git+ssh://lab:222/abstracts33d/fleet`.
+    #[arg(long)]
+    pin_source_url: Option<String>,
+
     /// `pretty` | `json`.
     #[arg(long, default_value = "pretty")]
     log_format: String,
@@ -160,6 +166,7 @@ fn main() -> ExitCode {
         smoke_verify: cli.smoke_verify,
         reuse_unchanged_signature: cli.reuse_unchanged_signature,
         revocations_attr: cli.revocations_attr,
+        pin_source_url: cli.pin_source_url,
     };
 
     match nixfleet_release::run(&config) {

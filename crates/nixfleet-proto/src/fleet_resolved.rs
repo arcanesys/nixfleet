@@ -38,6 +38,33 @@ pub struct Host {
     pub closure_hash: Option<String>,
     #[serde(default)]
     pub pubkey: Option<String>,
+    /// Operator-declared commit pin (issue #88). Resolved at mkFleet eval
+    /// time from the most-specific declaration in the host > tag > channel
+    /// chain. Populated only when the effective pin is non-empty AND not
+    /// expired (`until` is filtered at eval time). When present,
+    /// `nixfleet-release` builds the host's closure from `pin.commit`
+    /// instead of the current release commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<Pin>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Pin {
+    /// Source-control rev the host's closure should be built from.
+    /// Opaque to the framework; consumers (release tool, `nix build`'s
+    /// `--rev`) interpret it. Typically a 40-char SHA but short SHAs +
+    /// tag names work.
+    pub commit: String,
+    /// Free-form operator note (CVE ref, audit window, debug context).
+    /// Not parsed — surfaced verbatim in `nixfleet status` + dashboards.
+    pub reason: String,
+    /// Hard expiry. Pins past their `expiresAt` are filtered at mkFleet
+    /// eval time, so when this field is present here it's informational —
+    /// the artifact already passed the filter at signing time. Operators
+    /// reading the JSON can still see when the pin would have expired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

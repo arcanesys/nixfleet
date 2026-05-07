@@ -64,6 +64,7 @@ impl FleetBuilder {
                 channel: channel.to_string(),
                 closure_hash: Some(format!("{name}-closure")),
                 pubkey: None,
+                pin: None,
             },
         );
         self

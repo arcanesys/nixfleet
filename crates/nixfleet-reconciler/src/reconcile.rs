@@ -568,6 +568,7 @@ mod channel_edge_tests {
             channel: channel.into(),
             closure_hash: None,
             pubkey: None,
+            pin: None,
         }
     }
 }

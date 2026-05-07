@@ -19,7 +19,7 @@ pub mod testing;
 
 pub use fleet_resolved::{
     Channel, ChannelEdge, Compliance, ComplianceProbes, DisruptionBudget, Edge, FleetResolved,
-    HealthGate, Host, Meta, OnHealthFailure, PolicyWave, RolloutPolicy, Selector,
+    HealthGate, Host, Meta, OnHealthFailure, Pin, PolicyWave, RolloutPolicy, Selector,
     SystemdFailedUnits, Wave,
 };
 pub use fleet_view::{HostStatusEntry, HostsResponse, RolloutTrace, RolloutTraceEvent};

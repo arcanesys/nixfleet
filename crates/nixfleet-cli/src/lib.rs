@@ -82,6 +82,25 @@ fn status_label(
     now: DateTime<Utc>,
     freshness_minutes: Option<u32>,
 ) -> String {
+    let base = base_status_label(host, now, freshness_minutes);
+    // Issue #88: a pin is operator-declared metadata, not a status of its
+    // own. Appending it as a suffix preserves the existing health signal
+    // (converged / failed / stale / etc.) while making the freeze visible
+    // at a glance. Short-prefix the commit to keep the column tidy.
+    match host.pin.as_ref() {
+        Some(pin) => {
+            let short: String = pin.commit.chars().take(7).collect();
+            format!("{base} \u{1F512}{short}")
+        }
+        None => base,
+    }
+}
+
+fn base_status_label(
+    host: &HostStatusEntry,
+    now: DateTime<Utc>,
+    freshness_minutes: Option<u32>,
+) -> String {
     use nixfleet_proto::HostRolloutState;
 
     // Failed/Reverted is louder than closure-match because the rollout's
@@ -253,6 +272,7 @@ mod tests {
             rollout_state: None,
             pending_reboot: false,
             quarantined_closure: None,
+            pin: None,
         }
     }
 
@@ -331,6 +351,53 @@ mod tests {
             !out.contains("pending reboot"),
             "quarantined must out-rank pending-reboot: {out}",
         );
+    }
+
+    #[test]
+    fn pin_appends_to_converged_label() {
+        // Pin is operator metadata, not a health signal — it AUGMENTS
+        // the existing label rather than supplanting it. A pinned-and-
+        // converged host shows "✓ converged 🔒<short>".
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", true, Some(0), 0);
+        h.pin = Some(nixfleet_proto::Pin {
+            commit: "abc12345-deadbeef".into(),
+            reason: "investigating CVE".into(),
+            expires_at: None,
+        });
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        assert!(out.contains("\u{2713} converged"), "must keep converged: {out}");
+        assert!(out.contains("\u{1F512}abc1234"), "must show 7-char pin prefix: {out}");
+        assert!(!out.contains("abc12345"), "8th char must be truncated: {out}");
+    }
+
+    #[test]
+    fn pin_appends_to_failed_label_too() {
+        // Even on failure paths the pin info is visible — operator
+        // wants to know "this host was supposed to be on commit X
+        // and it's failed".
+        use nixfleet_proto::HostRolloutState;
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", false, Some(1), 0);
+        h.rollout_state = Some(HostRolloutState::Failed);
+        h.pin = Some(nixfleet_proto::Pin {
+            commit: "frozen1".into(),
+            reason: "Q2 audit".into(),
+            expires_at: None,
+        });
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        assert!(out.contains("\u{2717} failed"));
+        assert!(out.contains("\u{1F512}frozen1"));
     }
 
     #[test]

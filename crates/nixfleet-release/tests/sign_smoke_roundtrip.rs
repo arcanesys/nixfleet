@@ -22,6 +22,7 @@ fn dummy_resolved() -> FleetResolved {
             channel: "stable".into(),
             closure_hash: Some("abc123-nixos-system-test-host-26.05".into()),
             pubkey: None,
+            pin: None,
         },
     );
     let mut channels = std::collections::HashMap::new();

@@ -40,6 +40,45 @@
     };
   };
 
+  # Issue #88: declarative commit pin. Same shape on host, tag, channel —
+  # most-specific-wins resolution lives in `resolvePin` below. `expiresAt`
+  # is RFC3339 / ISO-8601 string; date arithmetic happens in
+  # `nixfleet-release` (chrono) — pure Nix has no robust date parsing.
+  pinType = types.submodule {
+    options = {
+      commit = mkOption {
+        type = types.str;
+        description = ''
+          Source-control rev the host's closure should be built from.
+          Opaque to mkFleet: `nixfleet-release` interprets this as
+          `--rev` for the configured pin source URL. Typical: 40-char
+          SHA. Short SHAs and tag names work as long as the configured
+          source resolves them.
+        '';
+      };
+      reason = mkOption {
+        type = types.str;
+        description = ''
+          Free-form operator note (CVE ref, audit window, debug
+          context). Surfaced verbatim in `nixfleet status` and
+          dashboards; not parsed.
+        '';
+      };
+      expiresAt = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "2026-06-01T00:00:00Z";
+        description = ''
+          RFC3339 hard expiry. `nixfleet-release` filters expired pins
+          at release time so they stop affecting the build path. Hosts
+          with an expired pin fall back to the current release commit.
+          `null` means no expiry — pin holds until the operator removes
+          it from the declaration.
+        '';
+      };
+    };
+  };
+
   hostType = types.submodule {
     options = {
       system = mkOption {type = types.str;};
@@ -61,6 +100,15 @@
           client cert at enrollment. `null` means the host has not been
           enrolled yet; it appears in the fleet schema but signed artifacts
           from it cannot be verified.
+        '';
+      };
+      pin = mkOption {
+        type = types.nullOr pinType;
+        default = null;
+        description = ''
+          Per-host commit pin (issue #88). Most-specific level: when set,
+          overrides any tag- or channel-level pin the host is otherwise
+          eligible for. See `mkFleet`'s pin precedence: host > tag > channel.
         '';
       };
     };
@@ -94,9 +142,22 @@
   };
 
   tagType = types.submodule {
-    options.description = mkOption {
-      type = types.str;
-      default = "";
+    options = {
+      description = mkOption {
+        type = types.str;
+        default = "";
+      };
+      pin = mkOption {
+        type = types.nullOr pinType;
+        default = null;
+        description = ''
+          Tag-scoped commit pin (issue #88). Applies to every host that
+          carries this tag, unless overridden by a host-level pin. A
+          host carrying multiple tags that BOTH have pins is rejected
+          at eval time — operator must disambiguate (typically by
+          moving one pin to a host-level declaration).
+        '';
+      };
     };
   };
 
@@ -133,6 +194,16 @@
       description = mkOption {
         type = types.str;
         default = "";
+      };
+      pin = mkOption {
+        type = types.nullOr pinType;
+        default = null;
+        description = ''
+          Channel-scoped commit pin (issue #88). Applies to every host on
+          this channel that does NOT carry a more-specific (host- or tag-
+          level) pin. Useful for "freeze stable on commit X during the
+          audit window" semantics.
+        '';
       };
       rolloutPolicy = mkOption {type = types.str;};
       reconcileIntervalMinutes = mkOption {
@@ -510,7 +581,29 @@
       lib.filter (n: resolvedComplianceMode n == "enforce") (lib.attrNames cfg.channels);
     staticComplianceErrors = staticFailuresForChannels enforceChannels;
 
-    errs = hostChannelErrors ++ channelPolicyErrors ++ edgeErrors ++ channelEdgeShapeErrors ++ channelEdgeErrors ++ configurationErrors ++ complianceErrors ++ cycleErrors ++ channelCycleErrors ++ freshnessErrors ++ staticComplianceErrors;
+    # Issue #88: ambiguity error when a host carries 2+ tags whose pins
+    # both resolve. Eager: lives in checkInvariants so the harness's
+    # tryEval (which doesn't force lazy mapAttrs thunks) catches it.
+    pinTagConflictErrors =
+      lib.concatMap (
+        hostName: let
+          host = cfg.hosts.${hostName};
+          pinnedTagNames =
+            lib.filter (
+              t: (cfg.tags ? ${t}) && (cfg.tags.${t}.pin or null) != null
+            )
+            host.tags;
+        in
+          # Only conflicts when host doesn't have its own pin (host wins).
+          lib.optional
+          (host.pin == null && builtins.length pinnedTagNames > 1)
+          "host '${hostName}' is in multiple tags with pins (${
+            lib.concatStringsSep ", " pinnedTagNames
+          }) — disambiguate by lifting one of these pins to a host-level declaration on '${hostName}', or removing the pin from one of the tags"
+      )
+      (lib.attrNames cfg.hosts);
+
+    errs = hostChannelErrors ++ channelPolicyErrors ++ edgeErrors ++ channelEdgeShapeErrors ++ channelEdgeErrors ++ configurationErrors ++ complianceErrors ++ cycleErrors ++ channelCycleErrors ++ freshnessErrors ++ staticComplianceErrors ++ pinTagConflictErrors;
   in
     if errs == []
     then true
@@ -580,6 +673,30 @@
         )
         hostsOnChannels;
 
+      # Issue #88: most-specific-wins pin resolution (host > tag > channel).
+      # Multi-tag-conflict is rejected eagerly in `checkInvariants`, so by
+      # the time we get here at most one tag pin can apply. `expiresAt`
+      # filtering happens later in `nixfleet-release` (chrono-based RFC3339
+      # comparison); pure Nix has no robust date parsing.
+      resolvePin = hostName: let
+        host = cfg.hosts.${hostName};
+        pinnedTagNames =
+          lib.filter (
+            t: (cfg.tags ? ${t}) && (cfg.tags.${t}.pin or null) != null
+          )
+          host.tags;
+        tagPin =
+          if pinnedTagNames == []
+          then null
+          else cfg.tags.${builtins.head pinnedTagNames}.pin;
+        channelPin = cfg.channels.${host.channel}.pin or null;
+      in
+        if host.pin != null
+        then host.pin
+        else if tagPin != null
+        then tagPin
+        else channelPin;
+
       allWarnings =
         emptySelectorWarnings
         ++ budgetWarnings
@@ -602,10 +719,16 @@
           # CI signing time.
         };
         hosts =
-          lib.mapAttrs (_: h: {
-            inherit (h) system tags channel pubkey;
-            closureHash = null; # Filled by CI from h.configuration.config.system.build.toplevel.
-          })
+          lib.mapAttrs (
+            n: h: let
+              pin = resolvePin n;
+            in
+              {
+                inherit (h) system tags channel pubkey;
+                closureHash = null; # Filled by CI from h.configuration.config.system.build.toplevel.
+              }
+              // lib.optionalAttrs (pin != null) {inherit pin;}
+          )
           cfg.hosts;
         channels =
           lib.mapAttrs (_: c: {

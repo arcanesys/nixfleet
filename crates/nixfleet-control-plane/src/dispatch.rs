@@ -207,6 +207,7 @@ mod tests {
             channel: "stable".to_string(),
             closure_hash: closure_hash.map(String::from),
             pubkey: None,
+            pin: None,
         }
     }
 

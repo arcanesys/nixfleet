@@ -4,6 +4,55 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [Semantic V
 
 ## [Unreleased]
 
+### Per-host/tag/channel commit pins for fleet.resolved.json (2026-05-07)
+
+Closes #88. Operators had no way to freeze a host (or a tag's worth of hosts, or an entire channel) on a specific commit while the rest of the fleet kept iterating — every push promoted every reachable host to the new closure. Now mkFleet accepts a `pin = { commit; reason; expiresAt? }` declaration at any of three levels with most-specific-wins resolution, and `nixfleet-release` honors the pin by building each affected host's closure from the pinned commit instead of the current release commit.
+
+#### Added
+
+- **`hostType.pin`, `tagType.pin`, `channelType.pin`** in `lib/mk-fleet.nix` — same `pinType` submodule (`commit; reason; expiresAt?`) at all three levels. `expiresAt` is RFC3339 / ISO-8601 string; `nixfleet-release` filters expired pins (chrono-based comparison; pure Nix has no robust date parsing, so the filter doesn't run at mkFleet eval time).
+- **`resolvePin` helper** inside `resolveFleet` — walks host > tag > channel; emits the most-specific non-null pin to the host's `fleet.resolved.json` entry. Multi-tag conflict (host has 2+ tags whose pins both apply) is rejected eagerly in `checkInvariants` so test harnesses' `tryEval` catches the error without forcing the lazy `mapAttrs` thunk.
+- **`Pin` struct + `Host.pin: Option<Pin>`** in `crates/nixfleet-proto/src/fleet_resolved.rs` — `commit`, `reason`, `expires_at`. Re-exported from `nixfleet_proto` top-level. `Host` literals across the workspace updated to default `pin: None`.
+- **`nixfleet-release` pinned-build path** (`crates/nixfleet-release/src/lib.rs::build_pinned`) — when a host's `pin.commit ≠ current_release_commit`, builds via `nix build "<pin_source_url>?rev=<commit>#<prefix>.<host>.config.system.build.toplevel"`. Same-commit pins fall through to the existing local build path. Pipeline reordered: eval BEFORE build so pin metadata can drive the build path.
+- **`--pin-source-url <URL>` CLI flag** on `nixfleet-release` — required iff any non-expired host pin specifies a commit different from the current release commit (validated AFTER eval so expired pins don't impose the requirement). Typical: `git+ssh://lab:222/abstracts33d/fleet`.
+- **`filter_expired_pins(&mut FleetResolved, Utc::now())`** — drops `expires_at <= now` pins so affected hosts fall back to the current-commit build path. The filter runs once per release; the resulting `fleet.resolved.json` only carries non-expired pins.
+- **`HostStatusEntry.pin: Option<Pin>`** + state_view passes through from the verified fleet snapshot.
+- **CLI** `nixfleet status` appends `🔒<short-commit>` to whatever the host's existing label is (converged / failed / activating / etc.). Pin is operator metadata, not a status of its own — augmenting preserves the health signal.
+
+#### Behavior
+
+```nix
+mkFleet {
+  hosts.web-02.pin = {
+    commit = "abc1234";
+    reason = "investigating CVE-2026-...";
+  };
+  channels.stable.pin = {
+    commit = "def5678";
+    reason = "freeze for Q2 audit";
+    expiresAt = "2026-06-01T00:00:00Z";
+  };
+  tags.infra.pin = {
+    commit = "9876fed";
+    reason = "lagging edge by 2 commits as policy";
+  };
+}
+```
+
+Resolution: web-02 takes its own pin (host wins); other hosts tagged `infra` take the tag pin; remaining stable hosts take the channel pin. Channel pin expires automatically on 2026-06-01.
+
+#### Tests
+
+- mkFleet harness: positive fixture asserting precedence (host overrides tag overrides channel); negative fixture asserting multi-tag conflict throws.
+- `nixfleet-release` unit tests: `filter_expired_pins` (past / future / null / exact-now boundary), `pin_target_commit` (unpinned / matching / diverging), `validate_pin_source_url` (errors when needed and unset; OK when no pins, when pin matches current commit, or when URL is set).
+- CLI: pin-suffix preserves base label on converged + failed paths; commit prefix truncated to 7 chars.
+
+#### Notes
+
+- The CI orchestration is nixfleet-side, not fleet-side: `nixfleet-release` lives in `crates/nixfleet-release/` and is the binary fleet repos invoke from their CI workflow. Pinned hosts therefore need NO additional fleet-side build logic — just the declaration in `fleet.nix` and a `--pin-source-url` flag passed to `nixfleet-release`.
+- Out of scope: pinning to a closureHash directly (instead of a commit). Could be added later as `pin.closureHash` for operators who'd rather skip the build dance.
+- Out of scope: structural validation of the pinned commit's existence (we let `nix build` fail loudly when the operator types a bogus rev).
+
 ### Fix: `wait_ssh` ignores `--identity-key`, hangs on password prompt (2026-05-07)
 
 Closes #89. `nix run .#build-vm -- -h <host> --identity-key <path>` hung at the SSH-readiness phase asking for a password: `wait_ssh` invoked `ssh` without `-i`, so the readiness probe tried `~/.ssh/id_*` then fell back to interactive password auth — fatal for non-interactive runs and impossible to satisfy with the ISO key (which is only known to the operator who built the ISO via `nixfleet.isoSshKeys`).

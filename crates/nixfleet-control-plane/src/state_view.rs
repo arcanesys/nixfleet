@@ -226,6 +226,12 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                 rollout_state,
                 pending_reboot,
                 quarantined_closure,
+                // Issue #88: pass through the pin from the fleet snapshot.
+                // mkFleet has already resolved the most-specific level
+                // (host > tag > channel) and `nixfleet-release` filtered
+                // expired pins at signing time, so what we render is the
+                // active pin for this host.
+                pin: host_decl.pin.clone(),
             }
         })
         .collect();
