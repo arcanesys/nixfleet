@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+pub mod signing;
+
 use chrono::{DateTime, Utc};
 use nixfleet_proto::FleetResolved;
 use nixfleet_reconciler::{reconcile, Action, Observed};
