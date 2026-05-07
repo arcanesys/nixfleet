@@ -37,12 +37,48 @@ pub const LAST_FETCH_OUTCOME_FILENAME: &str = "last_fetch_outcome";
 /// also trips the inhibitor).
 pub const LAST_DEFERRED_FILENAME: &str = "last_deferred";
 
+/// Written when activation produces SwitchFailed or VerifyMismatch (issue #55);
+/// suppresses retry of a closure that already failed within the quarantine
+/// window. Single-record overwrite-on-write: if the next failure has a
+/// different `closure_hash` the record is replaced (count resets to 1) so
+/// suppression only matches the most-recent broken closure. CI publishing a
+/// fix advances the channel-ref to a new closure_hash; on the next dispatch
+/// the suppression check no longer matches and activation proceeds normally.
+pub const LAST_FAILED_CLOSURE_FILENAME: &str = "last_failed_closure";
+
+/// 24h matches the issue's suggested suppression window. Long enough to
+/// absorb operator-paced fix cycles, short enough that a stale record from
+/// a successfully-recovered host doesn't suppress a legitimate retry.
+pub const QUARANTINE_WINDOW_SECS: i64 = 24 * 60 * 60;
+
+/// Re-post throttle: post `RolloutQuarantined` at most once per hour while
+/// the host is suppressing the same closure_hash. First post happens on the
+/// first suppression after a failure; subsequent suppressions within the
+/// hour are silent. Bounds journal volume during steady-state quarantine.
+pub const QUARANTINE_REPOST_THROTTLE_SECS: i64 = 60 * 60;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct LastDeferredRecord {
     pub closure_hash: String,
     pub channel_ref: String,
     pub component: String,
     pub deferred_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct LastFailedClosureRecord {
+    pub closure_hash: String,
+    pub channel_ref: String,
+    pub last_failure_at: DateTime<Utc>,
+    pub failure_count: u32,
+    /// Most recent failure summary — fed back into `RolloutQuarantined`'s
+    /// `reason` field on suppression posts.
+    pub reason: String,
+    /// `None` until the first quarantine event posts; updated on each post.
+    /// Read by the suppression check to throttle to one post per
+    /// `QUARANTINE_REPOST_THROTTLE_SECS` window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_quarantine_post_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -167,6 +203,79 @@ pub fn write_last_deferred(state_dir: &Path, record: &LastDeferredRecord) -> Res
 /// overwrites.
 pub fn clear_last_deferred(state_dir: &Path) -> Result<()> {
     let path = state_dir.join(LAST_DEFERRED_FILENAME);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(anyhow::anyhow!("remove {}: {err}", path.display())),
+    }
+}
+
+/// `Ok(None)` for absent or malformed records.
+pub fn read_last_failed_closure(state_dir: &Path) -> Result<Option<LastFailedClosureRecord>> {
+    read_atomic_json(state_dir, LAST_FAILED_CLOSURE_FILENAME)
+}
+
+/// Writes the record verbatim. Use `record_switch_failure` for the
+/// increment-or-reset semantics; `write_last_failed_closure` is the raw
+/// persistence path the suppression handler uses to update the
+/// `last_quarantine_post_at` timestamp without touching `failure_count`.
+pub fn write_last_failed_closure(
+    state_dir: &Path,
+    record: &LastFailedClosureRecord,
+) -> Result<()> {
+    write_atomic_json(state_dir, LAST_FAILED_CLOSURE_FILENAME, record)
+}
+
+/// Increment `failure_count` if the existing record matches `closure_hash`,
+/// else reset to a fresh record with count=1. Returns the post-write count
+/// so the caller can include it in tracing / event payloads. Single-record
+/// design — the FOOTGUN here is that two distinct closures failing in
+/// quick succession only retain the most-recent count (the previous one is
+/// reset to 1 if it later fails again). This is intentional: the
+/// suppression window is closure-scoped, and tracking history of every
+/// closure that ever failed bloats state-dir indefinitely.
+pub fn record_switch_failure(
+    state_dir: &Path,
+    closure_hash: &str,
+    channel_ref: &str,
+    reason: &str,
+    now: DateTime<Utc>,
+) -> Result<u32> {
+    let existing = read_last_failed_closure(state_dir).unwrap_or(None);
+    let new_record = match existing {
+        Some(r) if r.closure_hash == closure_hash => LastFailedClosureRecord {
+            closure_hash: r.closure_hash,
+            channel_ref: r.channel_ref,
+            last_failure_at: now,
+            failure_count: r.failure_count.saturating_add(1),
+            reason: reason.to_string(),
+            // Preserve last_quarantine_post_at across same-hash failures so
+            // the throttle window doesn't reset on every new attempt — a
+            // closure that flaps a second time within the hour shouldn't
+            // immediately re-post the operator alert.
+            last_quarantine_post_at: r.last_quarantine_post_at,
+        },
+        _ => LastFailedClosureRecord {
+            closure_hash: closure_hash.to_string(),
+            channel_ref: channel_ref.to_string(),
+            last_failure_at: now,
+            failure_count: 1,
+            reason: reason.to_string(),
+            last_quarantine_post_at: None,
+        },
+    };
+    let count = new_record.failure_count;
+    write_last_failed_closure(state_dir, &new_record)?;
+    Ok(count)
+}
+
+/// Best-effort delete; idempotent. Currently unused because passive
+/// supersession (overwrite on next failure / non-match in suppression
+/// check) handles the common cases. Exposed for symmetry with the other
+/// `clear_last_*` helpers and so future cleanup paths (e.g. an explicit
+/// "release this host from quarantine" admin action) have a hook.
+pub fn clear_last_failed_closure(state_dir: &Path) -> Result<()> {
+    let path = state_dir.join(LAST_FAILED_CLOSURE_FILENAME);
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -433,6 +542,17 @@ mod write_read_tests {
         }
     }
 
+    fn sample_failed() -> LastFailedClosureRecord {
+        LastFailedClosureRecord {
+            closure_hash: "broken-nixos-system-test".into(),
+            channel_ref: "stable@deadbeef".into(),
+            last_failure_at: Utc::now(),
+            failure_count: 1,
+            reason: "switch-poll-timeout exit=2".into(),
+            last_quarantine_post_at: None,
+        }
+    }
+
     #[test]
     fn last_deferred_round_trips() {
         let dir = TempDir::new().unwrap();
@@ -457,6 +577,107 @@ mod write_read_tests {
         write_last_deferred(dir.path(), &sample_deferred()).unwrap();
         clear_last_deferred(dir.path()).unwrap();
         assert!(read_last_deferred(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn last_failed_closure_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let r = sample_failed();
+        write_last_failed_closure(dir.path(), &r).unwrap();
+        let got = read_last_failed_closure(dir.path()).unwrap().expect("present");
+        assert_eq!(got.closure_hash, r.closure_hash);
+        assert_eq!(got.failure_count, 1);
+        assert_eq!(got.reason, r.reason);
+        assert!(got.last_quarantine_post_at.is_none());
+    }
+
+    #[test]
+    fn record_switch_failure_increments_count_for_same_hash() {
+        let dir = TempDir::new().unwrap();
+        let now = Utc::now();
+        let n1 = record_switch_failure(
+            dir.path(),
+            "broken-h1",
+            "stable@dead",
+            "phase=switch-poll-timeout",
+            now,
+        )
+        .unwrap();
+        assert_eq!(n1, 1, "first failure should be count=1");
+        let n2 = record_switch_failure(
+            dir.path(),
+            "broken-h1",
+            "stable@dead",
+            "phase=switch-poll-timeout",
+            now + chrono::Duration::seconds(60),
+        )
+        .unwrap();
+        assert_eq!(n2, 2, "second failure for same closure should be count=2");
+    }
+
+    #[test]
+    fn record_switch_failure_resets_count_for_different_hash() {
+        let dir = TempDir::new().unwrap();
+        let now = Utc::now();
+        record_switch_failure(dir.path(), "h-old", "stable@a", "phase=switch", now).unwrap();
+        record_switch_failure(dir.path(), "h-old", "stable@a", "phase=switch", now).unwrap();
+        let n = record_switch_failure(
+            dir.path(),
+            "h-new",
+            "stable@b",
+            "phase=verify",
+            now + chrono::Duration::seconds(120),
+        )
+        .unwrap();
+        assert_eq!(
+            n, 1,
+            "new closure_hash should reset failure_count to 1 (single-record overwrite)",
+        );
+        let stored = read_last_failed_closure(dir.path()).unwrap().expect("present");
+        assert_eq!(stored.closure_hash, "h-new");
+        assert_eq!(stored.channel_ref, "stable@b");
+    }
+
+    #[test]
+    fn record_switch_failure_preserves_quarantine_post_timestamp_across_same_hash() {
+        // Throttle invariant: a same-hash flap shouldn't bypass the 1h
+        // post-throttle window by clearing last_quarantine_post_at on each
+        // new failure. The repost timer is governed by wall-clock since
+        // last post, not since last failure.
+        let dir = TempDir::new().unwrap();
+        let now = Utc::now();
+        record_switch_failure(dir.path(), "h", "ch", "r1", now).unwrap();
+        // Simulate a quarantine post landing in the record.
+        let mut r = read_last_failed_closure(dir.path()).unwrap().unwrap();
+        r.last_quarantine_post_at = Some(now);
+        write_last_failed_closure(dir.path(), &r).unwrap();
+        // Another same-hash failure 5 minutes later.
+        record_switch_failure(
+            dir.path(),
+            "h",
+            "ch",
+            "r2",
+            now + chrono::Duration::seconds(300),
+        )
+        .unwrap();
+        let after = read_last_failed_closure(dir.path()).unwrap().unwrap();
+        assert_eq!(after.failure_count, 2);
+        assert_eq!(after.last_quarantine_post_at, Some(now), "post-throttle ts preserved");
+    }
+
+    #[test]
+    fn last_failed_closure_absent_returns_none() {
+        let dir = TempDir::new().unwrap();
+        assert!(read_last_failed_closure(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn clear_last_failed_closure_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        clear_last_failed_closure(dir.path()).unwrap();
+        write_last_failed_closure(dir.path(), &sample_failed()).unwrap();
+        clear_last_failed_closure(dir.path()).unwrap();
+        assert!(read_last_failed_closure(dir.path()).unwrap().is_none());
     }
 
     #[test]

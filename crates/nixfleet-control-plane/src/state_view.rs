@@ -88,18 +88,26 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
             // the fleet's current rollout. After a fresh deploy this can lag
             // by one tick — pre-existing pattern, applies to all event-buffer
             // counters here. `pending_reboot` is DB-backed below, so it's not
-            // affected by this drift.
+            // affected by this drift; `quarantined_closure` is event-ring
+            // based and CAN drift, but the agent re-posts hourly while
+            // suppressing so the worst-case staleness is one tick.
             let cur_rollout = last_rollout_id.as_deref();
             let mut compliance_failures = 0usize;
             let mut runtime_gate_errors = 0usize;
             let mut verified_count = 0usize;
+            // Most recent RolloutQuarantined for current rollout — None when
+            // no quarantine event present, Some(closure_hash) otherwise.
+            // Buf iter is oldest-first, so we overwrite as we find newer.
+            let mut quarantined_closure: Option<String> = None;
             if let Some(buf) = host_buf {
                 for record in buf.iter() {
                     let is_compliance =
                         matches!(record.report.event, ReportEvent::ComplianceFailure { .. });
                     let is_runtime_gate =
                         matches!(record.report.event, ReportEvent::RuntimeGateError { .. });
-                    if !is_compliance && !is_runtime_gate {
+                    let is_quarantined =
+                        matches!(record.report.event, ReportEvent::RolloutQuarantined { .. });
+                    if !is_compliance && !is_runtime_gate && !is_quarantined {
                         continue;
                     }
                     let event_rollout = record.report.rollout.as_deref();
@@ -116,7 +124,14 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                     if is_runtime_gate {
                         runtime_gate_errors += 1;
                     }
-                    if matches!(record.signature_status, Some(SignatureStatus::Verified)) {
+                    if let ReportEvent::RolloutQuarantined { closure_hash, .. } =
+                        &record.report.event
+                    {
+                        quarantined_closure = Some(closure_hash.clone());
+                    }
+                    if matches!(record.signature_status, Some(SignatureStatus::Verified))
+                        && !is_quarantined
+                    {
                         verified_count += 1;
                     }
                 }
@@ -210,6 +225,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                 last_uptime_secs,
                 rollout_state,
                 pending_reboot,
+                quarantined_closure,
             }
         })
         .collect();

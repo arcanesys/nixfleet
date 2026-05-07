@@ -196,6 +196,24 @@ pub enum ReportEvent {
         component: String,
     },
 
+    /// Agent gave up retrying a closure after a recent SwitchFailed/VerifyMismatch
+    /// (issue #55). Suppression auto-clears when the channel-ref advances to a
+    /// different closure_hash. Distinct from `ActivationFailed` (a single failure
+    /// observation) — `RolloutQuarantined` signals "agent has decided not to
+    /// re-attempt this closure" so the operator can distinguish a transient
+    /// hiccup from a permanently-broken release. Unsigned (observability-only;
+    /// see `apply_deferred_pending_reboot_transition` precedent: state-driving
+    /// effect is internal to CP, no fleet gate reads the signature).
+    RolloutQuarantined {
+        closure_hash: String,
+        channel_ref: String,
+        /// Total SwitchFailed/VerifyMismatch observations for this closure_hash.
+        failure_count: u32,
+        /// Free-form trigger summary (e.g. "switch-poll-timeout exit=2",
+        /// "post-switch verify mismatch"). Operator-visible; not parsed.
+        reason: String,
+    },
+
     ActivationFailed {
         phase: String,
         #[serde(default)]
@@ -328,6 +346,7 @@ impl ReportEvent {
             Self::ActivationStarted { .. } => "activation-started",
             Self::ActivationDeferred { .. } => "activation-deferred",
             Self::ActivationFailed { .. } => "activation-failed",
+            Self::RolloutQuarantined { .. } => "rollout-quarantined",
             Self::RealiseFailed { .. } => "realise-failed",
             Self::VerifyMismatch { .. } => "verify-mismatch",
             Self::RollbackTriggered { .. } => "rollback-triggered",
@@ -366,6 +385,12 @@ mod report_event_discriminator_tests {
                 closure_hash: "x".into(),
                 channel_ref: "y".into(),
                 component: "dbus".into(),
+            },
+            ReportEvent::RolloutQuarantined {
+                closure_hash: "x".into(),
+                channel_ref: "y".into(),
+                failure_count: 2,
+                reason: "switch-poll-timeout exit=2".into(),
             },
             ReportEvent::ActivationFailed {
                 phase: "x".into(),

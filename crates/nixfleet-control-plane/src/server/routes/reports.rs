@@ -536,14 +536,16 @@ async fn compute_signature_status(
             ))
         }
 
-        // UNSIGNED: ActivationDeferred is operator-surface only — it parks the
-        // dispatch row but no fleet-level gate reads its signature. If a
-        // future reconciler rule starts gating wave promotion on the
-        // pending_reboot signal, promote this to a SignedPayload + verify
-        // arm above. Unsigned today is consistent with ActivationStarted
-        // (also a non-gating observability event).
+        // UNSIGNED: ActivationDeferred + RolloutQuarantined are operator-
+        // surface only — neither parks a row that fleet-level gates read by
+        // signature, both are derived from durable CP-side state (deferred
+        // = host_dispatch_state row, quarantined = event ring) so a forged
+        // event without a signed payload can't drive a wrong gate decision.
+        // If a future reconciler rule starts gating on either signal,
+        // promote it to a SignedPayload + verify arm above.
         ReportEvent::ActivationStarted { .. }
         | ReportEvent::ActivationDeferred { .. }
+        | ReportEvent::RolloutQuarantined { .. }
         | ReportEvent::EnrollmentFailed { .. }
         | ReportEvent::RenewalFailed { .. }
         | ReportEvent::TrustError { .. }

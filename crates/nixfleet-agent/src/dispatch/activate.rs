@@ -15,6 +15,7 @@ use super::confirm::handle_fired_and_polled;
 use super::deferred::handle_deferred_pending_reboot;
 use super::DispatchCtx;
 use super::manifest_error;
+use super::quarantined::{evaluate as evaluate_quarantine, post_quarantine_event, QuarantineDecision};
 use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
 use super::verify_mismatch::{handle_switch_failed, handle_verify_mismatch};
 
@@ -168,6 +169,19 @@ pub(crate) async fn process_dispatch_target(
             channel_ref = %target.channel_ref,
             "agent: skipping dispatch — already deferred for this closure (awaiting reboot)",
         );
+        return;
+    }
+
+    // Issue #55: suppress retry of a closure that already failed within the
+    // quarantine window. Distinct from the deferred suppression above:
+    // deferred = "we made progress, awaiting reboot" (silent re-skip);
+    // quarantined = "this closure broke things, operator needs to know"
+    // (loud re-skip with throttled `RolloutQuarantined` event posts). Auto-
+    // clears when the channel-ref advances to a different closure_hash.
+    if let QuarantineDecision::Suppress(record) =
+        evaluate_quarantine(&args.state_dir, target, chrono::Utc::now())
+    {
+        post_quarantine_event(&ctx, record, chrono::Utc::now()).await;
         return;
     }
 

@@ -97,6 +97,14 @@ fn status_label(
         }
     }
 
+    // Quarantined ranks above pending-reboot: a quarantined host is stuck
+    // on a known-broken closure and needs a CI-side fix, not an operator
+    // action on the host itself. Pending-reboot is recoverable by reboot;
+    // quarantine requires upstream intervention.
+    if host.quarantined_closure.is_some() {
+        return "\u{2717} quarantined".to_string();
+    }
+
     // Pending-reboot is operator-actionable: agent set the new profile but a
     // critical-component swap forced a reboot. Surface louder than in-progress
     // states so it doesn't get lost in the noise.
@@ -244,6 +252,7 @@ mod tests {
             last_uptime_secs: None,
             rollout_state: None,
             pending_reboot: false,
+            quarantined_closure: None,
         }
     }
 
@@ -296,6 +305,32 @@ mod tests {
             "fell through to in-progress without a window: {out}"
         );
         assert!(!out.contains("stale"), "shouldn't be stale without window: {out}");
+    }
+
+    #[test]
+    fn quarantined_renders_above_pending_reboot_priority() {
+        // Quarantine + pending-reboot can't actually co-occur on the same
+        // host (different code paths) but the priority ordering is a
+        // contract: quarantine wins because it requires CI-side intervention
+        // (the closure is broken) rather than just an operator reboot.
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", false, Some(1), 0);
+        h.quarantined_closure = Some("broken-closure-h1".into());
+        h.pending_reboot = true;
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        assert!(
+            out.contains("\u{2717} quarantined"),
+            "expected quarantined label: {out}",
+        );
+        assert!(
+            !out.contains("pending reboot"),
+            "quarantined must out-rank pending-reboot: {out}",
+        );
     }
 
     #[test]

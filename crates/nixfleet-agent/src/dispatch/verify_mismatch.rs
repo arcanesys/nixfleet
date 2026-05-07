@@ -85,6 +85,28 @@ pub(crate) async fn handle_switch_failed<R: Reporter>(
         exit_code = ?exit_code,
         "activation: switch failed; rolling back",
     );
+    // Issue #55: record the failure so the next dispatch for this same
+    // closure_hash hits the quarantine suppression instead of repeating the
+    // SwitchFailed → rollback cycle. Best-effort; a write failure only
+    // means the next attempt will run normally and probably fail again,
+    // which is the existing behavior.
+    let reason = match exit_code {
+        Some(code) => format!("phase={phase} exit={code}"),
+        None => format!("phase={phase}"),
+    };
+    if let Err(err) = nixfleet_agent::checkin_state::record_switch_failure(
+        &ctx.args.state_dir,
+        &ctx.target.closure_hash,
+        &ctx.target.channel_ref,
+        &reason,
+        chrono::Utc::now(),
+    ) {
+        tracing::warn!(
+            error = %err,
+            state_dir = %ctx.args.state_dir.display(),
+            "record_switch_failure failed (non-fatal); next dispatch will not be quarantined",
+        );
+    }
     let stderr_tail_sha256 = nixfleet_agent::evidence_signer::sha256_jcs(&"").unwrap_or_default();
     let signature = ctx.try_sign(
         &nixfleet_agent::evidence_signer::ActivationFailedSignedPayload {
@@ -134,6 +156,21 @@ pub(crate) async fn handle_verify_mismatch<R: Reporter>(
         actual = %actual,
         "activation: post-switch verify caught flip to unexpected closure; rolling back",
     );
+    // Issue #55: same as SwitchFailed — record so the next dispatch
+    // suppresses retry of this broken closure_hash.
+    if let Err(err) = nixfleet_agent::checkin_state::record_switch_failure(
+        &ctx.args.state_dir,
+        &ctx.target.closure_hash,
+        &ctx.target.channel_ref,
+        &format!("verify-mismatch expected={expected} actual={actual}"),
+        chrono::Utc::now(),
+    ) {
+        tracing::warn!(
+            error = %err,
+            state_dir = %ctx.args.state_dir.display(),
+            "record_switch_failure failed (non-fatal); next dispatch will not be quarantined",
+        );
+    }
     let signature = ctx.try_sign(
         &nixfleet_agent::evidence_signer::VerifyMismatchSignedPayload {
             hostname: &ctx.args.machine_id,

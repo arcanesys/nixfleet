@@ -4,6 +4,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [Semantic V
 
 ## [Unreleased]
 
+### Closure-hash quarantine on activation failure (2026-05-07)
+
+Closes #55. The agent retried known-failing `closure_hash` values on every poll cycle without backoff or quarantine. Each retry burned a switch-to-configuration + rollback cycle, emitted churn (logs, IO), and gave the operator no signal distinguishing "transient hiccup" from "permanently broken release". Layered on top of #56's switch-inhibitor work, sharing the per-closure sentinel pattern.
+
+#### Added
+
+- **`ReportEvent::RolloutQuarantined { closure_hash, channel_ref, failure_count, reason }`** — additive wire variant. Discriminator: `rollout-quarantined`. Unsigned (operator-surface only, no fleet gate reads it).
+- **`LastFailedClosureRecord`** in `crates/nixfleet-agent/src/checkin_state.rs` — single-record agent-side persistence: `closure_hash`, `channel_ref`, `last_failure_at`, `failure_count`, `reason`, `last_quarantine_post_at`. Auto-supersedes when a different `closure_hash` fails (count resets to 1).
+- **`record_switch_failure(state_dir, closure_hash, channel_ref, reason, now)`** — increment-or-reset semantics. Called from `dispatch/verify_mismatch.rs::handle_switch_failed` and `handle_verify_mismatch`. Preserves `last_quarantine_post_at` across same-hash failures so the throttle window doesn't reset on every flap.
+- **`crates/nixfleet-agent/src/dispatch/quarantined.rs`** — suppression handler. `evaluate(state_dir, target, now)` returns `Proceed` or `Suppress(record)` based on closure_hash match + 24h `QUARANTINE_WINDOW_SECS`. `post_quarantine_event` re-posts at most once per `QUARANTINE_REPOST_THROTTLE_SECS` (1h) to bound journal volume during steady-state quarantine.
+- **`HostStatusEntry.quarantined_closure: Option<String>`** — set when the host has a `RolloutQuarantined` event for its current rollout in the event ring. Event-ring derived (NOT DB-backed): there's no CP-side state-machine entry for "quarantined" because the existing SwitchFailed → rollback flow already drives `host_dispatch_state` to RolledBack. Quarantine is purely an operator signal, and the event ring's eviction window roughly matches the 24h suppression window.
+- **`nixfleet status`** shows `✗ quarantined` ahead of `⟳ pending reboot`, between `failed` and `pending reboot` in priority — quarantine requires CI-side intervention while pending-reboot is operator-recoverable on the host itself.
+
+#### Behavior
+
+When a closure fails activation (SwitchFailed or VerifyMismatch outcome):
+1. The existing rollback fires; agent posts `ActivationFailed` + `RollbackTriggered`. CP marks the dispatch `RolledBack` via the existing `apply_rollback_state_transition` flow.
+2. The agent records `last_failed_closure` in its state-dir (increment if same closure_hash, else reset).
+3. On the next dispatch poll for the SAME closure_hash within 24h: agent's `evaluate` returns `Suppress(record)`. The dispatch loop short-circuits before `activate()` — no realise, no nix-env --set, no fire_switch — and posts `RolloutQuarantined`. Subsequent suppressions within the throttle hour are silent.
+4. CI publishes a fix → channel-ref advances → new closure_hash on next dispatch → `evaluate` returns `Proceed` → activation runs normally. The stale `last_failed_closure` record sits inert until something matches it again or the next failure overwrites it.
+
+#### Tests
+
+- 6 unit tests for `LastFailedClosureRecord` persistence and `record_switch_failure` semantics (round-trip, increment-on-same-hash, reset-on-different-hash, throttle-timestamp preservation, idempotency).
+- 4 dispatch handler tests for `evaluate`/`post_quarantine_event` (suppress when matching, proceed on different closure, proceed after window expires, throttle posts within 1h).
+- CLI test pinning the priority order: `quarantined` outranks `pending reboot`.
+
+#### Notes
+
+- Composes cleanly with #56's deferred suppression: the dispatch loop checks deferred first, then quarantine. Both auto-clear on closure_hash advance via the same passive-supersession pattern.
+- Out of scope: cross-host quarantine view (e.g. "this rollout is quarantined fleet-wide" derived from N quarantined hosts), automatic rollout cancellation when quarantine count exceeds a threshold. Both are dashboard-side concerns once we have the per-host signal.
+
 ### Switch-inhibitor carve-out for live activation (2026-05-07)
 
 Closes #56. `nixos-rebuild switch` refuses to live-swap critical components (dbus implementation, systemd, kernel, init) on a running system because the swap can hang processes or require kernel cooperation. The fire-and-forget agent (ADR-011) bypassed `nixos-rebuild`'s wrapper, so the same swap the operator-side guard refuses was happening silently via the gitops loop.

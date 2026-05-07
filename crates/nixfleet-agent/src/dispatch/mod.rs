@@ -6,6 +6,7 @@ pub(crate) mod compliance;
 mod confirm;
 mod deferred;
 mod manifest_error;
+mod quarantined;
 mod realise_failed;
 mod rollback;
 mod verify_mismatch;
@@ -53,6 +54,7 @@ mod tests {
 
     use super::DispatchCtx;
     use super::deferred::handle_deferred_pending_reboot;
+    use super::quarantined::{evaluate as evaluate_quarantine, post_quarantine_event, QuarantineDecision};
     use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
     use crate::Args;
 
@@ -181,6 +183,157 @@ mod tests {
                 assert_eq!(reason, "network unreachable");
             }
             other => panic!("expected RealiseFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn quarantine_evaluate_suppresses_when_recent_failure_matches_target_closure() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = chrono::Utc::now();
+        // Seed a recent failure record for the target's closure_hash.
+        nixfleet_agent::checkin_state::record_switch_failure(
+            dir.path(),
+            "abc123-test",
+            "stable@feedface",
+            "phase=switch-poll-timeout",
+            now,
+        )
+        .unwrap();
+        let target = sample_target();
+        match evaluate_quarantine(dir.path(), &target, now + chrono::Duration::seconds(60)) {
+            QuarantineDecision::Suppress(rec) => {
+                assert_eq!(rec.closure_hash, "abc123-test");
+                assert_eq!(rec.failure_count, 1);
+            }
+            QuarantineDecision::Proceed => {
+                panic!("expected Suppress for matching closure within window");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn quarantine_evaluate_proceeds_when_target_closure_differs() {
+        // The whole correctness guarantee for #55's auto-clearing: if the
+        // channel-ref advances to a fresher closure_hash, the suppression
+        // bypasses naturally without needing an explicit clear.
+        let dir = tempfile::tempdir().unwrap();
+        let now = chrono::Utc::now();
+        nixfleet_agent::checkin_state::record_switch_failure(
+            dir.path(),
+            "stale-hash",
+            "stable@old",
+            "phase=switch",
+            now,
+        )
+        .unwrap();
+        let target = sample_target(); // closure_hash = abc123-test
+        assert!(matches!(
+            evaluate_quarantine(dir.path(), &target, now),
+            QuarantineDecision::Proceed,
+        ));
+    }
+
+    #[tokio::test]
+    async fn quarantine_evaluate_proceeds_after_window_expires() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = chrono::Utc::now();
+        let target = sample_target();
+        nixfleet_agent::checkin_state::record_switch_failure(
+            dir.path(),
+            &target.closure_hash,
+            &target.channel_ref,
+            "phase=switch",
+            now,
+        )
+        .unwrap();
+        // 25 hours later — outside the 24h quarantine window.
+        let later = now + chrono::Duration::hours(25);
+        assert!(matches!(
+            evaluate_quarantine(dir.path(), &target, later),
+            QuarantineDecision::Proceed,
+        ));
+    }
+
+    #[tokio::test]
+    async fn post_quarantine_event_throttles_repeat_posts_within_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = chrono::Utc::now();
+        let target = sample_target();
+        nixfleet_agent::checkin_state::record_switch_failure(
+            dir.path(),
+            &target.closure_hash,
+            &target.channel_ref,
+            "phase=switch",
+            now,
+        )
+        .unwrap();
+
+        let fake = FakeReporter::new();
+        let mut args = sample_args();
+        args.state_dir = dir.path().to_path_buf();
+        let signer: Arc<Option<EvidenceSigner>> = Arc::new(None);
+
+        let record_first =
+            match evaluate_quarantine(&args.state_dir, &target, now + chrono::Duration::seconds(60))
+            {
+                QuarantineDecision::Suppress(r) => r,
+                _ => panic!("expected Suppress"),
+            };
+        post_quarantine_event(
+            &ctx(&target, &fake, &args, &signer),
+            record_first,
+            now + chrono::Duration::seconds(60),
+        )
+        .await;
+        assert_eq!(fake.calls().len(), 1, "first suppression posts");
+
+        // 5 minutes later — inside the 1h throttle window — should NOT re-post.
+        let record_second =
+            match evaluate_quarantine(&args.state_dir, &target, now + chrono::Duration::seconds(360))
+            {
+                QuarantineDecision::Suppress(r) => r,
+                _ => panic!("expected Suppress"),
+            };
+        post_quarantine_event(
+            &ctx(&target, &fake, &args, &signer),
+            record_second,
+            now + chrono::Duration::seconds(360),
+        )
+        .await;
+        assert_eq!(fake.calls().len(), 1, "throttled within 1h window");
+
+        // 70 minutes after first post — past the throttle — should re-post.
+        let record_third =
+            match evaluate_quarantine(&args.state_dir, &target, now + chrono::Duration::seconds(60 + 4200))
+            {
+                QuarantineDecision::Suppress(r) => r,
+                _ => panic!("expected Suppress"),
+            };
+        post_quarantine_event(
+            &ctx(&target, &fake, &args, &signer),
+            record_third,
+            now + chrono::Duration::seconds(60 + 4200),
+        )
+        .await;
+        assert_eq!(fake.calls().len(), 2, "throttle window elapsed → re-posts");
+
+        // Each post must be RolloutQuarantined with the right shape.
+        for (rollout, ev) in fake.calls() {
+            assert_eq!(rollout.as_deref(), Some("stable@feedface"));
+            match ev {
+                ReportEvent::RolloutQuarantined {
+                    closure_hash,
+                    channel_ref,
+                    failure_count,
+                    reason,
+                } => {
+                    assert_eq!(closure_hash, "abc123-test");
+                    assert_eq!(channel_ref, "stable@feedface");
+                    assert_eq!(failure_count, 1);
+                    assert!(reason.contains("switch"));
+                }
+                other => panic!("expected RolloutQuarantined, got {other:?}"),
+            }
         }
     }
 
