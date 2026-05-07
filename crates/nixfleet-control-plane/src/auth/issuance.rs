@@ -680,38 +680,27 @@ mod der_encode_tests {
     use super::*;
 
     #[test]
-    fn encodes_minimal_positive_int() {
-        // Single byte 0x01 → INTEGER 0x02 0x01 0x01 (no padding, no strip).
-        assert_eq!(der_encode_int(&[0x01]), vec![0x02, 0x01, 0x01]);
-    }
-
-    #[test]
-    fn pads_when_msb_set() {
-        // 0x80 → must prepend 0x00 to mark positive: 0x02 0x02 0x00 0x80
-        assert_eq!(der_encode_int(&[0x80]), vec![0x02, 0x02, 0x00, 0x80]);
-    }
-
-    #[test]
-    fn strips_leading_zeros() {
-        // 0x00 0x00 0x42 → strip leading zeros: 0x02 0x01 0x42
-        assert_eq!(der_encode_int(&[0x00, 0x00, 0x42]), vec![0x02, 0x01, 0x42]);
-    }
-
-    #[test]
-    fn keeps_one_zero_when_value_is_zero() {
-        // All zeros → minimum representation: 0x02 0x01 0x00
-        // (DER INTEGER 0 must be encoded as a single 0x00 byte.)
-        assert_eq!(der_encode_int(&[0x00, 0x00, 0x00]), vec![0x02, 0x01, 0x00]);
-    }
-
-    #[test]
-    fn pads_after_stripping_when_msb_still_set() {
-        // 0x00 0x80 0x01 → strip leading zero, MSB set, prepend 0x00:
-        // 0x02 0x03 0x00 0x80 0x01
-        assert_eq!(
-            der_encode_int(&[0x00, 0x80, 0x01]),
-            vec![0x02, 0x03, 0x00, 0x80, 0x01]
-        );
+    fn der_encode_int_handles_padding_and_stripping() {
+        // (label, input, expected)
+        let cases: &[(&str, &[u8], &[u8])] = &[
+            ("minimal positive: no pad/strip", &[0x01], &[0x02, 0x01, 0x01]),
+            ("MSB set: prepend 0x00", &[0x80], &[0x02, 0x02, 0x00, 0x80]),
+            ("strip leading zeros", &[0x00, 0x00, 0x42], &[0x02, 0x01, 0x42]),
+            // DER INTEGER 0 must be a single 0x00 byte.
+            ("zero stays as 0x00", &[0x00, 0x00, 0x00], &[0x02, 0x01, 0x00]),
+            (
+                "strip then pad when MSB still set",
+                &[0x00, 0x80, 0x01],
+                &[0x02, 0x03, 0x00, 0x80, 0x01],
+            ),
+        ];
+        for (label, input, expected) in cases {
+            assert_eq!(
+                der_encode_int(input).as_slice(),
+                *expected,
+                "case: {label}"
+            );
+        }
     }
 
     #[test]
@@ -890,20 +879,19 @@ mod extract_pem_tests {
     use super::*;
 
     #[test]
-    fn accepts_single_block_pkcs8() {
-        // PKCS#8 PEM produced by rcgen / mkcert / openssl pkcs8 -topk8.
+    fn accepts_single_block_key_pem() {
         // Body is opaque to the extractor — it just needs the labels.
-        let input = "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n";
-        let got = extract_private_key_pem_block(input).expect("PKCS#8 single block");
-        assert!(got.contains("-----BEGIN PRIVATE KEY-----"));
-        assert!(got.contains("AAAA"));
-    }
-
-    #[test]
-    fn accepts_single_block_sec1() {
-        let input = "-----BEGIN EC PRIVATE KEY-----\nBBBB\n-----END EC PRIVATE KEY-----\n";
-        let got = extract_private_key_pem_block(input).expect("SEC1 single block");
-        assert!(got.starts_with("-----BEGIN EC PRIVATE KEY-----"));
+        // PKCS#8 = rcgen / mkcert / openssl pkcs8 -topk8; SEC1 = openssl ecparam -genkey.
+        let cases = [
+            ("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+             "-----BEGIN PRIVATE KEY-----"),
+            ("-----BEGIN EC PRIVATE KEY-----\nBBBB\n-----END EC PRIVATE KEY-----\n",
+             "-----BEGIN EC PRIVATE KEY-----"),
+        ];
+        for (input, expected_label) in cases {
+            let got = extract_private_key_pem_block(input).expect("single block");
+            assert!(got.starts_with(expected_label), "got: {got}");
+        }
     }
 
     #[test]
@@ -925,38 +913,30 @@ MHcCAQEEIBoldKey...
     }
 
     #[test]
-    fn rejects_pem_with_no_key_block() {
-        let input = "\
------BEGIN EC PARAMETERS-----
-BggqhkjOPQMBBw==
------END EC PARAMETERS-----
-";
-        let err = extract_private_key_pem_block(input).expect_err("no key block");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("PRIVATE KEY"),
-            "msg should mention accepted labels: {msg}",
-        );
-    }
-
-    #[test]
-    fn rejects_garbage_input() {
-        let err = extract_private_key_pem_block("not a pem file at all").expect_err("not PEM");
-        let msg = format!("{err}");
-        assert!(msg.contains("PRIVATE KEY"));
-    }
-
-    #[test]
-    fn ignores_unrelated_block_types() {
-        // `BEGIN CERTIFICATE` is a non-key block. Must not be returned
-        // as if it were a key.
-        let input = "\
------BEGIN CERTIFICATE-----
-ZHVtbXk=
------END CERTIFICATE-----
-";
-        let err = extract_private_key_pem_block(input).expect_err("certificate is not a key");
-        assert!(format!("{err}").contains("PRIVATE KEY"));
+    fn rejects_input_without_key_block() {
+        // All non-key inputs must surface the same error mentioning the
+        // accepted PEM labels — the operator-facing hint.
+        let cases: &[(&str, &str)] = &[
+            (
+                "no key block (only EC PARAMETERS)",
+                "-----BEGIN EC PARAMETERS-----\nBggqhkjOPQMBBw==\n-----END EC PARAMETERS-----\n",
+            ),
+            ("garbage (not PEM at all)", "not a pem file at all"),
+            (
+                "non-key block (CERTIFICATE)",
+                "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n",
+            ),
+        ];
+        for (label, input) in cases {
+            let err = extract_private_key_pem_block(input)
+                .err()
+                .unwrap_or_else(|| panic!("expected error for: {label}"));
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("PRIVATE KEY"),
+                "case '{label}': msg should mention accepted labels: {msg}",
+            );
+        }
     }
 
     #[test]
