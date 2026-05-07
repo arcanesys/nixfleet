@@ -337,6 +337,15 @@ fn record_dispatched_target(
     state: &AppState,
     now: DateTime<Utc>,
 ) -> Option<nixfleet_proto::agent_wire::EvaluatedTarget> {
+    if is_already_deferred_for_target(db, hostname, &target.closure_hash) {
+        tracing::debug!(
+            target: "dispatch",
+            hostname = %hostname,
+            target_closure = %target.closure_hash,
+            "dispatch: host already deferred for this target — skipping re-issue (awaiting reboot)",
+        );
+        return None;
+    }
     let confirm_deadline = now + chrono::Duration::seconds(state.confirm_deadline_secs);
     // Defensive: ensure the rollouts table reflects this rid as active for
     // the channel even if the polling tick hasn't recorded it yet (first
@@ -380,5 +389,110 @@ fn record_dispatched_target(
             );
             None
         }
+    }
+}
+
+/// Issue #56 cross-tick guard. Returns true iff the host's existing
+/// `host_dispatch_state` row is already in `deferred-pending-reboot`
+/// for the SAME `target_closure_hash` being requested. Callers (the
+/// dispatch path) skip re-issuing when this returns true.
+///
+/// Why: `record_dispatch` is an unconditional UPSERT to state=Pending
+/// with a fresh deadline. Without this guard, every poll on a deferred
+/// host would reset the row to Pending — and once Pending, the 360s
+/// rollback timer counts down. The agent's `last_deferred` sentinel
+/// silently suppresses re-activation (so no `ActivationDeferred` is re-
+/// posted to bring state back), so the row would expire as Pending and
+/// trigger the rollback path we're explicitly trying to avoid. This is
+/// the symmetric CP-side guard.
+///
+/// A target_closure_hash MISMATCH falls through (returns false): a
+/// different closure means CI published a fix / the pin cleared / the
+/// channel-ref advanced, all cases where the operator wants the new
+/// target to land regardless of deferred state.
+///
+/// Read failures (DB lock poisoned, schema drift) → false (fail-open
+/// matches the rest of the dispatch decision; an in-flight DB hiccup
+/// shouldn't lock the entire fleet out of normal dispatch).
+pub(crate) fn is_already_deferred_for_target(
+    db: &crate::db::Db,
+    hostname: &str,
+    target_closure_hash: &str,
+) -> bool {
+    matches!(
+        db.host_dispatch_state().host_state(hostname),
+        Ok(Some(row))
+        if row.state == "deferred-pending-reboot"
+            && row.target_closure_hash == target_closure_hash,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_helpers::{dispatch_insert, fresh_db};
+    use chrono::Utc;
+
+    #[test]
+    fn guard_returns_true_when_existing_row_is_deferred_for_same_target() {
+        let db = fresh_db();
+        let deadline = Utc::now() + chrono::Duration::seconds(120);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert("host-a", "stable@r1", "system-r1", deadline))
+            .unwrap();
+        db.host_dispatch_state().mark_deferred("host-a", "stable@r1").unwrap();
+        assert!(
+            is_already_deferred_for_target(&db, "host-a", "system-r1"),
+            "deferred row + matching closure must trigger the guard",
+        );
+    }
+
+    #[test]
+    fn guard_returns_false_when_target_closure_mismatches() {
+        // Different closure means CI published a fix / pin advanced /
+        // channel-ref moved — operator wants the new target to land.
+        let db = fresh_db();
+        let deadline = Utc::now() + chrono::Duration::seconds(120);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert("host-a", "stable@r1", "system-r1", deadline))
+            .unwrap();
+        db.host_dispatch_state().mark_deferred("host-a", "stable@r1").unwrap();
+        assert!(
+            !is_already_deferred_for_target(&db, "host-a", "system-r2-NEW"),
+            "deferred row + different closure must NOT trigger the guard",
+        );
+    }
+
+    #[test]
+    fn guard_returns_false_when_row_is_pending() {
+        let db = fresh_db();
+        let deadline = Utc::now() + chrono::Duration::seconds(120);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert("host-a", "stable@r1", "system-r1", deadline))
+            .unwrap();
+        // Row is Pending (not deferred) → guard must NOT fire.
+        assert!(!is_already_deferred_for_target(&db, "host-a", "system-r1"));
+    }
+
+    #[test]
+    fn guard_returns_false_when_no_row_exists() {
+        let db = fresh_db();
+        // Brand-new host — no row → fail-open, normal dispatch path.
+        assert!(!is_already_deferred_for_target(&db, "fresh-host", "anything"));
+    }
+
+    #[test]
+    fn guard_returns_false_when_row_is_confirmed() {
+        // Confirmed = host activated successfully; not relevant for
+        // dispatch decision — re-dispatch path handles convergence
+        // separately. This test pins the boundary: only deferred state
+        // triggers the early-out.
+        let db = fresh_db();
+        let deadline = Utc::now() + chrono::Duration::seconds(120);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert("host-a", "stable@r1", "system-r1", deadline))
+            .unwrap();
+        db.host_dispatch_state().confirm("host-a", "stable@r1").unwrap();
+        assert!(!is_already_deferred_for_target(&db, "host-a", "system-r1"));
     }
 }
