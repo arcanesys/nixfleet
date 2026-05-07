@@ -42,7 +42,8 @@
 # Empty/absent → agent runs without a probe scheduler (no checkin field
 # overhead, no /etc file written).
 ++ lib.optionals (
-  cfg.healthChecks.http != []
+  cfg.healthChecks.http
+  != []
   || cfg.healthChecks.tcp != []
   || cfg.healthChecks.exec != []
 ) [

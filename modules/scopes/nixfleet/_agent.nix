@@ -20,7 +20,8 @@
   };
   healthChecksJson = pkgs.writers.writeJSON "health-checks.json" healthChecksConfig;
   hasHealthChecks =
-    cfg.healthChecks.http != []
+    cfg.healthChecks.http
+    != []
     || cfg.healthChecks.tcp != []
     || cfg.healthChecks.exec != [];
 in {
