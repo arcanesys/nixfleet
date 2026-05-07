@@ -216,6 +216,10 @@
               };
             });
             default = [];
+            description = ''
+              HTTP probes. Each entry runs `GET <url>` on its declared
+              `intervalSeconds`; Pass iff response is `expectStatus`.
+            '';
           };
           tcp = lib.mkOption {
             type = lib.types.listOf (lib.types.submodule {
@@ -236,14 +240,21 @@
                 intervalSeconds = lib.mkOption {
                   type = lib.types.int;
                   default = 30;
+                  description = "Run cadence. Lower bound 5s.";
                 };
                 timeoutSeconds = lib.mkOption {
                   type = lib.types.int;
                   default = 5;
+                  description = "Connect timeout; after this Fail.";
                 };
               };
             });
             default = [];
+            description = ''
+              TCP probes. Each entry attempts a connection to
+              `host:port` on its declared `intervalSeconds`; Pass iff
+              connect succeeds within `timeoutSeconds`.
+            '';
           };
           exec = lib.mkOption {
             type = lib.types.listOf (lib.types.submodule {
@@ -265,14 +276,21 @@
                 intervalSeconds = lib.mkOption {
                   type = lib.types.int;
                   default = 30;
+                  description = "Run cadence. Lower bound 5s.";
                 };
                 timeoutSeconds = lib.mkOption {
                   type = lib.types.int;
                   default = 10;
+                  description = "Wallclock timeout for the command; after this Fail.";
                 };
               };
             });
             default = [];
+            description = ''
+              Exec probes. Each entry runs `command` (argv) on its
+              declared `intervalSeconds`; Pass iff exit code is 0
+              within `timeoutSeconds`.
+            '';
           };
         };
       };
