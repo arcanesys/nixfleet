@@ -114,9 +114,6 @@ async fn fire_switch(
     target: &EvaluatedTarget,
     store_path: &str,
 ) -> Result<Option<ActivationOutcome>> {
-    // LOADBEARING: profile is already set in pipeline.rs, so deferring just
-    // means "skip systemd-run" — next reboot picks up the new gen via the
-    // bootloader entry the activation script writes for the system profile.
     if let Some(component) =
         detect_switch_inhibitors(Path::new(CURRENT_SYSTEM_PATH), Path::new(store_path))
     {
@@ -125,6 +122,30 @@ async fn fire_switch(
             component = component,
             "agent: deferring live switch — critical-component swap requires reboot",
         );
+        // LOADBEARING: `nix-env --set` (in pipeline.rs) creates the system
+        // generation but does NOT write bootloader entries — only
+        // `switch-to-configuration {boot,switch,test}` does. Without this,
+        // the deferred generation has no `/boot/loader/entries/*.conf` and
+        // the next reboot lands back on the previous boot default, defeating
+        // the entire defer-then-reboot lifecycle. `boot` mode writes loader
+        // entries without activating, which is exactly what defer needs.
+        let switch_bin = format!("{store_path}/bin/switch-to-configuration");
+        let boot_status = Command::new(&switch_bin)
+            .arg("boot")
+            .status()
+            .await
+            .with_context(|| format!("spawn {switch_bin} boot"))?;
+        if !boot_status.success() {
+            tracing::error!(
+                target_closure = %target.closure_hash,
+                exit_code = ?boot_status.code(),
+                "agent: switch-to-configuration boot failed in defer path; bootloader NOT updated",
+            );
+            return Ok(Some(ActivationOutcome::SwitchFailed {
+                phase: "defer-bootloader-update".to_string(),
+                exit_code: boot_status.code(),
+            }));
+        }
         return Ok(Some(ActivationOutcome::DeferredPendingReboot {
             component: component.to_string(),
         }));

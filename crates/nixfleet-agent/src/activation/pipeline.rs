@@ -73,7 +73,11 @@ pub async fn activate_with<B: ActivationBackend>(
         });
     }
 
-    // LOADBEARING: set profile BEFORE fire — bootloader must follow even if switch dies mid-run.
+    // LOADBEARING: set profile BEFORE fire — switch-to-configuration {boot,switch,test}
+    // reads `/nix/var/nix/profiles/system` to derive the generation number it
+    // writes into bootloader entries. The bootloader update itself happens
+    // inside the backend's fire_switch (live switch on the happy path,
+    // explicit `switch-to-configuration boot` on the defer path).
     let set_status = Command::new("nix-env")
         .arg("--profile")
         .arg("/nix/var/nix/profiles/system")
