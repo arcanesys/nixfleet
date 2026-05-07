@@ -604,4 +604,62 @@ mod tests {
         assert!(matches!(r.status, ProbeStatus::Fail));
         assert_eq!(r.failure_reason.as_deref(), Some("empty command"));
     }
+
+    #[test]
+    fn load_config_parses_nix_emitted_camelcase_json() {
+        // Lock the wire contract between the Nix module's
+        // `pkgs.writers.writeJSON` output and the agent's serde
+        // deserialiser. A drift here (rename_all attribute change,
+        // field rename, mode value casing) breaks every fleet that
+        // declared probes — catch it locally.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("health-checks.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "mode": "enforce",
+                "http": [
+                    {"name": "api", "url": "http://localhost/healthz",
+                     "expectStatus": 200, "intervalSeconds": 10, "timeoutSeconds": 5}
+                ],
+                "tcp": [
+                    {"name": "ssh", "host": "127.0.0.1", "port": 22,
+                     "intervalSeconds": 30, "timeoutSeconds": 5}
+                ],
+                "exec": [
+                    {"name": "etcd", "command": ["true"],
+                     "intervalSeconds": 30, "timeoutSeconds": 10}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let cfg = load_config(&path).unwrap().expect("present");
+        assert!(matches!(cfg.mode, GateMode::Enforce));
+        assert_eq!(cfg.http.len(), 1);
+        assert_eq!(cfg.http[0].name, "api");
+        assert_eq!(cfg.http[0].expect_status, 200);
+        assert_eq!(cfg.http[0].interval_seconds, 10);
+        assert_eq!(cfg.tcp.len(), 1);
+        assert_eq!(cfg.tcp[0].port, 22);
+        assert_eq!(cfg.exec.len(), 1);
+        assert_eq!(cfg.exec[0].command, vec!["true".to_string()]);
+    }
+
+    #[test]
+    fn load_config_returns_none_for_absent_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let absent = dir.path().join("nope.json");
+        assert!(load_config(&absent).unwrap().is_none());
+    }
+
+    #[test]
+    fn load_config_errors_loudly_on_bad_json() {
+        // Operator misconfiguration should be a hard fail at agent
+        // startup, not silently degraded health gating.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, "{not valid").unwrap();
+        let err = load_config(&path).unwrap_err();
+        assert!(format!("{err:#}").contains("parse"));
+    }
 }
