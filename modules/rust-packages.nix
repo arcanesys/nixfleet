@@ -83,6 +83,8 @@
         git
         age
         bashInteractive
+        tokei
+        cloc
       ];
       shellHook = ''
         export EDITOR=vim

@@ -172,9 +172,11 @@ The framework ships kernel + contract impls. Service wraps, hardware bundles, ro
 ## Development
 
 ```sh
-nix develop                        # Dev shell (cargo, clippy, rustfmt, rust-analyzer)
+nix develop                        # Dev shell (cargo, clippy, rustfmt, rust-analyzer, tokei, cloc)
 nix fmt                            # Format (alejandra + rustfmt + shfmt)
 nix run .#validate -- --all        # Full test suite
+tools/loc.sh                       # Rust LOC report (prod / inline-tests / integ-tests)
+tools/loc.sh --update              # Refresh tools/loc-baseline.txt after intentional changes
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor guidelines.

@@ -1,0 +1,8 @@
+  Category        LOC          %     Files
+  prod             18964    54.6%    120
+  inline-tests      9154    26.3%     59
+  integ-tests       6636    19.1%     27
+  ----------------------------------------------
+  total            34754  100.0%
+
+  Tests overall:  15790 LOC (45.4% of total)
