@@ -22,6 +22,27 @@ CLI override > `hostSpec.vmRam` > script default. The helper only consults `host
 
 - Out of scope: `test-vm` (smoke-test path); the per-host knob doesn't pay for itself there.
 - Fleet-side adoption is the consumer's responsibility (typical: a forge host running an in-VM CI workflow that compiles Rust).
+### CP self-bootstraps `artifactPath` from `channelRefsSource` (2026-05-07)
+
+Closes #90. The CP unit's `unitConfig.ConditionPathExists = artifactPath` refused to start until the artifact existed on disk, but the daemon's in-process channel-refs polling — the only mechanism that ever populates the path — runs INSIDE the unit. Chicken-and-egg: every fresh install required a sidecar to seed the file before nixfleet-control-plane could come up. nixfleet-demo's `cp.nix` was carrying ~25 lines of bespoke bootstrap to work around it; every consumer would need the same.
+
+#### Added
+
+- **`systemd.services.nixfleet-cp-artifact-bootstrap`** in `modules/scopes/nixfleet/_control-plane.nix`. Oneshot, `RemainAfterExit=true`, ordered `before=nixfleet-control-plane.service` and `after=network-online.target`. Curls `channelRefsSource.{artifactUrl,signatureUrl}` → `cfg.{artifactPath,signaturePath}` and (when set) `revocationsSource.{artifactUrl,signatureUrl}` → `${dirname(artifactPath)}/revocations.json{,.sig}`. Idempotent: skips files that already exist non-empty (`[ ! -s "$target" ]`). Per-file retry: up to 60×2s = 120s, because forge may still be mid-CI on first boot.
+- **`Requires=` + `After=` wiring** on `nixfleet-control-plane.service` to depend on the new bootstrap unit when emitted. The CP unit still gates on `ConditionPathExists`; the dependency just orders the bootstrap attempt first. Bootstrap failure does NOT prevent the CP unit from being scheduled — `Requires=` here is the systemd "if active, must be reached" semantic, and the gate is the artifact's actual presence.
+- **`systemd.tmpfiles.rules`** entry creating `${dirname(artifactPath)}` (defaults to `/var/lib/nixfleet-cp/fleet/releases`) so the bootstrap's curl has a writable destination on first boot.
+
+#### Behavior
+
+The bootstrap is emitted iff `channelRefsSource.artifactUrl != null`. When unset, the operator is provisioning the artifact via some other mechanism (git checkout sidecar, manual copy, etc.) and a curl-based bootstrap would be wrong — the unit is omitted and the CP unit's `Requires=` / `After=` revert to their pre-#90 shape.
+
+When `channelRefsSource.tokenFile` (or `revocationsSource.tokenFile`, falling back to `channelRefsSource.tokenFile`) is set, the token is read from disk on each retry and passed via `Authorization: Bearer <token>` — same shape as the daemon's `signed_fetch::fetch_url` uses for runtime polling, so token rotation propagates without restarting the unit.
+
+#### Notes
+
+- The bootstrap doesn't verify the signed bytes — that's the daemon's job once it starts. Bootstrap is a transport concern only; rejection of bad bytes happens at `verify_artifact` time during the first reconcile tick.
+- Out of scope: bootstrapping `rolloutsSource` URL templates (those are per-rollout-id and the daemon fetches them on-demand, no chicken-and-egg).
+- Consumer-side migration: `nixfleet-demo`'s `hosts/cp.nix` can drop its bespoke `nixfleet-cp-artifact-bootstrap.service` block (the framework now ships an equivalent under the same name).
 
 ### Per-host declarative health probes (2026-05-07)
 

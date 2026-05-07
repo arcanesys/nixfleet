@@ -49,6 +49,84 @@
   };
 
   listenPort = lib.toInt (lib.last (lib.splitString ":" cfg.listen));
+
+  # LOADBEARING: bootstrap fixes the chicken-and-egg between the CP unit's
+  # `ConditionPathExists = artifactPath` and the daemon's in-process polling
+  # (the only refresh path) — without a seed the unit never starts and the
+  # daemon never runs to populate the path. Emitted iff
+  # channelRefsSource.artifactUrl is set; when null the operator is seeding
+  # the path through some other mechanism (git sidecar, manual copy, etc.)
+  # and a curl-based bootstrap would be wrong.
+  bootstrapEnabled = cfg.channelRefsSource.artifactUrl != null;
+
+  # Auth shape mirrors `signed_fetch::fetch_url` — `Authorization: Bearer
+  # <token>`, token re-read each invocation so rotation propagates without
+  # restarting the unit. See crates/nixfleet-control-plane/src/polling/signed_fetch.rs.
+  effectiveRevocationsToken =
+    if cfg.revocationsSource.tokenFile != null
+    then cfg.revocationsSource.tokenFile
+    else cfg.channelRefsSource.tokenFile;
+
+  # Renders a shell snippet that fetches `url` to `target` with up to 60×2s
+  # retries. Idempotent: skips when target is already non-empty. When
+  # `tokenFile` is set, the token is read each retry (rotation-friendly,
+  # matches the daemon's `signed_fetch::read_token` semantics) and passed
+  # via `Authorization: Bearer <token>` (matches `signed_fetch::fetch_url`).
+  bootstrapFile = {
+    url,
+    target,
+    tokenFile,
+  }: let
+    readToken =
+      if tokenFile != null
+      then ''token="$(${pkgs.coreutils}/bin/tr -d '\n' < ${lib.escapeShellArg tokenFile})"''
+      else "";
+    authArg =
+      if tokenFile != null
+      then ''-H "Authorization: Bearer $token"''
+      else "";
+  in ''
+    if [ ! -s ${lib.escapeShellArg target} ]; then
+      for _ in $(seq 1 60); do
+        ${readToken}
+        if ${pkgs.curl}/bin/curl -fsS ${authArg} -o ${lib.escapeShellArg target} ${lib.escapeShellArg url}; then
+          break
+        fi
+        sleep 2
+      done
+    fi
+  '';
+
+  artifactDir = builtins.dirOf cfg.artifactPath;
+
+  bootstrapScript = lib.concatStringsSep "\n" (
+    [
+      "set -euo pipefail"
+      "${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg artifactDir}"
+      (bootstrapFile {
+        url = cfg.channelRefsSource.artifactUrl;
+        target = cfg.artifactPath;
+        tokenFile = cfg.channelRefsSource.tokenFile;
+      })
+      (bootstrapFile {
+        url = cfg.channelRefsSource.signatureUrl;
+        target = cfg.signaturePath;
+        tokenFile = cfg.channelRefsSource.tokenFile;
+      })
+    ]
+    ++ lib.optionals (cfg.revocationsSource.artifactUrl != null) [
+      (bootstrapFile {
+        url = cfg.revocationsSource.artifactUrl;
+        target = "${artifactDir}/revocations.json";
+        tokenFile = effectiveRevocationsToken;
+      })
+      (bootstrapFile {
+        url = cfg.revocationsSource.signatureUrl;
+        target = "${artifactDir}/revocations.json.sig";
+        tokenFile = effectiveRevocationsToken;
+      })
+    ]
+  );
 in {
   options.services.nixfleet-control-plane = {
     enable = lib.mkEnableOption "NixFleet control plane (long-running TLS server)";
@@ -477,8 +555,11 @@ in {
       systemd.services.nixfleet-control-plane = {
         description = "NixFleet control plane (long-running TLS server)";
         wantedBy = ["multi-user.target"];
-        after = ["network-online.target"];
+        after =
+          ["network-online.target"]
+          ++ lib.optional bootstrapEnabled "nixfleet-cp-artifact-bootstrap.service";
         wants = ["network-online.target"];
+        requires = lib.optional bootstrapEnabled "nixfleet-cp-artifact-bootstrap.service";
         unitConfig.ConditionPathExists = cfg.artifactPath;
 
         serviceConfig = {
@@ -597,11 +678,32 @@ in {
         };
       };
 
+      # See `bootstrapEnabled` comment above. Oneshot ordered before the
+      # CP unit so the `ConditionPathExists = artifactPath` gate has bytes
+      # to find on a fresh install. Idempotent (skips files that already
+      # exist non-empty), retries up to 120s per file because the upstream
+      # forge may still be mid-CI on first boot.
+      systemd.services.nixfleet-cp-artifact-bootstrap = lib.mkIf bootstrapEnabled {
+        description = "Seed CP artifact path from channelRefsSource before nixfleet-control-plane starts";
+        wantedBy = ["multi-user.target"];
+        before = ["nixfleet-control-plane.service"];
+        after = ["network-online.target"];
+        wants = ["network-online.target"];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          User = "root";
+        };
+        script = bootstrapScript;
+      };
+
       # GOTCHA: tmpfiles `C` (no `+`) copies only if target absent.
-      systemd.tmpfiles.rules = [
-        "d /var/lib/nixfleet-cp 0755 root root -"
-        "C ${cfg.observedPath} 0644 root root - ${initialObservedJson}"
-      ];
+      systemd.tmpfiles.rules =
+        [
+          "d /var/lib/nixfleet-cp 0755 root root -"
+          "C ${cfg.observedPath} 0644 root root - ${initialObservedJson}"
+        ]
+        ++ lib.optional bootstrapEnabled "d ${artifactDir} 0755 root root -";
 
       networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [listenPort];
     })
