@@ -33,6 +33,18 @@ pub struct Observed {
     /// with an identical line.
     #[serde(default)]
     pub last_deferrals: HashMap<String, DeferralRecord>,
+    /// Issue #86: per-host probe-pass state extracted from each host's
+    /// latest checkin. `true` = probes are passing (or the host has no
+    /// declared probes / mode is permissive / disabled — see
+    /// `nixfleet_proto::agent_wire::host_probes_passing`). `false` = at
+    /// least one probe is failing or hasn't run yet under enforce mode;
+    /// the soak gate holds the Healthy → Soaked transition for this
+    /// host. Hosts absent from the map (no checkin yet, or the CP
+    /// projector didn't populate them) default to `true` — the gate
+    /// fails open so a misconfigured projection can't accidentally
+    /// stall every promotion.
+    #[serde(default)]
+    pub host_probes_passing: HashMap<String, bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -47,6 +47,92 @@ pub struct CheckinRequest {
     /// a compromised host can't replay an older confirmation to short-circuit soak.
     #[serde(default)]
     pub attestation_signature: Option<String>,
+
+    /// Snapshot of the agent's currently-declared health probes (issue #86),
+    /// each with its latest run status. Empty list = host declared no
+    /// probes (`services.nixfleet-agent.healthChecks` empty); the soak gate
+    /// treats that as "no probe constraint" → no-op. Probe entries with
+    /// `status: Unknown` indicate the probe hasn't run yet — conservative
+    /// soak gate treats Unknown as blocking, so probes need to run at
+    /// least once before promotion.
+    #[serde(default)]
+    pub health_probes: Vec<ProbeResult>,
+
+    /// Per-host gate mode for the probes above (issue #86). The reconciler's
+    /// soak gate reads this to decide whether probe failures BLOCK the
+    /// `Healthy → Soaked` transition (`Enforce`) or are visibility-only
+    /// (`Permissive` / `None`). Disabled mode means the agent suppressed
+    /// probe execution entirely; CheckinRequest will also have `health_probes`
+    /// empty in that case.
+    #[serde(default)]
+    pub health_check_mode: Option<crate::compliance::GateMode>,
+}
+
+/// Probe transport. HTTP probes GET a URL and check the response status
+/// code; TCP probes attempt a connection; Exec probes run a command and
+/// inspect the exit code. The variant is informational on the wire —
+/// the agent's own runner picks the right transport from the per-probe
+/// config; CP/CLI render the kind for operator visibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProbeKind {
+    Http,
+    Tcp,
+    Exec,
+}
+
+/// Probe outcome. `Unknown` is the bootstrap state before the first run;
+/// `Pass`/`Fail` are post-run terminal states until the next run replaces
+/// them. The soak gate's "all-passing" check treats Unknown as
+/// non-passing (conservative — operators MUST have at least one
+/// successful run before promotion).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProbeStatus {
+    Unknown,
+    Pass,
+    Fail,
+}
+
+/// Soak-gate decision (issue #86). Returns true when the host's
+/// declared probes don't constrain promotion:
+/// * Mode is `Permissive` / `Disabled` / `None` → advisory or off → pass.
+/// * Mode is `Enforce` AND `health_probes` is empty → no probes declared,
+///   nothing to enforce → pass.
+/// * Mode is `Enforce` AND every probe in `health_probes` is `Pass` → pass.
+/// Anything else (any probe `Fail` or `Unknown` under enforce) → false.
+pub fn host_probes_passing(checkin: &CheckinRequest) -> bool {
+    use crate::compliance::GateMode;
+    match checkin.health_check_mode {
+        Some(GateMode::Enforce) => checkin
+            .health_probes
+            .iter()
+            .all(|p| matches!(p.status, ProbeStatus::Pass)),
+        _ => true,
+    }
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeResult {
+    /// Operator-declared probe name (unique per host); used as the
+    /// stable identifier in CP storage + CLI rendering.
+    pub name: String,
+    pub kind: ProbeKind,
+    pub status: ProbeStatus,
+    /// `None` until the probe has run at least once.
+    #[serde(default)]
+    pub last_run_at: Option<DateTime<Utc>>,
+    /// Most recent timestamp the probe passed; preserved across
+    /// subsequent failures so the operator can see "last green at X".
+    #[serde(default)]
+    pub last_pass_at: Option<DateTime<Utc>>,
+    /// Free-form failure detail (HTTP status code, TCP errno, exec
+    /// stderr tail). Truncated to ~512 chars by the agent before send.
+    /// `None` when status != Fail.
+    #[serde(default)]
+    pub failure_reason: Option<String>,
 }
 
 #[skip_serializing_none]

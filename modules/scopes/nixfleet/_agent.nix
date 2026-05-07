@@ -9,12 +9,29 @@
 
   trustConfig = import ./_trust-json.nix {trust = config.nixfleet.trust;};
   trustJson = pkgs.writers.writeJSON "trust.json" trustConfig;
+
+  # Issue #86: per-host probe declaration is too rich for CLI flags
+  # (variable lists of nested objects), so we materialise the
+  # `services.nixfleet-agent.healthChecks` value to a JSON file in
+  # /etc/ and pass `--health-checks-config <path>` instead. Mirrors
+  # the trust.json convention.
+  healthChecksConfig = {
+    inherit (cfg.healthChecks) mode http tcp exec;
+  };
+  healthChecksJson = pkgs.writers.writeJSON "health-checks.json" healthChecksConfig;
+  hasHealthChecks =
+    cfg.healthChecks.http != []
+    || cfg.healthChecks.tcp != []
+    || cfg.healthChecks.exec != [];
 in {
   imports = [./_agent-options.nix];
 
   config = lib.mkMerge [
     (lib.mkIf cfg.enable {
       environment.etc."nixfleet/agent/trust.json".source = trustJson;
+      environment.etc."nixfleet/agent/health-checks.json" = lib.mkIf hasHealthChecks {
+        source = healthChecksJson;
+      };
 
       systemd.services.nixfleet-agent = {
         description = "NixFleet Fleet Management Agent";

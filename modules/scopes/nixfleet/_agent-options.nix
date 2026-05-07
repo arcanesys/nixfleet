@@ -150,6 +150,134 @@
       '';
     };
 
+    healthChecks = lib.mkOption {
+      default = {};
+      description = ''
+        Operator-declared health probes (issue #86) — load-bearing for
+        wave promotion. Each declared probe runs in-agent on its own
+        interval; the latest result is reported with every checkin.
+        The reconciler gates Healthy → Soaked promotion on
+        `all-probes-passing`, so a host with even one failing probe
+        will never advance the wave (mode-dependent — see `mode`
+        below).
+
+        Distinct from `complianceGate` (which fronts the external
+        `nixfleet-compliance` collector for framework-controls
+        evidence): `healthChecks` runs in-process for application-level
+        liveness signals declared per host, no external service
+        required. The two coexist — a host can have both, and they
+        gate at different points in the lifecycle (compliance → confirm,
+        health → soak).
+      '';
+      type = lib.types.submodule {
+        options = {
+          mode = lib.mkOption {
+            type = lib.types.enum ["disabled" "permissive" "enforce"];
+            default = "enforce";
+            description = ''
+              - `disabled`: probes don't run; nothing reported. Use
+                when the host's NixOS module declares probes but a
+                temporary operator override should suppress them.
+              - `permissive`: probes run + report, but failures don't
+                block soak promotion. Use to observe what would fail
+                before flipping to enforce.
+              - `enforce` (default): probes run + report + failures
+                block soak promotion. The reconciler holds at the
+                Healthy → Soaked transition until all probes pass.
+            '';
+          };
+          http = lib.mkOption {
+            type = lib.types.listOf (lib.types.submodule {
+              options = {
+                name = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Probe identifier (unique per host).";
+                };
+                url = lib.mkOption {
+                  type = lib.types.str;
+                  example = "http://localhost/healthz";
+                  description = "Target URL. GET only.";
+                };
+                expectStatus = lib.mkOption {
+                  type = lib.types.port;
+                  default = 200;
+                  description = "Status code that counts as Pass.";
+                };
+                intervalSeconds = lib.mkOption {
+                  type = lib.types.int;
+                  default = 30;
+                  description = "Run cadence. Lower bound 5s.";
+                };
+                timeoutSeconds = lib.mkOption {
+                  type = lib.types.int;
+                  default = 5;
+                  description = "Per-request timeout; after this Fail.";
+                };
+              };
+            });
+            default = [];
+          };
+          tcp = lib.mkOption {
+            type = lib.types.listOf (lib.types.submodule {
+              options = {
+                name = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Probe identifier (unique per host).";
+                };
+                host = lib.mkOption {
+                  type = lib.types.str;
+                  default = "127.0.0.1";
+                  description = "Target host.";
+                };
+                port = lib.mkOption {
+                  type = lib.types.port;
+                  description = "Target port; Pass iff connect succeeds.";
+                };
+                intervalSeconds = lib.mkOption {
+                  type = lib.types.int;
+                  default = 30;
+                };
+                timeoutSeconds = lib.mkOption {
+                  type = lib.types.int;
+                  default = 5;
+                };
+              };
+            });
+            default = [];
+          };
+          exec = lib.mkOption {
+            type = lib.types.listOf (lib.types.submodule {
+              options = {
+                name = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Probe identifier (unique per host).";
+                };
+                command = lib.mkOption {
+                  type = lib.types.listOf lib.types.str;
+                  example = ["${"$"}{pkgs.curl}/bin/curl" "-fsS" "http://localhost/health"];
+                  description = ''
+                    Argv. Pass iff exit code is 0 within
+                    `timeoutSeconds`. The command runs as the agent's
+                    user; declare absolute paths to avoid PATH
+                    surprises.
+                  '';
+                };
+                intervalSeconds = lib.mkOption {
+                  type = lib.types.int;
+                  default = 30;
+                };
+                timeoutSeconds = lib.mkOption {
+                  type = lib.types.int;
+                  default = 10;
+                };
+              };
+            });
+            default = [];
+          };
+        };
+      };
+    };
+
     complianceGate.mode = lib.mkOption {
       type = lib.types.enum ["auto" "disabled" "permissive" "enforce"];
       default = "auto";

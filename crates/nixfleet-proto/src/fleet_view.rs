@@ -59,6 +59,14 @@ pub struct HostStatusEntry {
     /// what's here is by construction non-expired at signing time.
     #[serde(default)]
     pub pin: Option<crate::Pin>,
+    /// Count of health probes (issue #86) currently in non-Pass state on
+    /// this host's latest checkin — `Fail` and `Unknown` both count.
+    /// `0` when no probes are declared, all probes are passing, or the
+    /// host's mode is permissive/disabled (no probe constraint surfaced
+    /// to the soak gate in those modes either — same semantics as
+    /// `host_probes_passing` returning `true`).
+    #[serde(default)]
+    pub outstanding_health_failures: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

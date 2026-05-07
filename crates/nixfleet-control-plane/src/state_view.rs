@@ -232,6 +232,23 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                 // expired pins at signing time, so what we render is the
                 // active pin for this host.
                 pin: host_decl.pin.clone(),
+                // Issue #86: count probes in non-Pass state from the
+                // host's latest checkin. Snapshot-driven (not event-ring
+                // like compliance/runtime-gate above), because probe
+                // state IS the latest snapshot — the wire carries the
+                // current value, not a stream of failure events.
+                outstanding_health_failures: checkin
+                    .map(|c| {
+                        c.checkin
+                            .health_probes
+                            .iter()
+                            .filter(|p| !matches!(
+                                p.status,
+                                nixfleet_proto::agent_wire::ProbeStatus::Pass
+                            ))
+                            .count()
+                    })
+                    .unwrap_or(0),
             }
         })
         .collect();

@@ -94,7 +94,19 @@ pub(crate) fn handle_wave(
                 out.wave_all_soaked = false;
                 let soak_window = chrono::Duration::minutes(wave.soak_minutes as i64);
                 if let Some(since) = rollout.last_healthy_since.get(host) {
-                    if now.signed_duration_since(*since) >= soak_window {
+                    let soak_elapsed = now.signed_duration_since(*since) >= soak_window;
+                    // Issue #86: load-bearing health gate. Probe failures
+                    // (or Unknown under enforce mode) hold promotion. Hosts
+                    // not in the map (no checkin yet, or `host_probes_passing`
+                    // wasn't populated by the projector) default to true so
+                    // a missing projection doesn't accidentally stall every
+                    // wave — fail-open per the field's contract.
+                    let probes_pass = observed
+                        .host_probes_passing
+                        .get(host)
+                        .copied()
+                        .unwrap_or(true);
+                    if soak_elapsed && probes_pass {
                         out.actions.push(Action::SoakHost {
                             rollout: rollout.id.clone(),
                             host: host.clone(),
@@ -200,6 +212,10 @@ mod tests {
     }
 
     fn observed_online(host: &str) -> Observed {
+        observed_with_probes(host, true)
+    }
+
+    fn observed_with_probes(host: &str, probes_passing: bool) -> Observed {
         use crate::observed::HostState;
         let mut host_state = std::collections::HashMap::new();
         host_state.insert(
@@ -209,6 +225,8 @@ mod tests {
                 current_generation: None,
             },
         );
+        let mut probes = std::collections::HashMap::new();
+        probes.insert(host.to_string(), probes_passing);
         Observed {
             channel_refs: std::collections::HashMap::new(),
             last_rolled_refs: std::collections::HashMap::new(),
@@ -216,7 +234,113 @@ mod tests {
             active_rollouts: vec![],
             outstanding_compliance_events_by_rollout: std::collections::HashMap::new(),
             last_deferrals: std::collections::HashMap::new(),
+            host_probes_passing: probes,
         }
+    }
+
+    fn rollout_healthy_for(host: &str, since_minutes_ago: i64) -> Rollout {
+        use crate::rollout_state::RolloutState;
+        let mut host_states = std::collections::HashMap::new();
+        host_states.insert(host.into(), HostRolloutState::Healthy);
+        let mut last_healthy = std::collections::HashMap::new();
+        last_healthy.insert(
+            host.into(),
+            chrono::Utc::now() - chrono::Duration::minutes(since_minutes_ago),
+        );
+        Rollout {
+            id: "stable@abc12345".into(),
+            channel: "stable".into(),
+            target_ref: "ref-xyz".into(),
+            state: RolloutState::Executing,
+            current_wave: 0,
+            host_states,
+            last_healthy_since: last_healthy,
+            budgets: vec![],
+            terminal_at: None,
+        }
+    }
+
+    #[test]
+    fn soak_promotes_when_probes_pass_and_window_elapsed() {
+        // Issue #86: probes-passing AND soak-elapsed → SoakHost emitted.
+        let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
+        let rollout = rollout_healthy_for("host-a", 10); // 10 min ago
+        let observed = observed_with_probes("host-a", true);
+        let wave = Wave {
+            hosts: vec!["host-a".into()],
+            soak_minutes: 5,
+        };
+        let outcome = handle_wave(&fleet, &observed, &rollout, &wave, chrono::Utc::now());
+        let soak_count = outcome
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::SoakHost { .. }))
+            .count();
+        assert_eq!(soak_count, 1, "actions: {:?}", outcome.actions);
+    }
+
+    #[test]
+    fn soak_holds_when_probes_failing_even_if_window_elapsed() {
+        // Issue #86's load-bearing guarantee: a failing probe blocks the
+        // Healthy → Soaked promotion regardless of soak elapsed.
+        let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
+        let rollout = rollout_healthy_for("host-a", 10); // far past soak
+        let observed = observed_with_probes("host-a", false);
+        let wave = Wave {
+            hosts: vec!["host-a".into()],
+            soak_minutes: 5,
+        };
+        let outcome = handle_wave(&fleet, &observed, &rollout, &wave, chrono::Utc::now());
+        let soak_count = outcome
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::SoakHost { .. }))
+            .count();
+        assert_eq!(
+            soak_count, 0,
+            "probe-failing host must not promote: actions={:?}",
+            outcome.actions
+        );
+        // Wave is held — NOT all soaked.
+        assert!(!outcome.wave_all_soaked);
+    }
+
+    #[test]
+    fn soak_holds_when_window_not_elapsed_even_if_probes_pass() {
+        // Sanity check: wallclock soak still required.
+        let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
+        let rollout = rollout_healthy_for("host-a", 1); // 1 min ago, soak=5
+        let observed = observed_with_probes("host-a", true);
+        let wave = Wave {
+            hosts: vec!["host-a".into()],
+            soak_minutes: 5,
+        };
+        let outcome = handle_wave(&fleet, &observed, &rollout, &wave, chrono::Utc::now());
+        assert!(
+            outcome.actions.iter().all(|a| !matches!(a, Action::SoakHost { .. })),
+            "soak window NOT elapsed must hold even with probes passing",
+        );
+    }
+
+    #[test]
+    fn soak_promotes_when_probes_absent_from_map_fail_open() {
+        // Hosts not in `host_probes_passing` (no checkin yet, or projector
+        // skipped them) default to passing — fail open per the field contract.
+        let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
+        let rollout = rollout_healthy_for("host-a", 10);
+        // observed_online() = empty probe map.
+        let observed = observed_online("host-a");
+        let mut observed = observed;
+        observed.host_probes_passing.clear();
+        let wave = Wave {
+            hosts: vec!["host-a".into()],
+            soak_minutes: 5,
+        };
+        let outcome = handle_wave(&fleet, &observed, &rollout, &wave, chrono::Utc::now());
+        assert!(
+            outcome.actions.iter().any(|a| matches!(a, Action::SoakHost { .. })),
+            "absent map entry must default to passing, not block",
+        );
     }
 
     #[test]

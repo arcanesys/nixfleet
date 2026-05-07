@@ -63,6 +63,13 @@ pub(crate) struct Args {
         default_value = "/etc/ssh/ssh_host_ed25519_key"
     )]
     ssh_host_key_file: PathBuf,
+
+    /// JSON config for `services.nixfleet-agent.healthChecks` (issue #86).
+    /// Absent → no health probe scheduler; checkin omits `healthProbes`.
+    /// The NixOS module materialises this from the operator's
+    /// declarative config to `/etc/nixfleet/agent/health-checks.json`.
+    #[arg(long, env = "NIXFLEET_AGENT_HEALTH_CHECKS_CONFIG")]
+    health_checks_config: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -121,7 +128,46 @@ async fn main() -> anyhow::Result<()> {
         "agent starting poll loop"
     );
 
-    run_poll_loop(client, &args, started_at, evidence_signer).await
+    // Issue #86: load health-check config + spawn the probe scheduler
+    // before entering the poll loop. Absent config → no scheduler runs;
+    // checkin omits `healthProbes`. Parse failures are fatal — the
+    // operator declared probes and we couldn't honour them.
+    let health_cache = match args.health_checks_config.as_deref() {
+        Some(path) => match nixfleet_agent::health::load_config(path) {
+            Ok(Some(cfg)) => {
+                let mode = cfg.mode;
+                let cache = std::sync::Arc::new(
+                    nixfleet_agent::health::ProbeStateCache::new(
+                        nixfleet_agent::health::initial_results(&cfg),
+                        mode,
+                    ),
+                );
+                tokio::spawn({
+                    let cache = cache.clone();
+                    async move { nixfleet_agent::health::run_scheduler(cfg, cache).await }
+                });
+                cache
+            }
+            Ok(None) => {
+                tracing::info!(
+                    path = %path.display(),
+                    "health-checks config absent at declared path — proceeding without probe scheduler",
+                );
+                std::sync::Arc::new(nixfleet_agent::health::ProbeStateCache::default())
+            }
+            Err(err) => {
+                tracing::error!(
+                    path = %path.display(),
+                    error = %err,
+                    "failed to load health-checks config",
+                );
+                return Err(err);
+            }
+        },
+        None => std::sync::Arc::new(nixfleet_agent::health::ProbeStateCache::default()),
+    };
+
+    run_poll_loop(client, &args, started_at, evidence_signer, health_cache).await
 }
 
 fn init_tracing() {
@@ -237,6 +283,7 @@ async fn run_poll_loop(
     args: &Args,
     started_at: Instant,
     evidence_signer: std::sync::Arc<Option<nixfleet_agent::evidence_signer::EvidenceSigner>>,
+    health_cache: std::sync::Arc<nixfleet_agent::health::ProbeStateCache>,
 ) -> anyhow::Result<()> {
     let mut ticker = tokio::time::interval(Duration::from_secs(args.poll_interval));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -270,7 +317,7 @@ async fn run_poll_loop(
             reporter.replace_client(client_handle.clone());
         }
 
-        match send_checkin(&client_handle, args, started_at, &evidence_signer).await {
+        match send_checkin(&client_handle, args, started_at, &evidence_signer, &health_cache).await {
             Ok(resp) => {
                 consecutive_failures = 0;
                 // LOADBEARING: process CP rollback before new dispatch — host must step away from failed gen first.
@@ -372,6 +419,7 @@ async fn send_checkin(
     args: &Args,
     started_at: Instant,
     evidence_signer: &std::sync::Arc<Option<nixfleet_agent::evidence_signer::EvidenceSigner>>,
+    health_cache: &std::sync::Arc<nixfleet_agent::health::ProbeStateCache>,
 ) -> anyhow::Result<nixfleet_proto::agent_wire::CheckinResponse> {
     let current_generation = nixfleet_agent::host_facts::current_generation_ref()?;
     let pending_generation = nixfleet_agent::host_facts::pending_generation()?;
@@ -480,6 +528,10 @@ async fn send_checkin(
         uptime_secs: Some(uptime_secs),
         last_confirmed_at,
         attestation_signature,
+        // Issue #86: snapshot of latest probe states. Empty when the
+        // operator declared no health checks.
+        health_probes: health_cache.snapshot().await,
+        health_check_mode: health_cache.mode(),
     };
 
     comms::checkin(client, &args.control_plane_url, &req).await

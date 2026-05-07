@@ -4,6 +4,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [Semantic V
 
 ## [Unreleased]
 
+### Per-host declarative health probes (2026-05-07)
+
+Closes #86. Operators had no way to declaratively gate wave promotion on application-level liveness — `rolloutPolicies.<name>.healthGate` only covered fleet-policy systemd-failed-units / compliance-evidence checks. Adding a per-host probe primitive that runs in-agent (no external collector required) and gates the soak transition load-bearingly.
+
+#### Added
+
+- **`services.nixfleet-agent.healthChecks = { mode; http; tcp; exec; }`** module options. `mode` reuses the existing `disabled / permissive / enforce` triplet from `nixfleet_proto::compliance::GateMode` (no fork). Each list item declares `name; intervalSeconds; timeoutSeconds;` plus type-specific fields (HTTP `url`+`expectStatus`, TCP `host`+`port`, Exec `command`).
+- **`/etc/nixfleet/agent/health-checks.json`** materialised by the NixOS module (mirrors `trust.json` convention); agent reads via new `--health-checks-config` CLI arg. Absent file → no scheduler runs; checkin omits the field.
+- **`crates/nixfleet-agent/src/health.rs`** — in-process probe scheduler. One tokio task per probe ticking at its declared interval; latest result lives in a shared `ProbeStateCache` keyed by name. `MIN_INTERVAL_SECS = 5` clamps misconfigured low intervals; `FAILURE_REASON_MAX_LEN = 512` bounds the wire payload. HTTP via reqwest, TCP via `tokio::net::TcpStream`, Exec via `tokio::process::Command`.
+- **`CheckinRequest.health_probes: Vec<ProbeResult>`** and **`CheckinRequest.health_check_mode: Option<GateMode>`** in `nixfleet-proto::agent_wire`. Snapshot-on-checkin (not event-per-failure): the wire carries the current state, the soak gate reads the latest snapshot. `ProbeResult { name, kind, status, last_run_at, last_pass_at, failure_reason }` with `last_pass_at` preserved across subsequent failures for operator visibility.
+- **`host_probes_passing(checkin) -> bool`** helper in `agent_wire.rs`. Returns true unless mode is `Enforce` AND any probe is non-`Pass`. The soak gate's load-bearing predicate.
+- **`Observed.host_probes_passing: HashMap<String, bool>`** populated by `observed_projection::project` from each host's latest checkin. Hosts absent from the map default to `true` in the gate (fail-open contract).
+- **Soak gate (load-bearing)**: `host_state.rs::handle_wave` Healthy → Soaked transition now requires BOTH `soak_elapsed` AND `host_probes_passing`. Pre-#86 only `soak_elapsed` was required.
+- **`HostStatusEntry.outstanding_health_failures: usize`** populated by `state_view` from the latest checkin's non-`Pass` probes. Folded into the existing "X outstanding" CLI column alongside compliance + runtime-gate counts so the operator gets one number per host.
+
+#### Behavior
+
+```nix
+services.nixfleet-agent.healthChecks = {
+  mode = "enforce";  # default
+  http = [
+    { name = "api"; url = "http://localhost/healthz"; expectStatus = 200; intervalSeconds = 10; }
+  ];
+  tcp = [{ name = "ssh"; port = 22; }];
+  exec = [{ name = "etcd"; command = ["${pkgs.etcd}/bin/etcdctl" "endpoint" "health"]; }];
+};
+```
+
+Once activated, the agent runs each probe on its declared interval. Latest results ride the next checkin. The reconciler's soak gate reads `Observed.host_probes_passing[host]`; if any probe is `Fail` or `Unknown` (probe hasn't run yet) under enforce mode, the host's Healthy → Soaked promotion holds until probes pass. Permissive mode reports state but does NOT gate. Disabled mode short-circuits the scheduler.
+
+#### Reuse + DRY posture
+
+What's shared with the existing `complianceGate` (per the assessment in the implementation):
+- `GateMode` enum (verbatim) — same operator UX
+- NixOS module pattern (`enable / mode / list-of-probes`)
+- `HostStatusEntry` outstanding-counter convention (added to the same column)
+- `state_view` derivation pattern (per-host count from a known-shape input)
+
+What's deliberately separate:
+- Probe execution code — compliance fronts an external `compliance-evidence-collector.service`; #86 runs in-process. Forcing a shared abstraction would mean every operator who wants a `curl localhost/health` check has to deploy `nixfleet-compliance`.
+- Wire shape — compliance posts `ReportEvent::ComplianceFailure` (one event per failed control); #86 carries the latest snapshot in `CheckinRequest.health_probes` (continuous heartbeat, not event-stream).
+- State-machine effect — compliance gates confirm (at activation time); #86 gates soak (at promotion time). Different code sites, different lifecycles.
+
+#### Tests
+
+- 9 `health.rs` unit tests: probe runner timeouts/empty-command/zero-vs-nonzero exits, `truncate_reason` bounds, `clamped_interval` floor, `upsert` preserves `last_pass_at` across failures.
+- 4 reconciler `host_state.rs` tests: probes-pass + soak-elapsed promotes; probes-fail holds; soak-window-not-elapsed holds even with probes-pass; absent host in `host_probes_passing` defaults to passing.
+- CLI test: `outstanding_health_failures` rolls into the combined "X outstanding" count.
+- Existing `discriminator_matches_serde_event_tag` test catches any wire-tag drift on the new `ProbeKind` / `ProbeStatus` variants via serde round-trip.
+
+#### Out of scope
+
+- Magic-rollback on probe failure (load-bearing for the rollback path, not just promotion). Follow-up; would extend the existing pending_confirms timer to react to live probe state.
+- Per-tag declarative probes (operators declare per-host today; tag-level shorthand can layer on top later).
+- Signed probe results — unsigned matches the precedent of `ActivationDeferred` / `RolloutQuarantined` (both #56/#55 unsigned, both operator-surface).
+
 ### Per-host/tag/channel commit pins for fleet.resolved.json (2026-05-07)
 
 Closes #88. Operators had no way to freeze a host (or a tag's worth of hosts, or an entire channel) on a specific commit while the rest of the fleet kept iterating — every push promoted every reachable host to the new closure. Now mkFleet accepts a `pin = { commit; reason; expiresAt? }` declaration at any of three levels with most-specific-wins resolution, and `nixfleet-release` honors the pin by building each affected host's closure from the pinned commit instead of the current release commit.

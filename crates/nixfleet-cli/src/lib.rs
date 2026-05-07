@@ -177,7 +177,13 @@ fn format_age(d: chrono::Duration) -> String {
 }
 
 fn compliance_label(host: &HostStatusEntry) -> String {
-    let total = host.outstanding_compliance_failures + host.outstanding_runtime_gate_errors;
+    // Issue #86: include health-probe failures in the same column.
+    // Compliance + runtime-gate + health all surface as "outstanding"
+    // so the operator gets one number to react to. Drill-down lives
+    // in the dashboard / `/v1/hosts` JSON.
+    let total = host.outstanding_compliance_failures
+        + host.outstanding_runtime_gate_errors
+        + host.outstanding_health_failures;
     format!("{total} outstanding")
 }
 
@@ -273,6 +279,7 @@ mod tests {
             pending_reboot: false,
             quarantined_closure: None,
             pin: None,
+            outstanding_health_failures: 0,
         }
     }
 
@@ -351,6 +358,25 @@ mod tests {
             !out.contains("pending reboot"),
             "quarantined must out-rank pending-reboot: {out}",
         );
+    }
+
+    #[test]
+    fn health_failures_roll_into_outstanding_count() {
+        // Issue #86: outstanding_health_failures sums into the COMPLIANCE
+        // column alongside compliance + runtime-gate counts. Operator
+        // gets one number per host; drill-down lives in the dashboard.
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", true, Some(0), 1); // 1 compliance
+        h.outstanding_runtime_gate_errors = 1;
+        h.outstanding_health_failures = 2;
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        // 1 compliance + 1 runtime-gate + 2 health = 4
+        assert!(out.contains("4 outstanding"), "expected combined count: {out}");
     }
 
     #[test]

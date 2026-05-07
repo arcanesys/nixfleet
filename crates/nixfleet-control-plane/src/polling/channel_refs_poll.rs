@@ -314,6 +314,7 @@ async fn record_rollouts_gated_by_channel_edges(
         active_rollouts,
         outstanding_compliance_events_by_rollout: HashMap::new(),
         last_deferrals: HashMap::new(),
+            host_probes_passing: HashMap::new(),
     };
 
     let channel_names: Vec<String> = channel_rollouts.iter().map(|(c, _)| c.clone()).collect();

@@ -38,3 +38,14 @@
   "--ssh-host-key-file"
   (lib.escapeShellArg cfg.sshHostKeyFile)
 ]
+# Issue #86: only pass --health-checks-config when probes are declared.
+# Empty/absent → agent runs without a probe scheduler (no checkin field
+# overhead, no /etc file written).
+++ lib.optionals (
+  cfg.healthChecks.http != []
+  || cfg.healthChecks.tcp != []
+  || cfg.healthChecks.exec != []
+) [
+  "--health-checks-config"
+  (lib.escapeShellArg "/etc/nixfleet/agent/health-checks.json")
+]

@@ -106,6 +106,7 @@ mod tests {
             state_dir: PathBuf::from("/tmp/nixfleet-test"),
             compliance_gate_mode: None,
             ssh_host_key_file: PathBuf::from("/dev/null"),
+            health_checks_config: None,
         }
     }
 

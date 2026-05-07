@@ -38,6 +38,22 @@ pub fn project(
         })
         .collect();
 
+    // Issue #86: derive each host's probe-pass state from its latest
+    // checkin. The helper handles mode + Unknown semantics — see
+    // `nixfleet_proto::agent_wire::host_probes_passing`. Hosts without
+    // a checkin record are absent from the map; the soak gate's
+    // unwrap_or(true) treats absence as "no constraint" (fail open
+    // until a checkin lands).
+    let host_probes_passing: HashMap<String, bool> = host_checkins
+        .iter()
+        .map(|(host, record)| {
+            (
+                host.clone(),
+                nixfleet_proto::agent_wire::host_probes_passing(&record.checkin),
+            )
+        })
+        .collect();
+
     let active_rollouts: Vec<Rollout> = rollouts
         .iter()
         .map(|snap| {
@@ -64,6 +80,7 @@ pub fn project(
         active_rollouts,
         outstanding_compliance_events_by_rollout,
         last_deferrals,
+        host_probes_passing,
     }
 }
 
@@ -90,6 +107,8 @@ mod tests {
                 uptime_secs: Some(1),
                 last_confirmed_at: None,
                 attestation_signature: None,
+                health_probes: vec![],
+                health_check_mode: None,
             },
         }
     }

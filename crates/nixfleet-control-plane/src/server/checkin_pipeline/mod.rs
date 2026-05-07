@@ -243,6 +243,8 @@ pub(super) mod tests {
             uptime_secs: None,
             last_confirmed_at: attested,
             attestation_signature: None,
+        health_probes: vec![],
+        health_check_mode: None,
         }
     }
 

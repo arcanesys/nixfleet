@@ -211,6 +211,7 @@ mod tests {
             active_rollouts: vec![],
             outstanding_compliance_events_by_rollout: HashMap::new(),
             last_deferrals: HashMap::new(),
+            host_probes_passing: HashMap::new(),
         }
     }
 
