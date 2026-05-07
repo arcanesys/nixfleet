@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [Semantic V
 
 ## [Unreleased]
 
+### Fix: `wait_ssh` ignores `--identity-key`, hangs on password prompt (2026-05-07)
+
+Closes #89. `nix run .#build-vm -- -h <host> --identity-key <path>` hung at the SSH-readiness phase asking for a password: `wait_ssh` invoked `ssh` without `-i`, so the readiness probe tried `~/.ssh/id_*` then fell back to interactive password auth — fatal for non-interactive runs and impossible to satisfy with the ISO key (which is only known to the operator who built the ISO via `nixfleet.isoSshKeys`).
+
+#### Changed
+
+- **`lib/vm-helpers.sh::wait_ssh`** now honors `${IDENTITY_KEY:-}` (set by `build-vm` and `test-vm` from `--identity-key`). When non-empty, adds `-i $IDENTITY_KEY -o IdentitiesOnly=yes` to the readiness probe so it uses the SAME key that's baked into the ISO.
+- **`-o BatchMode=yes`** added unconditionally — defense-in-depth, makes the password-prompt symptom impossible regardless of key state. Fleets are keys-only by design (`nixfleet.isoSshKeys`); password auth was never a legitimate recovery path here.
+
+#### Notes
+
+- No changes to `build-vm` / `test-vm` script-level argument parsing — `IDENTITY_KEY` is already a script-scope variable that `wait_ssh` reads via dynamic scoping. One-line fix at the call site would also have worked but threading the convention through the helper keeps both scripts symmetric.
+
 ### Per-host VM port-forwards in `mkVmApps` (2026-05-07)
 
 Closes #87. `start-vm` only forwarded SSH-on-22 (`hostfwd=tcp::SSH_PORT-:22`); reaching guest services from the host required either SSH-into-the-VM-and-curl-localhost or hand-rolled `--vlan` networking. Demo-style walkthroughs ("`curl http://localhost:2280/version`") couldn't be expressed declaratively.

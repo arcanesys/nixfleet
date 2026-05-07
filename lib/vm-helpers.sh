@@ -30,7 +30,18 @@ assign_port() {
 wait_ssh() {
   local port="$1" timeout="$2"
   local elapsed=0
-  while ! ssh $SSH_OPTS -p "$port" root@localhost true 2>/dev/null; do
+  # Issue #89: honor IDENTITY_KEY when set so the readiness poll uses the
+  # SAME key the operator passed via --identity-key (the one baked into
+  # the ISO via nixfleet.isoSshKeys). Without -i + IdentitiesOnly=yes,
+  # ssh tries the agent + ~/.ssh/id_*, then falls back to password auth
+  # and hangs at the prompt — fatal for non-interactive runs. Empty
+  # IDENTITY_KEY keeps the old behavior (default key discovery) for
+  # operators who haven't opted into explicit identity passing.
+  local identity_args=""
+  if [ -n "${IDENTITY_KEY:-}" ]; then
+    identity_args="-i ${IDENTITY_KEY} -o IdentitiesOnly=yes"
+  fi
+  while ! ssh $SSH_OPTS $identity_args -o BatchMode=yes -p "$port" root@localhost true 2>/dev/null; do
     sleep 1
     elapsed=$((elapsed + 1))
     if [ "$elapsed" -ge "$timeout" ]; then
