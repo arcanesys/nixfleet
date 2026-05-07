@@ -4,6 +4,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [Semantic V
 
 ## [Unreleased]
 
+### Per-host VM port-forwards in `mkVmApps` (2026-05-07)
+
+Closes #87. `start-vm` only forwarded SSH-on-22 (`hostfwd=tcp::SSH_PORT-:22`); reaching guest services from the host required either SSH-into-the-VM-and-curl-localhost or hand-rolled `--vlan` networking. Demo-style walkthroughs ("`curl http://localhost:2280/version`") couldn't be expressed declaratively.
+
+#### Added
+
+- **`hostSpec.vmPortForwards: attrsOf port`** in `contracts/host-spec.nix` — per-host map of guest-port (string key) → host-port (int value). Defaults to `{}`. Only consumed by `nixfleet start-vm` (the install + smoke-test scripts deliberately stay SSH-only since they're short-lived).
+- **`compute_extra_hostfwd_args` helper** in `lib/vm-helpers.sh` — fetches the map via `nix eval ... --apply 'builtins.toJSON'`, parses it with a tiny sed pipe (no jq dependency), and emits `,hostfwd=tcp::HOST-:GUEST,...` segments that concatenate onto the existing -nic argument's hostfwd= chain. Silent fail-open on eval errors — the SSH forward always lands.
+- **`lib/vm-scripts/start.nix`** invokes the helper before launching qemu and interpolates `$EXTRA_HOSTFWD_ARGS` after the SSH hostfwd.
+
+#### Notes
+
+- Out of scope: build-vm and test-vm (install + smoke-test paths) — both are short-lived and only need SSH-on-22; no operator UX win from forwarding more.
+- Fleet-side / demo-side adoption is the consumer's responsibility (a separate work item per the `nixfleet-demo` walkthrough).
+
 ### Closure-hash quarantine on activation failure (2026-05-07)
 
 Closes #55. The agent retried known-failing `closure_hash` values on every poll cycle without backoff or quarantine. Each retry burned a switch-to-configuration + rollback cycle, emitted churn (logs, IO), and gave the operator no signal distinguishing "transient hiccup" from "permanently broken release". Layered on top of #56's switch-inhibitor work, sharing the per-closure sentinel pattern.

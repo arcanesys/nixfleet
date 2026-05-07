@@ -72,6 +72,27 @@
       description = "An attribute set of networking information (e.g. `interface` hint for DHCP).";
     };
 
+    vmPortForwards = lib.mkOption {
+      default = {};
+      type = lib.types.attrsOf lib.types.port;
+      example = lib.literalExpression ''
+        {
+          "80" = 2280;   # host:2280 -> guest:80
+          "443" = 2443;  # host:2443 -> guest:443
+        }
+      '';
+      description = ''
+        Per-host host:guest port forwards for `mkVmApps`-driven QEMU runs
+        (issue #87). Keys are guest ports (as strings — Nix attribute
+        names must be strings); values are host ports. SSH-on-22 always
+        forwards via the auto-assigned `SSH_PORT` (or `--ssh-port`
+        override) — these are additional ports for guest services the
+        operator wants to reach from the host (web servers, control-plane
+        TLS, Forgejo, etc.). Empty by default — only consumed when the
+        host is run as a VM via `nixfleet build-vm` / `start-vm`.
+      '';
+    };
+
     secretsPath = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;

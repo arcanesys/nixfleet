@@ -106,6 +106,31 @@ compute_vlan_args() {
   fi
 }
 
+# Issue #87: extra qemu hostfwd segments from `hostSpec.vmPortForwards`.
+# Emits a leading-comma string that gets concatenated onto the -nic
+# argument's hostfwd= chain. Empty when the host declares no extras or
+# the eval fails — silent fail-open matches `assign_port`'s posture
+# (the SSH forward always lands).
+compute_extra_hostfwd_args() {
+  local host="$1"
+  EXTRA_HOSTFWD_ARGS=""
+  local raw
+  raw=$(nix eval ".#nixosConfigurations.${host}.config.hostSpec.vmPortForwards" --apply 'builtins.toJSON' --raw 2>/dev/null) || return 0
+  [ -z "$raw" ] || [ "$raw" = "{}" ] && return 0
+  # Tiny sed extraction over the nix-emitted JSON (a flat string→int
+  # map). Avoids growing `basePkgs` for one helper; the input shape is
+  # constrained by the option's `attrsOf port` type so the parse is
+  # robust enough.
+  local pairs
+  pairs=$(printf '%s' "$raw" | sed -E 's/[{}"]//g; s/,/\n/g; s/: */:/g')
+  while IFS=':' read -r guest host_port; do
+    guest="$(printf '%s' "$guest" | tr -d '[:space:]')"
+    host_port="$(printf '%s' "$host_port" | tr -d '[:space:]')"
+    [ -z "$guest" ] || [ -z "$host_port" ] && continue
+    EXTRA_HOSTFWD_ARGS="${EXTRA_HOSTFWD_ARGS},hostfwd=tcp::${host_port}-:${guest}"
+  done <<<"$pairs"
+}
+
 compute_display_args() {
   DISPLAY_ARGS=""
   DAEMONIZE_ARGS="-daemonize"

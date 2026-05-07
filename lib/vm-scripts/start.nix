@@ -45,6 +45,7 @@ in
       local host="$1"
       assign_port "$host"
       compute_vlan_args
+      compute_extra_hostfwd_args "$host"
       compute_display_args
       local disk="''$VM_DIR/$host.qcow2"
       local pidfile="''$VM_DIR/$host.pid"
@@ -65,7 +66,7 @@ in
         -m "''$RAM" \
         -smp "''$CPUS" \
         -drive file="$disk",format=qcow2,if=virtio \
-        -nic user,model=virtio-net-pci,hostfwd=tcp::''$SSH_PORT-:22 \
+        -nic user,model=virtio-net-pci,hostfwd=tcp::''$SSH_PORT-:22''$EXTRA_HOSTFWD_ARGS \
         ''$VLAN_ARGS \
         ''$DISPLAY_ARGS \
         -bios ${qemuFirmware} \
