@@ -50,10 +50,12 @@
         type = types.str;
         description = ''
           Source-control rev the host's closure should be built from.
-          Opaque to mkFleet: `nixfleet-release` interprets this as
-          `--rev` for the configured pin source URL. Typical: 40-char
-          SHA. Short SHAs and tag names work as long as the configured
-          source resolves them.
+          MUST be a full 40-char SHA — `nixfleet-release` passes this
+          verbatim to `nix build "<source>?rev=<commit>#..."`, and Nix's
+          flake-ref parser rejects short SHAs / tag names with
+          `hash has wrong length for hash algorithm 'sha1'`. Resolve
+          short refs operator-side (`git rev-parse <ref>`) before
+          declaring the pin.
         '';
       };
       reason = mkOption {
