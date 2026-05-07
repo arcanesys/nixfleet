@@ -40,6 +40,19 @@ in {
         wants = ["network-online.target"];
         startLimitIntervalSec = 0;
 
+        # LOADBEARING: agent reads /etc/nixfleet/agent/{trust,health-checks}.json
+        # ONCE at startup. Without restartTriggers a content-only change to
+        # those files (most common: operator edits healthChecks in fleet.nix
+        # → CI rolls a new closure with a new JSON derivation; ExecStart
+        # line is unchanged because the path is constant) leaves the agent
+        # running with stale config until something else triggers a
+        # restart. Pinning the JSON derivations to restartTriggers makes
+        # `switch-to-configuration` see a content delta and restart the
+        # unit at activation, so declarative edits land deterministically.
+        restartTriggers =
+          [trustJson]
+          ++ lib.optional hasHealthChecks healthChecksJson;
+
         # LOADBEARING: bypasses `nixos-rebuild`; closure pre-built, we shell out to nix-store/switch-to-configuration to dodge rebuild-ng CLI churn.
         path = [config.nix.package pkgs.systemd];
 
