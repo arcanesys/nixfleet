@@ -433,6 +433,23 @@ If something that should be a contract is drifting, propose it as an addition to
 
 ---
 
+## Operator config file
+
+`~/.config/nixfleet/config.toml` is operator-side state with the following schema:
+
+```toml
+cp_url      = "https://cp.example.com:8080"
+ca_cert     = "/etc/nixfleet/ca.pem"
+client_cert = "/home/operator/.config/nixfleet/operator.pem"
+client_key  = "/home/operator/.config/nixfleet/operator.key"
+```
+
+All fields are optional in the file — missing fields fall through to `NIXFLEET_*` env, then to explicit flags. The CLI fails closed: any unfilled field triggers `ConfigError::Missing` with a hint to run `nixfleet config init`.
+
+The file path can be overridden per-invocation with `--config <path>` or `NIXFLEET_CONFIG`.
+
+---
+
 ## VIII. Amendment procedure
 
 1. Open a PR that modifies this document.

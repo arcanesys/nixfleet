@@ -1,6 +1,6 @@
 [package]
 name = "nixfleet-cli"
-description = "NixFleet v0.2 operator CLI: nixfleet (status), nixfleet-mint-token, nixfleet-derive-pubkey"
+description = "NixFleet v0.2 operator CLI: nixfleet (status, rollout trace, config init), nixfleet-mint-token, nixfleet-derive-pubkey"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,8 +8,8 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 
-# Top-level operator command: status (initial), rollout trace + diff
-# planned. Reads CP URL + mTLS paths from CLI args / env.
+# Operator CLI. Reads ~/.config/nixfleet/config.toml; flags + NIXFLEET_*
+# env override.
 [[bin]]
 name = "nixfleet"
 path = "src/bin/nixfleet.rs"
@@ -41,6 +41,18 @@ rand = "0.8"
 hex = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "5"
+is-terminal = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+# E2E integration test (`tests/cli_status_e2e.rs`): boot a real CP, drive
+# 2 mTLS checkins, then exercise `run_status` as an operator CN. Versions
+# match the CP crate's own deps so the workspace stays single-version
+# (no `[workspace.dependencies]` table — pin per-crate).
+nixfleet-control-plane = { path = "../nixfleet-control-plane" }
+rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-parser", "aws_lc_rs", "crypto"] }
+rustls = "0.23"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

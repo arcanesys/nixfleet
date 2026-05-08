@@ -4,9 +4,144 @@
 //! formatting without spinning up a real CP.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use nixfleet_proto::{HostStatusEntry, RolloutTrace};
+use nixfleet_proto::{HostStatusEntry, HostsResponse, RolloutTrace};
+use reqwest::{Certificate, Identity};
+
+pub mod color;
+pub mod config;
+pub use config::{ConfigError, FileConfig, Overrides};
+
+/// Write `~/.config/nixfleet/config.toml` (or `--path`). Returns the absolute
+/// path written, so the bin can report it to the operator.
+pub fn run_config_init(
+    path: &Path,
+    cp_url: String,
+    ca_cert: PathBuf,
+    client_cert: PathBuf,
+    client_key: PathBuf,
+    overwrite: bool,
+) -> Result<PathBuf> {
+    if path.exists() && !overwrite {
+        anyhow::bail!(
+            "{} already exists; pass --force to overwrite",
+            path.display(),
+        );
+    }
+    let cfg = config::FileConfig {
+        cp_url: Some(cp_url),
+        ca_cert: Some(ca_cert),
+        client_cert: Some(client_cert),
+        client_key: Some(client_key),
+    };
+    cfg.save(path)
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(path.to_path_buf())
+}
+
+/// Resolved operator-side config: every field is required by the time we
+/// reach a network call. Layered loader (flag > env > file) populates this.
+#[derive(Debug, Clone)]
+pub struct ResolvedClientConfig {
+    pub cp_url: String,
+    pub ca_cert: PathBuf,
+    pub client_cert: PathBuf,
+    pub client_key: PathBuf,
+}
+
+pub fn build_client(cfg: &ResolvedClientConfig) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder().use_rustls_tls();
+    let pem = std::fs::read(&cfg.ca_cert)
+        .with_context(|| format!("read CA cert {}", cfg.ca_cert.display()))?;
+    let cert = Certificate::from_pem(&pem).context("parse CA cert PEM")?;
+    builder = builder.add_root_certificate(cert);
+
+    let mut id_pem = std::fs::read(&cfg.client_cert)
+        .with_context(|| format!("read client cert {}", cfg.client_cert.display()))?;
+    let key_pem = std::fs::read(&cfg.client_key)
+        .with_context(|| format!("read client key {}", cfg.client_key.display()))?;
+    id_pem.extend_from_slice(&key_pem);
+    let identity = Identity::from_pem(&id_pem).context("parse client identity PEM")?;
+    builder = builder.identity(identity);
+
+    builder.build().context("build HTTP client")
+}
+
+pub async fn run_status(cfg: &ResolvedClientConfig, json: bool, color: bool) -> Result<String> {
+    let cp_url = cfg.cp_url.trim_end_matches('/');
+    let client = build_client(cfg)?;
+
+    let hosts: HostsResponse = client
+        .get(format!("{cp_url}/v1/hosts"))
+        .send()
+        .await
+        .with_context(|| format!("GET {cp_url}/v1/hosts"))?
+        .error_for_status()?
+        .json()
+        .await
+        .context("parse /v1/hosts response")?;
+
+    if json {
+        return serde_json::to_string_pretty(&hosts).context("serialize HostsResponse to JSON");
+    }
+
+    let mut channels_seen: Vec<String> = hosts.hosts.iter().map(|h| h.channel.clone()).collect();
+    channels_seen.sort();
+    channels_seen.dedup();
+    let mut channel_freshness: BTreeMap<String, u32> = BTreeMap::new();
+    for channel in &channels_seen {
+        let resp: serde_json::Value = client
+            .get(format!("{cp_url}/v1/channels/{channel}"))
+            .send()
+            .await
+            .with_context(|| format!("GET {cp_url}/v1/channels/{channel}"))?
+            .error_for_status()?
+            .json()
+            .await
+            .context("parse /v1/channels response")?;
+        if let Some(window) = resp
+            .get("freshness_window_minutes")
+            .and_then(serde_json::Value::as_u64)
+        {
+            channel_freshness.insert(channel.clone(), window as u32);
+        }
+    }
+
+    let inputs = StatusInputs {
+        now: Utc::now(),
+        hosts: hosts.hosts,
+        channel_freshness,
+    };
+    Ok(render_status_table_with_color(&inputs, color))
+}
+
+pub async fn run_trace(cfg: &ResolvedClientConfig, rollout_id: &str, json: bool) -> Result<String> {
+    let cp_url = cfg.cp_url.trim_end_matches('/');
+    let client = build_client(cfg)?;
+    let url = format!("{cp_url}/v1/rollouts/{}/trace", rollout_id);
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("GET {url}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        anyhow::bail!(
+            "rollout {rollout_id} has no dispatch history (never dispatched, or pruned past 90d retention)",
+        );
+    }
+    let trace: RolloutTrace = resp
+        .error_for_status()?
+        .json()
+        .await
+        .context("parse /v1/rollouts/{id}/trace response")?;
+    if json {
+        return serde_json::to_string_pretty(&trace).context("serialize RolloutTrace to JSON");
+    }
+    Ok(render_trace_table(&trace))
+}
 
 pub struct StatusInputs {
     pub now: DateTime<Utc>,
@@ -56,6 +191,91 @@ pub fn render_status_table(input: &StatusInputs) -> String {
             out.push_str(col);
             if i + 1 < row.len() {
                 let pad = widths[i].saturating_sub(col.chars().count());
+                for _ in 0..pad {
+                    out.push(' ');
+                }
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+pub fn render_status_table_with_color(input: &StatusInputs, color: bool) -> String {
+    use crate::color::Stylizer;
+    let st = Stylizer { enabled: color };
+    let mut rows: Vec<[(String, String); 6]> = Vec::with_capacity(input.hosts.len() + 1);
+    rows.push([
+        ("HOST".into(), "HOST".into()),
+        ("CHANNEL".into(), "CHANNEL".into()),
+        ("CURRENT".into(), "CURRENT".into()),
+        ("DECLARED".into(), "DECLARED".into()),
+        ("STATUS".into(), "STATUS".into()),
+        ("COMPLIANCE".into(), "COMPLIANCE".into()),
+    ]);
+    for host in &input.hosts {
+        let raw_status = status_label(
+            host,
+            input.now,
+            input.channel_freshness.get(&host.channel).copied(),
+        );
+        let painted = paint_status(&st, &raw_status);
+        let current = display_hash(host.current_closure_hash.as_deref(), "<unseen>");
+        let declared = display_hash(host.declared_closure_hash.as_deref(), "<unset>");
+        let compliance = compliance_label(host);
+        rows.push([
+            (host.hostname.clone(), host.hostname.clone()),
+            (host.channel.clone(), host.channel.clone()),
+            (current.clone(), current),
+            (declared.clone(), declared),
+            (painted, raw_status),
+            (compliance.clone(), compliance),
+        ]);
+    }
+    layout_styled(&rows)
+}
+
+/// Map a STATUS-column label to a colored variant. The label is always
+/// emitted by `status_label`, so it carries exactly one of:
+/// `\u{2713}` (converged), `\u{26A0}` (stale), `\u{27F3}` (pending-reboot),
+/// `\u{2192}` (in-flight), `\u{2026}` (queued), `\u{2717}` (failed/never/
+/// quarantined). The `contains`-based dispatch is therefore unambiguous.
+///
+/// `\u{2026}` is also used by `display_hash` for hash-column truncation —
+/// only call this function on STATUS labels, never on hash columns.
+fn paint_status(st: &crate::color::Stylizer, label: &str) -> String {
+    use crate::color::Style;
+    if label.contains('\u{2713}') {
+        st.paint(Style::Green, label)
+    } else if label.contains('\u{26A0}')
+        || label.contains('\u{27F3}')
+        || label.contains('\u{2192}')
+        || label.contains('\u{2026}')
+    {
+        st.paint(Style::Yellow, label)
+    } else if label.contains('\u{2717}') {
+        st.paint(Style::Red, label)
+    } else {
+        label.to_string()
+    }
+}
+
+fn layout_styled(rows: &[[(String, String); 6]]) -> String {
+    let mut widths = [0usize; 6];
+    for row in rows {
+        for (i, (_render, width_src)) in row.iter().enumerate() {
+            widths[i] = widths[i].max(width_src.chars().count());
+        }
+    }
+    let mut out = String::new();
+    for row in rows {
+        for (i, (render, width_src)) in row.iter().enumerate() {
+            if i > 0 {
+                out.push_str("  ");
+            }
+            out.push_str(render);
+            if i + 1 < row.len() {
+                let pad = widths[i].saturating_sub(width_src.chars().count());
                 for _ in 0..pad {
                     out.push(' ');
                 }
@@ -557,6 +777,106 @@ mod tests {
         assert!(
             out.contains("\u{26A0} stale"),
             "stale should win over in-flight Activating: {out}"
+        );
+    }
+
+    #[test]
+    fn run_status_json_branch_compiles() {
+        // Compile-time guard: the `run_status` signature stays
+        // (cfg, json, color) — bail-out if a refactor renames params.
+        fn _typecheck(cfg: &crate::ResolvedClientConfig) {
+            let _fut = crate::run_status(cfg, true, false);
+        }
+    }
+
+    #[test]
+    fn color_render_preserves_column_widths() {
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![
+                fixture_host("a", "stable", true, Some(0), 0),
+                fixture_host("verylonghostname", "stable", false, None, 0),
+            ],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let plain = render_status_table(&inputs);
+        let painted = render_status_table_with_color(&inputs, true);
+        // Same line count.
+        assert_eq!(plain.lines().count(), painted.lines().count());
+        // Painted contains ANSI escape; plain does not.
+        assert!(painted.contains("\x1b["), "expected ANSI in painted output");
+        assert!(!plain.contains("\x1b["), "plain must not have ANSI escapes");
+        // Strip ANSI from painted and confirm bytes match plain (modulo trailing
+        // whitespace, since column padding can collapse differently — accept
+        // line-by-line equality after rstrip).
+        let strip_ansi = |s: &str| -> String {
+            let mut out = String::new();
+            let mut chars = s.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '\x1b' && chars.peek() == Some(&'[') {
+                    chars.next();
+                    while let Some(&c2) = chars.peek() {
+                        chars.next();
+                        if c2 == 'm' {
+                            break;
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
+        let painted_plain: Vec<&str> = painted.lines().collect();
+        let stripped: Vec<String> = painted_plain.iter().map(|l| strip_ansi(l)).collect();
+        let plain_lines: Vec<&str> = plain.lines().collect();
+        for (a, b) in stripped.iter().zip(plain_lines.iter()) {
+            assert_eq!(a.trim_end(), b.trim_end(), "row mismatch:\nstripped: {a}\nplain:    {b}");
+        }
+    }
+
+    #[test]
+    fn paint_status_glyph_color_mapping_locks_in() {
+        use nixfleet_proto::HostRolloutState;
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+
+        // Converged → green.
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![fixture_host("a", "stable", true, Some(0), 0)],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let painted = render_status_table_with_color(&inputs, true);
+        assert!(
+            painted.contains("\x1b[32m") && painted.contains("\u{2713} converged"),
+            "converged should be green: {painted}",
+        );
+
+        // Failed → red.
+        let mut h = fixture_host("a", "stable", false, Some(1), 0);
+        h.rollout_state = Some(HostRolloutState::Failed);
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let painted = render_status_table_with_color(&inputs, true);
+        assert!(
+            painted.contains("\x1b[31m") && painted.contains("\u{2717} failed"),
+            "failed should be red: {painted}",
+        );
+
+        // Stale → yellow.
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![fixture_host("a", "stable", false, Some(60 * 24 * 3), 0)],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let painted = render_status_table_with_color(&inputs, true);
+        assert!(
+            painted.contains("\x1b[33m") && painted.contains("\u{26A0} stale"),
+            "stale should be yellow: {painted}",
         );
     }
 }

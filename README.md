@@ -142,6 +142,42 @@ nix run .#validate -- --vm      # + every fleet-harness-* scenario
 nix run .#validate -- --all     # Everything
 ```
 
+## Operator CLI
+
+Build the CLI:
+
+```bash
+cargo build --release -p nixfleet-cli
+install -m 0755 target/release/nixfleet ~/.local/bin/
+```
+
+Initialise operator config:
+
+```bash
+nixfleet config init \
+  --cp-url https://cp.example.com:8080 \
+  --ca-cert /etc/nixfleet/ca.pem \
+  --client-cert ~/.config/nixfleet/operator.pem \
+  --client-key  ~/.config/nixfleet/operator.key
+```
+
+This writes `~/.config/nixfleet/config.toml` (mode 0600).
+
+Inspect fleet state:
+
+```bash
+# rendered table
+nixfleet status
+
+# raw HostsResponse JSON
+nixfleet status --json
+
+# wave-by-wave history
+nixfleet rollout trace <rollout-id>
+```
+
+Override config-file values per-invocation with `--cp-url`, `--ca-cert`, `--client-cert`, `--client-key`, or the matching `NIXFLEET_*` env vars.
+
 ## Ecosystem
 
 | Repository | What it provides | License |
