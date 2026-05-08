@@ -67,11 +67,23 @@
       };
     });
 
+  # CLI's e2e test depends on nixfleet-control-plane via [dev-dependencies]
+  # path = "../nixfleet-control-plane". Cargo refuses to load the CLI manifest
+  # without CP's manifest also being readable, even when only -p nixfleet-cli
+  # is built. Pull CP's sources + migrations into the CLI's per-crate source
+  # filter so the manifest resolves; doCheck = false means the e2e test
+  # itself never runs under nix.
   nixfleet-cli = craneLib.buildPackage (commonArgs
     // {
       pname = "nixfleet-cli";
       cargoExtraArgs = "-p nixfleet-cli";
-      src = fileSetForCrate {crate = ./crates/nixfleet-cli;};
+      src = fileSetForCrate {
+        crate = ./crates/nixfleet-cli;
+        extraFiles = [
+          (craneLib.fileset.commonCargoSources ./crates/nixfleet-control-plane)
+          ./crates/nixfleet-control-plane/migrations
+        ];
+      };
       meta = {
         description = "NixFleet operator CLI (nixfleet status) + helpers (mint-token, derive-pubkey)";
         license = lib.licenses.mit;
