@@ -82,13 +82,20 @@ async fn read_unit_exit_code(unit_name: &str) -> Option<i32> {
 /// closure)`. Detection is path-canonicalize equality on the symlink target —
 /// if the canonicalised targets differ between current and new, the live swap
 /// is unsafe and we defer to next boot.
+///
+/// Intentionally NOT included: `init` (i.e. `<closure>/init`). That file is a
+/// regenerated-per-system stub script that bakes in the closure's own store
+/// path before exec'ing systemd, so two distinct system closures ALWAYS yield
+/// distinct `init` paths regardless of whether anything runtime-relevant
+/// changed. Listing it here turns every system update into a defer, even for
+/// a CP-binary-only diff. The actual live-swap-unsafe components are systemd
+/// (PID 1) + kernel + dbus; if those match, the init script delta is inert.
 const SWITCH_INHIBITORS: &[(&str, &str)] = &[
     // dbus.service is the unit symlink — broker→dbus and dbus→broker swaps
     // both surface as a different canonicalised target inside the new closure.
     ("dbus", "etc/systemd/system/dbus.service"),
     ("systemd", "sw/lib/systemd/systemd"),
     ("kernel", "kernel"),
-    ("init", "init"),
 ];
 
 /// Returns `Some(component)` when a critical-component swap is detected
@@ -322,8 +329,31 @@ mod tests {
     }
 
     #[test]
+    fn detect_ignores_init_only_delta() {
+        // Regression pin: `<closure>/init` is regenerated per-system (bakes
+        // in the closure's own store path), so a closure path bump alone
+        // changes init even when nothing runtime-meaningful did. The defer
+        // path must NOT fire on init-only deltas — otherwise every nixfleet-
+        // driven update on every host gets deferred unnecessarily.
+        let dir = tempfile::tempdir().unwrap();
+        let cur = dir.path().join("current");
+        let new = dir.path().join("new");
+        let rels: Vec<&str> = SWITCH_INHIBITORS.iter().map(|(_, p)| *p).collect();
+        make_fake_system(&cur, &rels, "cur");
+        share_targets(&cur, &new, &rels);
+        // Plant a differing `init` in `new` only — kernel/systemd/dbus stay
+        // equal. With init removed from SWITCH_INHIBITORS this MUST be None.
+        let init_target_dir = dir.path().join("targets-new-init");
+        std::fs::create_dir_all(&init_target_dir).unwrap();
+        let init_file = init_target_dir.join("init");
+        std::fs::write(&init_file, b"").unwrap();
+        std::os::unix::fs::symlink(&init_file, new.join("init")).unwrap();
+        assert_eq!(detect_switch_inhibitors(&cur, &new), None);
+    }
+
+    #[test]
     fn detect_returns_kernel_when_kernel_differs_first() {
-        // Kernel is at index 2 in SWITCH_INHIBITORS (after dbus, systemd).
+        // Kernel is the last entry in SWITCH_INHIBITORS (after dbus, systemd).
         // This test seeds matching dbus/systemd and a differing kernel, and
         // asserts kernel is the variant that fires — catches re-ordering or
         // accidental short-circuit regressions if the constant is reshuffled.
