@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,17 +34,24 @@ pub struct ChannelRefsCache {
 
 /// Cadence + optional `kick` (reconciler wakes us on `ConvergeRollout` / `SoakHost`).
 /// Failure retains previous state; cadence is the safety net for missed kicks.
+///
+/// `artifact_primed` is flipped to `true` after the first successful
+/// `apply_verified_refs` so the `/v1/*` ready gate (#95) opens. Subsequent
+/// successes are no-ops on the flag (it's already true). Failures while
+/// the flag is still `false` are logged at WARN once and DEBUG thereafter
+/// to avoid spamming the dashboard during cold-boot retries.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn(
     cancel: tokio_util::sync::CancellationToken,
     cache: Arc<RwLock<ChannelRefsCache>>,
     verified_fleet: Arc<RwLock<Option<crate::server::VerifiedFleetSnapshot>>>,
     db: Option<Arc<crate::db::Db>>,
-    last_deferrals: Arc<
-        RwLock<HashMap<String, nixfleet_reconciler::observed::DeferralRecord>>,
-    >,
+    last_deferrals: Arc<RwLock<HashMap<String, nixfleet_reconciler::observed::DeferralRecord>>>,
     config: ChannelRefsSource,
     kick: Option<tokio::sync::watch::Receiver<()>>,
+    artifact_primed: Arc<AtomicBool>,
 ) -> tokio::task::JoinHandle<()> {
+    let prime_warn_logged = Arc::new(AtomicBool::new(false));
     SignedArtifactPoller {
         interval: POLL_INTERVAL,
         label: "channel-refs",
@@ -54,19 +62,50 @@ pub fn spawn(
         let db = db.clone();
         let last_deferrals = Arc::clone(&last_deferrals);
         let config = config.clone();
+        let artifact_primed = Arc::clone(&artifact_primed);
+        let prime_warn_logged = Arc::clone(&prime_warn_logged);
         async move {
-            let (refs, fleet, fleet_hash) = poll_once(&client, &config).await?;
-            apply_verified_refs(
-                &cache,
-                &verified_fleet,
-                db.as_deref(),
-                &last_deferrals,
-                refs,
-                fleet,
-                fleet_hash,
-            )
-            .await;
-            Ok(())
+            match poll_once(&client, &config).await {
+                Ok((refs, fleet, fleet_hash)) => {
+                    apply_verified_refs(
+                        &cache,
+                        &verified_fleet,
+                        db.as_deref(),
+                        &last_deferrals,
+                        refs,
+                        fleet,
+                        fleet_hash,
+                    )
+                    .await;
+                    // First successful prime flips ready; subsequent ones no-op.
+                    let was_primed = artifact_primed.swap(true, Ordering::AcqRel);
+                    if !was_primed {
+                        tracing::info!(
+                            target: "channel_refs_poll",
+                            "control plane ready: first signed artifact verified",
+                        );
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    // Demote noise once primed (steady-state failures fall out via
+                    // `poller.rs`'s WARN). Pre-prime: WARN once, DEBUG thereafter.
+                    if !artifact_primed.load(Ordering::Acquire)
+                        && prime_warn_logged.swap(true, Ordering::AcqRel)
+                    {
+                        tracing::debug!(
+                            target: "channel_refs_poll",
+                            error = %err,
+                            "channel-refs prime still failing; will retry",
+                        );
+                        // Returning Ok here suppresses the poller's WARN duplicate
+                        // for repeated pre-prime failures while keeping the
+                        // first one visible (handled by the Err return below).
+                        return Ok(());
+                    }
+                    Err(err)
+                }
+            }
         }
     })
 }
@@ -314,7 +353,7 @@ async fn record_rollouts_gated_by_channel_edges(
         active_rollouts,
         outstanding_compliance_events_by_rollout: HashMap::new(),
         last_deferrals: HashMap::new(),
-            host_probes_passing: HashMap::new(),
+        host_probes_passing: HashMap::new(),
     };
 
     let channel_names: Vec<String> = channel_rollouts.iter().map(|(c, _)| c.clone()).collect();

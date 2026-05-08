@@ -77,6 +77,7 @@ async fn spawn_with_signed_fleet(
         freshness_window: Duration::from_secs(86400 * 365 * 5),
         confirm_deadline_secs: 120,
         db_path: Some(db_path),
+        mark_ready_at_startup: true,
         ..Default::default()
     };
     let handle = tokio::spawn(server::serve(args));

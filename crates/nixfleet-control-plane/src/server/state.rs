@@ -3,6 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -59,6 +60,14 @@ pub struct ServeArgs {
     /// `agent-<machineId>.<suffix>` for issued cert CNs. Must match the
     /// issuance CA's `dNSName` name constraint (D14).
     pub agent_cn_suffix: String,
+    /// Test-only opt-in: when `true`, the server starts already in the
+    /// ready state — `/v1/*` serves immediately instead of 503ing until
+    /// the first signed artifact is verified (#95). Production paths
+    /// MUST leave this `false`; the CLI never sets it. Integration
+    /// tests that exercise endpoint logic without driving a real
+    /// channel-refs poll set it to `true` so the readiness gate
+    /// doesn't mask the assertion under test.
+    pub mark_ready_at_startup: bool,
 }
 
 impl Default for ServeArgs {
@@ -87,6 +96,7 @@ impl Default for ServeArgs {
             rollouts_source: None,
             strict: false,
             agent_cn_suffix: crate::auth::issuance::DEFAULT_AGENT_CN_SUFFIX.to_string(),
+            mark_ready_at_startup: false,
         }
     }
 }
@@ -177,6 +187,36 @@ pub struct AppState {
     /// enroll/renew handlers can canonicalise CNs without going
     /// through `issuance_paths`.
     pub agent_cn_suffix: String,
+    /// Set to `true` once the channel-refs poll (or build-time prime)
+    /// has populated `verified_fleet` with a freshly-verified snapshot.
+    /// Stays `false` indefinitely when neither prime path produces a
+    /// verifiable artifact (operator must provision `artifact_path` or
+    /// configure `channel_refs.artifact_url`). Read by the
+    /// `require_ready` middleware to gate `/v1/*` with 503 until set.
+    pub artifact_primed: Arc<AtomicBool>,
+    /// Set to `true` once the revocations poll has applied a verified
+    /// list at least once. Only consulted when `revocations_required`
+    /// is `true`; otherwise the readiness check ignores this flag.
+    pub revocations_primed: Arc<AtomicBool>,
+    /// `true` iff `--revocations-{artifact,signature}-url` were both set
+    /// at startup. Captured into AppState so the readiness check stays
+    /// pure (no need to thread `ServeArgs` into middleware).
+    pub revocations_required: bool,
+}
+
+impl AppState {
+    /// Composite readiness: artifact verified AND (when configured)
+    /// revocations verified. Strict: full trust footprint loaded
+    /// before serving agents. See #95.
+    pub fn is_ready(&self) -> bool {
+        if !self.artifact_primed.load(Ordering::Acquire) {
+            return false;
+        }
+        if self.revocations_required && !self.revocations_primed.load(Ordering::Acquire) {
+            return false;
+        }
+        true
+    }
 }
 
 impl Default for AppState {
@@ -200,6 +240,9 @@ impl Default for AppState {
             rollouts_source: None,
             strict: false,
             agent_cn_suffix: crate::auth::issuance::DEFAULT_AGENT_CN_SUFFIX.to_string(),
+            artifact_primed: Arc::new(AtomicBool::new(false)),
+            revocations_primed: Arc::new(AtomicBool::new(false)),
+            revocations_required: false,
         }
     }
 }
@@ -209,5 +252,66 @@ impl std::fmt::Debug for AppState {
         f.debug_struct("AppState")
             .field("db", &self.db.is_some())
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod ready_tests {
+    use super::*;
+
+    /// Default fresh AppState — neither artifact nor revocations primed.
+    /// `is_ready` must return false so the middleware can hold /v1/* with 503.
+    #[test]
+    fn fresh_state_is_not_ready() {
+        let state = AppState::default();
+        assert!(!state.is_ready(), "fresh state must not be ready");
+    }
+
+    /// `revocations_required = false` (no `--revocations-*-url` flags).
+    /// Only the artifact prime gates readiness — revocations_primed is ignored.
+    #[test]
+    fn artifact_prime_alone_is_enough_when_revocations_not_required() {
+        let state = AppState::default();
+        state.artifact_primed.store(true, Ordering::Release);
+        assert!(
+            state.is_ready(),
+            "artifact-only ready when revocations not required"
+        );
+    }
+
+    /// `revocations_required = true` (operator configured the polling loop).
+    /// Artifact prime alone must NOT flip ready — full trust footprint required.
+    #[test]
+    fn artifact_alone_is_not_enough_when_revocations_required() {
+        let mut state = AppState::default();
+        state.revocations_required = true;
+        state.artifact_primed.store(true, Ordering::Release);
+        assert!(
+            !state.is_ready(),
+            "must not be ready until revocations also primed",
+        );
+    }
+
+    /// Both flags set in the required configuration → ready.
+    #[test]
+    fn both_primed_with_revocations_required_is_ready() {
+        let mut state = AppState::default();
+        state.revocations_required = true;
+        state.artifact_primed.store(true, Ordering::Release);
+        state.revocations_primed.store(true, Ordering::Release);
+        assert!(state.is_ready(), "both primed must flip ready");
+    }
+
+    /// Revocations primed but artifact not → not ready (can't serve dispatch
+    /// without a verified fleet snapshot, even if the revocation list loaded).
+    #[test]
+    fn revocations_alone_is_not_ready() {
+        let mut state = AppState::default();
+        state.revocations_required = true;
+        state.revocations_primed.store(true, Ordering::Release);
+        assert!(
+            !state.is_ready(),
+            "revocations without artifact is not ready"
+        );
     }
 }

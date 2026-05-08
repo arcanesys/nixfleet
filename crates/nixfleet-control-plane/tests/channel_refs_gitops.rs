@@ -2,6 +2,7 @@
 
 mod common;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -138,6 +139,7 @@ async fn poll_refreshes_verified_fleet_snapshot() {
     };
 
     let last_deferrals = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    let artifact_primed = Arc::new(AtomicBool::new(false));
     let _poll = spawn(
         CancellationToken::new(),
         cache.clone(),
@@ -146,6 +148,7 @@ async fn poll_refreshes_verified_fleet_snapshot() {
         last_deferrals,
         cfg,
         None, // no event kick in tests
+        artifact_primed.clone(),
     );
 
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
@@ -169,6 +172,14 @@ async fn poll_refreshes_verified_fleet_snapshot() {
 
     let refs = cache.read().await.refs.clone();
     assert!(refs.contains_key("stable"), "channel_refs should include stable: {refs:?}");
+
+    // #95: the first successful poll must flip the readiness flag so /v1/*
+    // opens up — without this the daemon would serve 503 forever even
+    // though the fleet snapshot is verified and live.
+    assert!(
+        artifact_primed.load(Ordering::Acquire),
+        "first successful poll must flip artifact_primed (readiness gate)",
+    );
 }
 
 #[tokio::test]
@@ -240,6 +251,7 @@ async fn poll_retains_snapshot_on_verify_failure() {
     };
 
     let last_deferrals = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    let artifact_primed = Arc::new(AtomicBool::new(false));
     let _poll = spawn(
         CancellationToken::new(),
         cache.clone(),
@@ -248,6 +260,7 @@ async fn poll_retains_snapshot_on_verify_failure() {
         last_deferrals,
         cfg,
         None, // no event kick in tests
+        artifact_primed.clone(),
     );
 
     // GOTCHA: negative-observation test — fixed sleep is correct because no positive condition can converge.
@@ -258,5 +271,13 @@ async fn poll_retains_snapshot_on_verify_failure() {
         fleet.hosts.get("sentinel").and_then(|h| h.closure_hash.as_deref()),
         Some("sentinel-hash"),
         "verify-failure must NOT overwrite sentinel snapshot",
+    );
+
+    // #95: a verify-failed poll must NOT flip the readiness flag — even
+    // with a sentinel snapshot already in place from a prior boot.
+    // Otherwise the rebuild-resurrects-revoked-cert path opens up.
+    assert!(
+        !artifact_primed.load(Ordering::Acquire),
+        "verify failure must not flip artifact_primed",
     );
 }

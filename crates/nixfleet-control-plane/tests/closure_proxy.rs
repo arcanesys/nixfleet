@@ -34,6 +34,7 @@ async fn spawn_cp(
         observed_path: observed,
         confirm_deadline_secs: 120,
         closure_upstream,
+        mark_ready_at_startup: true,
         ..Default::default()
     };
     let handle = tokio::spawn(server::serve(args));

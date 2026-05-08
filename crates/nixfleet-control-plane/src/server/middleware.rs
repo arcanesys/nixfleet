@@ -3,13 +3,22 @@
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::http::{Request as HttpRequest, StatusCode};
+use axum::http::{header, Request as HttpRequest, StatusCode};
 use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 use nixfleet_proto::agent_wire::{PROTOCOL_MAJOR_VERSION, PROTOCOL_VERSION_HEADER};
+use serde_json::json;
 
 use crate::auth::auth_cn::PeerCertificates;
 
 use super::state::AppState;
+
+/// `Retry-After` hint advertised on 503 not-ready responses. Tracks
+/// `channel_refs_poll::POLL_INTERVAL` (60 s) loosely — agents spread
+/// their retries across the hint so the next poll cycle has time to
+/// complete before they all reconnect.
+const NOT_READY_RETRY_AFTER_SECS: u32 = 30;
 
 /// 401 on missing/revoked cert; re-enrolled certs (notBefore > revoked_before) pass.
 pub(super) async fn require_cn(
@@ -75,6 +84,32 @@ pub(super) async fn require_cn_layer(
     let cn = require_cn(&state, &peer_certs).await?;
     req.extensions_mut().insert(AuthenticatedCn(cn));
     Ok(next.run(req).await)
+}
+
+/// 503 with `Retry-After: 30` until `AppState::is_ready()` returns true.
+/// Applied to every `/v1/*` route so agents see a deterministic "come
+/// back later" signal instead of partial behaviour driven by stale or
+/// missing trust state. Health/version/metrics are routed outside
+/// `/v1/*` and stay unguarded so operators can scrape them while the
+/// daemon is still priming.
+pub(super) async fn require_ready_layer(
+    state: Arc<AppState>,
+    req: HttpRequest<Body>,
+    next: Next,
+) -> Response {
+    if state.is_ready() {
+        return next.run(req).await;
+    }
+
+    let body = Json(json!({
+        "error": "control plane not ready",
+        "reason": "awaiting first signed artifact",
+    }));
+    let mut response = (StatusCode::SERVICE_UNAVAILABLE, body).into_response();
+    if let Ok(value) = NOT_READY_RETRY_AFTER_SECS.to_string().parse() {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    response
 }
 
 /// Forward-compat: missing header accepted; mismatched major → 426. Strict mode rejects missing.

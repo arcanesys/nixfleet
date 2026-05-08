@@ -268,6 +268,7 @@ async fn spawn_server(
         freshness_window: std::time::Duration::from_secs(86400 * 365 * 5),
         confirm_deadline_secs: 120,
         db_path: Some(db_path),
+        mark_ready_at_startup: true,
         ..Default::default()
     };
     let port = listen.port();

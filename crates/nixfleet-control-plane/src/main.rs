@@ -317,6 +317,7 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
         closure_upstream: flags.closure_upstream,
         rollouts_dir: flags.rollouts_dir,
         strict: flags.strict,
+        mark_ready_at_startup: false,
     })
     .await
 }

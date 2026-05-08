@@ -38,6 +38,7 @@ async fn spawn_server_with_db_at_port(
         observed_path: observed,
         confirm_deadline_secs: 120,
         db_path,
+        mark_ready_at_startup: true,
         ..Default::default()
     };
     let handle = tokio::spawn(server::serve(args));

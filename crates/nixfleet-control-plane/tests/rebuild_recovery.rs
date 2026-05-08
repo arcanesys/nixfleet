@@ -14,6 +14,7 @@
 
 mod common;
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -226,6 +227,7 @@ async fn polling_populates_rollouts_after_rebuild_and_supersedes_on_bump() {
             freshness_window: Duration::from_secs(86400 * 365 * 5),
         },
         None, // cadence-only in this test
+        Arc::new(AtomicBool::new(false)),
     );
 
     let deadline = std::time::Instant::now() + Duration::from_secs(15);

@@ -200,9 +200,18 @@ pub fn build_fleet_resolved_json(declared_closure: &str, ci_commit: &str) -> (St
 }
 
 /// Spawn `server::serve` and wait for its TCP listener to bind.
+///
+/// #95: integration tests that drive specific handler logic without
+/// setting up a live signed-fleet pipeline default `mark_ready_at_startup`
+/// to `true` so the readiness gate doesn't mask the assertion under test.
+/// Tests that explicitly exercise the not-ready 503 path should leave it
+/// at `false`.
 pub async fn spawn_server(
-    args: nixfleet_control_plane::server::ServeArgs,
+    mut args: nixfleet_control_plane::server::ServeArgs,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
+    if !args.mark_ready_at_startup {
+        args.mark_ready_at_startup = true;
+    }
     let port = args.listen.port();
     let handle = tokio::spawn(nixfleet_control_plane::server::serve(args));
     wait_for_listener_ready(port, &handle).await;

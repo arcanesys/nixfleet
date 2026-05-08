@@ -19,6 +19,8 @@ pub(super) fn spawn_reconcile_loop(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // Build-time artifact is the fallback prime; never overwrite an already-primed upstream-fresh snapshot.
+        // #95: success here also flips `artifact_primed`, which is the operator-provisioned-only ready
+        // path (channelRefsSource.artifactUrl == null + pre-staged bytes at artifact_path).
         {
             let already_primed = state.verified_fleet.read().await.is_some();
             if !already_primed {
@@ -35,11 +37,21 @@ pub(super) fn spawn_reconcile_loop(
                                 fleet: Arc::new(fleet),
                                 fleet_resolved_hash: h,
                             });
+                        let was_primed = state
+                            .artifact_primed
+                            .swap(true, std::sync::atomic::Ordering::AcqRel);
+                        if !was_primed {
+                            tracing::info!(
+                                target: "reconcile",
+                                "control plane ready: primed verified-fleet from build-time artifact",
+                            );
+                        }
+                    } else {
+                        tracing::info!(
+                            target: "reconcile",
+                            "primed verified-fleet snapshot from build-time artifact (Forgejo prime unavailable)",
+                        );
                     }
-                    tracing::info!(
-                        target: "reconcile",
-                        "primed verified-fleet snapshot from build-time artifact (Forgejo prime unavailable)",
-                    );
                 } else {
                     tracing::warn!(
                         target: "reconcile",
@@ -120,8 +132,7 @@ pub(super) fn spawn_reconcile_loop(
             // manifest. Disk-backed lookup is fine at reconcile cadence
             // (~5 manifests, ~30s tick); cache later if it shows up in
             // a profile.
-            let rollout_budgets =
-                load_rollout_budgets(state.as_ref(), &rollouts).await;
+            let rollout_budgets = load_rollout_budgets(state.as_ref(), &rollouts).await;
             let (result, verified_fleet) = if checkins.is_empty() && channel_refs.is_empty() {
                 (tick(&inputs_now), verify_fleet_only(&inputs_now))
             } else {
@@ -144,20 +155,29 @@ pub(super) fn spawn_reconcile_loop(
                 let mut guard = state.verified_fleet.write().await;
                 let should_overwrite = match guard.as_ref() {
                     None => true,
-                    Some(existing) => {
-                        match (existing.fleet.meta.signed_at, fleet.meta.signed_at) {
-                            (Some(prev), Some(new)) => new >= prev,
-                            _ => true,
-                        }
-                    }
+                    Some(existing) => match (existing.fleet.meta.signed_at, fleet.meta.signed_at) {
+                        (Some(prev), Some(new)) => new >= prev,
+                        _ => true,
+                    },
                 };
                 if should_overwrite {
-                    if let Ok(h) = nixfleet_reconciler::canonical_hash_from_bytes(&artifact_bytes)
-                    {
+                    if let Ok(h) = nixfleet_reconciler::canonical_hash_from_bytes(&artifact_bytes) {
                         *guard = Some(crate::server::VerifiedFleetSnapshot {
                             fleet: Arc::new(fleet),
                             fleet_resolved_hash: h,
                         });
+                        // #95: late prime (build-time prime failed but a later tick
+                        // re-read the artifact successfully). Flip ready so /v1/*
+                        // opens up without waiting for the channel-refs poll.
+                        let was_primed = state
+                            .artifact_primed
+                            .swap(true, std::sync::atomic::Ordering::AcqRel);
+                        if !was_primed {
+                            tracing::info!(
+                                target: "reconcile",
+                                "control plane ready: artifact verified by reconcile tick",
+                            );
+                        }
                     }
                 }
             }
@@ -559,9 +579,7 @@ fn run_tick_with_projection(
         // retire_at deadline has passed and a successor is declared.
         // Mirrors lib.rs::tick(); idempotent across ticks until the
         // operator commits the rotation in fleet.nix.
-        if let Ok(trust) =
-            crate::polling::signed_fetch::read_trust_config(&inputs.trust_path)
-        {
+        if let Ok(trust) = crate::polling::signed_fetch::read_trust_config(&inputs.trust_path) {
             actions.extend(nixfleet_reconciler::check_trust_rotations(
                 &trust, inputs.now,
             ));
@@ -631,8 +649,8 @@ fn run_tick_with_projection(
                 rollouts,
                 outstanding_compliance_events_by_rollout,
                 last_deferrals.clone(),
-            rollout_budgets,
-        );
+                rollout_budgets,
+            );
             let mut actions = nixfleet_reconciler::reconcile(&fleet, &observed, inputs.now);
             actions.extend(nixfleet_reconciler::check_trust_rotations(
                 &trust, inputs.now,

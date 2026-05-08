@@ -33,9 +33,12 @@ const TASK_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(30);
 const HTTP_DRAIN_DEADLINE: Duration = Duration::from_secs(25);
 
 /// `/healthz` outside `/v1`; `/v1/enroll` is anonymous; all other `/v1/*` require mTLS.
+/// `/v1/*` is gated by `require_ready_layer` (#95) so agents get 503 + Retry-After
+/// until the first signed artifact is verified — no stale-state serving.
 fn build_router(state: Arc<AppState>) -> Router {
     let strict = state.strict;
     let auth_state = state.clone();
+    let ready_state = state.clone();
 
     let anonymous_v1 = Router::new()
         .route("/v1/enroll", post(routes::enrollment::enroll))
@@ -82,6 +85,10 @@ fn build_router(state: Arc<AppState>) -> Router {
         .merge(authenticated_v1)
         .layer(axum::middleware::from_fn(move |req, next| {
             version_layer(strict, req, next)
+        }))
+        .layer(axum::middleware::from_fn(move |req, next| {
+            let s = ready_state.clone();
+            async move { middleware::require_ready_layer(s, req, next).await }
         }));
 
     Router::new()
@@ -137,6 +144,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     } else {
         None
     };
+    let revocations_required = args.revocations.is_some();
     let app_state = AppState {
         db: db.clone(),
         confirm_deadline_secs: args.confirm_deadline_secs,
@@ -145,8 +153,18 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         rollouts_source: args.rollouts_source.clone(),
         strict: args.strict,
         agent_cn_suffix: args.agent_cn_suffix.clone(),
+        revocations_required,
         ..Default::default()
     };
+    if args.mark_ready_at_startup {
+        // Test-only escape hatch — see ServeArgs::mark_ready_at_startup.
+        app_state
+            .artifact_primed
+            .store(true, std::sync::atomic::Ordering::Release);
+        app_state
+            .revocations_primed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
     let state = Arc::new(app_state);
 
     let cancel = CancellationToken::new();
@@ -252,6 +270,9 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     }
 
     // Pre-listener prime: bundled artifact is always older than upstream (CI commits release after build).
+    // #95: success here flips `artifact_primed` so the listener can serve `/v1/*` immediately.
+    // Failure leaves the daemon in not-ready state — the spawned channel-refs / reconcile loops
+    // are responsible for flipping `artifact_primed` once they verify a snapshot.
     if let Some(channel_refs_source) = args.channel_refs.as_ref() {
         match tokio::time::timeout(
             Duration::from_secs(20),
@@ -261,11 +282,13 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         {
             Ok(Ok((fleet, fleet_hash))) => {
                 let host_count = fleet.hosts.len();
-                *state.verified_fleet.write().await =
-                    Some(crate::server::VerifiedFleetSnapshot {
-                        fleet: Arc::new(fleet),
-                        fleet_resolved_hash: fleet_hash,
-                    });
+                *state.verified_fleet.write().await = Some(crate::server::VerifiedFleetSnapshot {
+                    fleet: Arc::new(fleet),
+                    fleet_resolved_hash: fleet_hash,
+                });
+                state
+                    .artifact_primed
+                    .store(true, std::sync::atomic::Ordering::Release);
                 tracing::info!(
                     target: "reconcile",
                     host_count,
@@ -275,11 +298,13 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
             Ok(Err(err)) => {
                 tracing::warn!(
                     error = %err,
-                    "channel-refs prime failed; falling back to build-time artifact",
+                    "channel-refs prime failed; daemon will keep retrying via the polling loop",
                 );
             }
             Err(_) => {
-                tracing::warn!("channel-refs prime timed out; falling back to build-time artifact",);
+                tracing::warn!(
+                    "channel-refs prime timed out; daemon will keep retrying via the polling loop",
+                );
             }
         }
     }
@@ -310,6 +335,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
             // between channelEdges releasing and the rollouts table
             // reflecting the new successor. See AppState::channel_refs_kick.
             Some(state.channel_refs_kick.subscribe()),
+            state.artifact_primed.clone(),
         ));
     }
 
@@ -318,6 +344,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
             cancel.clone(),
             db,
             revocations_source,
+            state.revocations_primed.clone(),
         ));
     }
 
@@ -325,7 +352,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     // (record_compliance_event etc) silently no-op until then.
     crate::metrics::install_recorder();
 
-    let app = build_router(state);
+    let app = build_router(state.clone());
 
     let tls_config =
         crate::tls::build_server_config(&args.tls_cert, &args.tls_key, args.client_ca.as_deref())?;
@@ -343,7 +370,14 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         );
         "TLS-only"
     };
-    tracing::info!(listen = %args.listen, %mode, "control plane listening");
+    let ready = state.is_ready();
+    tracing::info!(
+        listen = %args.listen,
+        %mode,
+        ready,
+        "control plane listening{}",
+        if ready { "" } else { "; /v1/* will return 503 until first artifact verified" },
+    );
 
     let server_handle = axum_server::Handle::new();
     let signal_handle = server_handle.clone();
@@ -375,9 +409,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
 }
 
 /// Tasks past `TASK_SHUTDOWN_DEADLINE` are abandoned (handles dropped → abort).
-async fn drain_background_tasks(
-    handles: Vec<tokio::task::JoinHandle<()>>,
-) -> anyhow::Result<()> {
+async fn drain_background_tasks(handles: Vec<tokio::task::JoinHandle<()>>) -> anyhow::Result<()> {
     let total = handles.len();
     let drain_fut = async move {
         for handle in handles {

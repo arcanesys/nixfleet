@@ -144,6 +144,7 @@ async fn spawn_server(
         observed_path: observed,
         confirm_deadline_secs: 120,
         db_path: Some(db_path),
+        mark_ready_at_startup: true,
         ..Default::default()
     };
     let port = listen.port();

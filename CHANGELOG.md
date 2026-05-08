@@ -22,6 +22,42 @@ CLI override > `hostSpec.vmRam` > script default. The helper only consults `host
 
 - Out of scope: `test-vm` (smoke-test path); the per-host knob doesn't pay for itself there.
 - Fleet-side adoption is the consumer's responsibility (typical: a forge host running an in-VM CI workflow that compiles Rust).
+### CP daemon does its own initial fetch; drop systemd bootstrap unit (2026-05-08)
+
+Closes #95. #90 added a NixOS-module bootstrap oneshot to seed `artifactPath` because the CP unit's `unitConfig.ConditionPathExists = artifactPath` blocked startup until the file existed. #94 fixed its retry loop. #95 is the architectural cleanup: have the daemon do this itself — it already runs the channel-refs poll, it already verifies bytes, it can flip a readiness flag to gate `/v1/*` while it boots. The systemd-side bootstrap and the `ConditionPathExists` gate become redundant.
+
+#### Added
+
+- **`AppState::artifact_primed: AtomicBool` + `revocations_primed: AtomicBool` + `revocations_required: bool`** in `crates/nixfleet-control-plane/src/server/state.rs`. `is_ready()` returns `artifact_primed AND (revocations_required ⇒ revocations_primed)` — strict: full trust footprint loaded before serving agents. Captured into AppState at startup so the readiness check stays pure (no need to thread `ServeArgs` through middleware).
+- **`require_ready_layer` middleware** in `crates/nixfleet-control-plane/src/server/middleware.rs`. Returns `503 Service Unavailable` + `Retry-After: 30` + JSON body `{ "error": "control plane not ready", "reason": "awaiting first signed artifact" }` for any `/v1/*` request when `is_ready()` is false. Wired at the v1-routes layer in `build_router` so it covers anonymous (`/v1/enroll`, `/v1/agent/bootstrap-report`) and authenticated routes alike. `/healthz` lives outside `/v1/*` and stays unguarded — operators can scrape it while the daemon is still priming.
+- **Daemon-side prime paths flip `artifact_primed`**:
+  - Pre-listener `prime_once` in `server/mod.rs` (channel-refs source configured): success → `artifact_primed=true` before the listener binds.
+  - First successful `channel_refs_poll::spawn` tick: success → `artifact_primed=true`.
+  - Reconcile loop's build-time prime + per-tick verify in `server/reconcile.rs`: success → `artifact_primed=true`. Covers the operator-provisioned-only path (channelRefsSource.artifactUrl null + pre-staged bytes at `artifactPath`).
+- **`revocations_poll::spawn` flips `revocations_primed`** on first successful verify+apply. Gated `is_ready()` so the rebuild-resurrects-revoked-cert window noted in #70 stays closed.
+- **Logging**: startup announces `ready=<bool>` + "/v1/* will return 503 until first artifact verified" when not ready. First successful prime emits `INFO control plane ready: …`. Pre-prime polling failures get one WARN then DEBUG noise to keep cold-boot dashboards clean.
+- **`ServeArgs::mark_ready_at_startup: bool`** — test-only escape hatch (defaults to `false`, never set by the production CLI). Integration tests that drive specific handler logic without setting up a live signed-fleet pipeline opt in so the readiness gate doesn't mask the assertion under test.
+
+#### Removed
+
+- **`systemd.services.nixfleet-cp-artifact-bootstrap`**, the `bootstrapEnabled` let-binding, the `bootstrapScript` / `bootstrapFile` helpers, and the `effectiveRevocationsToken` plumbing in `modules/scopes/nixfleet/_control-plane.nix`. Net deletion: ~118 LoC.
+- **`unitConfig.ConditionPathExists = cfg.artifactPath`** on the CP service unit. The daemon now handles missing path internally — it binds, serves 503 on `/v1/*`, and flips ready when the polling loop verifies a signed artifact.
+- **`Requires=` + `After=` references** to the bootstrap unit on `nixfleet-control-plane.service`. The unit only depends on `network-online.target` now.
+
+#### Behavior
+
+When `channelRefsSource.artifactUrl` is set, the daemon binds immediately and the channel-refs poll's first tick (or the pre-listener `prime_once`) flips ready. Agents that connect during the priming window get `503 + Retry-After: 30` with a deterministic JSON body — they reconnect on cadence.
+
+When `channelRefsSource.artifactUrl == null` (operator provisions `artifactPath` via some other mechanism), the daemon's reconcile-loop prime reads the file on startup. Bytes verify → ready. No bytes / unverifiable bytes → daemon stays not-ready forever and `/v1/*` keeps 503ing until the operator surfaces the file.
+
+When `revocationsSource` is configured, ready additionally requires the revocations poll's first verify+apply. Strict: a CP rebuild will not serve dispatch on its old, pre-revocation trust state.
+
+#### Notes
+
+- Migration: consumers that depended on `systemd.services.nixfleet-cp-artifact-bootstrap` existing (e.g. monitoring dashboards keying on the unit name) need to drop those references — the unit is gone. The artifact-fetch behavior is preserved, just relocated into the daemon.
+- `tmpfiles.rules` keeps creating `${dirname(artifactPath)}` (default `/var/lib/nixfleet-cp/fleet/releases`) — the daemon writes there on each successful poll and needs a writable directory.
+- The readiness check is intentionally strict (rejects partial trust footprints) rather than fail-open. Failing open here would let agents check in against a CP that lost its revocation list across rebuild — which is exactly the #70 footgun.
+
 ### CP self-bootstraps `artifactPath` from `channelRefsSource` (2026-05-07)
 
 Closes #90. The CP unit's `unitConfig.ConditionPathExists = artifactPath` refused to start until the artifact existed on disk, but the daemon's in-process channel-refs polling — the only mechanism that ever populates the path — runs INSIDE the unit. Chicken-and-egg: every fresh install required a sidecar to seed the file before nixfleet-control-plane could come up. nixfleet-demo's `cp.nix` was carrying ~25 lines of bespoke bootstrap to work around it; every consumer would need the same.

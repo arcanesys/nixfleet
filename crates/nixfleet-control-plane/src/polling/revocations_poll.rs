@@ -1,6 +1,7 @@
 //! Revocations poll: fetch+verify signed revocations.json, replay into `cert_revocations`.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,10 +22,16 @@ pub struct RevocationsSource {
     pub freshness_window: Duration,
 }
 
+/// `revocations_primed` flips to `true` after the first successful verify
+/// + apply. The `/v1/*` ready gate (#95) consults this when
+/// `revocations_required` is set so the daemon won't serve agents until
+/// the full trust footprint is loaded — preventing the rebuild-revives-
+/// revoked-certs window noted in #70.
 pub fn spawn(
     cancel: tokio_util::sync::CancellationToken,
     db: Arc<Db>,
     config: RevocationsSource,
+    revocations_primed: Arc<AtomicBool>,
 ) -> tokio::task::JoinHandle<()> {
     SignedArtifactPoller {
         interval: POLL_INTERVAL,
@@ -33,9 +40,18 @@ pub fn spawn(
     .spawn(cancel, move |client| {
         let db = Arc::clone(&db);
         let config = config.clone();
+        let revocations_primed = Arc::clone(&revocations_primed);
         async move {
             let revs = poll_once(&client, &config).await?;
             apply_verified_revocations(&db, &revs);
+            let was_primed = revocations_primed.swap(true, Ordering::AcqRel);
+            if !was_primed {
+                tracing::info!(
+                    target: "revocations",
+                    entries = revs.revocations.len(),
+                    "revocations primed: first verified list applied",
+                );
+            }
             Ok(())
         }
     })
