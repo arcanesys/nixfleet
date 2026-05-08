@@ -87,13 +87,25 @@
       else "";
   in ''
     if [ ! -s ${lib.escapeShellArg target} ]; then
-      for _ in $(seq 1 60); do
+      ok=0
+      # 30 attempts × 2s = 60s per file (#94). If still missing, exit
+      # non-zero — systemd's Restart=on-failure / RestartSec=30s on the
+      # unit retries the whole bootstrap until forge surfaces the artifact,
+      # giving an effectively infinite retry budget without a long-running
+      # script. Previous shape (60×2s + RemainAfterExit + script-exit-0)
+      # silently gave up after 120s and CP never started.
+      for _ in $(seq 1 30); do
         ${readToken}
         if ${pkgs.curl}/bin/curl -fsS ${authArg} -o ${lib.escapeShellArg target} ${lib.escapeShellArg url}; then
+          ok=1
           break
         fi
         sleep 2
       done
+      if [ "$ok" = "0" ]; then
+        echo "bootstrap: ${target} not available at ${url} after 60s; exiting 1, systemd will retry" >&2
+        exit 1
+      fi
     fi
   '';
 
@@ -693,6 +705,14 @@ in {
           Type = "oneshot";
           RemainAfterExit = true;
           User = "root";
+          # If the bootstrap script exits non-zero (artifact still not
+          # surfaced after the 60s in-script poll), systemd waits 30s
+          # then re-runs the whole unit. Repeats indefinitely until the
+          # script succeeds — which then satisfies CP's Requires= and
+          # the CP unit can start (#94). Effectively unbounded retries
+          # without long-running shell loops.
+          Restart = "on-failure";
+          RestartSec = "30s";
         };
         script = bootstrapScript;
       };
