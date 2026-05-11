@@ -7,7 +7,7 @@ the code disagrees, the code is being built to match.
 
 | File | What it is | When to read |
 |---|---|---|
-| [`design/architecture.md`](design/architecture.md) | High-level architecture, component roles, trust flow, build order (Phases 0-10) | First read for new contributors |
+| [`design/architecture.md`](design/architecture.md) | High-level architecture, component roles, trust flow, where v0.2 lands | First read for new contributors |
 | [`source-layout.md`](source-layout.md) | The four Nix layers (`lib/` / `modules/scopes/` / `contracts/` / `impls/`) and what goes where | When adding Nix code and unsure where it belongs |
 | [`CONTRACTS.md`](CONTRACTS.md) | Every artifact, key, and format that crosses a stream boundary (data, trust roots, canonicalization, storage purity) | When adding or changing anything cross-stream |
 | [`harness.md`](harness.md) | microvm.nix harness scope and slot-in points | When extending the integration-test fabric |

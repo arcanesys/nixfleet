@@ -261,10 +261,10 @@ Conflicts (same host name, same channel definition with different values) fail e
 
 ## 8. Migration path from current state
 
-- Phase 1: ship `mkFleet` alongside existing CLI. `fleet.nix` is optional; CLI still works imperatively.
-- Phase 2: control plane learns to ingest `fleet.resolved`. Operators can opt in per channel.
-- Phase 3: CLI `deploy` becomes syntactic sugar over channel-pointer updates. Remains for CI convenience.
-- Phase 4: SQLite desired-state becomes a cache of `fleet.resolved`, not a source of truth.
+- Ship `mkFleet` alongside existing CLI. `fleet.nix` is optional; CLI still works imperatively.
+- Control plane learns to ingest `fleet.resolved`. Operators can opt in per channel.
+- CLI `deploy` becomes syntactic sugar over channel-pointer updates. Remains for CI convenience.
+- SQLite desired-state becomes a cache of `fleet.resolved`, not a source of truth.
 
 ---
 

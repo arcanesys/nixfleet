@@ -180,18 +180,18 @@ Channels with `freshnessWindow > 7d` (online) or `> 90d` (air-gap) are flagged i
 
 **Failure mode worth stating.** A misconfigured `freshnessWindow = "1y"` on a production channel turns this protection off in practice. The hard floor (default 1h) prevents the obvious mistake; long-window flagging in fleet status is the protection against the less-obvious one. Channel definitions are git-tracked; `freshnessWindow` should be in the protected-branch review path.
 
-## 8. Build phases
+## 8. Deliverable
 
-This RFC is small enough to land in one phase. Continues `ARCHITECTURE.md` §6 numbering after RFC-0005.
+This RFC is small enough to land as one deliverable.
 
-- **Phase 20 - Freshness hardening.** Five sub-deliverables, parallelizable:
-  - 20.1 Schema additions (`freshnessHardFloorMinutes`, `timeSource`); mkFleet enforcement.
-  - 20.2 Wire-shape additions (`AgentTarget` freshness fields); CP populates from signed source.
-  - 20.3 Agent enforcement of `freshness_window_seconds` from the target (in addition to local config).
-  - 20.4 Time-source policy: NTP synchronization check via the host's existing timesync daemon; `TimeSourceUnavailable` event class.
-  - 20.5 Operator-visibility additions: `StaleChannelWarning`, long-window flagging, `nixfleet status` columns.
+- **Freshness hardening.** Five sub-pieces, parallelizable:
+  - Schema additions (`freshnessHardFloorMinutes`, `timeSource`); mkFleet enforcement.
+  - Wire-shape additions (`AgentTarget` freshness fields); CP populates from signed source.
+  - Agent enforcement of `freshness_window_seconds` from the target (in addition to local config).
+  - Time-source policy: NTP synchronization check via the host's existing timesync daemon; `TimeSourceUnavailable` event class.
+  - Operator-visibility additions: `StaleChannelWarning`, long-window flagging, `nixfleet status` columns.
 
-Roughtime / signed-time-source support is a separate sub-deliverable (20.6, optional for v0.3) - substantial dependency, useful but not blocking the rest. Lean: ship NTP-based time-source in v0.3, Roughtime as v0.3.x or v0.4 follow-up.
+Roughtime / signed-time-source support is a separate sub-piece (optional for v0.3) - substantial dependency, useful but not blocking the rest. Lean: ship NTP-based time-source in v0.3, Roughtime as v0.3.x or v0.4 follow-up.
 
 ## 9. Falsifiable done criteria
 

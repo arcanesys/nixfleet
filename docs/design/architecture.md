@@ -245,75 +245,21 @@ The design earns its keep when things go wrong. Walking through the scenarios:
 
 ---
 
-## 6. What to build, in order
+## 6. Where v0.2 lands
 
-Ten phases. Each phase produces a deliverable that can be tested and demonstrated before the next phase starts.
+v0.2 establishes the spine: signed CI artefacts, mTLS agent identity bound to SSH host keys, magic-rollback as the failure mode, static plus runtime compliance gates, the signed revocations sidecar, and the CP-resident-state recovery profile.
 
-### Phase 0 - The M70q as coordinator
+**Signed release pipeline.** CI signs `fleet.resolved.json` and the revocations sidecar with the release key; the binary cache signs closures independently. The CP fetches signed artefacts on every reconcile tick and refuses to reconcile if a signature does not verify.
 
-Prerequisite for everything. On the M70q: NixOS with flakes, agenix for secrets, Caddy + Tailscale for access control, Forgejo for git hosting, attic for binary cache, Hercules CI agent (or Forgejo Actions runner) for builds, Restic for backups. All declarative, all in a single `m70q-attic.nix` module.
+**Pull-based agent with magic rollback.** Each managed host runs the Rust agent: polls the CP over mTLS, fetches closures from the cache with signature verification, runs nixos-rebuild switch, opens a post-activation confirm window, auto-reverts on silence.
 
-Deliverable: a git push to Forgejo triggers a build, produces cached closures, and updates a channel pointer. No fleet yet. Just the CI spine.
+**SSH-host-key-bound agent identity.** The agent's mTLS client cert is bound to `/etc/ssh/ssh_host_ed25519_key`. CP enrollment and renewal both refuse any CSR whose pubkey does not match the declared `nixfleet.fleetSchema.hosts.<hostname>.pubkey`.
 
-### Phase 1 - `mkFleet` and `fleet.resolved`
+**Compliance gates.** Static gates run at CI build; runtime probes sign their output with the host SSH key and feed the CP's wave-promotion decision.
 
-Ship the Nix module from RFC-0001. Declare your actual fleet (m70q, workstation, rpi-sensor) in a `fleet.nix`. Add `fleet.resolved` as a flake output. Extend CI to produce and sign `fleet.resolved.json` alongside closures.
+**Signed revocations sidecar.** Agent-cert revocations live in a signed `revocations.json` committed to git; the CP replays the verified set on every reconcile tick. Loss of CP-side `cert_revocations` table is recoverable from the sidecar within one tick.
 
-Deliverable: `nix eval .#fleet.resolved --json` produces a valid signed artifact committed by CI.
-
-### Phase 2 - Reconciler prototype (read-only)
-
-Ship the Rust reconciler from the spike. Runs as a systemd timer on the M70q. Reads `fleet.resolved.json`, reads a simulated `observed.json` (no agents yet), prints the action plan to the journal. No actions taken - just planning.
-
-Deliverable: every commit produces a visible plan in the journal. Operator can review what *would* happen.
-
-### Phase 3 - Agent skeleton (pull-only, no activation)
-
-Rust daemon on each host. Polls control plane over mTLS. Reports current generation at each check-in. Does not activate anything yet - the control plane logs intended targets, the agent logs what it was told, but no `nixos-rebuild` runs.
-
-Deliverable: each host correctly reports itself. Control plane correctly computes deltas. Enrollment flow (bootstrap token → cert) works end-to-end.
-
-### Phase 4 - Activation + magic rollback
-
-Agent gains the ability to run `nixos-rebuild switch --flake git+https://...#<hostname>`. Post-activation confirm window. Auto-rollback on silence. Closure fetch from attic with signature verification.
-
-Deliverable: a git commit causes workstation to upgrade, then m70q, respecting canary wave ordering. Intentionally breaking the post-activation handshake (e.g. agent refuses to phone home) causes the host to revert within the window.
-
-### Phase 5 - Secrets via agenix
-
-Migrate any runtime secrets (Restic repo keys, API tokens, etc.) into agenix. Control plane never sees them. Demonstrate rotation: change a secret in the flake, commit, observe re-encryption and re-deployment without control-plane involvement.
-
-Deliverable: `tcpdump` on control plane ↔ agent shows no secret material during any rollout.
-
-### Phase 6 - Compliance gates (static)
-
-Port `nixfleet-compliance` controls to the typed model. Wire CI to run static gates. Intentionally commit a config that violates ANSSI-BP-028 (e.g. SSH password auth on): CI refuses to produce a release.
-
-Deliverable: bad configs never reach production. Audit trail shows which control caught which violation, in git history.
-
-### Phase 7 - Compliance gates (runtime) + signed probe outputs
-
-Agent runs probes post-activation, canonicalizes output, signs with host key. Control plane aggregates. Runtime gate blocks wave promotion on probe failure.
-
-Deliverable: end-to-end signed evidence chain for an ANSSI audit. Given a host, produce: its current closure hash, the closure's inputs from git, the probe outputs for the running generation, all cryptographically linked.
-
-### Phase 8 - microvm.nix test fabric
-
-Fleet simulation. Every state machine in RFC-0002 covered by at least one fixture scenario. Negative tests for every signature verification. Run in `nix flake check` on PR.
-
-Deliverable: regression protection. Refactoring the reconciler's state machines doesn't accidentally ship a week later as a production incident.
-
-### Phase 9 - Declarative enrollment
-
-Bootstrap tokens signed by org root key, scoped to expected hostname + pubkey fingerprint. `nixos-anywhere` + token yields a fully-enrolled host with no operator clicks after the initial provision.
-
-Deliverable: adding a new RPi sensor is: `nix run .#provision rpi-sensor-02 <mac>` + PR adding its entry in `fleet.nix`. Nothing else.
-
-### Phase 10 - Control-plane teardown test
-
-The actual validation of the design principle. Destroy the control plane's SQLite. Restart it from empty state. Observe: it re-reads fleet.resolved + revocations.json from git, replays the verified revocation set, accepts agent check-ins, reconstructs fleet state within one reconcile tick per channel. No data lost.
-
-Deliverable: a documented "disaster recovery" procedure that takes under 5 minutes from healthy-control-plane-gone to full-fleet-visibility restored.
+**CP-resident state recovery profile.** Every SQLite table either re-hydrates from agent inputs on the next checkin (soft state) or from a signed artefact in git (hard state). The full classification lives in the "CP-resident state by recovery profile" subsection below.
 
 #### CP-resident state by recovery profile
 
@@ -321,15 +267,15 @@ Every SQLite table the CP keeps falls into one of two recovery classes. The clas
 
 - **Soft state - recoverable from agent inputs on the next checkin cycle, or acceptable as a one-window operational regression:**
   - `token_replay` - bootstrap nonces with 24h TTL. Loss extends the replay window by up to one TTL. Bounded; no breach.
-  - `pending_confirms` - in-flight activation deadlines. Loss could force the agent into an unnecessary local rollback when its confirm POST hits a 410. Mitigated by orphan-confirm recovery (#46): when the agent's reported `closure_hash` matches the verified target, the handler synthesises a confirmed row and returns 204 instead of 410.
-  - `host_rollout_state` - per-host soak markers. Loss restarts soak windows from zero. Mitigated by agent-attested `last_confirmed_at` (#47): the agent persists the moment of its most recent successful confirm and echoes it on every checkin; the CP repopulates `last_healthy_since` from the attestation, clamped to `min(now, attested)`.
-  - `host_reports` - SQLite-backed (#59 closed). Hydrated at boot via `boot: host_reports hydration complete`; outstanding `ComplianceFailure` / `RuntimeGateError` events survive CP restarts so the wave-promotion gate stays armed across the unlock window that motivated the original ring-buffer concern. Soft only because individual late-arriving reports retry on the next checkin.
+  - `pending_confirms` - in-flight activation deadlines. Loss could force the agent into an unnecessary local rollback when its confirm POST hits a 410. Mitigated by orphan-confirm recovery: when the agent's reported `closure_hash` matches the verified target, the handler synthesises a confirmed row and returns 204 instead of 410.
+  - `host_rollout_state` - per-host soak markers. Loss restarts soak windows from zero. Mitigated by agent-attested `last_confirmed_at`: the agent persists the moment of its most recent successful confirm and echoes it on every checkin; the CP repopulates `last_healthy_since` from the attestation, clamped to `min(now, attested)`.
+  - `host_reports` - SQLite-backed. Hydrated at boot via `boot: host_reports hydration complete`; outstanding `ComplianceFailure` / `RuntimeGateError` events survive CP restarts so the wave-promotion gate stays armed across the unlock window that motivated the original ring-buffer concern. Soft only because individual late-arriving reports retry on the next checkin.
 
 - **Hard state - must come from signed artifacts pre-existing in git or from operator-declared trust roots:**
-  - `cert_revocations` - agent-cert revocation list. Loss is a **security regression** - previously-revoked certs become valid again. Mitigated by the signed `revocations.json` sidecar (#48): operator commits revocations to the fleet repo, CI signs the artifact with the same `ciReleaseKey` that signs `fleet.resolved.json`, the CP fetches + verifies + replays on every reconcile tick. Recovery from empty is "one tick later, table populated from the signed artifact."
-  - `trust.json` - the trust roots themselves. Sourced from the flake at build time; rebuildable as long as the flake survives. Issue #41 tracks the deferred TPM-bound issuance CA.
+  - `cert_revocations` - agent-cert revocation list. Loss is a **security regression** - previously-revoked certs become valid again. Mitigated by the signed `revocations.json` sidecar: operator commits revocations to the fleet repo, CI signs the artifact with the same `ciReleaseKey` that signs `fleet.resolved.json`, the CP fetches + verifies + replays on every reconcile tick. Recovery from empty is "one tick later, table populated from the signed artifact."
+  - `trust.json` - the trust roots themselves. Sourced from the flake at build time; rebuildable as long as the flake survives. A deferred TPM-bound issuance CA is tracked as future work.
 
-The principle is *"the CP holds nothing whose loss creates a security regression on rebuild, and nothing whose loss creates more than a one-window operational regression."* That is the strict reading of §8 done-criterion #1; #46 (orphan-confirm recovery), #47 (`last_confirmed_at` attestation), and #48 (signed revocations sidecar) are what make it true.
+The principle is *"the CP holds nothing whose loss creates a security regression on rebuild, and nothing whose loss creates more than a one-window operational regression."* That is the strict reading of §8 done-criterion #1; orphan-confirm recovery, the `last_confirmed_at` attestation, and the signed revocations sidecar are what make it true.
 
 ---
 
@@ -356,7 +302,7 @@ maintained in a separate repository.
 
 Four falsifiable statements. If any is false, the design hasn't landed:
 
-1. Destroying the control plane's database and rebuilding from empty state results in full fleet visibility within one reconcile cycle, with zero operator intervention beyond restarting the service. Strict reading: every CP-resident table either repopulates from agent inputs (soft state - `token_replay`, `pending_confirms`, `host_rollout_state`) or from a signed artifact in git (hard state - `cert_revocations` via the signed `revocations.json` sidecar, `trust.json` via the flake). See §6 Phase 10 for the per-table classification.
+1. Destroying the control plane's database and rebuilding from empty state results in full fleet visibility within one reconcile cycle, with zero operator intervention beyond restarting the service. Strict reading: every CP-resident table either repopulates from agent inputs (soft state - `token_replay`, `pending_confirms`, `host_rollout_state`) or from a signed artifact in git (hard state - `cert_revocations` via the signed `revocations.json` sidecar, `trust.json` via the flake). See §6 (CP-resident state by recovery profile) for the per-table classification.
 2. An auditor can be handed a host's hostname + a date range, and - without access to the control plane - produce a cryptographically-verifiable statement of "on this date, this host ran closure sha256-X, which was built from commit Y, and passed compliance controls Z₁..Zₙ with signed probe outputs matching the declared schemas".
 3. The control plane's disk contents, stolen in their entirety, yield zero plaintext secret material.
 4. A deliberately-corrupted closure pushed to attic (bypassing CI) is rejected by every agent; a deliberately-modified `fleet.resolved` served by the control plane is rejected by the control plane's own signature verification.

@@ -1,6 +1,6 @@
 # Disaster recovery - destroying the control plane
 
-Background: see `../design/architecture.md` §6 Phase 10 + §8.
+Background: see `../design/architecture.md` §6 (CP-resident state by recovery profile) + §8.
 
 Operator runbook for wiping the CP and rebuilding from signed artifacts.
 Validation: `fleet-harness-teardown` in CI.

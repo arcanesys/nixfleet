@@ -62,7 +62,7 @@ bundle-2026-05-14.tar
 ├── fleet/
 │   ├── fleet.resolved.json    # signed per RFC-0001
 │   ├── fleet.resolved.json.sig
-│   ├── revocations.json       # signed per ARCHITECTURE.md §6 Phase 10
+│   ├── revocations.json       # signed per the CP-resident-state recovery-profile policy in docs/design/architecture.md §6
 │   └── revocations.json.sig
 ├── rollouts/
 │   ├── <rolloutId>.json       # signed per RFC-0002 §4.4
@@ -198,15 +198,15 @@ The full chain, online commit to first agent activation, is human-paced (typical
 - An operator importing a malicious bundle whose signatures verify because the attacker has the keys. Same as above.
 - A leaked import receipt key being used to fake an import. Fix: rotate the receipt key.
 
-## 11. Build phases
+## 11. Deliverable
 
-- **Phase 21 - `nixfleet-bundle` crate + bundle format + verify/import + air-gap channel schema.** Single phase, all sub-deliverables tightly coupled:
-  - 21.1 Crate scaffold; bundle manifest types in `nixfleet-proto`.
-  - 21.2 `bundle export` (online side).
-  - 21.3 `bundle verify` (offline, no network).
-  - 21.4 `bundle import` (offline, writes to sovereign attic + CP-polled paths).
-  - 21.5 Air-gap channel schema (`airgap.enabled`, `airgap.maxStaleness`); mkFleet enforcement of explicit `timeSource` for air-gap channels.
-  - 21.6 microvm.nix scenario simulating the full pipeline (online build → bundle → offline verify → import → agent activation).
+- **`nixfleet-bundle` crate + bundle format + verify/import + air-gap channel schema.** Single deliverable, all sub-pieces tightly coupled:
+  - Crate scaffold; bundle manifest types in `nixfleet-proto`.
+  - `bundle export` (online side).
+  - `bundle verify` (offline, no network).
+  - `bundle import` (offline, writes to sovereign attic + CP-polled paths).
+  - Air-gap channel schema (`airgap.enabled`, `airgap.maxStaleness`); mkFleet enforcement of explicit `timeSource` for air-gap channels.
+  - microvm.nix scenario simulating the full pipeline (online build → bundle → offline verify → import → agent activation).
 
 ## 12. Falsifiable done criteria
 

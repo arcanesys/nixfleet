@@ -108,6 +108,6 @@ Look for: rows in `pending` long after deadline (rollback timer broken), repeate
 
 ```sh
 # Tag a stable point - useful before major refactors so we have a known-good restore.
-git -C ~/dev/arcanesys/nixfleet tag -m "v0.2.0-rc1: Phase 4 dispatch chain on hardware" v0.2.0-rc1
+git -C ~/dev/arcanesys/nixfleet tag -m "v0.2.0-rc1: dispatch chain on hardware" v0.2.0-rc1
 git -C ~/dev/arcanesys/nixfleet push lab v0.2.0-rc1
 ```

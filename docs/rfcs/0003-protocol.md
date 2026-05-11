@@ -1,9 +1,9 @@
 # RFC-0003: Agent ↔ control-plane protocol
 
 **Status.** Accepted.
-**Depends on.** RFC-0001, RFC-0002, nixfleet #2 (magic rollback).
+**Depends on.** RFC-0001, RFC-0002, magic rollback.
 **Scope.** Wire protocol between agent and control plane. Identity, endpoints, polling, versioning, security properties. Does not cover control-plane-internal APIs.
-**Implementation.** `crates/nixfleet-proto/src/agent_wire.rs` + `enroll_wire.rs` (request/response types), `crates/nixfleet-control-plane/src/server/` (the `/v1/*` handlers and mTLS gate), `crates/nixfleet-agent/` (the poll loop, enrollment, magic-rollback timer). See `ARCHITECTURE.md` §1.4 / §1.5 / §6 Phase 3.
+**Implementation.** `crates/nixfleet-proto/src/agent_wire.rs` + `enroll_wire.rs` (request/response types), `crates/nixfleet-control-plane/src/server/` (the `/v1/*` handlers and mTLS gate), `crates/nixfleet-agent/` (the poll loop, enrollment, magic-rollback timer). See `docs/design/architecture.md` §1.4 and §1.5.
 
 ## 1. Design goals
 
@@ -211,7 +211,7 @@ Agents fetch both. Implementations MAY also expose a single endpoint that return
 - **Passive network observer.** TLS 1.3 - sees only traffic shape.
 - **Active on-path attacker without a cert.** mTLS fails the handshake; no data exposed.
 - **Compromised non-target agent.** Cert only authorizes its own hostname; cannot request targets for other hosts, cannot submit reports for other hosts. Control plane enforces `cert.CN == request.hostname` on every endpoint.
-- **Compromised control plane - closure forgery.** Cannot learn secrets (zero-knowledge, nixfleet #6). Can serve a different closure hash as target → agent fetches from attic, verifies attic's ed25519 signature against the pinned attic public key (ARCHITECTURE.md §4), refuses unsigned or foreign-signed closures.
+- **Compromised control plane - closure forgery.** Cannot learn secrets (zero-knowledge property). Can serve a different closure hash as target → agent fetches from attic, verifies attic's ed25519 signature against the pinned attic public key (docs/design/architecture.md §4), refuses unsigned or foreign-signed closures.
 - **Compromised control plane - stale-closure replay.** A compromised CP cannot forge closures but could point hosts at an older-but-still-validly-signed closure to block security fixes. Mitigation: every check-in response references a CI-signed `fleet.resolved` revision; the agent fetches that artifact (directly from cache or via the CP) and refuses any target whose backing `fleet.resolved.meta.signedAt` is older than `channel.freshnessWindow` (per-channel declaration in minutes, required, no default - RFC-0001 §2.3). The freshness window is itself inside the signed artifact, so a compromised CP cannot widen it.
 - **Replay.** Confirm requests include `bootId`; the control plane rejects a confirm whose `bootId` doesn't match the expected new boot.
 

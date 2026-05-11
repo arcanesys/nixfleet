@@ -199,22 +199,20 @@ Per-host opt-in.
 
 There is no fleet-wide flag day. The framework supports a mixed fleet (some hosts attested, some not) indefinitely - the per-host `expectedBootEvidence` field's presence is the per-host opt-in.
 
-## 8. Build phases
+## 8. Work items
 
-Phase numbering continues from `ARCHITECTURE.md` §6 (Phase 10 was the v0.2 teardown test).
-
-- **Phase 11 - `expectedBootEvidence` schema + mkFleet derivation.** Schema lands in RFC-0001's evaluation contract; `mkFleet` produces the field for hosts that have declared `enrollAsHostIdentity`. CI's `nixfleet-release` signs over the new field. Deliverable: `fleet.resolved.json` for an attestation-opted host carries a valid `expectedBootEvidence` block; bit-flipping it fails verification.
-- **Phase 12 - Host-identity keyslot.** `enrollAsHostIdentity` flag + agent's switch from SSH-key signing to TPM-wrapper signing for probe outputs. Deliverable: a host with the flag set produces probe-output signatures that the offline auditor (`nixfleet-verify-artifact probe`) verifies against the TPM-derived pubkey, and an attempt to sign a fake probe with on-disk material is rejected by the same auditor.
-- **Phase 13 - Boot-evidence collection (advisory).** Agent collects + signs PCR quote on every checkin; CP logs `AttestationOK / Drift / Invalid` to `host_reports` (existing SQLite table per ARCHITECTURE.md §6 Phase 10). No gating yet. Deliverable: a tampered kernel produces a visible `AttestationDrift` event in fleet status.
-- **Phase 14 - PCR-bound secret recipients.** agenix-equivalent extension; one supported PCR-binding mechanism implemented end-to-end. Deliverable: a secret encrypted to a host's `@boot` PCR policy fails to decrypt on a tampered boot chain, without any agent-side or CP-side intervention.
+- **`expectedBootEvidence` schema + mkFleet derivation.** Schema lands in RFC-0001's evaluation contract; `mkFleet` produces the field for hosts that have declared `enrollAsHostIdentity`. CI's `nixfleet-release` signs over the new field. Deliverable: `fleet.resolved.json` for an attestation-opted host carries a valid `expectedBootEvidence` block; bit-flipping it fails verification.
+- **Host-identity keyslot.** `enrollAsHostIdentity` flag + agent's switch from SSH-key signing to TPM-wrapper signing for probe outputs. Deliverable: a host with the flag set produces probe-output signatures that the offline auditor (`nixfleet-verify-artifact probe`) verifies against the TPM-derived pubkey, and an attempt to sign a fake probe with on-disk material is rejected by the same auditor.
+- **Boot-evidence collection (advisory).** Agent collects + signs PCR quote on every checkin; CP logs `AttestationOK / Drift / Invalid` to `host_reports` (the existing SQLite table covered by the CP-resident-state recovery profile in docs/design/architecture.md §6). No gating yet. Deliverable: a tampered kernel produces a visible `AttestationDrift` event in fleet status.
+- **PCR-bound secret recipients.** agenix-equivalent extension; one supported PCR-binding mechanism implemented end-to-end. Deliverable: a secret encrypted to a host's `@boot` PCR policy fails to decrypt on a tampered boot chain, without any agent-side or CP-side intervention.
 
 Enforcement (boot-evidence as a wave-promotion gate) is the subject of RFC-0005 §4 - kept separate so the mechanism (this RFC) and the policy (lifecycle RFC) ship independently.
 
 ## 9. Falsifiable done criteria
 
-1. Disk extraction from a Phase-12-enrolled host yields no usable signing capability; an attempt to use the on-disk material to sign a fake probe is rejected by `nixfleet-verify-artifact probe` against the host's TPM-derived pubkey.
-2. Booting a Phase-13-enrolled host with a modified kernel or initrd produces a PCR mismatch that the CP detects on the next checkin and emits as `AttestationDrift`.
-3. A Phase-14-encrypted secret encrypted to a host's `@boot` PCR policy fails to decrypt when the boot chain is modified, without operator intervention.
+1. Disk extraction from a host enrolled with the host-identity keyslot yields no usable signing capability; an attempt to use the on-disk material to sign a fake probe is rejected by `nixfleet-verify-artifact probe` against the host's TPM-derived pubkey.
+2. Booting a host with boot-evidence collection active and a modified kernel or initrd produces a PCR mismatch that the CP detects on the next checkin and emits as `AttestationDrift`.
+3. A secret encrypted to a host's `@boot` PCR policy fails to decrypt when the boot chain is modified, without operator intervention.
 4. A host with TPM hardware failure can be re-enrolled and rejoin the fleet under the documented procedure (RFC-0005 §7) in under 30 minutes.
 5. A firmware update that the operator has tested and declared via `firmwareGeneration` rolls out without triggering attestation drift.
 

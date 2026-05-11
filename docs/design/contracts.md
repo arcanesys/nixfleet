@@ -412,7 +412,7 @@ A small set of technology choices are **load-bearing** for the framework - they'
 
 **TPM is *not* on this list.** TPM hardware is a *fleet's choice* of signing keyslot, not a framework requirement. The `keyslots/tpm` impl ships at `flake.scopes.keyslots.tpm` as one option among many; the framework runtime never links a TPM library. A fleet using a YubiKey, software key, HSM, or KMS for the CI release key is fully framework-supported - see §I #1's hook contract. The current reference fleet happens to use TPM-backed ECDSA P-256; that's deployment opinion.
 
-**Why call these out.** Phases 1-9 of the agnosticism work made it easy to add new tech-specific impls as scopes. The four assumptions above cannot be captured by the same pattern - there is no scope a fleet can import to replace systemd. Documenting them here prevents the framework from drifting into pretending they're substitutable, and gives future maintainers a clear test: *if it's listed below the agnosticism table, scope-side; if it's listed in this irreducible-assumptions table, framework-side and out of scope to abstract.*
+**Why call these out.** The agnosticism work made it easy to add new tech-specific impls as scopes. The four assumptions above cannot be captured by the same pattern - there is no scope a fleet can import to replace systemd. Documenting them here prevents the framework from drifting into pretending they're substitutable, and gives future maintainers a clear test: *if it's listed below the agnosticism table, scope-side; if it's listed in this irreducible-assumptions table, framework-side and out of scope to abstract.*
 
 ---
 

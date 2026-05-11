@@ -11,7 +11,7 @@ ARCHITECTURE.md §4 describes the trust model statically - four roots, derivatio
 
 - Pre-announced rotation slots (`current` / `previous` / `successor` / `retireAt`) on the trust contract - `contracts/trust.nix` enforces the paired-options invariant.
 - Bootstrap tokens with hostname + pubkey-fingerprint scoping, single-use via the `token_replay` SQLite table, signed by the org root key - RFC-0003 §4.5.
-- Closure-hash quarantine after activation failure (`ClosureQuarantined` event, agent-side state-dir record per ARCHITECTURE.md changelog #55).
+- Closure-hash quarantine after activation failure (`ClosureQuarantined` event, agent-side state-dir record).
 - Cert revocation via the signed `revocations.json` sidecar replayed into `cert_revocations` on every reconcile tick.
 
 What is missing and what auditors ask for first:
@@ -41,7 +41,7 @@ When in doubt: prefer hardware-bound, short-lived, narrow-scope, observably-revo
 
 ## 3. Operator workflow specification
 
-Three operator roles. Each has a documented hardware requirement, a stated maximum lifetime, and a defined revocation path. Procedures live in `docs/runbooks/` (new directory - Phase 15 deliverable); ceremony tooling in `tools/keys/` (new directory - Phase 15 deliverable).
+Three operator roles. Each has a documented hardware requirement, a stated maximum lifetime, and a defined revocation path. Procedures live in `docs/runbooks/` (new directory - documentation work item); ceremony tooling in `tools/keys/` (new directory - documentation work item).
 
 ### 3.1 Release operator
 
@@ -68,11 +68,11 @@ Three operator roles. Each has a documented hardware requirement, a stated maxim
 
 When a host's RFC-0004 boot attestation or runtime probes fail persistently, the CP stops issuing fresh mTLS certs to it. Existing certs are short-lived (default 30-day per RFC-0003 §2; renewed at 50% TTL); within one renewal cycle the host falls out of the active fleet view.
 
-This is a **distinct state machine** from closure-hash quarantine (`ClosureQuarantined` per the v0.2 changelog #55). To keep the two clearly separate:
+This is a **distinct state machine** from closure-hash quarantine (`ClosureQuarantined`). To keep the two clearly separate:
 
 | Mechanism | Trigger | Scope | Origin |
 |---|---|---|---|
-| `ClosureQuarantined` | Same `closure_hash` fails activation 24h | Per-closure, per-host | v0.2 #55 |
+| `ClosureQuarantined` | Same `closure_hash` fails activation 24h | Per-closure, per-host | v0.2 baseline |
 | `HostAttestationQuarantined` | Persistent attestation drift or probe failure | Per-host, all closures | RFC-0005 |
 
 Closure quarantine prevents wasted activation cycles on a known-broken release. Attestation quarantine declares "this host is no longer trusted to act in the fleet." Different lifecycles, different operator surfaces.
@@ -92,7 +92,7 @@ Default off per channel. Operators tune thresholds for their environment before 
 
 ### 4.2 State recovery classification
 
-Per ARCHITECTURE.md §6 Phase 10's soft/hard recovery taxonomy: `HostAttestationQuarantined` is **soft state**. After CP rebuild, repeated attestation failures from the same host re-trigger the quarantine within the threshold window. No signed-artifact replay needed because the trigger is observable from agent inputs.
+Per docs/design/architecture.md §6's soft/hard recovery taxonomy (CP-resident state by recovery profile): `HostAttestationQuarantined` is **soft state**. After CP rebuild, repeated attestation failures from the same host re-trigger the quarantine within the threshold window. No signed-artifact replay needed because the trigger is observable from agent inputs.
 
 The quarantine *threshold configuration* is hard state (lives in `fleet.resolved.json`, signed). The quarantine *occurrence record* is soft (rebuilt from continued failures).
 
@@ -235,15 +235,15 @@ Most of RFC-0005 is additive documentation. Mechanism additions are per-host or 
 - **Threshold-signed channels** are opt-in per channel. Default is single-signer (the existing `ciReleaseKey` flow). Operators opt in by declaring `releaseSigners`.
 - **Operator workflow** documentation is the bulk of the work and applies retroactively; no code change required.
 
-## 10. Build phases
+## 10. Work items
 
-- **Phase 15 - Operator workflow documentation.** Runbooks for the four key types in `docs/runbooks/`; ceremony scripts in `tools/keys/`; hardware compatibility matrix; transparency-log file format. No new Rust code.
-- **Phase 16 - EK-bound bootstrap tokens.** Token-claims field, `nixfleet mint-token` subcommand flag, EK-quote verification at `/v1/enroll`, single-use enforcement against EK fingerprint.
-- **Phase 17 - Active host-attestation quarantine.** `attestationQuarantine` channel schema (RFC-0001 additive), CP-side state machine and cert-issuance hook, observable status, `unquarantine-host` flake app, microvm scenario.
-- **Phase 18 - Threshold-signed channels.** Channel schema additions (`releaseSigners`), signing-session protocol, `sign-release` CLI flake app, CP-side multi-signature verification.
-- **Phase 19 - Key rotation runbooks tested.** Each rotation procedure has a microvm scenario that runs in the nightly suite.
+- **Operator workflow documentation.** Runbooks for the four key types in `docs/runbooks/`; ceremony scripts in `tools/keys/`; hardware compatibility matrix; transparency-log file format. No new Rust code.
+- **EK-bound bootstrap tokens.** Token-claims field, `nixfleet mint-token` subcommand flag, EK-quote verification at `/v1/enroll`, single-use enforcement against EK fingerprint.
+- **Active host-attestation quarantine.** `attestationQuarantine` channel schema (RFC-0001 additive), CP-side state machine and cert-issuance hook, observable status, `unquarantine-host` flake app, microvm scenario.
+- **Threshold-signed channels.** Channel schema additions (`releaseSigners`), signing-session protocol, `sign-release` CLI flake app, CP-side multi-signature verification.
+- **Key rotation runbooks tested.** Each rotation procedure has a microvm scenario that runs in the nightly suite.
 
-Phases 15-19 are largely independent - Phases 16, 17, 18 can be parallelized once Phase 15 lands the documentation tooling. Phase 19 depends on the others (the runbooks for new mechanisms can only be written after the mechanisms ship).
+These work items are largely independent - the documentation tooling unblocks the rest; runbook validation depends on the mechanisms shipping first.
 
 ## 11. Falsifiable done criteria
 

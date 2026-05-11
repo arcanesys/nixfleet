@@ -1,9 +1,9 @@
 # RFC-0002: Rollout execution engine
 
 **Status.** Accepted.
-**Depends on.** RFC-0001 (`fleet.nix` schema), nixfleet #2 (magic rollback), nixfleet #4 (compliance gates).
+**Depends on.** RFC-0001 (`fleet.nix` schema), magic rollback, compliance gates.
 **Scope.** The decision procedure that turns `fleet.resolved` + observed fleet state into wave-by-wave reconciliation actions. Does not cover *how* actions reach hosts - that's RFC-0003.
-**Implementation.** `crates/nixfleet-reconciler/` (pure decision procedure: `reconcile`, `verify_artifact`, `host_state`, `manifest`). `crates/nixfleet-control-plane/src/server/reconcile.rs` (the tick loop). See `ARCHITECTURE.md` §1.4 / §6 Phase 4-6.
+**Implementation.** `crates/nixfleet-reconciler/` (pure decision procedure: `reconcile`, `verify_artifact`, `host_state`, `manifest`). `crates/nixfleet-control-plane/src/server/reconcile.rs` (the tick loop). See `docs/design/architecture.md` §1.4 and §6.
 
 ## 1. Motivation
 

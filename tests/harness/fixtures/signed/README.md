@@ -1,14 +1,12 @@
 # Signed harness fixture
 
 A deterministic, byte-stable `fleet.resolved.json` with an ed25519
-signature, baked at Nix build time. Consumed by the Phase 2 signed
+signature, baked at Nix build time. Consumed by the signed
 round-trip harness scenario and by the Rust verify CLI.
 
 Lives at `tests/harness/fixtures/signed/` rather than under
 `crates/*/tests/fixtures/` because the fixture is produced by a Nix
-derivation (openssl + the pinned `nixfleet-canonicalize` binary). See
-`docs/phase-2-entry-spec.md` §12.1 for the locked-in placement
-rationale.
+derivation (openssl + the pinned `nixfleet-canonicalize` binary).
 
 ## What the derivation emits
 
@@ -59,26 +57,25 @@ randomness, absolute paths) and needs tracing.
 
 All pending. Updated to links as work lands.
 
-- **`tests/harness/scenarios/signed-roundtrip.nix`** (Phase 2 PR(b),
-  TODO) - serves `canonical.json` + `canonical.json.sig` from the CP
-  stub, mounts `test-trust.json` into the agent microVM, asserts
-  verify succeeds and the agent logs `harness-roundtrip-ok:`.
-- **`crates/nixfleet-verify-artifact`** (Phase 2 PR(a), Stream C,
-  TODO) - thin CLI wrapping `reconciler::verify_artifact`. Receives
-  the four files as `--artifact`, `--signature`, `--trust-file`, and
-  a derived `--now` / `--freshness-window-secs`.
+- **`tests/harness/scenarios/signed-roundtrip.nix`** (TODO) - serves
+  `canonical.json` + `canonical.json.sig` from the CP stub, mounts
+  `test-trust.json` into the agent microVM, asserts verify succeeds
+  and the agent logs `harness-roundtrip-ok:`.
+- **`crates/nixfleet-verify-artifact`** (TODO) - thin CLI wrapping
+  `reconciler::verify_artifact`. Receives the four files as
+  `--artifact`, `--signature`, `--trust-file`, and a derived `--now`
+  / `--freshness-window-secs`.
 
 ## Out of scope here
 
-Per `docs/phase-2-entry-spec.md` §9 - the first wire-up deliberately
-exercises only one algorithm and one non-rotation trust configuration.
-Explicit non-goals for this fixture:
+The first wire-up deliberately exercises only one algorithm and one
+non-rotation trust configuration. Explicit non-goals for this fixture:
 
 - ECDSA P-256 signatures (unit-tested in `crates/nixfleet-reconciler`).
 - Multi-key `previous` rotation (follow-up scenario
   `fleet-harness-signed-rotation-cross-algo`).
 - `rejectBefore` compromise switch (scenario-specific).
-- Tampered-signature refusal (Checkpoint 2 scenario copies this
+- Tampered-signature refusal (a sibling scenario copies this
   derivation and flips one byte).
 
 Each of those is a sibling derivation that copies this one and changes
