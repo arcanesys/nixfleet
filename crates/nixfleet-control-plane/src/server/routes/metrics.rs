@@ -3,7 +3,10 @@
 //! `/v1/hosts`. Returns 404 when the `metrics` feature is off.
 
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
+
+#[cfg(feature = "metrics")]
+use axum::response::IntoResponse;
 
 #[cfg(feature = "metrics")]
 use crate::metrics::{install_recorder, record_build_info};
