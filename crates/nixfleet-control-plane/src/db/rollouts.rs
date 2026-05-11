@@ -39,9 +39,8 @@ impl SupersedeStatus {
 
 impl Rollouts<'_> {
     /// Idempotent insert + same-channel supersede in one txn. LOADBEARING:
-    /// `INSERT OR IGNORE` (concurrent same-id dispatches no-op), supersede
-    /// `WHERE rollout_id != ?` (never self-supersede), supersession is
-    /// strictly intra-channel, RFC3339 timestamps (read paths parse them).
+    /// INSERT OR IGNORE for concurrent dispatches, `WHERE rollout_id != ?`
+    /// prevents self-supersede, supersession is intra-channel only.
     pub fn record_active_rollout(&self, rollout_id: &str, channel: &str) -> Result<()> {
         let now_rfc = Utc::now().to_rfc3339();
         super::txn(self.conn, "record_active_rollout", |t| {
@@ -65,9 +64,8 @@ impl Rollouts<'_> {
         })
     }
 
-    /// `Ok(None)` when the rollout isn't tracked. Lifecycle endpoint
-    /// returns 404 in that case - callers don't fabricate supersession
-    /// state for unknown rids (no historical reconstruction).
+    /// `Ok(None)` for untracked rollout ids; callers don't fabricate
+    /// supersession state.
     pub fn supersede_status(&self, rollout_id: &str) -> Result<Option<SupersedeStatus>> {
         super::read(self.conn, |c| {
             let row = c
@@ -106,10 +104,8 @@ impl Rollouts<'_> {
         })
     }
 
-    /// Idempotent terminal stamp. Triggers: `Action::ConvergeRollout` (all
-    /// hosts terminal-for-ordering on the last wave) + per-tick orphan sweep
-    /// (channel has no expected hosts; without the sweep the rollout sits
-    /// "in flight" forever).
+    /// Idempotent terminal stamp. Triggered by `ConvergeRollout` and the
+    /// orphan sweep.
     pub fn mark_terminal(&self, rollout_id: &str, now: DateTime<Utc>) -> Result<usize> {
         super::read(self.conn, |c| {
             c.execute(
@@ -122,9 +118,8 @@ impl Rollouts<'_> {
         })
     }
 
-    /// Monotonic wave-index advance. The `WHERE current_wave < ?2` guard
-    /// ensures concurrent reconciler ticks can't race a rollout backwards;
-    /// the second update is a no-op (returns 0).
+    /// Monotonic wave-index advance; `WHERE current_wave < ?2` blocks
+    /// concurrent ticks from racing backwards.
     pub fn set_current_wave(&self, rollout_id: &str, wave: u32) -> Result<usize> {
         super::read(self.conn, |c| {
             c.execute(
@@ -149,9 +144,7 @@ impl Rollouts<'_> {
         })
     }
 
-    /// Used by `active_rollouts_snapshot` to filter out superseded rollouts
-    /// without joining (snapshot is grouped by rollout_id; this returns the
-    /// set of superseded ids to exclude).
+    /// Set of superseded ids to exclude from snapshots without a join.
     pub fn superseded_rollout_ids(&self) -> Result<Vec<String>> {
         super::read(self.conn, |c| {
             let mut stmt =
@@ -163,10 +156,8 @@ impl Rollouts<'_> {
         })
     }
 
-    /// Returns rollout-ids no longer in flight - superseded OR terminal.
-    /// Single set so callers don't have to track two filters; the
-    /// reconciler and dispatch path treat both states equivalently
-    /// (don't advance, exclude from gate observed).
+    /// Rollouts no longer in flight (superseded OR terminal). Both paths
+    /// treat the two states equivalently.
     pub fn finished_rollout_ids(&self) -> Result<Vec<String>> {
         super::read(self.conn, |c| {
             let mut stmt = c.prepare(
@@ -180,23 +171,19 @@ impl Rollouts<'_> {
         })
     }
 
-    /// Gate-observed source. Filters superseded only - terminal rollouts MUST
+    /// Gate-observed source. Filters superseded only - terminal rollouts
     /// stay visible so channelEdges can detect "predecessor converged" via
-    /// host_states inspection (hiding them was the dispatch/reconciler
-    /// asymmetry regression). UI consumers want `list_in_flight` instead.
+    /// host_states. UI consumers should use `list_in_flight`.
     pub fn list_active(&self) -> Result<GateRollouts> {
         Ok(GateRollouts(self.list_filtered(false)?))
     }
 
-    /// UI source. Filters superseded AND terminal - `Action::ConvergeRollout`
-    /// stamps terminal_at and the rollout drops out (operator's "done" view).
-    /// Gates use `list_active` instead.
+    /// UI source. Filters superseded AND terminal (operator's "done" view).
     pub fn list_in_flight(&self) -> Result<UiRollouts> {
         Ok(UiRollouts(self.list_filtered(true)?))
     }
 
     fn list_filtered(&self, exclude_terminal: bool) -> Result<Vec<ActiveRollout>> {
-        // SQL is compile-time-static so the WHERE toggle has no injection risk.
         let sql = if exclude_terminal {
             "SELECT rollout_id, channel, current_wave, created_at, terminal_at
              FROM rollouts
@@ -227,7 +214,6 @@ impl Rollouts<'_> {
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(v)
         })?;
-        // Parse terminal_at outside the closure so error context is precise.
         rows.into_iter()
             .map(|(mut row, raw)| -> Result<ActiveRollout> {
                 row.terminal_at = match raw {

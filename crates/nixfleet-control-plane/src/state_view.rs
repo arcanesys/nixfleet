@@ -1,7 +1,6 @@
-//! Reusable read-model substrate for fleet state. Consumed by the
-//! `/v1/hosts` and `/v1/deferrals` HTTP routes and the (forthcoming)
-//! Prometheus metrics exporter + CLI status renderer. Sharing this
-//! means row shapes and label sets agree by construction across all surfaces.
+//! Shared read-model for fleet state. Consumed by `/v1/hosts`,
+//! `/v1/deferrals`, the metrics exporter, and the CLI status renderer - so
+//! row shapes and label sets agree by construction.
 
 use std::collections::HashMap;
 
@@ -15,17 +14,13 @@ use crate::server::AppState;
 
 #[derive(Debug)]
 pub enum StateViewError {
-    /// Verified fleet snapshot not yet primed (CP just started; channel-refs
-    /// poll hasn't completed a successful verify yet, or file-backed artifact
-    /// failed verification).
+    /// Verified fleet snapshot not yet primed.
     FleetNotPrimed,
 }
 
-/// Joins verified fleet declarations × per-host checkins × report buffers
-/// into a one-row-per-declared-host view, sorted by hostname for stable
-/// output. Outstanding-event counts apply resolution-by-replacement:
-/// events from older rollouts than the host's `last_rollout_id` are
-/// treated as resolved.
+/// Joins fleet declarations × per-host checkins × report buffers into a
+/// one-row-per-host view sorted by hostname. Resolution-by-replacement:
+/// events from older rollouts than `last_rollout_id` are treated as resolved.
 pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, StateViewError> {
     let snapshot = state
         .verified_fleet
@@ -38,10 +33,9 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
     let checkins = state.host_checkins.read().await;
     let reports = state.host_reports.read().await;
 
-    // Memoise per-channel rollout ID so we project the manifest once per
-    // channel, not per host. Projection failure is louder than the legitimate
-    // "no host with closure on this channel" Ok(None) case - warn so a broken
-    // fleet manifest surfaces in logs instead of as silently empty rollout_state.
+    // Memoise per-channel rollout ID; project once per channel, not per host.
+    // Projection failure warns so a broken manifest surfaces in logs rather
+    // than silently empty rollout_state.
     let mut current_rollout_for_channel: HashMap<String, Option<String>> = HashMap::new();
     for channel in fleet.channels.keys() {
         let id = match compute_rollout_id_for_channel(&fleet, &fleet_hash, channel) {
@@ -84,20 +78,17 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
             };
 
             let host_buf = reports.get(hostname);
-            // GOTCHA: cur_rollout uses agent-reported `last_rollout_id`, not
-            // the fleet's current rollout. After a fresh deploy this can lag
-            // by one tick - pre-existing pattern, applies to all event-buffer
-            // counters here. `pending_reboot` is DB-backed below, so it's not
-            // affected by this drift; `quarantined_closure` is event-ring
-            // based and CAN drift, but the agent re-posts hourly while
-            // suppressing so the worst-case staleness is one tick.
+            // GOTCHA: cur_rollout uses agent-reported `last_rollout_id`, so
+            // event-buffer counters can lag by one tick after fresh deploys.
+            // DB-backed signals (pending_reboot) are immune; event-ring
+            // signals (quarantined_closure) can drift, but agent re-posts
+            // hourly so worst case is one tick.
             let cur_rollout = last_rollout_id.as_deref();
             let mut compliance_failures = 0usize;
             let mut runtime_gate_errors = 0usize;
             let mut verified_count = 0usize;
-            // Most recent ClosureQuarantined for current rollout - None when
-            // no quarantine event present, Some(closure_hash) otherwise.
-            // Buf iter is oldest-first, so we overwrite as we find newer.
+            // Most-recent ClosureQuarantined for current rollout. Buf iter
+            // is oldest-first; overwrite as we find newer.
             let mut quarantined_closure: Option<String> = None;
             if let Some(buf) = host_buf {
                 for record in buf.iter() {

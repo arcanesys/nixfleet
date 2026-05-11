@@ -1,9 +1,7 @@
 //! Orphan-confirm + soak-state recovery for CP rebuild mid-flight.
-//!
-//! LOADBEARING: only synthesises state when the agent's claim matches the
-//! verified fleet (closure AND rollout id). Closure mismatch / missing
-//! snapshot / missing host declaration → fall through (caller decides 410).
-//! Failures here are non-fatal - agent's local rollback still fires on 410.
+//! LOADBEARING: synthesises state only when the agent's claim matches the
+//! verified fleet (closure AND rollout id). Mismatch falls through to 410;
+//! agent's local rollback fires either way.
 
 use std::sync::Arc;
 
@@ -65,9 +63,9 @@ async fn validate_orphan_recovery(
         return None;
     }
 
-    // FOOTGUN: closure match alone doesn't prove `req.rollout` is THIS
-    // snapshot's id - content-addressed manifests mean a CI re-sign with the
-    // same closure but different host_set/wave_layout produces a new rolloutId.
+    // FOOTGUN: closure match alone doesn't prove `req.rollout` is this
+    // snapshot's id - a CI re-sign with the same closure but different
+    // host_set/wave_layout produces a new rolloutId.
     let expected_rollout_id = match nixfleet_reconciler::compute_rollout_id_for_channel(
         &fleet,
         &fleet_resolved_hash,
@@ -95,8 +93,7 @@ async fn validate_orphan_recovery(
     Some((target_closure.clone(), host_decl.channel.clone()))
 }
 
-/// Atomic write via `record_confirmed_dispatch_with_state`: target_state =
-/// Healthy, healthy_since = now. Returns true on success.
+/// Atomic write: state = Healthy, healthy_since = now. Returns true on success.
 fn synthesise_orphan_confirm_rows(
     db: &crate::db::Db,
     req: &ConfirmRequest,

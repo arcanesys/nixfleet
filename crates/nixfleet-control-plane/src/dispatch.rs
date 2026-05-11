@@ -9,9 +9,9 @@ use nixfleet_proto::{
 
 const CONFIRM_ENDPOINT: &str = "/v1/agent/confirm";
 
-// FOOTGUN: PartialEq is intentionally NOT derived. EvaluatedTarget doesn't
-// implement it and `evaluated_at` equality wouldn't be meaningful anyway.
-// Tests pattern-match on variants; don't add a derive to "fix" assertion sites.
+// FOOTGUN: PartialEq is intentionally NOT derived (EvaluatedTarget doesn't
+// implement it and `evaluated_at` equality wouldn't be meaningful). Tests
+// pattern-match on variants.
 #[derive(Debug, Clone)]
 pub enum Decision {
     Converged,
@@ -23,12 +23,8 @@ pub enum Decision {
     InFlight,
     /// Last fetch failed; hold rather than dispatch.
     HoldAfterFailure,
-    /// Host's `wave_index` exceeds the rollout's `current_wave`. The
-    /// reconciler's PromoteWave action advances `current_wave` when the
-    /// previous wave reaches Soaked. Until then, hosts in later waves
-    /// are held at the dispatch endpoint - without this, the agent-
-    /// facing checkin would serve targets to wave-N hosts before
-    /// wave-(N-1) had soaked, defeating wave-staged rollouts.
+    /// Host's `wave_index` exceeds the rollout's `current_wave`. Holds wave-N
+    /// hosts at the dispatch endpoint until PromoteWave advances current_wave.
     WaveNotReached,
     Dispatch {
         target: EvaluatedTarget,
@@ -38,14 +34,9 @@ pub enum Decision {
 }
 
 /// LOADBEARING: `fleet_resolved_hash` anchors rolloutId to the verified
-/// snapshot's canonical bytes - different snapshot at the same channel ref
-/// produces a different rolloutId, by design. Drift breaks the wire promise
-/// that every advertised rolloutId resolves to a CI-signed manifest.
-/// `current_wave`: `None` means "no rollout recorded in DB yet"  -
-/// interpreted as `current_wave = 0` for gating purposes (the wave-
-/// staging contract always opens at wave 0). Reconciler's PromoteWave
-/// action persists advancement; the checkin path reads the same column
-/// to gate.
+/// snapshot's canonical bytes. Different snapshot ⇒ different rolloutId,
+/// preserving the wire promise that every advertised rolloutId resolves to a
+/// CI-signed manifest. `current_wave = None` ⇒ wave 0 (rollouts open at 0).
 #[allow(clippy::too_many_arguments)]
 pub fn decide_target(
     hostname: &str,

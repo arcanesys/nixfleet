@@ -42,8 +42,7 @@ pub enum AuditContext {
     Renew { previous_cert_serial: String },
 }
 
-/// Stage-typed error so axum handlers map each phase to the right StatusCode
-/// without duplicating the candidate loop.
+/// Stage-typed error so axum handlers map each phase to the right StatusCode.
 #[derive(Debug)]
 pub enum TrustVerifyError {
     TrustFileRead {
@@ -79,9 +78,8 @@ impl std::fmt::Display for TrustVerifyError {
     }
 }
 
-/// Re-reads trust.json each call (key rotations propagate without restart).
-/// ed25519-only; non-ed25519 / base64-decode failures skip the candidate.
-/// `now` enables the `successor` overlap window (`now < retire_at`).
+/// Re-reads trust.json per call (key rotations apply without restart).
+/// ed25519-only. `now` enables the `successor` overlap window.
 pub fn verify_bootstrap_token_against_trust(
     trust_path: &Path,
     token: &BootstrapToken,
@@ -141,7 +139,7 @@ pub fn verify_token_signature(token: &BootstrapToken, org_root_pubkey: &[u8]) ->
         .context("decode token signature base64")?;
     let signature = Signature::from_slice(&sig_bytes).context("parse ed25519 signature")?;
 
-    // JCS canonical bytes; matches what the operator-side mint tool signed.
+    // JCS canonical bytes match what the operator-side mint tool signed.
     let claims_json = serde_json::to_string(&token.claims).context("serialize claims")?;
     let canonical =
         nixfleet_canonicalize::canonicalize(&claims_json).context("canonicalize claims")?;
@@ -182,10 +180,8 @@ pub fn fingerprint(pubkey_bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(digest)
 }
 
-/// Extract the first private-key PEM block; rcgen's `KeyPair::from_pem`
-/// reads only one block, so OpenSSL-generated EC keys (`EC PARAMETERS` +
-/// `EC PRIVATE KEY`) need this stripping. Accepted labels:
-/// `PRIVATE KEY` (PKCS#8), `EC PRIVATE KEY` (SEC1), `RSA PRIVATE KEY` (PKCS#1).
+/// Extract the first private-key PEM block. Strips OpenSSL preambles
+/// (`EC PARAMETERS`) that rcgen's `KeyPair::from_pem` can't read.
 pub fn extract_private_key_pem_block(pem_text: &str) -> Result<String> {
     const ACCEPTED: &[&str] = &["PRIVATE KEY", "EC PRIVATE KEY", "RSA PRIVATE KEY"];
 
@@ -225,15 +221,9 @@ pub fn extract_private_key_pem_block(pem_text: &str) -> Result<String> {
     )
 }
 
-/// Validates that the CSR's raw ed25519 pubkey matches the host's
-/// declared SSH host pubkey (`hosts.<hostname>.pubkey` from
-/// fleet.resolved.json). Closes RFC-0003 §2: agent identity is bound
-/// to the SSH host key, not a fresh keypair.
-///
-/// Fail-closed: a host with no `pubkey` declared in fleet.nix CANNOT
-/// enroll. The expected workflow is "operator declares host (with
-/// pubkey) in fleet.nix → CI signs new fleet.resolved → agent enrols"
-/// - there's no permissive fallback.
+/// Bind agent identity to the host's declared SSH host pubkey. Fail-closed:
+/// no `pubkey` in fleet.nix ⇒ enrollment refused (declarative-enrollment
+/// policy, no permissive fallback).
 pub fn validate_csr_against_fleet_host(
     csr_pubkey_raw: &[u8],
     declared_openssh_pubkey: Option<&str>,
@@ -257,10 +247,9 @@ pub fn validate_csr_against_fleet_host(
     Ok(())
 }
 
-/// CA signer abstraction over file-backed + TPM-backed paths. `issuer()` is
-/// cached at construction (TPM pays one `tpm_sign` call upfront);
-/// `make_key_pair()` produces a fresh signer per issuance so operator key
-/// rotations apply without restart.
+/// CA signer abstraction over file-backed + TPM-backed paths. `issuer()`
+/// caches the cert at construction; `make_key_pair()` produces a fresh signer
+/// per issuance so operator key rotations apply without restart.
 pub trait CaSigner: Send + Sync {
     fn issuer(&self) -> &rcgen::Certificate;
     fn make_key_pair(&self) -> Result<KeyPair>;

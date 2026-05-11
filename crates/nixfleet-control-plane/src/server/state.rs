@@ -21,7 +21,8 @@ pub(super) const RECONCILE_INTERVAL: Duration = Duration::from_secs(30);
 /// Must exceed agent poll budget (~300s) plus slack to avoid magic-rollback / agent-poll races.
 pub const DEFAULT_CONFIRM_DEADLINE_SECS: i64 = 360;
 
-/// `Default` defaults are bogus on purpose: prod paths that miss clap parsing fail at first IO.
+/// `Default` defaults are bogus on purpose; prod paths fail at first IO if
+/// clap parsing is skipped.
 #[derive(Debug, Clone)]
 pub struct ServeArgs {
     pub listen: SocketAddr,
@@ -60,13 +61,9 @@ pub struct ServeArgs {
     /// `agent-<machineId>.<suffix>` for issued cert CNs. Must match the
     /// issuance CA's `dNSName` name constraint (D14).
     pub agent_cn_suffix: String,
-    /// Test-only opt-in: when `true`, the server starts already in the
-    /// ready state - `/v1/*` serves immediately instead of 503ing until
-    /// the first signed artifact is verified (#95). Production paths
-    /// MUST leave this `false`; the CLI never sets it. Integration
-    /// tests that exercise endpoint logic without driving a real
-    /// channel-refs poll set it to `true` so the readiness gate
-    /// doesn't mask the assertion under test.
+    /// Test-only: skip the readiness gate so endpoint tests don't have to
+    /// drive a real channel-refs poll. Production paths MUST leave `false`;
+    /// the CLI never sets it.
     pub mark_ready_at_startup: bool,
 }
 

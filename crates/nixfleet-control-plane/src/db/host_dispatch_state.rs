@@ -1,31 +1,25 @@
-//! Operational dispatch row, one per host (soft state); orphan-confirm recovers from loss.
+//! Operational dispatch row, one per host (soft state). Orphan-confirm
+//! recovers from loss. LOADBEARING: paired with append-only `dispatch_history`;
+//! UPSERT replaces the operational row per new dispatch, audit trail lives in
+//! history.
 //!
-//! LOADBEARING: paired with `dispatch_history` (append-only audit) - UPSERT replaces
-//! the operational row on every new dispatch; audit trail must survive in history.
-//!
-//! `confirm_deadline` filtering convention across the four readers:
+//! `confirm_deadline` filter conventions across readers:
 //!
 //! | caller | filter | intent |
 //! |--------|--------|--------|
-//! | `confirm()` | `(state='pending' AND deadline > now) OR state='deferred-pending-reboot'` | accept timely confirms + post-reboot confirms |
+//! | `confirm()` | `(state='pending' AND deadline > now) OR state='deferred-pending-reboot'` | timely + post-reboot confirms |
 //! | `pending_deadlines()` | `state='pending' AND deadline < now` | timer sweeps expired |
-//! | `pending_dispatch_exists()` | `state='pending'` only | deadline-agnostic in-flight check; deferred is NOT counted so CP can overwrite with a fresher target |
+//! | `pending_dispatch_exists()` | `state='pending'` | in-flight check; deferred excluded so CP can re-target |
 //! | `active_rollouts_snapshot()` | `state IN ('pending','confirmed','deferred-pending-reboot')` | UI/gate view |
 //! | `mark_deferred()` | `state='pending'` | only Pending rows transition to DeferredPendingReboot |
 //!
-//! Eventual-consistency window = `ROLLBACK_TIMER_INTERVAL` (30s).
-//! New caller? Pick from the table above; never compare without `datetime(...)`
-//! (naked string compare ranks `'T'` after `' '` and breaks the timer).
+//! FOOTGUN: never compare timestamps without `datetime(...)` - naked string
+//! compare ranks `'T'` after `' '` and breaks the timer.
 //!
-//! `DeferredPendingReboot` is the human-paced state for issue #56's switch-
-//! inhibitor carve-out: the agent ran `nix-env --set` but skipped live
-//! activation because a critical-component swap (dbus impl, systemd, kernel,
-//! init) requires a reboot. The 360s rollback timer must NOT sweep these
-//! rows - `pending_deadlines()` filters them out via `state='pending'`. The
-//! confirm endpoint accepts post-reboot confirms against deferred rows
-//! without the deadline check (`confirm()` above). When the operator finally
-//! reboots, the agent's boot-recovery POSTs confirm and the row transitions
-//! `DeferredPendingReboot → Confirmed`.
+//! `DeferredPendingReboot` is the human-paced state for switch-inhibitor
+//! carve-out: agent ran `nix-env --set` but skipped live activation. The 360s
+//! rollback timer must NOT sweep these; confirm accepts post-reboot confirms
+//! without the deadline check.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -56,23 +50,17 @@ pub struct RolloutDbSnapshot {
     pub target_channel_ref: String,
     /// `host_rollout_state` wins when present; otherwise derived from operational state.
     pub host_states: HashMap<String, String>,
-    /// `hds.wave` per host - the wave the host was dispatched into. Stays
-    /// constant once dispatched; distinct from rollout-level `current_wave`
-    /// which advances as PromoteWave fires. Read by the dashboard's
-    /// per-host detail rows.
+    /// Wave the host was dispatched into. Constant once dispatched;
+    /// distinct from rollout-level `current_wave` which advances on PromoteWave.
     pub host_waves: HashMap<String, u32>,
     /// Excludes hosts not currently Healthy.
     pub last_healthy_since: HashMap<String, DateTime<Utc>>,
-    /// Persisted wave index from the rollouts table; advanced by `apply_actions`
-    /// when `Action::PromoteWave` fires. Defaults to 0 for rollouts not yet
-    /// in the rollouts table (transitional, single-tick window).
+    /// Persisted wave index advanced by `apply_actions` on `PromoteWave`.
+    /// Defaults to 0 for rollouts not yet in the rollouts table.
     pub current_wave: u32,
-    /// `Some(t)` once the rollout reaches a terminal state (ConvergeRollout
-    /// stamped, or orphan-sweep retired). Plumbed through to
-    /// `Rollout::terminal_at` so `advance_rollout` short-circuits and so
-    /// gates can distinguish "predecessor converged" from "predecessor
-    /// not yet known". `None` for snapshots built without joining the
-    /// rollouts table (test fixtures, legacy paths).
+    /// `Some(t)` once terminal (ConvergeRollout or orphan-sweep). Plumbed to
+    /// `Rollout::terminal_at` so `advance_rollout` short-circuits and gates
+    /// can distinguish "predecessor converged" from "predecessor unknown".
     #[doc(hidden)]
     pub terminal_at: Option<DateTime<Utc>>,
 }

@@ -131,8 +131,8 @@ struct ServeFlags {
     #[arg(long, env = "NIXFLEET_CP_ROLLOUTS_DIR")]
     rollouts_dir: Option<PathBuf>,
 
-    /// FOOTGUN: must contain literal `{rolloutId}` token for substitution;
-    /// both this and the signature template must be set together (or both omitted).
+    /// FOOTGUN: must contain `{rolloutId}` substitution token; paired with
+    /// signature template (both required, or both omitted).
     #[arg(long, env = "NIXFLEET_CP_ROLLOUTS_SOURCE_ARTIFACT_URL_TEMPLATE")]
     rollouts_source_artifact_url_template: Option<String>,
 
@@ -168,38 +168,19 @@ struct TickFlags {
 }
 
 fn install_crypto_provider() {
-    // Rustls 0.23 needs an explicit provider when multiple backends are linked.
+    // Rustls 0.23 needs explicit provider selection when both ring and
+    // aws-lc-rs are linked.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // `.json()` - one structured JSON object per log entry. Downstream
-    // Loki/Grafana panels consume `target`, `level`, `fields.hostname`,
-    // `fields.rollout` directly - no regex on free-text. For direct
-    // ops use: `journalctl --output=cat -u nixfleet-control-plane.service | jq`.
-    //
-    // Tracing-target contract for log-based dashboards (modules/scopes/
-    // server/grafana-dashboards/nixfleet-events.json depends on these
-    // names being stable):
-    //   - `dispatch`           - per-host dispatch decisions (target
-    //                            issued, held by gate)
-    //   - `confirm`            - agent-side confirms acknowledged at CP
-    //   - `soak`               - Healthy → Soaked transitions
-    //   - `converge`           - final stamp per rollout
-    //   - `promote`            - wave promotions
-    //   - `rollback`           - rollback timer firings (WARN)
-    //   - `closure_proxy`      - manifest fetch / signature anomalies
-    //   - `report`             - agent compliance + runtime-gate reports
-    //   - `checkin`            - agent checkins arriving at CP
-    //   - `channel_refs_poll`  - CP detects new signed artifact
-    //
-    // Renaming any of these breaks the corresponding dashboard panel
-    // silently; add a new target alongside, then migrate panels.
-    //
-    // Field convention: `hostname = %h` (NEVER `host = ...`) so the
-    // Grafana `$hostname` filter matches uniformly. Every host-scoped
-    // tracing call must use this name.
+    // JSON logs feed Loki/Grafana panels keyed off `target`, `level`, and
+    // `fields.{hostname,rollout}` - NO regex on free-text. Tracing targets
+    // are part of the dashboard contract (dispatch, confirm, soak, converge,
+    // promote, rollback, closure_proxy, report, checkin, channel_refs_poll);
+    // renaming any silently breaks a panel.
+    // Field convention: `hostname = %h` (never `host = ...`).
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(
@@ -257,7 +238,6 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
                     artifact_url,
                     signature_url,
                     token_file: flags.channel_refs_token_file.clone(),
-                    // Re-read each poll so trust-root rotation propagates without restart.
                     trust_path: flags.trust_file.clone(),
                     freshness_window,
                 },

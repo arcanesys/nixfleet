@@ -32,14 +32,10 @@ pub struct ChannelRefsCache {
     pub last_refreshed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Cadence + optional `kick` (reconciler wakes us on `ConvergeRollout` / `SoakHost`).
-/// Failure retains previous state; cadence is the safety net for missed kicks.
-///
-/// `artifact_primed` is flipped to `true` after the first successful
-/// `apply_verified_refs` so the `/v1/*` ready gate (#95) opens. Subsequent
-/// successes are no-ops on the flag (it's already true). Failures while
-/// the flag is still `false` are logged at WARN once and DEBUG thereafter
-/// to avoid spamming the dashboard during cold-boot retries.
+/// Cadence + optional `kick` (reconciler wakes us on terminal-for-ordering
+/// transitions). Failure retains previous state. First successful
+/// `apply_verified_refs` flips `artifact_primed`, opening the `/v1/*` ready
+/// gate. Cold-boot retry failures log at WARN once, then DEBUG.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn(
     cancel: tokio_util::sync::CancellationToken,
@@ -77,7 +73,6 @@ pub fn spawn(
                         fleet_hash,
                     )
                     .await;
-                    // First successful prime flips ready; subsequent ones no-op.
                     let was_primed = artifact_primed.swap(true, Ordering::AcqRel);
                     if !was_primed {
                         tracing::info!(

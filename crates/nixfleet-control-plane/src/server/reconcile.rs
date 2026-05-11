@@ -18,9 +18,9 @@ pub(super) fn spawn_reconcile_loop(
     inputs: TickInputs,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        // Build-time artifact is the fallback prime; never overwrite an already-primed upstream-fresh snapshot.
-        // #95: success here also flips `artifact_primed`, which is the operator-provisioned-only ready
-        // path (channelRefsSource.artifactUrl == null + pre-staged bytes at artifact_path).
+        // Build-time artifact is fallback prime; never overwrite an upstream-
+        // fresh snapshot. Success also flips `artifact_primed` (operator-
+        // provisioned-only ready path).
         {
             let already_primed = state.verified_fleet.read().await.is_some();
             if !already_primed {
