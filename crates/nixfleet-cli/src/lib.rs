@@ -12,6 +12,7 @@ use nixfleet_proto::{HostStatusEntry, HostsResponse, RolloutTrace};
 use reqwest::{Certificate, Identity};
 
 pub mod color;
+pub mod commands;
 pub mod config;
 pub mod operator_cert;
 pub use config::{ConfigError, FileConfig, Overrides};
