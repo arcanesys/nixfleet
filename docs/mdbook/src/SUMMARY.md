@@ -11,6 +11,15 @@
 # Reference
 
 - [Test harness](reference/harness.md)
+- [Crates](reference/crates/index.md)
+  - [nixfleet-agent](reference/crates/nixfleet-agent.md)
+  - [nixfleet-canonicalize](reference/crates/nixfleet-canonicalize.md)
+  - [nixfleet-cli](reference/crates/nixfleet-cli.md)
+  - [nixfleet-control-plane](reference/crates/nixfleet-control-plane.md)
+  - [nixfleet-proto](reference/crates/nixfleet-proto.md)
+  - [nixfleet-reconciler](reference/crates/nixfleet-reconciler.md)
+  - [nixfleet-release](reference/crates/nixfleet-release.md)
+  - [nixfleet-verify-artifact](reference/crates/nixfleet-verify-artifact.md)
 - [Rust API (cargo doc)](api.md)
 
 # Operations
