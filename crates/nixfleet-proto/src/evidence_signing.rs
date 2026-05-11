@@ -1,11 +1,11 @@
-//! Shared signing-payload shapes for host probe-output evidence.
-//! Adding a field invalidates existing signatures - bump signing version.
+//! Shared signing-payload shapes for host probe-output evidence. Adding a
+//! field invalidates existing signatures - bump signing version.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-/// `evidence_snippet_sha256` hashes the JCS bytes of the snippet - keeps
-/// the signed payload bounded.
+/// `evidence_snippet_sha256` hashes the JCS bytes of the snippet to keep the
+/// signed payload bounded.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComplianceFailureSignedPayload<'a> {
@@ -48,14 +48,10 @@ pub struct RollbackTriggeredSignedPayload<'a> {
     pub reason: &'a str,
 }
 
-/// Soak-state attestation. Bound to (hostname, rollout) so a stale
-/// signature can't replay across rollouts; `last_confirmed_at` is what
-/// the CP clamps `last_healthy_since` against during rebuild recovery.
-///
-/// Without this signature the CP cannot trust the agent's claimed
-/// confirmation time - a compromised host could replay an older
-/// timestamp to short-circuit the soak gate. Verified against
-/// `hosts.<hostname>.pubkey` from fleet.resolved.
+/// Soak-state attestation, bound to (hostname, rollout) so a stale signature
+/// can't replay across rollouts. Without this signature CP cannot trust the
+/// agent's claimed confirmation time (replay would short-circuit the soak gate).
+/// Verified against `hosts.<hostname>.pubkey` from fleet.resolved.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LastConfirmedAtSignedPayload<'a> {

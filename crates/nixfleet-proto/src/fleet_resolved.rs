@@ -1,5 +1,5 @@
-//! `fleet.resolved.json`. Produced by CI's Nix eval, consumed by the CP
-//! and (fallback path) agents. Byte-identical JCS bytes across Nix + Rust.
+//! `fleet.resolved.json` types. Produced by CI's Nix eval, consumed by CP and
+//! (fallback path) agents; JCS bytes must round-trip identically across Nix + Rust.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -17,10 +17,9 @@ pub struct FleetResolved {
     pub waves: HashMap<String, Vec<Wave>>,
     #[serde(default)]
     pub edges: Vec<Edge>,
-    /// Cross-channel ordering: a `before` channel must reach Converged
-    /// before any new rollout opens on the `after` channel. RFC-0002 §4.3
-    /// - within-channel coordination uses `edges`; channel-level uses this.
-    /// Cycles are rejected at mkFleet eval time.
+    /// Cross-channel ordering: a `before` channel must reach Converged before
+    /// any new rollout opens on the `after` channel. Within-channel coordination
+    /// uses `edges`. Cycles rejected at mkFleet eval time.
     #[serde(default)]
     pub channel_edges: Vec<ChannelEdge>,
     #[serde(default)]
@@ -38,12 +37,10 @@ pub struct Host {
     pub closure_hash: Option<String>,
     #[serde(default)]
     pub pubkey: Option<String>,
-    /// Operator-declared commit pin (issue #88). Resolved at mkFleet eval
-    /// time from the most-specific declaration in the host > tag > channel
-    /// chain. Populated only when the effective pin is non-empty AND not
-    /// expired (`until` is filtered at eval time). When present,
-    /// `nixfleet-release` builds the host's closure from `pin.commit`
-    /// instead of the current release commit.
+    /// Operator-declared commit pin. Resolved at mkFleet eval time from the
+    /// most-specific declaration in the host > tag > channel chain; populated
+    /// only when the effective pin is non-empty AND unexpired. When present,
+    /// `nixfleet-release` builds from `pin.commit` instead of the release commit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin: Option<Pin>,
 }
@@ -51,18 +48,15 @@ pub struct Host {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Pin {
-    /// Source-control rev the host's closure should be built from.
-    /// Opaque to the framework; consumers (release tool, `nix build`'s
-    /// `--rev`) interpret it. Typically a 40-char SHA but short SHAs +
-    /// tag names work.
+    /// Source-control rev the host's closure should be built from. Opaque to
+    /// the framework; typically a 40-char SHA but short SHAs + tag names work.
     pub commit: String,
-    /// Free-form operator note (CVE ref, audit window, debug context).
-    /// Not parsed - surfaced verbatim in `nixfleet status` + dashboards.
+    /// Free-form operator note. Not parsed; surfaced verbatim in
+    /// `nixfleet status` + dashboards.
     pub reason: String,
-    /// Hard expiry. Pins past their `expiresAt` are filtered at mkFleet
-    /// eval time, so when this field is present here it's informational  -
-    /// the artifact already passed the filter at signing time. Operators
-    /// reading the JSON can still see when the pin would have expired.
+    /// Hard expiry. Expired pins are filtered at mkFleet eval time, so when
+    /// present here the artifact already passed the filter at signing time -
+    /// informational for operators reading the JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
 }
@@ -72,7 +66,7 @@ pub struct Pin {
 pub struct Channel {
     pub rollout_policy: String,
     pub reconcile_interval_minutes: u32,
-    /// MINUTES (despite missing `_minutes` suffix - kept for wire-compat).
+    /// MINUTES despite missing `_minutes` suffix (kept for wire-compat).
     /// Convert via [`Channel::freshness_window_duration`].
     pub freshness_window: u32,
     pub signing_interval_minutes: u32,
@@ -80,7 +74,7 @@ pub struct Channel {
 }
 
 impl Channel {
-    /// `freshness_window` is MINUTES; this helper avoids the
+    /// Helper that converts minutes → Duration. Avoids the
     /// `Duration::from_secs(raw)` 60× landmine.
     pub fn freshness_window_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.freshness_window as u64 * 60)
@@ -148,10 +142,10 @@ pub struct Selector {
 }
 
 impl Selector {
-    /// Match a single host. Mirrors `lib/mk-fleet.nix:resolveSelector`  -
-    /// any rule that fires (all / hosts / channel / tags-all / tags-any)
-    /// matches; sub-selector composition (and / not) is mkFleet-only and
-    /// not exposed in the wire format.
+    /// Match a single host. Mirrors `lib/mk-fleet.nix:resolveSelector`: any
+    /// rule that fires (all / hosts / channel / tags-all / tags-any) matches.
+    /// Sub-selector composition (and / not) is mkFleet-only and not exposed
+    /// in the wire format.
     pub fn matches(&self, host_name: &str, host: &Host) -> bool {
         if self.all {
             return true;
@@ -173,8 +167,8 @@ impl Selector {
         false
     }
 
-    /// Resolve to the matching host names. Order is `fleet.hosts`'s natural
-    /// iteration; callers that need a stable ordering should sort.
+    /// Resolve to matching host names. Order follows the input iterator;
+    /// callers that need a stable ordering should sort.
     pub fn resolve<'a, I: IntoIterator<Item = (&'a String, &'a Host)>>(
         &self,
         hosts: I,
@@ -186,11 +180,9 @@ impl Selector {
             .collect()
     }
 
-    /// Canonical short string for log lines, metric labels, and any
-    /// other consumer that needs to refer to a `Selector` by name.
-    /// Sorted-list semantics keep the rendering stable across HashMap
-    /// iteration orders. Priority order matches `matches()` evaluation
-    /// shape: broadest predicate (`all`) first, then specific lists.
+    /// Canonical short string for log lines, metric labels, and any consumer
+    /// that needs to refer to a `Selector` by name. Sorted-list semantics keep
+    /// rendering stable across HashMap iteration orders.
     pub fn summary(&self) -> String {
         if self.all {
             return "all".to_string();
@@ -217,8 +209,8 @@ impl Selector {
     }
 }
 
-// GOTCHA: Nix emits `"healthGate": {}` when no inner constraints set;
-// skip_serializing_none preserves that empty-object shape.
+// Nix emits `"healthGate": {}` when no inner constraints set; the
+// skip_serializing_none below preserves that empty-object shape for JCS parity.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -248,19 +240,11 @@ pub struct Wave {
     pub soak_minutes: u32,
 }
 
-/// Per-host DAG edge: `gated` host can dispatch only once `gates` host
-/// reaches terminal-for-ordering (Soaked / Converged) within the same
-/// rollout. Both hosts must be on the same channel - cross-channel
-/// ordering is `ChannelEdge`'s job (the gate operates within a single
-/// rollout's host_states; cross-channel pairs would silently brick the
-/// gated host).
-///
-/// Schema note: pre-rev these were named `before`/`after`, where
-/// "before" actually meant "the gated host" (held back) - the
-/// opposite of natural DAG reading. Renamed to `gated`/`gates` for
-/// clarity. Hard cutover: any pre-rename fleet.resolved bytes will
-/// fail to parse against this schema. Verified safe because lab is
-/// the only CP and gets the new code + new artifact together.
+/// Per-host DAG edge: `gated` host dispatches only once `gates` host reaches
+/// terminal-for-ordering (Soaked / Converged) within the same rollout. Both
+/// hosts must be on the same channel; cross-channel ordering is `ChannelEdge`'s
+/// job. Hard cutover from pre-rename `before`/`after` field names - those
+/// bytes will not parse.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Edge {
@@ -272,28 +256,19 @@ pub struct Edge {
     pub reason: Option<String>,
 }
 
-/// Cross-channel ordering edge. `before` channel must converge before any
-/// rollout opens on `after`. "Converge" = the most-recent rollout on `before`
-/// reached terminal state `converged`. If `before` has never had a rollout,
-/// the gate is open (no rollout to wait for). Validated at mkFleet eval time:
-/// both channels must exist, no cycles.
-/// Field semantics match the host-level `Edge` (gated/gates):
-///
-///   `gates` is the predecessor channel - it must converge before any
-///   new rollout opens on `gated`. "gates" reads as "the channel that
-///   gates dispatch on `gated`." `gated` reads as "the channel whose
-///   dispatch is gated by `gates`."
-///
-/// Wire-format aliases `before`/`after` accepted on deserialize so
-/// fleet.resolved bytes signed before the rename still verify on
-/// upgraded CPs. New emitters (mk-fleet) write `gates`/`gated`.
+/// Cross-channel ordering edge. The `gates` channel's most-recent rollout
+/// must reach terminal `converged` before any new rollout opens on `gated`.
+/// If `gates` has never had a rollout, the gate is open. Validated at
+/// mkFleet eval time: both channels must exist, no cycles. Pre-rename
+/// `before`/`after` wire keys accepted via serde alias so older signed
+/// bytes still verify on upgraded CPs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelEdge {
-    /// Predecessor channel. Was `before` - kept as serde alias.
+    /// Predecessor channel. Was `before`; kept as serde alias.
     #[serde(alias = "before")]
     pub gates: String,
-    /// Dependent channel - held until `gates` converges. Was `after`.
+    /// Dependent channel, held until `gates` converges. Was `after`.
     #[serde(alias = "after")]
     pub gated: String,
     #[serde(default)]
@@ -303,8 +278,8 @@ pub struct ChannelEdge {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DisruptionBudget {
-    /// Tag-driven selector resolved at reconcile time so adding/removing
-    /// hosts under a tag doesn't require re-signing fleet.resolved.
+    /// Tag-driven selector resolved at reconcile time so tag membership can
+    /// change without re-signing fleet.resolved.
     pub selector: Selector,
     #[serde(default)]
     pub max_in_flight: Option<u32>,
@@ -313,8 +288,8 @@ pub struct DisruptionBudget {
 }
 
 // LOADBEARING: signed_at + ci_commit serialize as `null` (no skip) to match
-// the Nix evaluator's shape - JCS byte-identity round-trip depends on it.
-// Only `signature_algorithm` is genuinely optional in the wire format.
+// the Nix evaluator's shape - JCS byte-identity depends on it. Only
+// `signature_algorithm` is genuinely optional in the wire format.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Meta {
@@ -323,7 +298,7 @@ pub struct Meta {
     pub signed_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub ci_commit: Option<String>,
-    /// CONTRACTS §V Pattern A: absent ≡ "ed25519" at schemaVersion=1. Pre-stamp
+    /// Absent ≡ "ed25519" at schemaVersion=1 (CONTRACTS §V Pattern A). Pre-stamp
     /// eval emits absent; `stamp_meta` populates at signing time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature_algorithm: Option<String>,
@@ -331,7 +306,6 @@ pub struct Meta {
 
 impl Meta {
     /// `signature_algorithm` with the `absent ≡ "ed25519"` rule applied.
-    /// Use this in any read path that needs a concrete algorithm string.
     pub fn signature_algorithm_or_default(&self) -> &str {
         self.signature_algorithm.as_deref().unwrap_or("ed25519")
     }
@@ -341,10 +315,9 @@ impl Meta {
 mod tests {
     use super::*;
 
-    /// Pre-rename fleet.resolved bytes used `before`/`after` keys.
-    /// New CPs must accept those via serde alias, otherwise an
-    /// upgraded CP would reject any signed artifact in the existing
-    /// channel-refs window.
+    /// Pre-rename fleet.resolved bytes used `before`/`after` keys. New CPs
+    /// must accept those via serde alias, otherwise an upgraded CP would
+    /// reject any signed artifact in the channel-refs window.
     #[test]
     fn channel_edge_accepts_legacy_before_after_wire_format() {
         let legacy = r#"{"before":"edge","after":"stable","reason":"lab canary"}"#;
@@ -354,8 +327,7 @@ mod tests {
         assert_eq!(parsed.reason.as_deref(), Some("lab canary"));
     }
 
-    /// New emitters (mk-fleet post-rename) write `gates`/`gated`.
-    /// Round-trip must be lossless.
+    /// New emitters write `gates`/`gated`; round-trip must be lossless.
     #[test]
     fn channel_edge_canonical_wire_format_round_trips() {
         let edge = ChannelEdge {
@@ -364,7 +336,6 @@ mod tests {
             reason: Some("canary".into()),
         };
         let bytes = serde_json::to_string(&edge).unwrap();
-        // Canonical wire emits new field names.
         assert!(
             bytes.contains("\"gates\":\"edge\""),
             "wire must use canonical 'gates' field; got {bytes}"
@@ -392,7 +363,6 @@ mod tests {
         assert_eq!(s.summary(), "channel:stable");
 
         let s = Selector {
-            // Unsorted on the way in; summary sorts.
             tags: vec!["server".into(), "prod".into()],
             ..Default::default()
         };
@@ -410,8 +380,7 @@ mod tests {
         };
         assert_eq!(s.summary(), "hosts:aaa,zzz");
 
-        // Empty selector: explicit sentinel rather than empty string,
-        // so a Prometheus label with this value is still queryable.
+        // Explicit "unknown" sentinel keeps a Prometheus label queryable.
         assert_eq!(Selector::default().summary(), "unknown");
     }
 }

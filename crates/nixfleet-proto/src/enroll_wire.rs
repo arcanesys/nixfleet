@@ -1,6 +1,6 @@
-//! Bootstrap token + enrollment + renewal wire types. Tokens carry a
-//! detached ed25519 signature over the JCS canonical bytes of `claims`,
-//! verified against `orgRootKey.current` from `trust.json`.
+//! Bootstrap token + enrollment + renewal wire types. Tokens carry a detached
+//! ed25519 signature over JCS-canonical `claims`, verified against
+//! `orgRootKey.current` from `trust.json`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -58,14 +58,11 @@ pub struct RenewResponse {
     pub not_after: DateTime<Utc>,
 }
 
-/// `POST /v1/agent/bootstrap-report` - anonymous, bootstrap-token-authed
-/// event channel for failure modes the agent hits before it has a
-/// client cert. CP validates the token signature against orgRootKey
-/// (same path as `/v1/enroll`) but does NOT consume the nonce - the
-/// agent should still be able to enroll on the next attempt with the
-/// same token after the operator fixes whatever broke. Only specific
-/// `ReportEvent` variants (`EnrollmentFailed`, `TrustError`) are
-/// accepted; everything else is 422.
+/// `POST /v1/agent/bootstrap-report` - token-authed event channel for failures
+/// hit before the agent has a client cert. CP validates the token signature
+/// but does NOT consume the nonce, so the agent can still enroll afterwards.
+/// Only `EnrollmentFailed` / `TrustError` variants are accepted (everything
+/// else is 422).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapEventRequest {

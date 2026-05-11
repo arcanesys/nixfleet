@@ -1,14 +1,10 @@
-//! `releases/rollouts/<rolloutId>.json` - signed per-channel rollout manifest.
-//!
-//! LOADBEARING: rolloutId is the SHA-256 of canonical bytes (not a label).
-//! Verifiers MUST canonicalize the **received bytes** and assert the hash
-//! matches the advertised rolloutId before consuming any other field. They
-//! MUST NOT re-serialise a parsed `RolloutManifest` and hash that - re-
-//! serialisation drops fields the verifier's proto doesn't know about,
-//! breaking content-addressing across additive schema changes (see
-//! `nixfleet_reconciler::verify::rollout_id_from_bytes`). `display_name`
-//! is decorative and any edit changes the hash, so tampered manifests fail
-//! this check.
+//! Signed per-channel rollout manifest (`releases/rollouts/<rolloutId>.json`).
+//! LOADBEARING: rolloutId is the SHA-256 of canonical received bytes (not a
+//! label) - verifiers MUST canonicalize the received bytes and assert the
+//! hash before consuming any other field. They MUST NOT hash a re-serialised
+//! parsed `RolloutManifest`: re-serialisation drops fields the verifier's
+//! proto doesn't know about, breaking content-addressing across additive
+//! schema changes.
 
 use serde::{Deserialize, Serialize};
 
@@ -27,8 +23,8 @@ pub struct RolloutManifest {
     pub channel_ref: String,
 
     /// LOADBEARING: anchors the manifest to one signed `fleet.resolved`
-    /// snapshot - different snapshot produces a different rolloutId,
-    /// preventing cross-snapshot mix-and-match.
+    /// snapshot - different snapshot produces a different rolloutId, blocking
+    /// cross-snapshot mix-and-match.
     pub fleet_resolved_hash: String,
 
     /// FOOTGUN: MUST be sorted by `hostname` ascending - JCS sorts object
@@ -40,23 +36,21 @@ pub struct RolloutManifest {
     /// Mirrored from `channels[channel].compliance.frameworks`.
     pub compliance_frameworks: Vec<String>,
 
-    /// Disruption-budget snapshot: each `fleet.disruptionBudgets[i]` resolved
-    /// against `fleet.hosts.tags` at projection time. Frozen for the
-    /// rollout's life - mid-rollout retag does NOT reshape these. Cross-
-    /// rollout in-flight counting matches by `selector` equality so the
-    /// fleet-wide enforcement property survives the snapshot model.
-    /// Empty vec when fleet declares no budgets.
-    /// FOOTGUN: per-budget `hosts` MUST be sorted alphabetically - JCS
-    /// canonicalizes object keys but not array elements.
+    /// Disruption-budget snapshot resolved against `fleet.hosts.tags` at
+    /// projection time and frozen for the rollout's life - mid-rollout
+    /// retag does NOT reshape these. Cross-rollout in-flight counting
+    /// matches by `selector` equality so fleet-wide enforcement survives
+    /// the snapshot model. FOOTGUN: per-budget `hosts` MUST be sorted
+    /// alphabetically (JCS canonicalizes keys, not array elements).
     #[serde(default)]
     pub disruption_budgets: Vec<RolloutBudget>,
 
     pub meta: Meta,
 }
 
-/// Per-rollout snapshot of a fleet-wide disruption budget. The selector is
-/// preserved so cross-rollout sums can match by intent regardless of
-/// whether host membership has shifted between rollout opens.
+/// Per-rollout snapshot of a fleet-wide disruption budget. Selector is
+/// preserved so cross-rollout sums match by intent even when host
+/// membership has shifted between rollout opens.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RolloutBudget {
@@ -74,8 +68,8 @@ pub struct HostWave {
     pub hostname: String,
     /// Frozen at projection time; reshaping waves produces a new rolloutId.
     pub wave_index: u32,
-    /// Per-host (not channel-level) - agent re-asserts this against the
-    /// CP-advertised closure to detect retargeting.
+    /// Per-host closure. Agent re-asserts this against the CP-advertised
+    /// closure to detect retargeting.
     pub target_closure: String,
 }
 
@@ -129,9 +123,10 @@ mod tests {
         assert_eq!(parsed, m);
     }
 
+    /// LOADBEARING: rolloutId = sha256(canonical(m)) depends on canonical-byte
+    /// stability across round-trips.
     #[test]
     fn manifest_canonical_bytes_stable_across_round_trip() {
-        // LOADBEARING: rolloutId = sha256(canonical(m)) depends on canonical-byte stability.
         let m = sample_manifest();
         let raw1 = serde_json::to_string(&m).unwrap();
         let canon1 = canonicalize(&raw1).unwrap();

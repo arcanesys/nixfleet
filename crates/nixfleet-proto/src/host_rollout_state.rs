@@ -1,7 +1,5 @@
-//! Per-host rollout state machine.
-//!
-//! LOADBEARING: single source of truth for both CP (SQL CHECK round-trip)
-//! and reconciler decision-procedure. Don't fork the variant set - adding
+//! Per-host rollout state machine. LOADBEARING: single source of truth for
+//! both CP (SQL CHECK round-trip) and reconciler decision-procedure - adding
 //! a state requires updating the SQL CHECK constraint in the CP migration.
 
 use serde::{Deserialize, Serialize};
@@ -65,26 +63,16 @@ impl HostRolloutState {
         }
     }
 
-    /// Terminal-for-ordering: host has cleared its observable activation
-    /// (soak window passed or rollout reached Converged). Used by:
-    ///   - `gates::channel_edges` (predecessor channel done?)
-    ///   - `gates::host_edges` (gating host done?)
-    ///
-    /// Why both `Soaked` and `Converged`: treating only `Converged` as
-    /// terminal would leave the gap between SoakHost transitions and the
-    /// next reconcile tick's `ConvergeRollout` action holding the
-    /// successor - small in practice but semantically wrong (a Soaked
-    /// host has finished its observable activation).
-    ///
-    /// `Failed` / `Reverted` are NOT terminal-for-ordering: predecessor
-    /// is in trouble, operator action is needed, successor must wait.
+    /// Host has cleared its observable activation (soak window passed or
+    /// rollout reached Converged). Both Soaked and Converged count: treating
+    /// only Converged as terminal would hold the successor across the gap
+    /// between SoakHost and the next reconcile tick. `Failed`/`Reverted` are
+    /// NOT terminal-for-ordering - successor must wait for operator action.
     pub fn is_terminal_for_ordering(&self) -> bool {
         matches!(self, Self::Soaked | Self::Converged)
     }
 
-    /// In-flight: host is consuming a disruption-budget slot. Used by
-    /// `gates::disruption_budget::in_flight_count` for cross-rollout
-    /// budget enforcement.
+    /// Host is consuming a disruption-budget slot.
     pub fn is_in_flight(&self) -> bool {
         matches!(
             self,
@@ -92,9 +80,9 @@ impl HostRolloutState {
         )
     }
 
-    /// Stuck-and-staying-stuck: needs operator action. Distinct from
-    /// `is_terminal_for_ordering` because Failed/Reverted hosts must
-    /// hold their successor (the rollout is in trouble).
+    /// Stuck and staying stuck; needs operator action. Distinct from
+    /// `is_terminal_for_ordering` because Failed/Reverted hosts must hold
+    /// their successor.
     pub fn is_failed(&self) -> bool {
         matches!(self, Self::Failed | Self::Reverted)
     }

@@ -1,8 +1,6 @@
-//! Agent ↔ control-plane wire types.
-//!
-//! LOADBEARING: additions within a major version MUST be backwards-compatible
-//! (older consumers serde-ignore unknown fields). Bump `PROTOCOL_MAJOR_VERSION`
-//! for any breaking change - the CP rejects mismatched majors with 426.
+//! Agent ↔ control-plane wire types. LOADBEARING: within a major version,
+//! additions must be backwards-compatible (older consumers serde-ignore unknown
+//! fields); bump `PROTOCOL_MAJOR_VERSION` for any breaking change.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -37,42 +35,33 @@ pub struct CheckinRequest {
     #[serde(default)]
     pub uptime_secs: Option<u64>,
 
-    /// CP repopulates `last_healthy_since` after rebuild from this; clamped to
+    /// CP repopulates `last_healthy_since` after rebuild; clamped to
     /// `min(now, last_confirmed_at)` so clock skew can't fast-forward soak.
     #[serde(default)]
     pub last_confirmed_at: Option<DateTime<Utc>>,
 
     /// Base64 ed25519 over JCS(`LastConfirmedAtSignedPayload`) signed with the
-    /// host's SSH key. Without it the attested time is silently ignored  -
-    /// a compromised host can't replay an older confirmation to short-circuit soak.
+    /// host's SSH key. Without it the attested time is silently ignored, so a
+    /// compromised host can't replay an older confirmation to short-circuit soak.
     #[serde(default)]
     pub attestation_signature: Option<String>,
 
-    /// Snapshot of the agent's currently-declared health probes (issue #86),
-    /// each with its latest run status. Empty list = host declared no
-    /// probes (`services.nixfleet-agent.healthChecks` empty); the soak gate
-    /// treats that as "no probe constraint" → no-op. Probe entries with
-    /// `status: Unknown` indicate the probe hasn't run yet - conservative
-    /// soak gate treats Unknown as blocking, so probes need to run at
-    /// least once before promotion.
+    /// Snapshot of the agent's declared health probes with latest run status.
+    /// Empty list ⇒ no probe constraint. `Unknown` status is treated as
+    /// blocking by the soak gate (probes must run at least once before promotion).
     #[serde(default)]
     pub health_probes: Vec<ProbeResult>,
 
-    /// Per-host gate mode for the probes above (issue #86). The reconciler's
-    /// soak gate reads this to decide whether probe failures BLOCK the
-    /// `Healthy → Soaked` transition (`Enforce`) or are visibility-only
-    /// (`Permissive` / `None`). Disabled mode means the agent suppressed
-    /// probe execution entirely; CheckinRequest will also have `health_probes`
-    /// empty in that case.
+    /// Per-host gate mode for the probes above. `Enforce` blocks the
+    /// `Healthy → Soaked` transition on failures; `Permissive`/`None` are
+    /// visibility-only; `Disabled` means probe execution is suppressed and
+    /// `health_probes` will be empty.
     #[serde(default)]
     pub health_check_mode: Option<crate::compliance::GateMode>,
 }
 
-/// Probe transport. HTTP probes GET a URL and check the response status
-/// code; TCP probes attempt a connection; Exec probes run a command and
-/// inspect the exit code. The variant is informational on the wire  -
-/// the agent's own runner picks the right transport from the per-probe
-/// config; CP/CLI render the kind for operator visibility.
+/// Probe transport - informational on the wire (the agent's runner picks the
+/// transport from per-probe config; CP/CLI just render the kind).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProbeKind {
@@ -81,11 +70,9 @@ pub enum ProbeKind {
     Exec,
 }
 
-/// Probe outcome. `Unknown` is the bootstrap state before the first run;
-/// `Pass`/`Fail` are post-run terminal states until the next run replaces
-/// them. The soak gate's "all-passing" check treats Unknown as
-/// non-passing (conservative - operators MUST have at least one
-/// successful run before promotion).
+/// Probe outcome. `Unknown` is the bootstrap state before the first run; the
+/// soak gate treats it as non-passing so probes must succeed at least once
+/// before promotion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProbeStatus {
@@ -94,13 +81,8 @@ pub enum ProbeStatus {
     Fail,
 }
 
-/// Soak-gate decision (issue #86). Returns true when the host's
-/// declared probes don't constrain promotion:
-/// * Mode is `Permissive` / `Disabled` / `None` → advisory or off → pass.
-/// * Mode is `Enforce` AND `health_probes` is empty → no probes declared,
-///   nothing to enforce → pass.
-/// * Mode is `Enforce` AND every probe in `health_probes` is `Pass` → pass.
-/// Anything else (any probe `Fail` or `Unknown` under enforce) → false.
+/// Soak-gate decision. Returns true unless mode is `Enforce` with at least one
+/// non-`Pass` probe (including `Unknown`).
 pub fn host_probes_passing(checkin: &CheckinRequest) -> bool {
     use crate::compliance::GateMode;
     match checkin.health_check_mode {
@@ -116,20 +98,18 @@ pub fn host_probes_passing(checkin: &CheckinRequest) -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeResult {
-    /// Operator-declared probe name (unique per host); used as the
-    /// stable identifier in CP storage + CLI rendering.
+    /// Operator-declared probe name, unique per host. Stable identifier
+    /// in CP storage + CLI rendering.
     pub name: String,
     pub kind: ProbeKind,
     pub status: ProbeStatus,
     /// `None` until the probe has run at least once.
     #[serde(default)]
     pub last_run_at: Option<DateTime<Utc>>,
-    /// Most recent timestamp the probe passed; preserved across
-    /// subsequent failures so the operator can see "last green at X".
+    /// Preserved across subsequent failures so operators can see "last green at X".
     #[serde(default)]
     pub last_pass_at: Option<DateTime<Utc>>,
-    /// Free-form failure detail (HTTP status code, TCP errno, exec
-    /// stderr tail). Truncated to ~512 chars by the agent before send.
+    /// Free-form failure detail truncated to ~512 chars by the agent.
     /// `None` when status != Fail.
     #[serde(default)]
     pub failure_reason: Option<String>,
@@ -179,11 +159,9 @@ pub struct EvaluatedTarget {
 pub struct ActivateBlock {
     /// Seconds before CP triggers magic rollback.
     pub confirm_window_secs: u32,
-    /// Required for any target the agent will confirm. The agent refuses to
-    /// confirm when no `activate` block is present (treats absence as "not a
-    /// confirmable target") and otherwise POSTs strictly to this path. CP
-    /// must always set it for confirm-bearing targets - the agent has no
-    /// hardcoded fallback. Wire-carried so endpoint moves are CP-driven.
+    /// Required for any confirmable target - the agent has no hardcoded
+    /// fallback and refuses to confirm when this is absent. Wire-carried so
+    /// endpoint moves are CP-driven.
     pub confirm_endpoint: String,
 }
 
@@ -271,32 +249,25 @@ pub enum ReportEvent {
         channel_ref: String,
     },
 
-    /// Profile flipped via `nix-env --set` but live switch was skipped because
-    /// a critical-component swap (dbus impl, systemd, kernel, init) would have
-    /// been refused by `nixos-rebuild`'s switchInhibitors check. New generation
-    /// activates on next boot. Operator surface: `pending_reboot` in /v1/hosts.
+    /// Profile flipped via `nix-env --set` but live switch was skipped because a
+    /// critical-component swap would have been refused by `nixos-rebuild`'s
+    /// switchInhibitors check. New generation activates on next boot.
+    /// Operator surface: `pending_reboot` in /v1/hosts.
     ActivationDeferred {
         closure_hash: String,
         channel_ref: String,
-        /// Component that triggered the inhibitor (e.g. "dbus", "systemd").
         component: String,
     },
 
-    /// Agent gave up retrying a closure after a recent SwitchFailed/VerifyMismatch
-    /// (issue #55). Suppression auto-clears when the channel-ref advances to a
-    /// different closure_hash. Distinct from `ActivationFailed` (a single failure
-    /// observation) - `ClosureQuarantined` signals "agent has decided not to
-    /// re-attempt this closure" so the operator can distinguish a transient
-    /// hiccup from a permanently-broken release. Unsigned (observability-only;
-    /// see `apply_deferred_pending_reboot_transition` precedent: state-driving
-    /// effect is internal to CP, no fleet gate reads the signature).
+    /// Agent gave up retrying a closure after repeated SwitchFailed/VerifyMismatch.
+    /// Suppression auto-clears when the channel-ref advances to a different
+    /// closure_hash. Distinct from a single `ActivationFailed`: this signals
+    /// "agent will not re-attempt this closure" so operators can distinguish a
+    /// transient hiccup from a permanently-broken release.
     ClosureQuarantined {
         closure_hash: String,
         channel_ref: String,
-        /// Total SwitchFailed/VerifyMismatch observations for this closure_hash.
         failure_count: u32,
-        /// Free-form trigger summary (e.g. "switch-poll-timeout exit=2",
-        /// "post-switch verify mismatch"). Operator-visible; not parsed.
         reason: String,
     },
 
@@ -346,7 +317,7 @@ pub enum ReportEvent {
     },
 
     /// Substituter rejected closure narinfo signature. Distinct from
-    /// `RealiseFailed` for dashboard routing of trust vs transient failures.
+    /// `RealiseFailed` so dashboards can route trust vs transient failures.
     ClosureSignatureMismatch {
         closure_hash: String,
         stderr_tail: String,
@@ -403,7 +374,7 @@ pub enum ReportEvent {
     },
 
     /// Runtime gate couldn't produce a verdict (collector failed/timeout/stale).
-    /// Distinct from `ComplianceFailure` - CP treats this as a confirm-blocker.
+    /// Distinct from `ComplianceFailure`; CP treats this as a confirm-blocker.
     RuntimeGateError {
         reason: String,
         #[serde(default)]
@@ -424,9 +395,9 @@ pub enum ReportEvent {
 }
 
 impl ReportEvent {
-    /// Wire-side `event` discriminator - matches the serde kebab-case rename.
-    /// Adding a variant requires updating this match (compiler-enforced) and
-    /// the corresponding wire string in lockstep.
+    /// Wire-side `event` discriminator. Must match the serde kebab-case rename;
+    /// adding a variant requires updating this match (compiler-enforced) and
+    /// the wire string in lockstep.
     pub fn discriminator(&self) -> &'static str {
         match self {
             Self::ActivationStarted { .. } => "activation-started",
@@ -456,9 +427,8 @@ mod report_event_discriminator_tests {
     use super::*;
 
     /// LOADBEARING: discriminator() must match the wire-serialized "event" tag
-    /// exactly, since the CP indexes events by the string. Round-trip a value
-    /// of every variant through serde and compare against the hand-written
-    /// match - if a variant is renamed at the serde layer this test catches it.
+    /// exactly since CP indexes events by it. If a variant is renamed at the
+    /// serde layer this test catches it.
     #[test]
     fn discriminator_matches_serde_event_tag() {
         let now = chrono::Utc::now();

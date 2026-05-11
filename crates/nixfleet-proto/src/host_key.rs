@@ -1,30 +1,16 @@
-//! Host SSH key plumbing shared by agent enrollment, CP enroll/renew
-//! validation, and mint_token. Three primitives - kept tiny + pure-rust
-//! so the boundary-contract crate stays lean (no `ssh-key` dep here).
-//!
-//! - [`ed25519_pubkey_raw_from_openssh`] parses an OpenSSH public-key
-//!   string (`"ssh-ed25519 <base64> [comment]"`) into the 32-byte raw
-//!   pubkey. The wire-format under the base64 is RFC 4253 §6.6:
-//!   `string "ssh-ed25519" || string <32-byte pubkey>`.
-//!
-//! - [`ed25519_pkcs8_der_from_seed`] wraps a 32-byte ed25519 seed in
-//!   PKCS#8 DER (RFC 8410 envelope). `rcgen::KeyPair::from_pem` accepts
-//!   a PEM-armoured form of this; both endpoints (agent CSR + CP CA
-//!   issuance) sign through that path, so this is the canonical bridge
-//!   from "OpenSSH host key bytes on disk" to "rcgen-usable keypair".
-//!
-//! - [`fingerprint_openssh_pubkey`] produces base64(SHA-256(raw_pubkey)),
-//!   matching the format the bootstrap-token's `expected_pubkey_fingerprint`
-//!   field carries.
+//! Host SSH key primitives shared by agent enrollment, CP enroll/renew, and
+//! mint_token. Kept pure-rust (no `ssh-key` dep) so the boundary-contract crate
+//! stays lean - the canonical bridge from "OpenSSH host key bytes on disk" to
+//! "rcgen-usable keypair" and bootstrap-token fingerprints.
 
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
 /// Parse a 32-byte ed25519 raw public key from an OpenSSH-format pubkey
-/// line (`"ssh-ed25519 <base64> [comment]"`).
-///
-/// Errors when the line isn't ed25519, the base64 doesn't decode, or
-/// the inner SSH-wire-format is malformed.
+/// line (`"ssh-ed25519 <base64> [comment]"`). Errors when the line isn't
+/// ed25519, the base64 doesn't decode, or the inner SSH-wire-format
+/// (RFC 4253 §6.6: `string "ssh-ed25519" || string <32-byte pubkey>`)
+/// is malformed.
 pub fn ed25519_pubkey_raw_from_openssh(line: &str) -> Result<[u8; 32], OpenSshParseError> {
     let trimmed = line.trim();
     let mut parts = trimmed.split_whitespace();
@@ -39,8 +25,7 @@ pub fn ed25519_pubkey_raw_from_openssh(line: &str) -> Result<[u8; 32], OpenSshPa
         .decode(blob_b64)
         .map_err(|_| OpenSshParseError::InvalidBase64)?;
 
-    // RFC 4253 §6.6: each field is a u32 big-endian length followed by bytes.
-    // For ssh-ed25519: ["ssh-ed25519"] then [32-byte pubkey].
+    // RFC 4253 §6.6 wire format: u32 big-endian length + bytes per field.
     let mut cursor = 0usize;
     let algo_bytes = read_ssh_string(&blob, &mut cursor)?;
     if algo_bytes != b"ssh-ed25519" {
@@ -76,10 +61,10 @@ pub fn ed25519_pkcs8_pem_from_seed(seed: &[u8; 32]) -> String {
     format!("-----BEGIN PRIVATE KEY-----\n{b64}\n-----END PRIVATE KEY-----\n")
 }
 
-/// Extract the 32-byte raw ed25519 pubkey from a SubjectPublicKeyInfo
-/// DER blob (RFC 8410 - what `rcgen::PublicKeyData::der_bytes()` returns
-/// for ed25519). Validates the fixed 12-byte SPKI prefix so callers
-/// reject non-ed25519 CSRs cleanly instead of silently slicing.
+/// Extract the 32-byte raw ed25519 pubkey from a SubjectPublicKeyInfo DER
+/// blob (RFC 8410, what `rcgen::PublicKeyData::der_bytes()` returns). Validates
+/// the fixed 12-byte SPKI prefix so callers reject non-ed25519 CSRs cleanly
+/// instead of silently slicing.
 pub fn ed25519_pubkey_raw_from_spki_der(spki: &[u8]) -> Result<[u8; 32], OpenSshParseError> {
     const ED25519_SPKI_PREFIX: [u8; 12] = [
         0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
@@ -207,7 +192,6 @@ mod tests {
         let seed = [0x55u8; 32];
         let der = ed25519_pkcs8_der_from_seed(&seed);
         assert_eq!(der.len(), 48);
-        // First 16 bytes = fixed PKCS#8 ed25519 envelope.
         assert_eq!(
             &der[..16],
             &[
@@ -215,7 +199,6 @@ mod tests {
                 0x04, 0x20,
             ]
         );
-        // Last 32 bytes = the seed.
         assert_eq!(&der[16..], &seed);
     }
 
@@ -247,7 +230,6 @@ mod tests {
     #[test]
     fn spki_der_rejects_non_ed25519_prefix() {
         let mut spki = vec![0xffu8; 44];
-        // Length matches but prefix doesn't - must be flagged as wrong algorithm.
         spki[0] = 0x30;
         spki[1] = 0x2a;
         let err = ed25519_pubkey_raw_from_spki_der(&spki).unwrap_err();
