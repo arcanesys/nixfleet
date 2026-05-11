@@ -76,3 +76,9 @@ Sibling entries are mutually exclusive. Adding a third impl to an existing famil
 - [`modules/flake-module.nix`](../modules/flake-module.nix) - the wire-up that turns these directories into flake outputs.
 - [`lib/mk-host.nix`](../lib/mk-host.nix) - the function that auto-includes `modules/scopes/*` and `contracts/*` for each host.
 - [`docs/CONTRACTS.md`](CONTRACTS.md) - the cross-stream artifact contracts (different sense of "contract" - wire formats and signed artifacts, not Nix option schemas).
+
+## Dependency pinning policy
+
+Fleet repos that consume `nixfleet` inherit `nixpkgs`, `home-manager`, `disko`, and the other shared inputs via `inputs.<name>.follows = "nixfleet/<name>"` rather than pinning their own copies. The framework modules are evaluated against the exact revisions declared in this repo's `flake.lock`; an independent consumer pin can drift on option renames, type changes, or removed modules between the revisions the framework was tested against and the ones the consumer evaluates with.
+
+The practical contract: `nix flake update nixfleet` in a fleet repo updates every shared dependency in one step. The framework commits to staying current against `nixos-unstable` so consumers are not pinned to a stale tree. Fleet-specific inputs (themes, editor plugins, things the framework does not know about) are pinned independently by the consumer - the `follows` chain only covers what the framework guarantees to test against.

@@ -10,7 +10,7 @@ This document consolidates the v0.2 design: the spine, the RFCs, the Rust/Nix bo
 
 ## 1. Components
 
-Eight components, each with a defined role, a defined owner, and a defined trust property. Components only interact through versioned, typed boundaries.
+Each component below has a defined role, a defined owner, and a defined trust property. Components only interact through versioned, typed boundaries.
 
 ### 1.1 The flake (source of truth)
 
@@ -22,6 +22,14 @@ Git-tracked, hosted on a self-run Forgejo instance on the M70q. Contains:
 - `nixfleet.compliance.controls.<name>` - typed controls with static `evaluate` and runtime `probe` projections.
 
 Trust role: **primary trust root for intent.** A commit that passes review IS the desired state. No other place in the system can claim "the fleet should be X" without a corresponding commit.
+
+#### Framework Nix surface (mkHost, hostSpec, scopes)
+
+The framework exposes a single top-level builder, `nixfleet.lib.mkHost`, plus a typed `hostSpec` identity record and an auto-discovered set of service modules under `modules/scopes/`. `mkHost` takes a `hostSpec` plus a list of consumer modules and returns a `nixosSystem` or `darwinSystem`; it does not impose a fleet/org/role DSL above `hostSpec`. Batch hosts are plain Nix (`builtins.map` over `mkHost`); convenience layers can sit on top without changing the primitive. `mkFleet` is a separate, orthogonal function that produces the declarative `fleet` topology consumed by CI - the operational spine in §1.1 - not a wrapper that owns `mkHost`'s call sites.
+
+`hostSpec` carries identity and locale data only - hostname, primary user, home directory, timezone, locale, platform marker, root access keys. Behaviour belongs to scopes: small NixOS modules in `modules/scopes/` that self-activate via `services.<name>.enable` options gated by `lib.mkIf`. `mkHost` auto-includes every scope but disabled by default, so adding a new scope requires no `mkHost` change and inactive scopes cost zero at evaluation. Roles (in `nixfleet-scopes`) are scope bundles that set `enable` defaults with `lib.mkDefault`; the framework itself has no "role" concept.
+
+The agent and control plane are themselves NixOS service modules (`services.nixfleet-agent`, `services.nixfleet-control-plane`), not opinionated profiles. Host operators stay in charge of firewall, persistence, and TLS posture; framework concerns stay in the `services.*` namespace, with secrets wired through the consumer's chosen backend (agenix, sops, vault). Fleet repos extend `hostSpec` with their own opinionated capability flags (`isGraphical`, `isDev`, `theme`) by declaring additional options in plain NixOS modules passed via `mkHost`'s `modules` parameter - the NixOS module system merges option declarations, so consumer extensions compose with framework-defined options without modifying the framework.
 
 ### 1.2 Continuous integration (the intent-signing oracle)
 
@@ -61,6 +69,12 @@ Trust role: **router.** Compromise yields at worst a denial of service (refuse t
 
 Destroying the control plane and rebuilding from scratch: re-pull fleet.resolved from git, re-fetch channel refs, let agents check in on their next poll cycle. Operational state reconstructs within one reconcile tick per channel.
 
+#### Scaling envelope
+
+The CP's SQLite handle is wrapped in `tokio::sync::Mutex<rusqlite::Connection>`. WAL mode is enabled, so reads proceed while a write is in flight at the file level, but every operation that goes through the mutex serializes on the mutex itself. The current factoring is sized for fleets of O(100) hosts checking in at the configured polling cadence (default 60s with jitter); past ~150 hosts, dispatch bursts and report ingestion start to contend on the mutex and p99 dispatch latency can rise above one polling cycle. The bound is conservative, not load-tested, and intentionally invisible to operators today beyond the host-count log emitted on snapshot prime.
+
+The path past the bound is a connection pool (`deadpool-sqlite` - same `rusqlite::Connection` surface, tokio-native `async fn get()`), scoped to when measurable contention appears: fleet size > 150, p99 `dispatch_for_host` exceeding the polling cycle in steady state, or operator-visible queueing in the journal. Migration is a wrapper swap plus an `await` per use site - same SQL, same schema, same behaviour, multi-connection on the inside. The mutex is the v0.2 commitment; the pool is the v0.3 trigger.
+
 ### 1.5 Agent (the actuator)
 
 Rust daemon running on every managed host. Single-binary, minimal dependencies. **What it does:**
@@ -71,6 +85,8 @@ Rust daemon running on every managed host. Single-binary, minimal dependencies. 
 - Runs `nixos-rebuild switch`. Opens the magic-rollback confirm window.
 - On post-activation boot: phones home with `bootId` + probe results. On silence past the window: auto-rollback.
 - Reports current generation + probe outcomes at next check-in.
+
+**Self-switch resilience.** When the new generation changes the agent itself, `switch-to-configuration switch` must complete after systemd stops the agent's own cgroup. The agent's apply path is fire-and-forget: the switch is queued in a detached transient systemd unit (`systemd-run --unit=nixfleet-switch`) before activation begins, so systemd stopping the agent does not kill the in-flight activation. The agent does not wait on the child; it polls `/run/current-system` until the symlink matches the desired generation, with a bounded timeout. If the agent is killed mid-poll, the new agent re-runs at startup and reconciles state by reading the active generation. The same mechanism handles rollback. The carve-out: switch inhibitors (dbus, systemd, kernel, init swaps) trip an inline pre-check that downgrades to `nix-env --set` only and posts `ActivationDeferred`, leaving the new generation to activate on next reboot - see `docs/CONTRACTS.md` §I.7.
 
 **What it does not do:**
 
