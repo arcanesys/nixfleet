@@ -1,5 +1,5 @@
-//! `nixfleet` operator CLI. Logic lives in the lib so integration tests
-//! can exercise it in-process against a real CP.
+//! `nixfleet` operator CLI thin wrapper. Logic lives in the lib so
+//! integration tests can exercise it in-process.
 
 use std::path::PathBuf;
 

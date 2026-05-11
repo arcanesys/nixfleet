@@ -1,10 +1,6 @@
 //! End-to-end: spin a real CP, drive 2 agent checkins via mTLS, then call
-//! `nixfleet_cli::run_status` as an operator and snapshot the rendered table.
-//!
-//! Mirrors the operator workflow named in #66's acceptance criteria. No
-//! mocking at the wire layer: real fleet artifact signing, real mTLS
-//! certificate chain, real `/v1/agent/checkin` + `/v1/hosts` HTTP traffic
-//! against the long-running server task.
+//! `run_status` as an operator. No wire-layer mocking - real signing, real
+//! mTLS chain, real `/v1/agent/checkin` + `/v1/hosts` traffic.
 
 use std::path::PathBuf;
 use std::sync::Once;
@@ -83,9 +79,8 @@ struct PkiBundle {
     clients: Vec<(PathBuf, PathBuf)>,
 }
 
-/// Mint a self-signed CA, a server cert (SAN=localhost), and one client cert
-/// per CN in `client_cns`. All keys + chains are written to PEM files inside
-/// `dir`. Returned paths are stable for the lifetime of `dir`.
+/// Mint a self-signed CA + server cert (SAN=localhost) + one client cert per
+/// CN. All written to PEM under `dir`.
 fn mint_pki(dir: &TempDir, client_cns: &[&str]) -> PkiBundle {
     let mut ca_params = CertificateParams::default();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -177,11 +172,9 @@ fn build_fleet_resolved(declared: &str) -> (String, Vec<u8>) {
     (raw, canonical.into_bytes())
 }
 
-/// Mint an ed25519 release key, sign the canonical fleet bytes, and write
-/// `(artifact, signature, trust)` to `dir`. The trust file uses the
-/// canonical `TrustConfig` shape (schemaVersion + ciReleaseKey.current
-/// as `{algorithm, public}`) the CP's `serde_json::from_str::<TrustConfig>`
-/// expects - the looser list shape is not accepted by the prod parser.
+/// Mint a release key, sign the canonical fleet bytes, write
+/// `(artifact, signature, trust)` using the canonical `TrustConfig` shape
+/// (the looser list shape is not accepted by the prod parser).
 fn write_signed_fleet(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf) {
     let signing = SigningKey::generate(&mut OsRng);
     let pub_b64 = base64::engine::general_purpose::STANDARD.encode(signing.verifying_key());
@@ -278,9 +271,8 @@ async fn nixfleet_status_renders_two_real_hosts_after_checkins() {
         signature_path: signature,
         trust_path: trust,
         observed_path: observed,
-        // 5-year window so the static `signedAt` in the test fixture
-        // never goes stale as wall-clock advances. Same trick as
-        // crates/nixfleet-control-plane/tests/rollout_trace.rs.
+        // Multi-year window keeps the static `signedAt` fresh as wall-clock
+        // advances during long test runs.
         freshness_window: Duration::from_secs(86_400 * 365 * 5),
         confirm_deadline_secs: 120,
         ..Default::default()
@@ -289,14 +281,12 @@ async fn nixfleet_status_renders_two_real_hosts_after_checkins() {
 
     let cp_url = format!("https://localhost:{port}");
 
-    // Drive two real checkins. Each agent presents its own mTLS cert
-    // (CN=host-a / CN=host-b) so the CP's CN-vs-hostname guard accepts.
+    // Per-host mTLS cert so the CP's CN-vs-hostname guard accepts.
     let host_a = build_mtls(&pki.ca_pem_path, &pki.clients[0].0, &pki.clients[0].1);
     let _ra = checkin(&cp_url, &host_a, HOST_A, "current-a-closure").await;
     let host_b = build_mtls(&pki.ca_pem_path, &pki.clients[1].0, &pki.clients[1].1);
     let _rb = checkin(&cp_url, &host_b, HOST_B, "current-b-closure").await;
 
-    // Operator runs `nixfleet status` against the live CP via the lib path.
     let cfg = ResolvedClientConfig {
         cp_url: cp_url.clone(),
         ca_cert: pki.ca_pem_path.clone(),
@@ -305,24 +295,19 @@ async fn nixfleet_status_renders_two_real_hosts_after_checkins() {
     };
     let rendered = run_status(&cfg, false, false).await.expect("run_status");
 
-    // Snapshot key facts (not a byte-exact snapshot - the CP timestamps
-    // row ages from `Utc::now()` at call time, so equality on the whole
-    // table is racy. Assert load-bearing substrings instead).
+    // Assert load-bearing substrings; the CP timestamps row ages at call
+    // time so a byte-exact snapshot would be racy.
     assert!(rendered.contains("HOST"), "header missing: {rendered}");
     assert!(rendered.contains(HOST_A), "host-a missing: {rendered}");
     assert!(rendered.contains(HOST_B), "host-b missing: {rendered}");
     assert!(rendered.contains(CHANNEL), "channel missing: {rendered}");
 
-    // The hosts have just checked in with a "current" closure that does
-    // not match `declared` - they should not be `converged`. Either "in
-    // progress" or a state-machine label is acceptable here; assert the
-    // negative.
+    // Current closure != declared, so hosts must not be converged.
     assert!(
         !rendered.contains("\u{2713} converged"),
         "freshly-divergent hosts must not be converged: {rendered}",
     );
 
-    // JSON path also works: returns parseable JSON with a `hosts` array.
     let json = run_status(&cfg, true, false)
         .await
         .expect("run_status json");

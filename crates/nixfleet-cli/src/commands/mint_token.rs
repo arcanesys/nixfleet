@@ -1,14 +1,13 @@
-//! Operator-side bootstrap-token minter. Folded from the former
-//! `nixfleet-mint-token` binary. Subcommand form:
-//! `nixfleet mint-token --hostname <h> --org-root-key <path>
-//!                     [--fleet-resolved <path> | --csr-pubkey-fingerprint <fp>]`.
+//! Operator-side bootstrap-token minter. Signs a `TokenClaims` block with the
+//! org root key, derives the host fingerprint from either fleet.resolved or
+//! a flag override.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use base64::Engine;
 use chrono::{Duration as ChronoDuration, Utc};
-// Alias required: `struct Args` below shares its name with the clap trait.
+// Alias avoids clashing with `struct Args` below.
 use clap::Args as ClapArgs;
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_proto::enroll_wire::{BootstrapToken, TokenClaims};
@@ -22,17 +21,14 @@ pub struct Args {
     hostname: String,
 
     /// base64 SHA-256 of the CSR's pubkey; binds the token to the key.
-    /// Mutually exclusive with `--fleet-resolved`: pass one or the other,
-    /// not both. The flag-driven path is for dev/test; declarative
-    /// fleets should use `--fleet-resolved`.
+    /// Mutually exclusive with `--fleet-resolved`. Flag-driven path is for
+    /// dev/test; declarative fleets use `--fleet-resolved`.
     #[arg(long, conflicts_with = "fleet_resolved")]
     csr_pubkey_fingerprint: Option<String>,
 
-    /// Path to the signed `releases/fleet.resolved.json`. When set, the
-    /// fingerprint is derived from `hosts.<hostname>.pubkey`  -
-    /// guarantees the token is scoped to whatever the operator
-    /// declared in fleet.nix, no manual SHA-256 dance. Closes #9's
-    /// "fingerprint binding declared in flake" ergonomics.
+    /// Path to signed `releases/fleet.resolved.json`. Derives the fingerprint
+    /// from `hosts.<hostname>.pubkey` so the token is scoped to what the
+    /// operator declared, no manual SHA-256 dance.
     #[arg(long)]
     fleet_resolved: Option<PathBuf>,
 
@@ -89,7 +85,8 @@ pub fn run(args: Args) -> Result<()> {
 fn read_signing_key(path: &PathBuf) -> Result<SigningKey> {
     let bytes =
         std::fs::read(path).with_context(|| format!("read org root key {}", path.display()))?;
-    // FOOTGUN: detect PEM before whitespace strip - strip would collapse BEGIN/body/END and break lines().
+    // FOOTGUN: detect PEM before whitespace strip - strip would collapse
+    // BEGIN/body/END lines.
     if let Ok(orig) = std::str::from_utf8(&bytes) {
         if orig.trim_start().starts_with("-----BEGIN") {
             let body: String = orig
@@ -100,7 +97,7 @@ fn read_signing_key(path: &PathBuf) -> Result<SigningKey> {
             let der = base64::engine::general_purpose::STANDARD
                 .decode(&body)
                 .context("base64 decode PEM body")?;
-            // LOADBEARING: PKCS#8 ed25519 OCTET STRING is the last 34 bytes (0x04 0x20 + 32).
+            // PKCS#8 ed25519 OCTET STRING tail: 0x04 0x20 + 32 bytes.
             if der.len() < 34 {
                 anyhow::bail!("PEM too short for PKCS#8 ed25519");
             }
@@ -119,7 +116,7 @@ fn read_signing_key(path: &PathBuf) -> Result<SigningKey> {
     if trimmed.len() == 32 {
         let arr: [u8; 32] = trimmed[..32]
             .try_into()
-            .expect("slice of length 32 fits [u8; 32] - len checked above");
+            .expect("len 32 checked above");
         return Ok(SigningKey::from_bytes(&arr));
     }
     if let Ok(s) = std::str::from_utf8(&trimmed) {
@@ -128,7 +125,7 @@ fn read_signing_key(path: &PathBuf) -> Result<SigningKey> {
             let raw = hex::decode(s).context("hex decode org root key")?;
             let arr: [u8; 32] = raw[..32]
                 .try_into()
-                .expect("hex decode of 64 chars yields 32 bytes - fits [u8; 32]");
+                .expect("hex-64 decodes to 32 bytes");
             return Ok(SigningKey::from_bytes(&arr));
         }
     }
@@ -142,7 +139,6 @@ mod tests {
     use std::io::Write;
 
     fn pkcs8_pem_for_seed(seed: &[u8; 32]) -> String {
-        // SEQUENCE(46) { v=0; AlgId(Ed25519); OCTET-STRING(32){seed} }
         let mut der = hex::decode("302e020100300506032b657004220420").unwrap();
         der.extend_from_slice(seed);
         let b64 = base64::engine::general_purpose::STANDARD.encode(&der);
@@ -209,9 +205,6 @@ mod fleet_resolved_tests {
 
     #[test]
     fn fingerprint_from_fleet_matches_proto_helper() {
-        // Build a tiny fleet.resolved.json declaring "test-host" with a
-        // known OpenSSH ed25519 pubkey; assert the derived fingerprint
-        // equals the proto helper's direct computation.
         let raw_pubkey = [0x42u8; 32];
         let mut blob = Vec::new();
         blob.extend_from_slice(&(b"ssh-ed25519".len() as u32).to_be_bytes());

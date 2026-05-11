@@ -1,9 +1,6 @@
-//! Operator-cert mint: takes an offline fleet root cert + key, generates
-//! an ECDSA-P-256 keypair, signs a clientAuth-EKU child cert with the
-//! root, atomic-writes both PEMs to disk.
-//!
-//! Pure offline crypto. Never opens a socket. Run once per operator
-//! workstation (and yearly for renewal).
+//! Operator-cert mint. Offline crypto only - never opens a socket. Generates
+//! an ECDSA-P-256 keypair, signs a clientAuth-EKU child with the fleet root
+//! cert + key, atomic-writes both PEMs.
 
 use std::path::PathBuf;
 
@@ -51,10 +48,8 @@ pub fn mint_operator_cert(args: MintOperatorCertArgs) -> Result<MintOutcome> {
         .with_context(|| format!("read fleet root key {}", args.root_key_path.display()))?;
 
     let ca_key = KeyPair::from_pem(&ca_key_pem).context("parse fleet root key PEM")?;
-    // Reject non-ECDSA-P-256 root keys: the existing trust hierarchy is
-    // built around a P-256 chain (issuance CA + agent certs), and an
-    // operator cert signed by an off-algorithm root would not chain at
-    // the CP's mTLS layer.
+    // Reject non-ECDSA-P-256 roots: trust chain is P-256 (issuance CA + agent
+    // certs); off-algorithm roots won't chain at the CP's mTLS layer.
     let algo = ca_key.algorithm();
     if algo != &rcgen::PKCS_ECDSA_P256_SHA256 {
         bail!(
@@ -72,8 +67,7 @@ pub fn mint_operator_cert(args: MintOperatorCertArgs) -> Result<MintOutcome> {
     let now = Utc::now();
     let not_before = now - chrono::Duration::minutes(5);
     let not_after = now + chrono::Duration::days(i64::from(args.validity_days));
-    // rcgen's `not_before`/`not_after` are `time::OffsetDateTime`; bridge
-    // through `SystemTime` (matches the CP's issuance.rs idiom).
+    // rcgen wants `time::OffsetDateTime`; bridge through `SystemTime`.
     let not_before_sys = std::time::SystemTime::UNIX_EPOCH
         + std::time::Duration::from_secs(not_before.timestamp().max(0) as u64);
     let not_after_sys = std::time::SystemTime::UNIX_EPOCH
@@ -91,10 +85,8 @@ pub fn mint_operator_cert(args: MintOperatorCertArgs) -> Result<MintOutcome> {
         .push(DnType::OrganizationalUnitName, "fleet");
     child_params.is_ca = IsCa::ExplicitNoCa;
     child_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-    // CN-only is fine for client auth - webpki's dNSName check is
-    // server-side only. CP issuance sets a SAN dNSName because agent
-    // certs are also reachable via TLS server (closure proxy); operator
-    // certs never serve, so no SAN is needed.
+    // CN-only is fine for clientAuth (webpki's dNSName check is server-side).
+    // Operator certs never serve, so no SAN.
     child_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
     child_params.not_before = not_before_sys.into();
     child_params.not_after = not_after_sys.into();
@@ -302,8 +294,6 @@ mod tests {
 
     #[test]
     fn rejects_non_ecdsa_root_key() {
-        // Mint an Ed25519 root, attempt to mint operator cert against it,
-        // expect the algorithm-mismatch bail.
         let dir = TempDir::new().unwrap();
         let mut params = CertificateParams::default();
         params
@@ -345,12 +335,10 @@ mod tests {
         assert_eq!(key_mode, 0o600, "key mode");
     }
 
+    /// Smoke check on PEM well-formedness. Cryptographic pairing is covered
+    /// transitively by `mints_cert_signed_by_provided_root`.
     #[test]
     fn output_pems_decode_without_error() {
-        // Smoke check: both PEMs are well-formed and parseable.
-        // Cryptographic pairing is covered transitively by
-        // `mints_cert_signed_by_provided_root` (which verifies the leaf
-        // signature against the root pubkey).
         let dir = TempDir::new().unwrap();
         let (root_cert, root_key) = fresh_root_pki(&dir);
         let outcome = mint_operator_cert(mint_args(&dir, root_cert, root_key)).unwrap();

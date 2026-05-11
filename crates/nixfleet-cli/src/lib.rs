@@ -1,6 +1,5 @@
 //! Shared CLI logic - table rendering, age math, status classification.
-//! Kept as a library so binaries (`nixfleet status` today, `rollout
-//! trace` + `diff` next) compose against it and unit tests can exercise
+//! Library form so binaries compose against it and unit tests exercise
 //! formatting without spinning up a real CP.
 
 use std::collections::BTreeMap;
@@ -19,7 +18,7 @@ pub use config::{ConfigError, FileConfig, Overrides};
 pub use operator_cert::{mint_operator_cert, MintOperatorCertArgs, MintOutcome};
 
 /// Write `~/.config/nixfleet/config.toml` (or `--path`). Returns the absolute
-/// path written, so the bin can report it to the operator.
+/// path so the bin can report it.
 pub fn run_config_init(
     path: &Path,
     cp_url: String,
@@ -45,8 +44,8 @@ pub fn run_config_init(
     Ok(path.to_path_buf())
 }
 
-/// Resolved operator-side config: every field is required by the time we
-/// reach a network call. Layered loader (flag > env > file) populates this.
+/// Resolved operator-side config. Every field is required by the time we
+/// reach a network call; layered loader (flag > env > file) populates this.
 #[derive(Debug, Clone)]
 pub struct ResolvedClientConfig {
     pub cp_url: String,
@@ -238,14 +237,9 @@ pub fn render_status_table_with_color(input: &StatusInputs, color: bool) -> Stri
     layout_styled(&rows)
 }
 
-/// Map a STATUS-column label to a colored variant. The label is always
-/// emitted by `status_label`, so it carries exactly one of:
-/// `\u{2713}` (converged), `\u{26A0}` (stale), `\u{27F3}` (pending-reboot),
-/// `\u{2192}` (in-flight), `\u{2026}` (queued), `\u{2717}` (failed/never/
-/// quarantined). The `contains`-based dispatch is therefore unambiguous.
-///
-/// `\u{2026}` is also used by `display_hash` for hash-column truncation  -
-/// only call this function on STATUS labels, never on hash columns.
+/// Map a STATUS label to its colored variant. FOOTGUN: `\u{2026}` also marks
+/// hash-column truncation in `display_hash` - only call this on STATUS
+/// labels emitted by `status_label`, never on hash columns.
 fn paint_status(st: &crate::color::Stylizer, label: &str) -> String {
     use crate::color::Style;
     if label.contains('\u{2713}') {
@@ -306,10 +300,8 @@ fn status_label(
     freshness_minutes: Option<u32>,
 ) -> String {
     let base = base_status_label(host, now, freshness_minutes);
-    // Issue #88: a pin is operator-declared metadata, not a status of its
-    // own. Appending it as a suffix preserves the existing health signal
-    // (converged / failed / stale / etc.) while making the freeze visible
-    // at a glance. Short-prefix the commit to keep the column tidy.
+    // Pin is operator metadata, not a status of its own - appended as a suffix
+    // so the health signal stays primary. Short-prefix to keep the column tidy.
     match host.pin.as_ref() {
         Some(pin) => {
             let short: String = pin.commit.chars().take(7).collect();
@@ -326,9 +318,8 @@ fn base_status_label(
 ) -> String {
     use nixfleet_proto::HostRolloutState;
 
-    // Failed/Reverted is louder than closure-match because the rollout's
-    // state machine remembers the failure even after operator-driven
-    // recovery - surface it.
+    // Failed/Reverted ranks above closure-match: the state machine remembers
+    // failures even after operator-driven recovery - keep surfacing them.
     if let Some(state) = host.rollout_state {
         if state.is_failed() {
             return match state {
@@ -339,17 +330,13 @@ fn base_status_label(
         }
     }
 
-    // Quarantined ranks above pending-reboot: a quarantined host is stuck
-    // on a known-broken closure and needs a CI-side fix, not an operator
-    // action on the host itself. Pending-reboot is recoverable by reboot;
-    // quarantine requires upstream intervention.
+    // Quarantined ranks above pending-reboot (CI-side fix vs operator reboot).
     if host.quarantined_closure.is_some() {
         return "\u{2717} quarantined".to_string();
     }
 
-    // Pending-reboot is operator-actionable: agent set the new profile but a
-    // critical-component swap forced a reboot. Surface louder than in-progress
-    // states so it doesn't get lost in the noise.
+    // Pending-reboot ranks above in-flight: critical-component swap forced a
+    // reboot, operator-actionable, shouldn't be lost in the noise.
     if host.pending_reboot {
         return "\u{27F3} pending reboot".to_string();
     }
@@ -358,13 +345,12 @@ fn base_status_label(
         return "\u{2713} converged".to_string();
     }
 
-    // No checkin yet - host hasn't reached the CP since the rollout opened.
     let Some(last) = host.last_checkin_at else {
         return "\u{2717} never".to_string();
     };
 
-    // Stale-checkin trumps in-flight state - a host stuck in `Activating`
-    // for 3 days isn't "activating", it's offline.
+    // Stale-checkin trumps in-flight state - a host stuck in `Activating` for
+    // 3 days isn't "activating", it's offline.
     if let Some(window) = freshness_minutes {
         let age = now.signed_duration_since(last);
         let stale_threshold = chrono::Duration::minutes(i64::from(window) * 2);
@@ -373,7 +359,6 @@ fn base_status_label(
         }
     }
 
-    // Fresh checkin + non-failed state → use the state machine if present.
     match host.rollout_state {
         Some(s) if s.is_terminal_for_ordering() => {
             format!("\u{2713} {}", s.as_db_str().to_lowercase(),)
@@ -396,20 +381,16 @@ fn format_age(d: chrono::Duration) -> String {
 }
 
 fn compliance_label(host: &HostStatusEntry) -> String {
-    // Issue #86: include health-probe failures in the same column.
-    // Compliance + runtime-gate + health all surface as "outstanding"
-    // so the operator gets one number to react to. Drill-down lives
-    // in the dashboard / `/v1/hosts` JSON.
+    // Compliance + runtime-gate + health failures all surface as one
+    // "outstanding" number; drill-down lives in the dashboard / JSON.
     let total = host.outstanding_compliance_failures
         + host.outstanding_runtime_gate_errors
         + host.outstanding_health_failures;
     format!("{total} outstanding")
 }
 
-/// Render `nixfleet rollout trace` output: wave-major listing of every
-/// dispatch_history row for a rollout. Open dispatches show `<open>`
-/// in the TERMINAL column; the operator reads the table top-to-bottom
-/// to follow the rollout through waves.
+/// Render `nixfleet rollout trace`: wave-major listing of every
+/// dispatch_history row. Open dispatches show `<open>` in TERMINAL.
 pub fn render_trace_table(trace: &RolloutTrace) -> String {
     let mut rows: Vec<[String; 5]> = Vec::with_capacity(trace.events.len() + 1);
     rows.push([
@@ -455,9 +436,8 @@ pub fn render_trace_table(trace: &RolloutTrace) -> String {
     out
 }
 
-/// "2026-05-05T12:34:56.789Z" → "2026-05-05 12:34:56" (drop subseconds +
-/// zone for a denser column). Falls back to the original on parse fail
-/// so malformed historical rows surface to the operator.
+/// "2026-05-05T12:34:56.789Z" → "2026-05-05 12:34:56" (denser column).
+/// Falls back to the original on parse fail so malformed rows surface.
 fn short_ts(rfc3339: &str) -> String {
     DateTime::parse_from_rfc3339(rfc3339)
         .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
@@ -555,12 +535,10 @@ mod tests {
         );
     }
 
+    /// Priority contract: quarantined (CI-side fix) ranks above
+    /// pending-reboot (operator reboot).
     #[test]
     fn quarantined_renders_above_pending_reboot_priority() {
-        // Quarantine + pending-reboot can't actually co-occur on the same
-        // host (different code paths) but the priority ordering is a
-        // contract: quarantine wins because it requires CI-side intervention
-        // (the closure is broken) rather than just an operator reboot.
         let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
         let mut h = fixture_host("a", "stable", false, Some(1), 0);
         h.quarantined_closure = Some("broken-closure-h1".into());
@@ -583,11 +561,8 @@ mod tests {
 
     #[test]
     fn health_failures_roll_into_outstanding_count() {
-        // Issue #86: outstanding_health_failures sums into the COMPLIANCE
-        // column alongside compliance + runtime-gate counts. Operator
-        // gets one number per host; drill-down lives in the dashboard.
         let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
-        let mut h = fixture_host("a", "stable", true, Some(0), 1); // 1 compliance
+        let mut h = fixture_host("a", "stable", true, Some(0), 1);
         h.outstanding_runtime_gate_errors = 1;
         h.outstanding_health_failures = 2;
         let inputs = StatusInputs {
@@ -596,7 +571,6 @@ mod tests {
             channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
         };
         let out = render_status_table(&inputs);
-        // 1 compliance + 1 runtime-gate + 2 health = 4
         assert!(
             out.contains("4 outstanding"),
             "expected combined count: {out}"
@@ -605,9 +579,6 @@ mod tests {
 
     #[test]
     fn pin_appends_to_converged_label() {
-        // Pin is operator metadata, not a health signal - it AUGMENTS
-        // the existing label rather than supplanting it. A pinned-and-
-        // converged host shows "✓ converged 🔒<short>".
         let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
         let mut h = fixture_host("a", "stable", true, Some(0), 0);
         h.pin = Some(nixfleet_proto::Pin {
@@ -635,11 +606,10 @@ mod tests {
         );
     }
 
+    /// Pin info stays visible on failure paths so operators see "supposed
+    /// to be on commit X, and it's failed".
     #[test]
     fn pin_appends_to_failed_label_too() {
-        // Even on failure paths the pin info is visible - operator
-        // wants to know "this host was supposed to be on commit X
-        // and it's failed".
         use nixfleet_proto::HostRolloutState;
         let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
         let mut h = fixture_host("a", "stable", false, Some(1), 0);
@@ -818,10 +788,9 @@ mod tests {
         );
     }
 
+    /// Compile-time guard for the `run_status(cfg, json, color)` signature.
     #[test]
     fn run_status_json_branch_compiles() {
-        // Compile-time guard: the `run_status` signature stays
-        // (cfg, json, color) - bail-out if a refactor renames params.
         fn _typecheck(cfg: &crate::ResolvedClientConfig) {
             let _fut = crate::run_status(cfg, true, false);
         }
@@ -840,14 +809,11 @@ mod tests {
         };
         let plain = render_status_table(&inputs);
         let painted = render_status_table_with_color(&inputs, true);
-        // Same line count.
         assert_eq!(plain.lines().count(), painted.lines().count());
-        // Painted contains ANSI escape; plain does not.
         assert!(painted.contains("\x1b["), "expected ANSI in painted output");
         assert!(!plain.contains("\x1b["), "plain must not have ANSI escapes");
-        // Strip ANSI from painted and confirm bytes match plain (modulo trailing
-        // whitespace, since column padding can collapse differently - accept
-        // line-by-line equality after rstrip).
+        // Strip ANSI then compare line-by-line modulo trailing whitespace
+        // (column padding can collapse differently across renderers).
         let strip_ansi = |s: &str| -> String {
             let mut out = String::new();
             let mut chars = s.chars().peekable();
@@ -883,7 +849,6 @@ mod tests {
         use nixfleet_proto::HostRolloutState;
         let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
 
-        // Converged → green.
         let inputs = StatusInputs {
             now,
             hosts: vec![fixture_host("a", "stable", true, Some(0), 0)],
@@ -895,7 +860,6 @@ mod tests {
             "converged should be green: {painted}",
         );
 
-        // Failed → red.
         let mut h = fixture_host("a", "stable", false, Some(1), 0);
         h.rollout_state = Some(HostRolloutState::Failed);
         let inputs = StatusInputs {
@@ -909,7 +873,6 @@ mod tests {
             "failed should be red: {painted}",
         );
 
-        // Stale → yellow.
         let inputs = StatusInputs {
             now,
             hosts: vec![fixture_host("a", "stable", false, Some(60 * 24 * 3), 0)],

@@ -1,11 +1,10 @@
-//! Operator-side helper that mints a clientAuth-EKU X.509 cert from
-//! the offline fleet root CA. Pure offline crypto. Folded from the
-//! former `nixfleet-mint-operator-cert` binary.
+//! Operator-side helper: mints a clientAuth-EKU X.509 cert from the offline
+//! fleet root CA. Pure offline crypto, no network access.
 
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
-// Alias required: `struct Args` below shares its name with the clap trait.
+// Alias avoids clashing with `struct Args` below.
 use clap::Args as ClapArgs;
 
 use crate::{mint_operator_cert, MintOperatorCertArgs};
