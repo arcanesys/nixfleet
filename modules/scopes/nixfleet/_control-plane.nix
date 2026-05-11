@@ -163,9 +163,9 @@ in {
       type = lib.types.path;
       default = "/etc/nixfleet/cp/trust.json";
       description = ''
-        Path to the trust-root JSON file (see
-        docs/trust-root-flow.md §3.4). Materialised by this module
-        from `config.nixfleet.trust` via environment.etc.
+        Path to the trust-root JSON file. Materialised by this module
+        from `config.nixfleet.trust` via environment.etc. See
+        docs/rfcs/0005-trust-lifecycle.md §1.5 for the wiring.
       '';
     };
 
@@ -221,9 +221,9 @@ in {
         + confirm a target before the magic-rollback timer marks the
         pending row as `rolled-back`.
 
-        Default 360s: agents activate via fire-and-forget (ADR-011,
-        ~300s polling `/run/current-system` after the detached
-        `systemd-run` is fired) plus 60s slack. Dropping below ~310s
+        Default 360s: agents activate via fire-and-forget (~300s
+        polling `/run/current-system` after the detached `systemd-run`
+        is fired) plus 60s slack. Dropping below ~310s
         creates a chaos cascade - CP rolls back while the agent is
         still polling, agent eventually polls success, posts confirm,
         CP returns 410, agent triggers local rollback.

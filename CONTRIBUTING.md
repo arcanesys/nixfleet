@@ -58,7 +58,7 @@ Keep the subject line under 72 characters. Use the body to explain "why," not "w
 
 ## Architecture Decisions
 
-Significant design decisions are recorded in `docs/adr/` as Architecture Decision Records (ADRs). Read the existing ADRs before proposing changes to core patterns like `mkHost`, hostSpec, or the agent state machine.
+Significant design rationale lives in `ARCHITECTURE.md` (mechanism + invariants) and `docs/rfcs/` (forward-looking design proposals). Read those before proposing changes to core patterns like `mkHost`, hostSpec, or the agent state machine.
 
 ## License
 

@@ -20,7 +20,7 @@ output directory:
 | `canonical.json` | JCS-canonical bytes of `fleet.resolved` with `meta.{signedAt, ciCommit, signatureAlgorithm}` stamped. The exact byte stream the signature covers. |
 | `canonical.json.sig` | Raw 64-byte ed25519 signature over `canonical.json`. No DER, no armour. |
 | `verify-pubkey.b64` | Base64 of the 32 raw pubkey bytes, no newline. Extracted from the DER SPKI output of `openssl pkey -pubout` by stripping the 12-byte header. |
-| `test-trust.json` | Trust root JSON per `docs/trust-root-flow.md` §3.4 (`schemaVersion: 1` required per §7.4). Embeds the verify pubkey as `ciReleaseKey.current`. |
+| `test-trust.json` | Trust root JSON per `docs/rfcs/0005-trust-lifecycle.md` §1.5 (`schemaVersion: 1` required). Embeds the verify pubkey as `ciReleaseKey.current`. |
 
 ## Determinism
 

@@ -202,8 +202,7 @@ The framework ships kernel + contract impls. Service wraps, hardware bundles, ro
 
 - Full docs: [arcanesys.github.io/nixfleet](https://arcanesys.github.io/nixfleet)
 - Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
-- ADRs: [`docs/adr/`](docs/adr/) (12 records)
-- RFCs: [`docs/rfcs/`](docs/rfcs/) - fleet.nix schema, reconciler, wire protocol
+- RFCs: [`docs/rfcs/`](docs/rfcs/) - fleet.nix schema, reconciler, wire protocol, attestation, trust lifecycle
 
 ## Development
 

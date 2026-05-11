@@ -25,6 +25,14 @@ What is missing and what auditors ask for first:
 
 The documentation gap is the larger work. The mechanism additions are: EK binding on bootstrap tokens (small), host-attestation quarantine policy (small, reuses cert-lifetime as revocation horizon), threshold-signed channels (the only nontrivial new mechanism).
 
+## 1.5 Trust-root wiring (v0.2 baseline)
+
+The lifecycle work in this RFC sits on top of an existing v0.2 wiring path that carries declared trust roots from the Nix layer to the runtime verify call. That path is the load-bearing assumption every subsequent section makes; this section captures the shape so readers do not need to reconstruct it from source.
+
+Declarations live under `nixfleet.trust.{ciReleaseKey,atticCacheKey,orgRootKey}` in the Nix layer (`modules/contracts/trust.nix`). Each entry is a `KeySlot` with `current`, `previous`, and `rejectBefore` fields - `current` is the active key, `previous` covers the rotation grace window, and `rejectBefore` is the compromise-incident switch that refuses any artifact whose `meta.signedAt` predates the cutoff regardless of which key produced the signature. The CP-host NixOS module (`modules/scopes/nixfleet/_control-plane.nix`) materialises the declared attrset as `/etc/nixfleet/cp/trust.json` at activation time and passes `--trust-file` on the CP binary's command line. Agents follow the same pattern through `/etc/nixfleet/agent/trust.json`. The on-disk file is world-readable because it contains only public material; `schemaVersion: 1` is required at the top level and binaries refuse to start on unknown versions.
+
+At runtime the CP deserialises the file into `proto::TrustConfig`, and on every `fleet.resolved` load calls `slot.active_keys()` to get the `&[TrustedPubkey]` slice handed to `reconciler::verify_artifact`. The verify function iterates the slice and matches on each entry's `algorithm` tag, which is what makes cross-algorithm rotation work end-to-end - the same call site verifies ed25519-signed and ecdsa-p256-signed artifacts as long as both keys are present in the active slot pair. The CP never holds trust private keys; the org root, CI release key, and attic signing key all live with operator hardware or CI signing tooling outside the CP host. Rotation happens declaratively in `fleet.nix` and reaches the CP via the normal nixos-rebuild activation path; no separate trust-state replication channel exists, and the CP is reconstructible from git plus agent check-ins by design (CONTRACTS.md §IV).
+
 ## 2. Design principle
 
 Every authorization in the system has an explicit lifecycle: who creates it, where it lives, how long it lasts, how it is revoked, what happens when it is lost. No silent state, no implicit trust, no procedure that exists only in a single operator's head.

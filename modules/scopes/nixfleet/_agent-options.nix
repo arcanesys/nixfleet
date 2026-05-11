@@ -44,10 +44,10 @@
       type = lib.types.path;
       default = "/etc/nixfleet/agent/trust.json";
       description = ''
-        Path to the trust-root JSON file (see docs/trust-root-flow.md §3.4).
-        The default is materialised by this module from config.nixfleet.trust
-        via environment.etc; override only when sourcing the file from a
-        secrets manager.
+        Path to the trust-root JSON file. The default is materialised
+        by this module from config.nixfleet.trust via environment.etc;
+        override only when sourcing the file from a secrets manager.
+        See docs/rfcs/0005-trust-lifecycle.md §1.5 for the wiring.
       '';
     };
 

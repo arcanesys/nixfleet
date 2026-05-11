@@ -343,7 +343,12 @@ Stated explicitly because pressure to add them will come and each dilutes the co
 - **Not a cloud provisioning tool.** Fleet membership is declared; hosts are not auto-created from templates. If you want autoscaling, generate the flake from a higher-level tool and commit.
 - **Not agentless.** Pull-based means an agent is required on every managed host. Acceptable cost for the sovereignty property.
 
-For the operations-grade capabilities the open kernel intentionally does not ship - HA replication, real-time signed-state snapshots, SLA observability, audit packages, hosted CP, multi-tenant federation, fine-grained RBAC, long-running metrics warehousing - see [`docs/commercial-extensions.md`](docs/commercial-extensions.md). Those belong above the kernel, not inside it.
+For the operations-grade capabilities the open kernel intentionally
+does not ship - HA replication, real-time signed-state snapshots, SLA
+observability, audit packages, hosted CP, multi-tenant federation,
+fine-grained RBAC, long-running metrics warehousing - those belong
+above the kernel, not inside it. The commercial extensions are
+maintained in a separate repository.
 
 ---
 
@@ -433,10 +438,8 @@ nixfleet/
 │   └── lib/mk-fleet/              ↓  positive + negative eval fixtures
 │
 └── docs/                          ← human-readable docs
-    ├── README.md, CONTRACTS.md, trust-root-flow.md, harness.md,
-    ├── commercial-extensions.md
-    ├── rfcs/                      │  RFC-0001 / 0002 / 0003
-    └── adr/                       ↓  ADR 001-012, design decisions
+    ├── README.md, CONTRACTS.md, harness.md, source-layout.md
+    └── rfcs/                      ↓  RFC-0001 / 0002 / 0003 / 0004 / 0005
 ```
 
 Convention: `_*.nix` is **skipped by `import-tree`**. Files like `_agent.nix` are imported *explicitly* by `lib/mk-host.nix`. This is why agent/CP modules end up in every host's module list while test modules under `modules/tests/` only register via their non-prefixed siblings.
@@ -505,7 +508,7 @@ Internally:
 4. Forces `hostSpec.hostName = hostName` exactly (never overrideable).
 5. Merges consumer's `modules` last.
 
-Every framework service module is auto-injected but **disabled by default**. Zero cost unless the host opts in (`services.nixfleet-agent.enable = true;` etc.) - [ADR-005](docs/adr/005-scope-self-activation.md). Per [ADR-001](docs/adr/001-mkhost-over-mkfleet.md), the framework deliberately exposes one builder; no fleet/org/role taxonomy.
+Every framework service module is auto-injected but **disabled by default**. Zero cost unless the host opts in (`services.nixfleet-agent.enable = true;` etc.). The framework deliberately exposes one builder; no fleet/org/role taxonomy.
 
 #### `mkFleet` - the fleet topology ([`lib/mk-fleet.nix`](lib/mk-fleet.nix))
 
@@ -543,7 +546,7 @@ Pure schemas under [`contracts/`](contracts). They declare options; they impleme
 
 Every host has one. Identity (hostname, primary user, home dir), locale (timezone, locale, keyboard layout), access (root password file, root SSH keys), networking hints, secrets-backend hints, platform marker (`isDarwin`). The agent reads `hostSpec.userName`; persistence reads it for ownership; core reads `hostSpec.hostName` and stamps it into `networking.hostName`.
 
-[ADR-002](docs/adr/002-flags-over-roles.md): hostSpec carries identity only; behaviour is via scope `enable` options. [ADR-006](docs/adr/006-hostspec-extension.md): fleets extend hostSpec with their own options via plain NixOS modules.
+hostSpec carries identity only; behaviour is via scope `enable` options. Fleets extend hostSpec with their own options via plain NixOS modules.
 
 #### `persistence` - what survives reboots ([`contracts/persistence.nix`](contracts/persistence.nix))
 
@@ -574,7 +577,7 @@ Three roots declared in the flake; the fourth root - the per-host SSH key - is i
 
 ### 10.4 Pluggable impls (`flake.scopes.*`)
 
-[ADR-008](docs/adr/008-release-abstraction.md) and the kernel/opinion split: framework declares contracts and ships **one** impl per family. Sibling impls are alternatives. Registered in `modules/flake-module.nix`:
+The kernel/opinion split: framework declares contracts and ships **one** impl per family. Sibling impls are alternatives. Registered in `modules/flake-module.nix`:
 
 ```nix
 flake.scopes = {
@@ -665,11 +668,11 @@ Adds `nixfleet-cli` (`nixfleet`, with subcommands `mint-token`, `derive-pubkey`,
 
 #### `_trust-json.nix` - shared trust serialiser
 
-Helper imported by `_agent.nix`, `_control-plane.nix`, `_agent-darwin.nix`. Builds the JSON payload for `/etc/nixfleet/{agent,cp}/trust.json`. `schemaVersion = 1` is **required** per [`docs/trust-root-flow.md`](docs/trust-root-flow.md) §7.4 - binaries refuse to start on unknown versions.
+Helper imported by `_agent.nix`, `_control-plane.nix`, `_agent-darwin.nix`. Builds the JSON payload for `/etc/nixfleet/{agent,cp}/trust.json`. `schemaVersion = 1` is **required** per [RFC-0005 §1.5](docs/rfcs/0005-trust-lifecycle.md) - binaries refuse to start on unknown versions.
 
 #### Core glue (`modules/core/`)
 
-`_nixos.nix`: flake-only `nix.nixPath`, `experimental-features`, hostName/timeZone/locale/keyMap/xkb from `hostSpec`, root SSH keys + hashed password file, imports `contracts/trust.nix`. `_darwin.nix` is even smaller - `system.stateVersion`, `system.primaryUser`, disables `verifyNixPath`, marks `hostSpec.isDarwin = true`. [ADR-009](docs/adr/009-core-hardening-audit.md) trimmed core down from a previous fat version.
+`_nixos.nix`: flake-only `nix.nixPath`, `experimental-features`, hostName/timeZone/locale/keyMap/xkb from `hostSpec`, root SSH keys + hashed password file, imports `contracts/trust.nix`. `_darwin.nix` is even smaller - `system.stateVersion`, `system.primaryUser`, disables `verifyNixPath`, marks `hostSpec.isDarwin = true`. Core was deliberately trimmed to mechanism-only; everything else lives in scopes.
 
 ---
 
@@ -776,7 +779,7 @@ Internal modules: `host_state.rs` (`HostRolloutState` lives in `nixfleet-proto`;
 
 Long-running daemon. Flags set by the NixOS module: `--control-plane-url`, `--machine-id`, `--poll-interval`, `--trust-file`, `--ca-cert`, `--client-cert`, `--client-key`, `--bootstrap-token-file`, `--state-dir`, `--compliance-mode`.
 
-Main loop: load trust → enrol if no cert + bootstrap token present → build mTLS client → `run_boot_recovery()` (handles ADR-011 self-switch convergence) → loop every `poll_interval`: POST `/v1/agent/checkin`; if response.target set, fetch + verify rollout manifest, pre-realise (`nix-store --realise <closure>` with cache_keys signature verify), activate (`systemd-run --unit=nixfleet-switch -- switch-to-configuration switch` on Linux, `setsid -c` on Darwin - both detached so they survive agent self-restart during NixOS reload, ADR-011), poll `/run/current-system` every 2s up to 300s, post-verify `basename == expected`, run compliance gate if enabled, POST `/v1/agent/confirm`, clear `last_dispatched`. On failure: POST `/v1/agent/report` with signed evidence. If cert TTL <50%: POST `/v1/agent/renew`.
+Main loop: load trust → enrol if no cert + bootstrap token present → build mTLS client → `run_boot_recovery()` (handles fire-and-forget self-switch convergence) → loop every `poll_interval`: POST `/v1/agent/checkin`; if response.target set, fetch + verify rollout manifest, pre-realise (`nix-store --realise <closure>` with cache_keys signature verify), activate (`systemd-run --unit=nixfleet-switch -- switch-to-configuration switch` on Linux, `setsid -c` on Darwin - both detached so they survive agent self-restart during NixOS reload), poll `/run/current-system` every 2s up to 300s, post-verify `basename == expected`, run compliance gate if enabled, POST `/v1/agent/confirm`, clear `last_dispatched`. On failure: POST `/v1/agent/report` with signed evidence. If cert TTL <50%: POST `/v1/agent/renew`.
 
 Key modules: `comms.rs` (mTLS reqwest, 10s connect, 30s per-request), `activation.rs` (three-stage validation, fire-and-forget launch, lock coordination via `/run/nixos/switch-to-configuration.lock`, `ActivationOutcome` enum), `enrollment.rs` (CSR generation + enrol + 50% TTL renew), `checkin_state.rs` (`last_confirmed_at` + `last_dispatched`), `compliance.rs` (Pass / Failures / Skipped / GateError; `auto` mode → Permissive if collector present, Disabled if absent), `evidence_signer.rs` (loads `/etc/ssh/ssh_host_ed25519_key`, JCS-canonicalises, ed25519-signs, base64), `freshness.rs`, `manifest_cache.rs` (content-address verification), `recovery.rs` (`run_boot_recovery()`), `host_facts/` (Linux reads boot_id from `/proc/sys/kernel/random/boot_id`; Darwin uses hardware UUID).
 
@@ -803,7 +806,7 @@ GET  /v1/rollouts/{rolloutId}          → manifest JSON (mTLS-gated)
 GET  /v1/rollouts/{rolloutId}/sig      → manifest signature bytes
 ```
 
-mTLS enforced at TLS handshake when `--client-ca` set. Agent routes authenticate solely via verified client cert (CN matches request hostname). No admin routes in the open kernel - fine-grained operator RBAC is intentionally out of scope (see [`docs/commercial-extensions.md`](docs/commercial-extensions.md)).
+mTLS enforced at TLS handshake when `--client-ca` set. Agent routes authenticate solely via verified client cert (CN matches request hostname). No admin routes in the open kernel - fine-grained operator RBAC is intentionally out of scope and belongs in a sibling commercial-extensions repository.
 
 State:
 - **In-memory** (`RwLock`): `host_checkins: HashMap<hostname, HostCheckinRecord>`, `channel_refs: HashMap<channel, git_ref>`, rollout manifest cache, `last_tick_at`.
@@ -884,7 +887,7 @@ Full integration via `runNixOSTest` hosting microvm.nix guests under one host VM
 | `fleet-harness-teardown` | **Real CP + real agents.** Wipe CP DB mid-run; assert state recovery within one reconcile cycle. The validation of done-criterion #1. |
 | `fleet-harness-deadline-expiry` | Confirm-deadline timeout → 410 |
 | `fleet-harness-stale-target` | Year-old fixture; agent's freshness gate rejects + posts `StaleTarget` |
-| `fleet-harness-boot-recovery` | ADR-011: pre-staged stale `last_dispatched`; assert `check_boot_recovery` clears before poll loop |
+| `fleet-harness-boot-recovery` | Fire-and-forget: pre-staged stale `last_dispatched`; assert `check_boot_recovery` clears before poll loop |
 | `fleet-harness-secret-hygiene` | Agent decrypts age secret; testScript greps CP disk + journal + audit; assert plaintext absent |
 | `fleet-harness-rollback-policy` | Real CP + agent under `onHealthFailure = "rollback-and-halt"`; inject Failed via host-side sqlite3; assert RollbackSignal, agent rollback, Reverted, idempotency holds |
 | `fleet-harness-concurrent-checkin` | Two agents in same tick window; assert no duplicate dispatch and ordered confirms |

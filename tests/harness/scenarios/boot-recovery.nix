@@ -89,7 +89,7 @@ in
       print("step 2: recovery cleared the stale record as expected")
 
       print(
-          "fleet-harness-boot-recovery: ADR-011 boot-recovery hook "
+          "fleet-harness-boot-recovery: fire-and-forget boot-recovery hook "
           "ran before poll loop and cleared the stale dispatch record."
       )
     '';

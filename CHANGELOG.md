@@ -59,7 +59,7 @@ The tool's standing function - mint the offline fleet root + sign the TPM-bound 
 
 - **Package + app rename**: `nixfleet-cp-bootstrap` → `nixfleet-trust-bootstrap`. Source moved from `tools/cp-bootstrap/` to `tools/trust-bootstrap/`. Flake outputs (`packages.nixfleet-trust-bootstrap`, `apps.nixfleet-trust-bootstrap`) follow the new name. Invocation: `nix run github:arcanesys/nixfleet#nixfleet-trust-bootstrap -- ...`.
 - **Default `--output-dir` flattened**: writes to `~/.config/nixfleet/` directly (no `bundle-c/` subdir). The subdir was a migration-phase scratch area; the standing layout is the flat one. Operators with existing `bundle-c/` directories can `mv ~/.config/nixfleet/bundle-c/* ~/.config/nixfleet/ && rmdir ~/.config/nixfleet/bundle-c` once and forget about it.
-- **`Bundle C` / `nixfleet#41` labels stripped** from committed text outside `docs/adr/` and `docs/superpowers/`. Per the docs-generic-only convention: working notes don't belong in code comments, module docstrings, or user-facing READMEs once the work has landed. ADRs and the superpowers spec/plan archive remain the historical record.
+- **`Bundle C` / `nixfleet#41` labels stripped** from committed text outside `docs/superpowers/`. Per the docs-generic-only convention: working notes don't belong in code comments, module docstrings, or user-facing READMEs once the work has landed. The superpowers spec/plan archive remains the historical record.
 
 #### Removed
 
@@ -359,7 +359,7 @@ When a closure fails activation (SwitchFailed or VerifyMismatch outcome):
 
 ### Switch-inhibitor carve-out for live activation (2026-05-07)
 
-Closes #56. `nixos-rebuild switch` refuses to live-swap critical components (dbus implementation, systemd, kernel, init) on a running system because the swap can hang processes or require kernel cooperation. The fire-and-forget agent (ADR-011) bypassed `nixos-rebuild`'s wrapper, so the same swap the operator-side guard refuses was happening silently via the gitops loop.
+Closes #56. `nixos-rebuild switch` refuses to live-swap critical components (dbus implementation, systemd, kernel, init) on a running system because the swap can hang processes or require kernel cooperation. The fire-and-forget agent bypassed `nixos-rebuild`'s wrapper, so the same swap the operator-side guard refuses was happening silently via the gitops loop.
 
 #### Added
 
@@ -392,7 +392,7 @@ When a deploy hits a switch-inhibitor: agent runs `nix-env --profile ... --set <
 
 #### Notes
 
-- ADR-011's fire-and-forget invariant is preserved for non-inhibited switches. CONTRACTS.md §I.7 documents the carve-out as a sub-section.
+- The fire-and-forget activation invariant is preserved for non-inhibited switches. CONTRACTS.md §I.7 documents the carve-out as a sub-section.
 - A NixOS VM harness scenario (`tests/harness/scenarios/switch-inhibitor.nix`) is the natural follow-up for end-to-end coverage.
 
 ### Cross-channel rollout ordering + tag-driven disruption budgets (2026-05-04)
@@ -487,9 +487,8 @@ Closes the framework-scoped gaps required for ARCHITECTURE.md §8 done-criterion
 
 #### Documentation
 
-- **`docs/commercial-extensions.md`** (new). Catalogues capabilities the open kernel intentionally does not ship - HA replication, real-time signed-state snapshots, SLA observability, audit packages, hosted CP, multi-tenant federation, fine-grained RBAC, long-running metrics warehousing - with stranger-fleet-test rationale and integration paths.
 - **ARCHITECTURE.md §6 Phase 10 - "CP-resident state by recovery profile"** subsection enumerating every SQLite table with its recovery class (soft from agent inputs / hard from signed artifacts in git).
-- **ARCHITECTURE.md §7 Non-goals** points at `docs/commercial-extensions.md` for capabilities deliberately out of scope.
+- **ARCHITECTURE.md §7 Non-goals** records that operations-grade capabilities (HA replication, real-time signed-state snapshots, SLA observability, audit packages, hosted CP, multi-tenant federation, fine-grained RBAC, long-running metrics warehousing) are deliberately out of scope for the open kernel and belong in a sibling commercial-extensions repository.
 - **ARCHITECTURE.md §8 done-criterion #1** expanded with the per-table guarantee.
 - **v0.2 completeness cycle landed** - gap #2 closed (steps 1+2+3); gaps A/B/C/D enumerated with their closing commits. Tracking moved to GitHub issues (#46/#47/#48/#14, plus open #68/#69/#67 for the remaining items).
 

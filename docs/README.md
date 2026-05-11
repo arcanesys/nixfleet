@@ -10,8 +10,6 @@ the code disagrees, the code is being built to match.
 | [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | High-level architecture, component roles, trust flow, build order (Phases 0-10) | First read for new contributors |
 | [`source-layout.md`](source-layout.md) | The four Nix layers (`lib/` / `modules/scopes/` / `contracts/` / `impls/`) and what goes where | When adding Nix code and unsure where it belongs |
 | [`CONTRACTS.md`](CONTRACTS.md) | Every artifact, key, and format that crosses a stream boundary (data, trust roots, canonicalization, storage purity) | When adding or changing anything cross-stream |
-| [`commercial-extensions.md`](commercial-extensions.md) | Capabilities deliberately out of scope for the open kernel (HA, SLA observability, audit packages) | When weighing whether a feature belongs in this repo |
-| [`trust-root-flow.md`](trust-root-flow.md) | How `nixfleet.trust.*` declarations reach `verify_artifact` at runtime | When touching trust-root wiring |
 | [`harness.md`](harness.md) | microvm.nix harness scope and slot-in points | When extending the integration-test fabric |
 
 ## Protocol + data (RFCs)
@@ -36,11 +34,6 @@ The [`mdbook/`](mdbook/) subtree is the user-facing manual. Source lives in
 | Troubleshooting | [`mdbook/src/troubleshooting.md`](mdbook/src/troubleshooting.md) |
 | Rust API (generated) | [`mdbook/src/api.md`](mdbook/src/api.md) |
 | Module options (generated) | [`mdbook/src/options.md`](mdbook/src/options.md) |
-
-## Historical decisions
-
-[`adr/`](adr/) - 11 Architecture Decision Records (001-011) covering `mkHost`,
-flags-over-roles, agent-as-service-module, hydration, fire-and-forget apply, etc.
 
 ## Root-level docs
 

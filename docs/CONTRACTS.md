@@ -101,7 +101,7 @@ These env-var names are part of the contract - renaming them is a §VIII amendme
 
 **Evolution discipline.** Same as wire protocol - additive within a major, bump on breaking changes. Historical events MUST remain parseable for the declared audit retention window.
 
-### 7. Activation timing invariant (ADR-011)
+### 7. Activation timing invariant (fire-and-forget)
 
 Operators tuning the magic-rollback confirm window MUST preserve the coupling:
 
@@ -115,7 +115,7 @@ Where:
 - `POLL_BUDGET` is the agent-side fire-and-forget poll duration (currently `300s`, defined as `crates/nixfleet-agent/src/activation.rs::POLL_BUDGET`).
 - `CLOCK_SKEW_SLACK` is the symmetric tolerance baked into both the freshness gate and the rollback timer (currently `60s`, defined as `crates/nixfleet-reconciler/src/verify.rs::CLOCK_SKEW_SLACK_SECS`).
 
-**Why.** Agents activate via fire-and-forget (ADR-011): `systemd-run --unit=nixfleet-switch` queues a detached transient unit, and the agent then polls `/run/current-system` for up to `POLL_BUDGET`. If the deadline expires before the poll succeeds, the CP's rollback timer marks the `pending_confirms` row rolled-back and any subsequent confirm POST returns `410 Gone`, triggering the agent's local rollback path - *even though the activation itself was succeeding*. The slack absorbs benign clock drift between the CP's deadline computation and the agent's poll completion.
+**Why.** Agents activate via fire-and-forget: `systemd-run --unit=nixfleet-switch` queues a detached transient unit, and the agent then polls `/run/current-system` for up to `POLL_BUDGET`. If the deadline expires before the poll succeeds, the CP's rollback timer marks the `pending_confirms` row rolled-back and any subsequent confirm POST returns `410 Gone`, triggering the agent's local rollback path - *even though the activation itself was succeeding*. The slack absorbs benign clock drift between the CP's deadline computation and the agent's poll completion.
 
 **How to tune.** Slow-link channels (large closures over residential uplinks, long activation scripts): raise `confirmWindowSecs` AND `POLL_BUDGET` together, keeping the inequality. Tight rollout windows (canary channels with short freshness): lower both, but never set `confirmWindowSecs < POLL_BUDGET + CLOCK_SKEW_SLACK`.
 
