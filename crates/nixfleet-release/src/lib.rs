@@ -1,9 +1,8 @@
 #![allow(clippy::doc_lazy_continuation)]
-//! Producer for `releases/fleet.resolved.json` and signed sidecars.
-//! Pipeline: enumerate hosts → build → push → eval → inject closureHashes
-//! → stamp meta → canonicalize → sign → smoke-verify → atomic write
-//! → optional git commit/push. Hook contract (env vars, exit codes)
-//! lives at the binary surface.
+//! Producer for `releases/fleet.resolved.json` and signed sidecars. Pipeline:
+//! enumerate hosts → build → push → eval → inject closureHashes → stamp meta
+//! → canonicalize → sign → smoke-verify → atomic write → optional git
+//! commit/push. Hook contract lives at the binary surface.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -30,9 +29,9 @@ pub enum HostsSpec {
     Auto,
     /// `Auto` minus the listed names.
     AutoExclude(Vec<String>),
-    /// Explicit list (order preserved). Names appearing in both
-    /// `nixosConfigurations` and `darwinConfigurations` error out
-    /// at classify time - operator must disambiguate.
+    /// Explicit list, order preserved. Names appearing in both
+    /// `nixosConfigurations` and `darwinConfigurations` error at classify
+    /// time; operator must disambiguate.
     Explicit(Vec<String>),
 }
 
@@ -73,22 +72,20 @@ pub struct ReleaseConfig {
     pub commit_template: String,
     pub git_user_name: Option<String>,
     pub git_user_email: Option<String>,
-    /// Structural smoke verify: canonicalize round-trip + schema parse
-    /// + non-zero sig length. Default on.
+    /// Structural smoke verify: canonicalize round-trip + schema parse +
+    /// non-zero sig length. Default on.
     pub smoke_verify: bool,
-    /// Reuse `signedAt` when closureHashes match; produces byte-stable
+    /// Reuse `signedAt` when closureHashes match - produces byte-stable
     /// releases on no-op runs.
     pub reuse_unchanged_signature: bool,
-    /// Flake attr yielding revocations list. When set, the pipeline
-    /// signs `revocations.json` alongside `fleet.resolved.json` via
-    /// the same `sign_cmd`. When `None`, no revocations artifact.
+    /// Flake attr yielding the revocations list. When set, the pipeline signs
+    /// `revocations.json` alongside `fleet.resolved.json` via the same
+    /// `sign_cmd`. `None` skips the revocations artifact.
     pub revocations_attr: Option<String>,
-    /// Source URL for building pinned hosts at non-current commits
-    /// (issue #88). Used as `nix build "<url>?rev=<commit>#nixosConfigurations.<host>.config.system.build.toplevel"`.
-    /// Optional at the type level; required at runtime iff any
-    /// non-expired host pin specifies a commit different from the
-    /// current release commit. Validation fires after eval (where
-    /// pins are visible) - see `validate_pin_source_url`.
+    /// Source URL for building pinned hosts at non-current commits. Optional
+    /// at the type level but required at runtime iff any non-expired host pin
+    /// specifies a commit different from the current release commit
+    /// (validation in `validate_pin_source_url`).
     pub pin_source_url: Option<String>,
 }
 
@@ -125,11 +122,8 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
     let host_names: Vec<&str> = hosts.iter().map(|(n, _)| n.as_str()).collect();
     tracing::info!(count = hosts.len(), hosts = ?host_names, "enumerated");
 
-    // Issue #88: eval BEFORE build so pin metadata can branch the build
-    // path per host. Pre-#88 this happened after build because eval was
-    // only used to inject closure_hashes; pins make eval load-bearing for
-    // the build itself. The reorder is safe - eval is its own nix
-    // invocation with no build-output dependency.
+    // Eval BEFORE build: pin metadata branches the build path per host. Safe
+    // to reorder - eval is its own nix invocation with no build dependency.
     let mut resolved = eval_fleet_resolved(config)?;
     let current_commit = git_head_sha(&config.flake_dir).ok();
     let now = Utc::now();
@@ -163,8 +157,6 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
     };
 
     let signed_at = preserved_signed_at.unwrap_or_else(Utc::now);
-    // Issue #88: `current_commit` was already captured before build to
-    // drive pin-source validation; reuse here for `meta.ciCommit`.
     let ci_commit = current_commit.clone();
     stamp_meta(
         &mut resolved,
@@ -175,8 +167,6 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
 
     let canonical = canonicalize_resolved(&resolved)?;
 
-    // Skip signing when reuse_unchanged_signature short-circuit fired
-    // and the existing signature file is intact.
     let sig_bytes = if preserved_signed_at.is_some() && signature_path.exists() {
         std::fs::read(&signature_path).context("read existing signature")?
     } else {
@@ -194,9 +184,9 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
         &sig_bytes,
     )?;
 
-    // LOADBEARING: empty list still emits the file - CP-rebuild recovery
-    // primes `cert_revocations` from this and a missing file would unlock
-    // every revoked cert on rebuild.
+    // LOADBEARING: empty list still emits the file. CP-rebuild recovery
+    // primes `cert_revocations` from this; a missing file would unlock every
+    // revoked cert on rebuild.
     let mut revocations_paths: Vec<PathBuf> = Vec::new();
     if let Some(attr) = &config.revocations_attr {
         let entries = eval_revocations(config, attr)?;
@@ -215,8 +205,7 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
             .context("canonicalize revocations.json")?;
         let revs_sig_path = config.release_dir.join("revocations.json.sig");
         let revs_path = config.release_dir.join("revocations.json");
-        // Reuse-unchanged short-circuit: existing canonical bytes match
-        // → reuse on-disk signature (idempotent, byte-stable).
+        // Reuse on-disk signature when canonical bytes match (idempotent).
         let revs_sig_bytes = if revs_path.exists()
             && revs_sig_path.exists()
             && std::fs::read(&revs_path).ok().as_deref() == Some(revs_canonical.as_bytes())
@@ -240,8 +229,8 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
         );
     }
 
-    // One signed manifest per channel. fleetResolvedHash binds each
-    // to this snapshot, blocking mix-and-match across rotations.
+    // One signed manifest per channel; fleetResolvedHash binds each to this
+    // snapshot, blocking mix-and-match across rotations.
     let mut manifest_paths: Vec<PathBuf> = Vec::new();
     let fleet_resolved_hash = sha256_hex(canonical.as_bytes());
     let rollouts_dir = config.release_dir.join("rollouts");
@@ -269,8 +258,8 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
         let manifest_path = rollouts_dir.join(&artifact_name);
         let sig_path = rollouts_dir.join(format!("{artifact_name}.sig"));
 
-        // rolloutId IS the content hash, so byte-identical bytes ⇒
-        // identical path. Reuse on-disk signature when bytes match.
+        // rolloutId IS the content hash, so identical bytes ⇒ identical path.
+        // Reuse on-disk signature when bytes match.
         let sig_bytes = if manifest_path.exists()
             && sig_path.exists()
             && std::fs::read(&manifest_path).ok().as_deref() == Some(manifest_canonical.as_bytes())
@@ -343,7 +332,7 @@ fn validate_config(c: &ReleaseConfig) -> Result<()> {
     Ok(())
 }
 
-/// `(host, kind)` pairs: NixOS sorted, then Darwin sorted; `Explicit`
+/// `(host, kind)` pairs. NixOS sorted, then Darwin sorted; `Explicit`
 /// preserves caller order. Missing attrsets are empty, not errors.
 fn enumerate_hosts(config: &ReleaseConfig) -> Result<Vec<(String, HostKind)>> {
     let mut nixos = list_attr_optional(&config.flake_dir, "nixosConfigurations")?;
@@ -412,8 +401,8 @@ fn eval_revocations(config: &ReleaseConfig, attr: &str) -> Result<Vec<Revocation
         .with_context(|| format!("parse revocations from `nix eval .#{attr}`"))
 }
 
-/// Enumerate attribute names; missing attrset → empty. "Missing
-/// attribute" matches a small set of stable nix-eval phrasings.
+/// Enumerate attribute names; missing attrset → empty. "Missing attribute"
+/// matches a small set of stable nix-eval phrasings.
 fn list_attr_optional(flake_dir: &Path, attr_path: &str) -> Result<Vec<String>> {
     let output = Command::new("nix")
         .args([
@@ -429,7 +418,6 @@ fn list_attr_optional(flake_dir: &Path, attr_path: &str) -> Result<Vec<String>> 
         .with_context(|| format!("invoke `nix eval .#{attr_path}`"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // Stable phrasings for "attr doesn't exist on the flake".
         let lowered = stderr.to_lowercase();
         let is_missing = [
             "does not provide attribute",
@@ -453,11 +441,10 @@ fn list_attr_optional(flake_dir: &Path, attr_path: &str) -> Result<Vec<String>> 
     Ok(names)
 }
 
-/// Sequential build. Per-host branch on `resolved.hosts[host].pin`
-/// (issue #88): no pin OR pin.commit == current_commit → existing local
-/// build path; non-current commit → flake-ref build via
-/// `<pin_source_url>?rev=<commit>`. Failures abort before any push.
-/// Cross-platform builds rely on the operator's `nix.buildMachines` config.
+/// Sequential build. No pin or pin.commit == current_commit → local build
+/// path; non-current commit → flake-ref build via `<pin_source_url>?rev=<commit>`.
+/// Cross-platform builds rely on the operator's `nix.buildMachines`. Failures
+/// abort before any push.
 fn build_hosts(
     config: &ReleaseConfig,
     hosts: &[(String, HostKind)],
@@ -478,9 +465,8 @@ fn build_hosts(
             }
             Some(commit) => {
                 let url = config.pin_source_url.as_deref().ok_or_else(|| {
-                    // Should be unreachable - `validate_pin_source_url`
-                    // catches this earlier. Defensive bail keeps the path
-                    // honest in case the validation is bypassed in tests.
+                    // Defensive bail; `validate_pin_source_url` catches this
+                    // earlier in normal flow.
                     anyhow::anyhow!(
                         "host '{host}' is pinned to commit '{commit}' but \
                          --pin-source-url is unset"
@@ -496,10 +482,8 @@ fn build_hosts(
     Ok(out)
 }
 
-/// `Some(commit)` iff host has a pin AND `pin.commit ≠ current_commit`.
-/// `None` for unpinned hosts and for pins that target the same commit
-/// we're already releasing (the local build path is correct in that
-/// case - no point invoking the flake-ref machinery).
+/// `Some(commit)` iff the host has a pin AND `pin.commit ≠ current_commit`.
+/// Same-commit pins return `None` so the local build path handles them.
 fn pin_target_commit<'a>(
     resolved: &'a FleetResolved,
     host: &str,
@@ -527,10 +511,8 @@ fn build_local(flake_dir: &Path, attr: &str) -> Result<String> {
     interpret_build_output(attr, output)
 }
 
-/// Build via flake-ref at a different commit. The `url?rev=<commit>` form
-/// lets Nix handle checkout + caching; we don't manage a worktree
-/// ourselves. The host attr path mirrors the local build (Nix vs Darwin
-/// is consumed identically at the pinned source).
+/// Build via flake-ref at a different commit. The `url?rev=<commit>` form lets
+/// Nix handle checkout + caching; we don't manage a worktree ourselves.
 fn build_pinned(pin_source_url: &str, commit: &str, kind: HostKind, host: &str) -> Result<String> {
     let attr = format!(
         "{pin_source_url}?rev={commit}#{}.{host}.config.system.build.toplevel",
@@ -569,10 +551,8 @@ fn interpret_build_output(attr: &str, output: std::process::Output) -> Result<St
     Ok(path)
 }
 
-/// Drop expired pins from the resolved fleet (issue #88). Pins past
-/// their `expires_at` are silently removed; affected hosts fall back to
-/// the current-commit build path. Pins with no `expires_at` always
-/// remain. Same eval-time semantics regardless of host kind.
+/// Drop expired pins (past `expires_at`); affected hosts fall back to the
+/// current-commit build path. Pins with no `expires_at` always remain.
 pub fn filter_expired_pins(resolved: &mut FleetResolved, now: DateTime<Utc>) {
     for (host_name, host) in resolved.hosts.iter_mut() {
         if let Some(pin) = host.pin.as_ref() {
@@ -592,8 +572,7 @@ pub fn filter_expired_pins(resolved: &mut FleetResolved, now: DateTime<Utc>) {
 }
 
 /// Errors when any host has a non-current-commit pin but `--pin-source-url`
-/// is unset. Run AFTER `filter_expired_pins` so expired pins are not
-/// counted (they fall back to the current commit anyway).
+/// is unset. Run AFTER `filter_expired_pins` so expired pins aren't counted.
 fn validate_pin_source_url(
     config: &ReleaseConfig,
     resolved: &FleetResolved,
@@ -1009,7 +988,6 @@ mod tests {
         assert!(h
             .chars()
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
-        // known sha256("hello world")
         assert_eq!(
             h,
             "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
@@ -1105,9 +1083,7 @@ mod tests {
 
     #[test]
     fn filter_expired_treats_exact_now_as_expired() {
-        // `<=` boundary: a pin whose expiresAt is exactly now is past
-        // its window and should be dropped (the operator's window
-        // closed at that instant).
+        // `<=` boundary: window-closes-at-instant means now == expiresAt drops.
         let now = Utc::now();
         let mut r = pin_resolved(Some(fresh_pin("c", Some(now))));
         filter_expired_pins(&mut r, now);
@@ -1164,8 +1140,6 @@ mod tests {
 
     #[test]
     fn validate_pin_source_url_ok_when_pin_matches_release_commit() {
-        // Pin that targets the SAME commit being released doesn't need a
-        // source URL - the local build path handles it.
         let c = base_config();
         let r = pin_resolved(Some(fresh_pin("matching-commit", None)));
         validate_pin_source_url(&c, &r, Some("matching-commit")).unwrap();

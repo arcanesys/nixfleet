@@ -14,7 +14,7 @@ pub(crate) fn sign(cmd: &str, canonical: &[u8]) -> Result<Vec<u8>> {
     let output = NamedTempFile::new().context("create tempfile for signature")?;
 
     std::fs::write(input.path(), canonical).context("write canonical bytes to tempfile")?;
-    // Pre-create empty so the hook only needs to overwrite.
+    // Pre-create empty so the hook only needs to overwrite, not also create.
     std::fs::write(output.path(), b"").ok();
 
     tracing::info!("sign hook");

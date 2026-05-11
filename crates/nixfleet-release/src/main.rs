@@ -74,7 +74,7 @@ struct Cli {
 
     /// Source URL the pinned-host build path uses as `nix build "<url>?rev=<commit>#..."`.
     /// Required iff any non-expired host pin specifies a commit different from
-    /// the current release commit (issue #88). Typical: `git+ssh://lab:222/abstracts33d/fleet`.
+    /// the current release commit.
     #[arg(long)]
     pin_source_url: Option<String>,
 
