@@ -176,7 +176,7 @@ pub(crate) async fn process_dispatch_target(
     // quarantine window. Distinct from the deferred suppression above:
     // deferred = "we made progress, awaiting reboot" (silent re-skip);
     // quarantined = "this closure broke things, operator needs to know"
-    // (loud re-skip with throttled `RolloutQuarantined` event posts). Auto-
+    // (loud re-skip with throttled `ClosureQuarantined` event posts). Auto-
     // clears when the channel-ref advances to a different closure_hash.
     if let QuarantineDecision::Suppress(record) =
         evaluate_quarantine(&args.state_dir, target, chrono::Utc::now())

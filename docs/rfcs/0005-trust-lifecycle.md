@@ -11,7 +11,7 @@ ARCHITECTURE.md §4 describes the trust model statically — four roots, derivat
 
 - Pre-announced rotation slots (`current` / `previous` / `successor` / `retireAt`) on the trust contract — `contracts/trust.nix` enforces the paired-options invariant.
 - Bootstrap tokens with hostname + pubkey-fingerprint scoping, single-use via the `token_replay` SQLite table, signed by the org root key — RFC-0003 §4.5.
-- Closure-hash quarantine after activation failure (`RolloutQuarantined` event, agent-side state-dir record per ARCHITECTURE.md changelog #55).
+- Closure-hash quarantine after activation failure (`ClosureQuarantined` event, agent-side state-dir record per ARCHITECTURE.md changelog #55).
 - Cert revocation via the signed `revocations.json` sidecar replayed into `cert_revocations` on every reconcile tick.
 
 What is missing and what auditors ask for first:

@@ -2,7 +2,7 @@
 //! `should_suppress_quarantined_dispatch` before activate() to decide whether
 //! to skip a closure that already failed within the quarantine window.
 //!
-//! Skip is paired with a throttled `RolloutQuarantined` event post: the first
+//! Skip is paired with a throttled `ClosureQuarantined` event post: the first
 //! suppression fires the event, subsequent suppressions within
 //! `QUARANTINE_REPOST_THROTTLE_SECS` are silent. `failure_count` tracks
 //! distinct switch failures, NOT suppression hits — flapping the event log
@@ -50,7 +50,7 @@ pub(crate) fn evaluate(
     QuarantineDecision::Suppress(record)
 }
 
-/// Post `RolloutQuarantined` if we haven't recently, then mark the post
+/// Post `ClosureQuarantined` if we haven't recently, then mark the post
 /// timestamp on the record. Throttled to one post per
 /// `QUARANTINE_REPOST_THROTTLE_SECS` to bound journal volume during
 /// steady-state quarantine.
@@ -80,7 +80,7 @@ pub(crate) async fn post_quarantine_event<R: Reporter>(
     ctx.reporter
         .post_report(
             Some(&ctx.target.channel_ref),
-            ReportEvent::RolloutQuarantined {
+            ReportEvent::ClosureQuarantined {
                 closure_hash: ctx.target.closure_hash.clone(),
                 channel_ref: ctx.target.channel_ref.clone(),
                 failure_count: record.failure_count,

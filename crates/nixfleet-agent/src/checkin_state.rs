@@ -51,7 +51,7 @@ pub const LAST_FAILED_CLOSURE_FILENAME: &str = "last_failed_closure";
 /// a successfully-recovered host doesn't suppress a legitimate retry.
 pub const QUARANTINE_WINDOW_SECS: i64 = 24 * 60 * 60;
 
-/// Re-post throttle: post `RolloutQuarantined` at most once per hour while
+/// Re-post throttle: post `ClosureQuarantined` at most once per hour while
 /// the host is suppressing the same closure_hash. First post happens on the
 /// first suppression after a failure; subsequent suppressions within the
 /// hour are silent. Bounds journal volume during steady-state quarantine.
@@ -71,7 +71,7 @@ pub struct LastFailedClosureRecord {
     pub channel_ref: String,
     pub last_failure_at: DateTime<Utc>,
     pub failure_count: u32,
-    /// Most recent failure summary — fed back into `RolloutQuarantined`'s
+    /// Most recent failure summary — fed back into `ClosureQuarantined`'s
     /// `reason` field on suppression posts.
     pub reason: String,
     /// `None` until the first quarantine event posts; updated on each post.

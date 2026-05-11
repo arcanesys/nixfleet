@@ -285,12 +285,12 @@ pub enum ReportEvent {
     /// Agent gave up retrying a closure after a recent SwitchFailed/VerifyMismatch
     /// (issue #55). Suppression auto-clears when the channel-ref advances to a
     /// different closure_hash. Distinct from `ActivationFailed` (a single failure
-    /// observation) — `RolloutQuarantined` signals "agent has decided not to
+    /// observation) — `ClosureQuarantined` signals "agent has decided not to
     /// re-attempt this closure" so the operator can distinguish a transient
     /// hiccup from a permanently-broken release. Unsigned (observability-only;
     /// see `apply_deferred_pending_reboot_transition` precedent: state-driving
     /// effect is internal to CP, no fleet gate reads the signature).
-    RolloutQuarantined {
+    ClosureQuarantined {
         closure_hash: String,
         channel_ref: String,
         /// Total SwitchFailed/VerifyMismatch observations for this closure_hash.
@@ -432,7 +432,7 @@ impl ReportEvent {
             Self::ActivationStarted { .. } => "activation-started",
             Self::ActivationDeferred { .. } => "activation-deferred",
             Self::ActivationFailed { .. } => "activation-failed",
-            Self::RolloutQuarantined { .. } => "rollout-quarantined",
+            Self::ClosureQuarantined { .. } => "closure-quarantined",
             Self::RealiseFailed { .. } => "realise-failed",
             Self::VerifyMismatch { .. } => "verify-mismatch",
             Self::RollbackTriggered { .. } => "rollback-triggered",
@@ -472,7 +472,7 @@ mod report_event_discriminator_tests {
                 channel_ref: "y".into(),
                 component: "dbus".into(),
             },
-            ReportEvent::RolloutQuarantined {
+            ReportEvent::ClosureQuarantined {
                 closure_hash: "x".into(),
                 channel_ref: "y".into(),
                 failure_count: 2,

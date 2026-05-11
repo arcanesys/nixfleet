@@ -44,7 +44,7 @@ pub struct HostStatusEntry {
     /// finish activation. Cleared once the host converges (post-reboot).
     #[serde(default)]
     pub pending_reboot: bool,
-    /// Agent posted `RolloutQuarantined` for the host's current rollout —
+    /// Agent posted `ClosureQuarantined` for the host's current rollout —
     /// the closure_hash already failed activation and the agent has
     /// stopped retrying it. Operator surface for "this release is
     /// permanently broken on this host, fix it in CI". Cleared

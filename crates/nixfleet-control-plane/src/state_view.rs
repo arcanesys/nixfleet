@@ -95,7 +95,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
             let mut compliance_failures = 0usize;
             let mut runtime_gate_errors = 0usize;
             let mut verified_count = 0usize;
-            // Most recent RolloutQuarantined for current rollout — None when
+            // Most recent ClosureQuarantined for current rollout — None when
             // no quarantine event present, Some(closure_hash) otherwise.
             // Buf iter is oldest-first, so we overwrite as we find newer.
             let mut quarantined_closure: Option<String> = None;
@@ -106,7 +106,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                     let is_runtime_gate =
                         matches!(record.report.event, ReportEvent::RuntimeGateError { .. });
                     let is_quarantined =
-                        matches!(record.report.event, ReportEvent::RolloutQuarantined { .. });
+                        matches!(record.report.event, ReportEvent::ClosureQuarantined { .. });
                     if !is_compliance && !is_runtime_gate && !is_quarantined {
                         continue;
                     }
@@ -124,7 +124,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                     if is_runtime_gate {
                         runtime_gate_errors += 1;
                     }
-                    if let ReportEvent::RolloutQuarantined { closure_hash, .. } =
+                    if let ReportEvent::ClosureQuarantined { closure_hash, .. } =
                         &record.report.event
                     {
                         quarantined_closure = Some(closure_hash.clone());

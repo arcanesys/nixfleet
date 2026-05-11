@@ -106,7 +106,7 @@ Two new `ReportEvent` variants, additive:
 - `StaleTargetRejected { observed_age_seconds, signing_timestamp, freshness_window_seconds }`
 - `TimeSourceUnavailable { configured_sources, last_attempt_at, last_error }`
 
-Both are unsigned (operator-surface, no fleet gate reads them — matching the existing `ActivationDeferred` / `RolloutQuarantined` precedent per the v0.2 changelog).
+Both are unsigned (operator-surface, no fleet gate reads them — matching the existing `ActivationDeferred` / `ClosureQuarantined` precedent per the v0.2 changelog).
 
 ## 4. Time-source policy
 

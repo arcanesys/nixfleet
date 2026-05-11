@@ -318,11 +318,11 @@ mod tests {
         .await;
         assert_eq!(fake.calls().len(), 2, "throttle window elapsed → re-posts");
 
-        // Each post must be RolloutQuarantined with the right shape.
+        // Each post must be ClosureQuarantined with the right shape.
         for (rollout, ev) in fake.calls() {
             assert_eq!(rollout.as_deref(), Some("stable@feedface"));
             match ev {
-                ReportEvent::RolloutQuarantined {
+                ReportEvent::ClosureQuarantined {
                     closure_hash,
                     channel_ref,
                     failure_count,
@@ -333,7 +333,7 @@ mod tests {
                     assert_eq!(failure_count, 1);
                     assert!(reason.contains("switch"));
                 }
-                other => panic!("expected RolloutQuarantined, got {other:?}"),
+                other => panic!("expected ClosureQuarantined, got {other:?}"),
             }
         }
     }

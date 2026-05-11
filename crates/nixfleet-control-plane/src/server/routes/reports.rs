@@ -536,7 +536,7 @@ async fn compute_signature_status(
             ))
         }
 
-        // UNSIGNED: ActivationDeferred + RolloutQuarantined are operator-
+        // UNSIGNED: ActivationDeferred + ClosureQuarantined are operator-
         // surface only — neither parks a row that fleet-level gates read by
         // signature, both are derived from durable CP-side state (deferred
         // = host_dispatch_state row, quarantined = event ring) so a forged
@@ -545,7 +545,7 @@ async fn compute_signature_status(
         // promote it to a SignedPayload + verify arm above.
         ReportEvent::ActivationStarted { .. }
         | ReportEvent::ActivationDeferred { .. }
-        | ReportEvent::RolloutQuarantined { .. }
+        | ReportEvent::ClosureQuarantined { .. }
         | ReportEvent::EnrollmentFailed { .. }
         | ReportEvent::RenewalFailed { .. }
         | ReportEvent::TrustError { .. }
