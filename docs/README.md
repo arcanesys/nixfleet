@@ -7,7 +7,7 @@ the code disagrees, the code is being built to match.
 
 | File | What it is | When to read |
 |---|---|---|
-| [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | High-level architecture, component roles, trust flow, build order (Phases 0-10) | First read for new contributors |
+| [`design/architecture.md`](design/architecture.md) | High-level architecture, component roles, trust flow, build order (Phases 0-10) | First read for new contributors |
 | [`source-layout.md`](source-layout.md) | The four Nix layers (`lib/` / `modules/scopes/` / `contracts/` / `impls/`) and what goes where | When adding Nix code and unsure where it belongs |
 | [`CONTRACTS.md`](CONTRACTS.md) | Every artifact, key, and format that crosses a stream boundary (data, trust roots, canonicalization, storage purity) | When adding or changing anything cross-stream |
 | [`harness.md`](harness.md) | microvm.nix harness scope and slot-in points | When extending the integration-test fabric |
@@ -42,6 +42,6 @@ The [`mdbook/`](mdbook/) subtree is the user-facing manual. Source lives in
 | [`../README.md`](../README.md) | User-facing README: install, quick start, ecosystem |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | Changelog (Keep a Changelog format) |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Contributor guide: setup, tests, commit conventions, license |
-| [`../DISASTER-RECOVERY.md`](../DISASTER-RECOVERY.md) | Operator runbook for CP teardown + recovery |
+| [`operations/disaster-recovery.md`](operations/disaster-recovery.md) | Operator runbook for CP teardown + recovery |
 | [`../SECURITY.md`](../SECURITY.md) | Security policy and disclosure |
 | [`../CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md) | Code of conduct |

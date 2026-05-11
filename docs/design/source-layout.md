@@ -2,7 +2,7 @@
 
 The Nix half of the codebase is split into four layers. The split is structural, not stylistic - each directory plays a distinct role in the API surface and import graph. When adding code, this doc tells you which layer it belongs in.
 
-If you're looking for the *runtime* architecture (components, trust flow, build order), read [`../ARCHITECTURE.md`](../ARCHITECTURE.md) instead. This doc is about source organization for contributors.
+If you're looking for the *runtime* architecture (components, trust flow, build order), read [`./architecture.md`](./architecture.md) instead. This doc is about source organization for contributors.
 
 ## The four layers
 
@@ -75,7 +75,7 @@ Sibling entries are mutually exclusive. Adding a third impl to an existing famil
 
 - [`modules/flake-module.nix`](../modules/flake-module.nix) - the wire-up that turns these directories into flake outputs.
 - [`lib/mk-host.nix`](../lib/mk-host.nix) - the function that auto-includes `modules/scopes/*` and `contracts/*` for each host.
-- [`docs/CONTRACTS.md`](CONTRACTS.md) - the cross-stream artifact contracts (different sense of "contract" - wire formats and signed artifacts, not Nix option schemas).
+- [`./contracts.md`](./contracts.md) - the cross-stream artifact contracts (different sense of "contract" - wire formats and signed artifacts, not Nix option schemas).
 
 ## Dependency pinning policy
 

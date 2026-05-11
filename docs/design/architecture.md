@@ -86,7 +86,7 @@ Rust daemon running on every managed host. Single-binary, minimal dependencies. 
 - On post-activation boot: phones home with `bootId` + probe results. On silence past the window: auto-rollback.
 - Reports current generation + probe outcomes at next check-in.
 
-**Self-switch resilience.** When the new generation changes the agent itself, `switch-to-configuration switch` must complete after systemd stops the agent's own cgroup. The agent's apply path is fire-and-forget: the switch is queued in a detached transient systemd unit (`systemd-run --unit=nixfleet-switch`) before activation begins, so systemd stopping the agent does not kill the in-flight activation. The agent does not wait on the child; it polls `/run/current-system` until the symlink matches the desired generation, with a bounded timeout. If the agent is killed mid-poll, the new agent re-runs at startup and reconciles state by reading the active generation. The same mechanism handles rollback. The carve-out: switch inhibitors (dbus, systemd, kernel, init swaps) trip an inline pre-check that downgrades to `nix-env --set` only and posts `ActivationDeferred`, leaving the new generation to activate on next reboot - see `docs/CONTRACTS.md` §I.7.
+**Self-switch resilience.** When the new generation changes the agent itself, `switch-to-configuration switch` must complete after systemd stops the agent's own cgroup. The agent's apply path is fire-and-forget: the switch is queued in a detached transient systemd unit (`systemd-run --unit=nixfleet-switch`) before activation begins, so systemd stopping the agent does not kill the in-flight activation. The agent does not wait on the child; it polls `/run/current-system` until the symlink matches the desired generation, with a bounded timeout. If the agent is killed mid-poll, the new agent re-runs at startup and reconciles state by reading the active generation. The same mechanism handles rollback. The carve-out: switch inhibitors (dbus, systemd, kernel, init swaps) trip an inline pre-check that downgrades to `nix-env --set` only and posts `ActivationDeferred`, leaving the new generation to activate on next reboot - see `./contracts.md` §I.7.
 
 **What it does not do:**
 
@@ -540,7 +540,7 @@ Returns five flake apps: `build-vm`, `start-vm`, `stop-vm`, `clean-vm`, `test-vm
 
 ### 10.3 Contracts
 
-Pure schemas under [`contracts/`](contracts). They declare options; they implement nothing. Kept top-level (not under `modules/`) so `import-tree` doesn't treat them as flake-parts modules and leak `assertions` into flake-level scope. The cross-reference for *every* boundary-crossing artifact is [`docs/CONTRACTS.md`](docs/CONTRACTS.md).
+Pure schemas under [`contracts/`](contracts). They declare options; they implement nothing. Kept top-level (not under `modules/`) so `import-tree` doesn't treat them as flake-parts modules and leak `assertions` into flake-level scope. The cross-reference for *every* boundary-crossing artifact is [`./contracts.md`](./contracts.md).
 
 #### `hostSpec` - universal identity ([`contracts/host-spec.nix`](contracts/host-spec.nix))
 

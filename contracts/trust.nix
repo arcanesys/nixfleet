@@ -101,7 +101,7 @@
         default = null;
         description = ''
           Previous public key accepted during rotation grace. Remove after
-          the rotation window closes (see docs/CONTRACTS.md §II for
+          the rotation window closes (see docs/design/contracts.md §II for
           per-key grace windows).
         '';
       };
@@ -166,7 +166,7 @@ in {
 
         Both are accepted by nix; mix freely. Empty list is fine for
         fleets with no shared cache or that distribute trust through
-        another channel. See docs/CONTRACTS.md §II #2.
+        another channel. See docs/design/contracts.md §II #2.
       '';
     };
 
@@ -175,7 +175,7 @@ in {
       default = {};
       description = ''
         Organization root key. Verifies enrollment tokens at the control
-        plane. Rotation is a catastrophic event - see docs/CONTRACTS.md
+        plane. Rotation is a catastrophic event - see docs/design/contracts.md
         §II #3.
       '';
     };

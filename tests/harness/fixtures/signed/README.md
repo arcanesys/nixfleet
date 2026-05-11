@@ -42,7 +42,7 @@ Deterministic inputs:
   the cleanest path. Changing the seed string forces a new keypair
   everywhere downstream.
 - **Canonicalizer** - pinned `nixfleet-canonicalize` package (serde_jcs
-  0.2 per `docs/CONTRACTS.md` §III).
+  0.2 per `../../../docs/design/contracts.md` §III).
 
 Verify with two evals:
 
