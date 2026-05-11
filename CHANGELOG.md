@@ -4,6 +4,104 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [Semantic V
 
 ## [Unreleased]
 
+### Operator mTLS cert mint from offline fleet root (2026-05-11)
+
+Operators had no first-class way to issue themselves a CP-recognised mTLS client cert without hand-driving `openssl x509 -req`, juggling the offline root key path, picking an algorithm that matches the issuance-CA chain, and remembering to chmod the private key. Shipping `nixfleet-mint-operator-cert` as a dedicated bin and wiring the fleet root paths through the operator scope so the daily mint takes one command with zero flags.
+
+#### Added
+
+- **`nixfleet-mint-operator-cert`** bin in `nixfleet-cli`. Mints a `clientAuth`-EKU X.509 cert (ECDSA-P-256, 365d default validity, default `CN=operator-${USER}@${HOSTNAME}`) signed by the offline fleet root. Output defaults to `~/.config/nixfleet/operator.{cert,key}.pem` with mode `0644` / `0600` on Unix. Atomic write (write-to-tmp + `rename`) so a crash mid-write can't leave a partial cert at the canonical path.
+- **Path resolution chain** for the offline material: `--root-cert` / `--root-key` flag → `NIXFLEET_OPERATOR_FLEET_ROOT_CERT_FILE` / `NIXFLEET_OPERATOR_FLEET_ROOT_KEY_FILE` env → convention default `~/.config/nixfleet/fleet-root.{cert,key}.pem`. Same three-tier shape used elsewhere in the CLI for config (`--cp-url` → `NIXFLEET_CP_URL` → `config.toml`).
+- **`nixfleet.operator.fleetRootCertFile`** and **`nixfleet.operator.fleetRootKeyFile`** options in `modules/scopes/nixfleet/_operator.nix`. `nullOr str`, default `null`. When the operator scope is enabled and these are set, the corresponding `NIXFLEET_OPERATOR_FLEET_ROOT_*_FILE` env vars are exported system-wide so the bin picks the material up automatically — no per-invocation flags on declared operator workstations.
+- **`--force` flag** on the mint bin: refuse to overwrite existing output files unless explicitly authorised. Default behaviour exits non-zero on collision so a stray mint can't clobber an in-use cert.
+- **Algorithm guard**: hard-rejects non-ECDSA-P-256 root keys with a clear error pointing to the issuance-CA chain spec. Pre-fix a P-384 or RSA root key would silently produce a cert that the CP's `webpki` verifier refused at handshake time.
+
+#### Behavior
+
+```bash
+# Operator scope enabled + fleetRoot{Cert,Key}File set → zero-flag mint
+nixfleet-mint-operator-cert
+# minted operator cert
+#   cn:          operator-s33d@krach
+#   valid until: 2027-05-11T13:18:42Z (365 days)
+#   cert:        /home/s33d/.config/nixfleet/operator.cert.pem
+#   key:         /home/s33d/.config/nixfleet/operator.key.pem
+# next: nixfleet config init --client-cert ... --client-key ...
+```
+
+The bin runs entirely offline — it reads the root cert + key from disk, generates a fresh keypair, signs the cert locally, and writes the output. No CP round-trip, no network. Cert verification against the CP's mTLS `clientCa` bundle is end-to-end on the first `nixfleet status` call.
+
+#### Notes
+
+- The fleet root key stays where it is — operator's home directory, mode `0600`, not under agenix. The root is an offline ceremony key signed by the bin a few times a year per operator; agenix is the wrong fit (encrypts for fleet hosts, but only the operator workstation should ever touch the root).
+- For the CP-side trust setup that accepts these minted certs, see `services.nixfleet-control-plane.tls.clientCa` (existing — no change in this entry). The fleet-side CA bundle must include the offline root for `webpki` to anchor the operator cert chain.
+- Daily-driver operator surface is now: `nixfleet` (status + rollout trace + config init), `nixfleet-mint-token`, `nixfleet-derive-pubkey`, `nixfleet-mint-operator-cert`. `nixfleet-trust-bootstrap` is a ceremony tool, kept out of the operator scope's PATH and invoked via `nix run`.
+
+### `nixfleet-cp-bootstrap` → `nixfleet-trust-bootstrap` rename (2026-05-09)
+
+The tool's standing function — mint the offline fleet root + sign the TPM-bound issuance CA from lab's keyslot — outlives the v0.1→v0.2 trust-hierarchy migration that named it `cp-bootstrap`. Renaming to a role-based name and dropping the migration narrative so the README documents only the standing workflows (new-fleet stand-up, annual issuance-CA renewal, TPM rotation, DR). Wire-breaking name change with no production deprecation window — the v0.2 release hasn't shipped yet.
+
+#### Changed
+
+- **Package + app rename**: `nixfleet-cp-bootstrap` → `nixfleet-trust-bootstrap`. Source moved from `tools/cp-bootstrap/` to `tools/trust-bootstrap/`. Flake outputs (`packages.nixfleet-trust-bootstrap`, `apps.nixfleet-trust-bootstrap`) follow the new name. Invocation: `nix run github:arcanesys/nixfleet#nixfleet-trust-bootstrap -- …`.
+- **Default `--output-dir` flattened**: writes to `~/.config/nixfleet/` directly (no `bundle-c/` subdir). The subdir was a migration-phase scratch area; the standing layout is the flat one. Operators with existing `bundle-c/` directories can `mv ~/.config/nixfleet/bundle-c/* ~/.config/nixfleet/ && rmdir ~/.config/nixfleet/bundle-c` once and forget about it.
+- **`Bundle C` / `nixfleet#41` labels stripped** from committed text outside `docs/adr/` and `docs/superpowers/`. Per the docs-generic-only convention: working notes don't belong in code comments, module docstrings, or user-facing READMEs once the work has landed. ADRs and the superpowers spec/plan archive remain the historical record.
+
+#### Removed
+
+- **`tools/cp-bootstrap/MIGRATION.md`** (~186 LoC). The v0.1→v0.2 transition runbook is no longer applicable; the standing workflows live in the new `tools/trust-bootstrap/README.md` (~59 LoC, role-based).
+
+#### Notes
+
+- This is a hard rename of a public tool surface. Consumers that called `nix run …#nixfleet-cp-bootstrap` need to update to the new name.
+- No content change to the actual minting logic (offline root keygen + TPM-bound issuance-CA signing) — the rename is name + docs only.
+
+### CP freshness-window default: 24h → 30d (2026-05-11)
+
+The agent-side freshness check refuses signed CI artifacts older than `freshness_window`. The v0.1 default was 24h — appropriate when the operator manually pushed signed bytes to each CP via a build-time release ceremony. v0.2's CP polls Forgejo on every reconcile tick, and freshness is enforced by the polling cadence (minutes), not the artifact age (days). Bumping the default to 30d — the replay-defence ceiling — to prevent surprise refusals on slow-rebuild or paused-fleet timelines without weakening the security envelope.
+
+#### Changed
+
+- **`AppState::freshness_window`** in `crates/nixfleet-control-plane/src/server/state.rs`: default `Duration::from_secs(86_400)` → `Duration::from_secs(2_592_000)` (24h → 30d).
+- **NixOS-module default** in `modules/scopes/nixfleet/_control-plane.nix`: `freshnessWindowMinutes = 1440` → `freshnessWindowMinutes = 43200`. All three sites (module default, CLI default, AppState default) now agree.
+
+#### Behavior
+
+A CP rebuilt from scratch on day 29 of a quiet fleet (no new CI release in 29 days) now serves the existing signed artifact instead of 503ing the entire dispatch surface until a fresh release lands. Replay attacks against signed bytes captured 31 days ago still fail closed (signature verification + age check both apply).
+
+Operators who want the old 24h ceiling can set `services.nixfleet-control-plane.freshnessWindowMinutes = 1440` explicitly. The agent-side window is independent and configurable per channel via `channels.<name>.freshnessWindow` in fleet.nix (unchanged in this entry; that knob predates this default bump).
+
+#### Notes
+
+- The 30d ceiling is the replay-defence bound — long enough to absorb realistic build-rebuild-paused-rebuild cycles, short enough that a leaked artifact from a year ago can't suddenly become servable.
+- Three CP test sites converted from `let mut state = AppState::default(); state.revocations_required = true;` to struct-literal-with-spread to satisfy clippy's `field_reassign_with_default` after the default bumped — pre-existing main breakage that workspace `clippy --all-targets` caught.
+
+### Generic agent-keypair fixture + `#43`/`#95` harness fallout (2026-05-11)
+
+`#43` (host-key-bound enrollment: CSR pubkey + `last_confirmed_at` attestation signature must match `hosts.<name>.pubkey` declared in fleet.nix) and `#95` (CP daemon does its own initial fetch; drop systemd bootstrap unit) both landed on main, but the test harness still carried per-scenario keypair handwiring that diverged once both contracts started enforcing. Replacing the ad-hoc keys with one parameterised fixture so the same deterministic keypair flows into the fleet declaration, the agent's evidence-signer SSH host key, and the CSR — and adjusting the affected scenarios to the post-`#95` reality.
+
+#### Added
+
+- **`tests/harness/fixtures/agent-keypair/default.nix`** — parameterised by `hostName`. Outputs `private.pem` (PKCS#8, for openssl CSR generation), `private.openssh` (OpenSSH PEM, for `/etc/ssh/ssh_host_ed25519_key`), and `public.openssh` (the OpenSSH-format pubkey string used in `hosts.<name>.pubkey`). Deterministic seed `sha256(seedSalt+"/"+hostName)` so re-runs produce the same key. Built via `pkgs.writers.writePython3` with the cryptography library.
+- **`agentPubkeys` parameter** on `signedFixture` (`tests/harness/fixtures/signed/default.nix`). Attrset of `{ hostName = openssh-pubkey-string; }`. Entries matching the built-in `baseHosts` (agent-01, agent-02, cp) override their `pubkey` field; entries for unknown hostnames append new hosts. Lets the enroll-replay scenario add `agent-99` without modifying the base host list.
+- **`sshHostKey` arg** on `mkRealAgentNode` + `agent-real.nix` — when set, lands the fixture private key at `/etc/ssh/ssh_host_ed25519_key` (mode `0600`) so the agent's evidence-signer authenticates with the keypair the CP expects per `#43`.
+
+#### Changed
+
+- **`teardown` post-wipe recovery probe** moved from log-grep (`"recover_soak_state_from_attestation"`) to SQL probe on `host_rollout_state` (one row per agent, `last_healthy_since IS NOT NULL`). The log-grep only fires from the attestation-recovery path, which post-`#43` needs a precomputed `rollout_id` matching the CP's `project_manifest + sha256` projection — that plumbing isn't here yet, and is the right scope for a dedicated follow-up. The SQL probe accepts either CP recovery path (`recover_soak_state_from_attestation` or `record_converged_at_dispatch`).
+- **`teardown` revocations-replay grep** updated for the CP's JSON tracing output: pattern is now `"\"message\":\"revocations poll: list verified\".*\"entries\":1"` (was `entries=1`). Production CP emits structured JSON via `init_tracing().json()`; the test was looking for the discarded text-format shape.
+- **`deadline-expiry` + `stale-target`** scenarios stopped overriding the agent's ExecStart with `lib.mkForce` pointing at `/etc/nixfleet-cp/canonical.json` (the path `#95` no longer stages). Switched to module-option overrides on `services.nixfleet-agent` instead — same effect, no broken path reference.
+- **`enroll-replay` `--trust-file` override** now lands at the daemon's actual `--trust-file` path. The pre-fix override targeted `/etc/nixfleet-cp/trust.json`, which the daemon doesn't read after `#95` collapsed the bootstrap-staging layer.
+
+#### Fixed
+
+- **`read_atomic_json` in nixfleet-agent** now logs a `tracing::warn!` when JSON parse fails. The previous silent `.ok()` swallow masked a missing required field (`confirm_endpoint`) in a harness preseed for years before a test failure surfaced it.
+
+#### Notes
+
+- All 27 `validate` gates pass after the harness fixes: cargo nextest, clippy --workspace, treefmt, mkFleet-eval-tests, 4 rust package builds, 18 harness scenarios.
+- The deferred attestation-path probe for teardown (precomputed `rollout_id`) is captured as future work — the current SQL probe satisfies the LOADBEARING property ("CP wipe doesn't lose rollout state") via the synthesised-row path; the attestation-specific assertion needs a fixture that mirrors the CP's manifest projection.
+
 ### Per-host VM memory size in `mkVmApps` (2026-05-07)
 
 Closes #92. `mkVmApps`' `start-vm` and `build-vm` defaulted `RAM` to script-level constants (1024 MiB and 4096 MiB respectively); operators wanting more memory had to remember to pass `--ram N` on every invocation. There was no declarative per-host way to express "forge needs 4 GiB because its in-VM CI compiles Rust." Mirrors the #87 `hostSpec.vmPortForwards` pattern.
