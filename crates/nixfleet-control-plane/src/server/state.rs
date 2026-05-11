@@ -86,7 +86,7 @@ impl Default for ServeArgs {
             signature_path: PathBuf::new(),
             trust_path: PathBuf::new(),
             observed_path: PathBuf::new(),
-            freshness_window: Duration::from_secs(86400),
+            freshness_window: Duration::from_secs(2_592_000),
             confirm_deadline_secs: DEFAULT_CONFIRM_DEADLINE_SECS,
             channel_refs: None,
             revocations: None,
@@ -283,8 +283,10 @@ mod ready_tests {
     /// Artifact prime alone must NOT flip ready — full trust footprint required.
     #[test]
     fn artifact_alone_is_not_enough_when_revocations_required() {
-        let mut state = AppState::default();
-        state.revocations_required = true;
+        let state = AppState {
+            revocations_required: true,
+            ..AppState::default()
+        };
         state.artifact_primed.store(true, Ordering::Release);
         assert!(
             !state.is_ready(),
@@ -295,8 +297,10 @@ mod ready_tests {
     /// Both flags set in the required configuration → ready.
     #[test]
     fn both_primed_with_revocations_required_is_ready() {
-        let mut state = AppState::default();
-        state.revocations_required = true;
+        let state = AppState {
+            revocations_required: true,
+            ..AppState::default()
+        };
         state.artifact_primed.store(true, Ordering::Release);
         state.revocations_primed.store(true, Ordering::Release);
         assert!(state.is_ready(), "both primed must flip ready");
@@ -306,8 +310,10 @@ mod ready_tests {
     /// without a verified fleet snapshot, even if the revocation list loaded).
     #[test]
     fn revocations_alone_is_not_ready() {
-        let mut state = AppState::default();
-        state.revocations_required = true;
+        let state = AppState {
+            revocations_required: true,
+            ..AppState::default()
+        };
         state.revocations_primed.store(true, Ordering::Release);
         assert!(
             !state.is_ready(),

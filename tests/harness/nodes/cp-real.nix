@@ -70,7 +70,7 @@ in {
       auditLogPath = "/var/lib/nixfleet-cp/audit.log";
       dbPath = "/var/lib/nixfleet-cp/state.db";
 
-      freshnessWindowMinutes = 10080;
+      freshnessWindowMinutes = 43200;
     }
     // lib.optionalAttrs hasRevocations {
       revocationsSource = {

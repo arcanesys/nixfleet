@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# nixfleet-cp-bootstrap — operator bootstrap for Bundle C (#41)
+# nixfleet-trust-bootstrap — operator tool that mints the offline fleet
+# root CA and signs the TPM-bound issuance CA cert.
 #
-# Generates the offline fleet root CA + signs the TPM-bound issuance
-# CA cert from lab's TPM-provisioned pubkey. Run on the operator
-# workstation; the root key never leaves it.
+# Standing workflows: new-fleet stand-up, annual issuance-CA renewal,
+# TPM rotation, disaster recovery.
 #
 # Prerequisite: lab has converged onto a closure that declares the
 # TPM keyslot in `nixfleet.keyslots.tpm.keys.<name>`, and the
@@ -18,7 +18,7 @@ lab_host="lab"
 tpm_keyslot_name="issuanceCA"
 tpm_pubkey_path="" # derived from keyslot name unless overridden
 agent_cn_suffix="fleet.lab.internal"
-output_dir=""
+output_dir="${HOME}/.config/nixfleet"
 root_key=""
 root_validity_days=3650        # ~10y
 intermediate_validity_days=365 # 1y
@@ -27,10 +27,9 @@ assume_yes=0
 
 usage() {
   cat <<EOF >&2
-Usage: nixfleet-cp-bootstrap [OPTIONS]
+Usage: nixfleet-trust-bootstrap [OPTIONS]
 
-Generate offline fleet root CA + sign TPM-bound issuance CA cert
-(Bundle C / nixfleet#41).
+Generate the offline fleet root CA + sign the TPM-bound issuance CA cert.
 
 OPTIONS:
   --lab-host <host>            SSH target for the CP host (default: lab)
@@ -38,7 +37,7 @@ OPTIONS:
   --tpm-pubkey-path <path>     Override TPM pubkey path on lab
                                (default: /var/lib/nixfleet-tpm-keyslot/<name>/pubkey.raw)
   --agent-cn-suffix <fqdn>     Name constraint domain (default: fleet.lab.internal)
-  --output-dir <dir>           Where to write artefacts (REQUIRED)
+  --output-dir <dir>           Where to write artefacts (default: ~/.config/nixfleet)
   --root-key <path>            Use existing root key file (skip generation;
                                cert auto-derived if <key>.cert.pem missing)
   --root-validity-days <n>     Self-signed root validity (default: ${root_validity_days})
@@ -116,10 +115,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n $output_dir ]] || {
-  usage
-  die "--output-dir is required"
-}
+[[ -n $output_dir ]] || die "internal: --output-dir empty after default applied"
 if [[ -z $tpm_pubkey_path ]]; then
   tpm_pubkey_path="/var/lib/nixfleet-tpm-keyslot/${tpm_keyslot_name}/pubkey.raw"
 fi
@@ -267,10 +263,10 @@ jq -n \
 
 # ── 8. operator README ───────────────────────────────────────────────
 cat >"$output_dir/README.txt" <<EOF
-Bundle C (#41) bootstrap output — generated $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+nixfleet-trust-bootstrap output — generated $(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
 CONTENT:
-  fleet-root.cert.pem        — root CA cert (PUBLISH; trust.json)
+  fleet-root.cert.pem        — root CA cert (publish via trust.json)
   fleet-root.key.pem         — root CA private key (KEEP OFFLINE; mode 0600)
   fleet-issuance-ca.cert.pem — issuance CA cert (ship to lab)
   trust-snippet.json         — trust.json fragment to merge into fleet config
@@ -291,9 +287,6 @@ NEXT STEPS (operator):
      --tpm-ca-sign-wrapper /run/current-system/sw/bin/tpm-sign-${tpm_keyslot_name}
      --fleet-ca-cert /etc/nixfleet/cp/issuance-ca.pem
 
-   Keep --fleet-ca-key for the overlap window (Bundle C C.5
-   migration); drop after agents have rotated through one /renew.
-
 4. Commit, push, lab converges. Verify:
      ssh ${lab_host} 'sudo journalctl -u nixfleet-control-plane -n 20'
    should log: "issuance CA signer: TPM-backed".
@@ -302,11 +295,10 @@ NEXT STEPS (operator):
      ssh <agent-host> 'sudo systemctl restart nixfleet-agent'
    then check the agent's cert was reissued by the new chain.
 
-KEY CUSTODY (D12 file root for v1; Yubikey path stub for later):
-  fleet-root.key.pem must NOT be committed to any repo.
-  Recommended: store on operator workstation under ~/.config/nixfleet/
-  with mode 0600, or migrate to Yubikey PIV slot 9c when hardware
-  arrives.
+KEY CUSTODY:
+  fleet-root.key.pem must NOT be committed to any repo. Keep on the
+  operator workstation under \${HOME}/.config/nixfleet/ with mode
+  0600, or migrate to Yubikey PIV slot 9c when hardware arrives.
 EOF
 
 chmod 0644 "$root_cert_pem" "$issuance_cert" "$trust_snippet" "$output_dir/README.txt"

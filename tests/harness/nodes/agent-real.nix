@@ -9,6 +9,11 @@
   agentPkg,
   signedFixture,
   pollIntervalSecs ? 10,
+  # Optional OpenSSH-format ed25519 private key for /etc/ssh/ssh_host_ed25519_key.
+  # When provided, the agent's evidence_signer reads it and signs
+  # last_confirmed_at attestations with a pubkey matching the host's
+  # declaration in fleet.nix (#43 contract).
+  sshHostKey ? null,
   ...
 }: {
   imports = [
@@ -32,12 +37,21 @@
     linkConfig.RequiredForOnline = "routable";
   };
 
-  environment.etc = {
-    "nixfleet-agent/ca.pem".source = "${testCerts}/ca.pem";
-    "nixfleet-agent/${agentHostName}-cert.pem".source = "${testCerts}/${agentHostName}-cert.pem";
-    "nixfleet-agent/${agentHostName}-key.pem".source = "${testCerts}/${agentHostName}-key.pem";
-    "nixfleet-agent/test-trust.json".source = "${signedFixture}/test-trust.json";
-  };
+  environment.etc =
+    {
+      "nixfleet-agent/ca.pem".source = "${testCerts}/ca.pem";
+      "nixfleet-agent/${agentHostName}-cert.pem".source = "${testCerts}/${agentHostName}-cert.pem";
+      "nixfleet-agent/${agentHostName}-key.pem".source = "${testCerts}/${agentHostName}-key.pem";
+      "nixfleet-agent/test-trust.json".source = "${signedFixture}/test-trust.json";
+    }
+    // lib.optionalAttrs (sshHostKey != null) {
+      # mode 0600 on the etc symlink — the agent's evidence_signer
+      # opens this directly; ssh-key-derived agents (RFC-0003 §2) don't
+      # need anything else on the SSH side because sshd is disabled in
+      # the harness microvms.
+      "ssh/ssh_host_ed25519_key".source = sshHostKey;
+      "ssh/ssh_host_ed25519_key".mode = "0600";
+    };
 
   networking.hosts."${controlPlaneHost}" = ["cp"];
 

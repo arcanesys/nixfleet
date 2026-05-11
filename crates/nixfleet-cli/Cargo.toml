@@ -1,6 +1,6 @@
 [package]
 name = "nixfleet-cli"
-description = "NixFleet v0.2 operator CLI: nixfleet (status, rollout trace, config init), nixfleet-mint-token, nixfleet-derive-pubkey"
+description = "NixFleet v0.2 operator CLI: nixfleet (status, rollout trace, config init), nixfleet-mint-token, nixfleet-mint-operator-cert, nixfleet-derive-pubkey"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -28,6 +28,14 @@ path = "src/bin/mint_token.rs"
 name = "nixfleet-derive-pubkey"
 path = "src/bin/derive_pubkey.rs"
 
+# Operator cert mint: takes the offline fleet root cert+key (path resolved
+# from --flag / NIXFLEET_OPERATOR_FLEET_ROOT_*_FILE / convention) and
+# writes a clientAuth-EKU child cert + private key under
+# ~/.config/nixfleet/operator.{pem,key}. ECDSA-P-256, 365d default.
+[[bin]]
+name = "nixfleet-mint-operator-cert"
+path = "src/bin/mint_operator_cert.rs"
+
 [dependencies]
 nixfleet-proto = { path = "../nixfleet-proto" }
 nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }
@@ -45,14 +53,16 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 dirs = "5"
 is-terminal = "0.4"
+rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-parser", "aws_lc_rs", "crypto"] }
+whoami = "1"
 
 [dev-dependencies]
 tempfile = "3"
+x509-parser = "0.16"
 # E2E integration test (`tests/cli_status_e2e.rs`): boot a real CP, drive
 # 2 mTLS checkins, then exercise `run_status` as an operator CN. Versions
 # match the CP crate's own deps so the workspace stays single-version
 # (no `[workspace.dependencies]` table — pin per-crate).
 nixfleet-control-plane = { path = "../nixfleet-control-plane" }
-rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-parser", "aws_lc_rs", "crypto"] }
 rustls = "0.23"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

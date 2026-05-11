@@ -9,28 +9,13 @@
     inherit testCerts signedFixture cpPkg;
   };
 
-  shortDeadlineModule = {lib, ...}: {
-    systemd.services.nixfleet-control-plane.serviceConfig.ExecStart = lib.mkForce (
-      lib.concatStringsSep " " [
-        "${cpPkg}/bin/nixfleet-control-plane"
-        "serve"
-        "--listen 0.0.0.0:8443"
-        "--tls-cert /etc/nixfleet-cp/cp-cert.pem"
-        "--tls-key /etc/nixfleet-cp/cp-key.pem"
-        "--client-ca /etc/nixfleet-cp/ca.pem"
-        "--fleet-ca-cert /etc/nixfleet-cp/fleet-ca-cert.pem"
-        "--fleet-ca-key /etc/nixfleet-cp/fleet-ca-key.pem"
-        "--audit-log /var/lib/nixfleet-cp/audit.log"
-        "--artifact /etc/nixfleet-cp/canonical.json"
-        "--signature /etc/nixfleet-cp/canonical.json.sig"
-        "--trust-file /etc/nixfleet-cp/test-trust.json"
-        "--observed /etc/nixfleet-cp/observed.json"
-        "--db-path /var/lib/nixfleet-cp/state.db"
-        "--freshness-window-secs 604800"
-        "--confirm-deadline-secs 3"
-      ]
-    );
-
+  # Short confirm-deadline so step 1's manually-injected row expires
+  # within the test's first action. Reuses the module-managed ExecStart
+  # (which reads artifact/signature/trust from signedFixture's nix-store
+  # path) rather than a hand-rolled ExecStart referencing
+  # /etc/nixfleet-cp/* paths that no longer get staged.
+  shortDeadlineModule = {
+    services.nixfleet-control-plane.confirmDeadlineSecs = 3;
     environment.etc = {
       "harness/agent-cert.pem".source = "${testCerts}/agent-01-cert.pem";
       "harness/agent-key.pem".source = "${testCerts}/agent-01-key.pem";

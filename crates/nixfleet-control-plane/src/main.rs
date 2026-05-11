@@ -55,7 +55,7 @@ struct ServeFlags {
     #[arg(long)]
     observed: PathBuf,
 
-    #[arg(long, default_value_t = 86400)]
+    #[arg(long, default_value_t = 2592000)]
     freshness_window_secs: u64,
 
     /// Must exceed agent poll budget (~300s) plus slack to avoid CP-rollback / agent-poll races.
@@ -163,7 +163,7 @@ struct TickFlags {
     #[arg(long)]
     observed: PathBuf,
 
-    #[arg(long, default_value_t = 86400)]
+    #[arg(long, default_value_t = 2592000)]
     freshness_window_secs: u64,
 }
 

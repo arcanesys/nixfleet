@@ -24,10 +24,10 @@ pub(super) async fn checkin(
     Json(req): Json<CheckinRequest>,
 ) -> Result<Json<CheckinResponse>, StatusCode> {
     let cn = cn.into_string();
-    // Bundle C: cert CN may be canonical (`agent-<machineId>.<suffix>`)
-    // while the agent still sends bare `machineId` in the body. Strip
-    // back to bare for the equality check; legacy bare CNs pass
-    // through unchanged.
+    // Cert CN may be canonical (`agent-<machineId>.<suffix>`) while the
+    // agent still sends bare `machineId` in the body. Strip back to
+    // bare for the equality check; legacy bare CNs pass through
+    // unchanged.
     let machine_id = crate::auth::issuance::extract_machine_id(&cn, &state.agent_cn_suffix);
     if machine_id != req.hostname {
         tracing::warn!(

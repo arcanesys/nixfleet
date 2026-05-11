@@ -3,14 +3,14 @@
 # like `validate`) and `rust-packages.nix` (workspace crates).
 {...}: {
   perSystem = {pkgs, ...}: let
-    nixfleet-cp-bootstrap = import ../tools/cp-bootstrap {inherit pkgs;};
+    nixfleet-trust-bootstrap = import ../tools/trust-bootstrap {inherit pkgs;};
   in {
-    packages.nixfleet-cp-bootstrap = nixfleet-cp-bootstrap;
+    packages.nixfleet-trust-bootstrap = nixfleet-trust-bootstrap;
 
-    apps.nixfleet-cp-bootstrap = {
+    apps.nixfleet-trust-bootstrap = {
       type = "app";
-      program = "${nixfleet-cp-bootstrap}/bin/nixfleet-cp-bootstrap";
-      meta.description = "Bundle C operator bootstrap — fleet root CA + TPM-bound issuance CA cert (nixfleet#41)";
+      program = "${nixfleet-trust-bootstrap}/bin/nixfleet-trust-bootstrap";
+      meta.description = "Mint offline fleet root CA + sign TPM-bound issuance CA cert";
     };
   };
 }

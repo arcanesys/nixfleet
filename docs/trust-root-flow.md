@@ -259,7 +259,7 @@ Cross-algorithm rotation is supported end-to-end — the Rust runtime's `verify_
 
 **Decision: restart-only.** CP has no SIGHUP handler and no file-watcher. Trust rotation requires a service restart, which `nixos-rebuild switch` triggers for free when `/etc/nixfleet/cp/trust.json` content changes.
 
-Rationale. Rotation is rare (30-day grace per CONTRACTS §II #1) and a 5–10s CP bounce under a 24h freshness window is irrelevant. File-watching code is a real failure surface we do not need to build speculatively. Agents' check-ins during the restart retry per RFC-0003 §8 offline grace — zero behavioral impact.
+Rationale. Rotation is rare (30-day grace per CONTRACTS §II #1) and a 5–10s CP bounce under a 30d freshness window is irrelevant. File-watching code is a real failure surface we do not need to build speculatively. Agents' check-ins during the restart retry per RFC-0003 §8 offline grace — zero behavioral impact.
 
 ### 7.2 `rejectBefore` semantics
 

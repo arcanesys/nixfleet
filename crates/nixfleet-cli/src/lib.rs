@@ -13,7 +13,9 @@ use reqwest::{Certificate, Identity};
 
 pub mod color;
 pub mod config;
+pub mod operator_cert;
 pub use config::{ConfigError, FileConfig, Overrides};
+pub use operator_cert::{mint_operator_cert, MintOperatorCertArgs, MintOutcome};
 
 /// Write `~/.config/nixfleet/config.toml` (or `--path`). Returns the absolute
 /// path written, so the bin can report it to the operator.

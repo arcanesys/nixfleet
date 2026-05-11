@@ -9,6 +9,14 @@
   derivationName ? "nixfleet-harness-signed-fixture",
   hostClosureHashes ? {},
   onHealthFailure ? "halt",
+  # OpenSSH-format public keys per agent, e.g.
+  # `{ "agent-01" = "ssh-ed25519 AAAA…"; "agent-99" = "ssh-ed25519 …"; }`.
+  # The CP binds agent CSRs (/v1/enroll) and last_confirmed_at
+  # attestations against the host's declared pubkey per #43. Entries
+  # for the built-in harness hosts (agent-01, agent-02, cp) override
+  # their pubkey field; entries for unknown hostnames add a new host
+  # to the fleet with that pubkey.
+  agentPubkeys ? {},
 }: let
   fixedSignedAt = signedAt;
   fixedCiCommit = "0000000000000000000000000000000000000000";
@@ -25,30 +33,47 @@
   mkFleetImpl = import mkFleetPath {inherit lib;};
   inherit (mkFleetImpl) mkFleet withSignature;
 
-  fleetInput = {
-    hosts = {
-      agent-01 = {
-        system = "x86_64-linux";
-        configuration = stubConfiguration;
-        tags = ["harness"];
-        channel = "stable";
-        pubkey = null;
-      };
-      agent-02 = {
-        system = "x86_64-linux";
-        configuration = stubConfiguration;
-        tags = ["harness"];
-        channel = "stable";
-        pubkey = null;
-      };
-      cp = {
-        system = "x86_64-linux";
-        configuration = stubConfiguration;
-        tags = ["harness" "control-plane"];
-        channel = "stable";
-        pubkey = null;
-      };
+  # trailing newline from builtins.readFile would break the OpenSSH parser
+  stripTrailingNewline = s: lib.removeSuffix "\n" s;
+  pubkeyFor = name: lib.mapNullable stripTrailingNewline (agentPubkeys.${name} or null);
+
+  baseHosts = {
+    agent-01 = {
+      system = "x86_64-linux";
+      configuration = stubConfiguration;
+      tags = ["harness"];
+      channel = "stable";
+      pubkey = pubkeyFor "agent-01";
     };
+    agent-02 = {
+      system = "x86_64-linux";
+      configuration = stubConfiguration;
+      tags = ["harness"];
+      channel = "stable";
+      pubkey = pubkeyFor "agent-02";
+    };
+    cp = {
+      system = "x86_64-linux";
+      configuration = stubConfiguration;
+      tags = ["harness" "control-plane"];
+      channel = "stable";
+      pubkey = pubkeyFor "cp";
+    };
+  };
+
+  # Any agentPubkeys entries for hostnames not in baseHosts add new
+  # hosts to the fleet. Lets enroll-replay add `agent-99` without
+  # tracking it explicitly in this file.
+  extraHosts = lib.mapAttrs (_name: openssh: {
+    system = "x86_64-linux";
+    configuration = stubConfiguration;
+    tags = ["harness"];
+    channel = "stable";
+    pubkey = stripTrailingNewline openssh;
+  }) (lib.filterAttrs (n: _: !(baseHosts ? ${n})) agentPubkeys);
+
+  fleetInput = {
+    hosts = baseHosts // extraHosts;
     channels.stable = {
       description = "Harness signed-fixture channel.";
       rolloutPolicy = "all-at-once";

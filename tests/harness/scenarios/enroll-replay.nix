@@ -9,18 +9,27 @@
   cpPkg,
   cliPkg,
   orgRootKeyFixture,
+  agentKeypairs,
   ...
 }: let
   cpHostBase = harnessLib.mkRealCpHostModule {
     inherit testCerts signedFixture cpPkg;
   };
 
-  # GOTCHA: default cp-real trust.json carries only ciReleaseKey; /v1/enroll needs orgRootKey.current (else 500).
-  enrollEnabledModule = {
+  # GOTCHA: default cp-real trust.json carries only ciReleaseKey; /v1/enroll
+  # needs orgRootKey.current (else 500). Override the daemon's --trust-file
+  # via the module option (cp-real.nix points it at signedFixture).
+  #
+  # Also stages the deterministic agent-99 private key so the test's CSR
+  # uses the pubkey that signedFixture declared in hosts.agent-99.pubkey —
+  # required for the post-#43 CSR-vs-declared-pubkey binding check.
+  enrollEnabledModule = {lib, ...}: {
+    services.nixfleet-control-plane.trustFile =
+      lib.mkForce "${orgRootKeyFixture}/trust.json";
     environment.etc = {
-      "nixfleet-cp/trust.json".source = "${orgRootKeyFixture}/trust.json";
       "harness/org-root.pem".source = "${orgRootKeyFixture}/private.pem";
       "harness/ca.pem".source = "${testCerts}/ca.pem";
+      "harness/agent-99-key.pem".source = "${agentKeypairs.agent-99}/private.pem";
     };
     environment.systemPackages = [pkgs.openssl pkgs.sqlite pkgs.jq cliPkg];
   };
@@ -43,11 +52,13 @@ in
 
       host.succeed("mkdir -p /tmp/enroll-test")
 
-      # agent-99 is not in testCerts, so enrolment is genuinely fresh.
-      print("step 1: generate agent-99 CSR…")
+      # agent-99's private key is staged from agentKeypairs; its pubkey is
+      # baked into the signedFixture (hosts.agent-99.pubkey) so the
+      # CP's CSR↔declared-pubkey binding check passes.
+      print("step 1: stage agent-99 private key and build CSR…")
       host.succeed(
-          "openssl genpkey -algorithm ed25519 "
-          "-out /tmp/enroll-test/agent-99-key.pem"
+          "install -m 0600 /etc/harness/agent-99-key.pem "
+          "/tmp/enroll-test/agent-99-key.pem"
       )
       host.succeed(
           "openssl req -new -key /tmp/enroll-test/agent-99-key.pem "

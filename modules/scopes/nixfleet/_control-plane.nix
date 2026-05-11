@@ -171,11 +171,22 @@ in {
 
     freshnessWindowMinutes = lib.mkOption {
       type = lib.types.ints.positive;
-      default = 1440;
+      default = 43200;
       description = ''
         Maximum age (minutes) of `meta.signedAt` accepted by
         `verify_artifact`. Match the operator-declared channel
-        `freshnessWindow` in fleet.nix when in doubt; default is 24h.
+        `freshnessWindow` in fleet.nix when in doubt; default is 30d.
+
+        The window is a replay bound on stale signed artifacts, not
+        the primary freshness mechanism: in normal v0.2 operation the
+        CP polls Forgejo on every reconcile tick and accepts whatever
+        the lab CI most-recently signed, so the effective freshness
+        is the CI cadence (minutes between pushes). 30d is the
+        fallback bound that protects against a Forgejo outage AND a
+        captured-and-replayed old signed bundle, while leaving room
+        for the build-time prime to succeed against fixtures or
+        operator-pushed artifacts that haven't been refreshed in a
+        few weeks.
       '';
     };
 
@@ -244,9 +255,9 @@ in {
         /v1/agent/renew via the file-backed `FileCaSigner`. Mutually
         exclusive with the `tpmCa*` options at runtime — when TPM
         flags are set, the CP picks `TpmCaSigner` and this path is
-        ignored. Keep set during the Bundle C migration overlap so a
-        revert (drop `tpmCa*` options) restores file-backed signing
-        without re-deriving the legacy CA.
+        ignored. Keep set as a fallback so a revert (drop `tpmCa*`
+        options) restores file-backed signing without re-deriving a
+        legacy CA.
       '';
     };
 
@@ -255,12 +266,12 @@ in {
       default = null;
       example = "/var/lib/nixfleet-tpm-keyslot/issuanceCA/pubkey.raw";
       description = ''
-        Bundle C (nixfleet#41): path to the keyslots scope's
-        `pubkey.raw` (64 bytes raw P-256 X||Y) for the issuance CA's
-        TPM key. Setting this AND `tpmCaSignWrapper` switches issuance
-        to TPM signing; `fleetCaKey` becomes unused. Pair with
-        `fleetCaCert` pointing at the offline-root-signed issuance CA
-        cert (typically `/etc/nixfleet/cp/issuance-ca.pem`).
+        Path to the keyslots scope's `pubkey.raw` (64 bytes raw P-256
+        X||Y) for the issuance CA's TPM key. Setting this AND
+        `tpmCaSignWrapper` switches issuance to TPM signing; `fleetCaKey`
+        becomes unused. Pair with `fleetCaCert` pointing at the
+        offline-root-signed issuance CA cert (typically
+        `/etc/nixfleet/cp/issuance-ca.pem`).
       '';
     };
 
@@ -269,9 +280,8 @@ in {
       default = null;
       example = "/run/current-system/sw/bin/tpm-sign-issuanceCA";
       description = ''
-        Bundle C (nixfleet#41): path to the keyslots scope's
-        `tpm-sign-<keyname>` shell wrapper. Set together with
-        `tpmCaPubkeyRaw` to enable TPM-backed issuance.
+        Path to the keyslots scope's `tpm-sign-<keyname>` shell wrapper.
+        Set together with `tpmCaPubkeyRaw` to enable TPM-backed issuance.
       '';
     };
 
@@ -578,11 +588,11 @@ in {
           ProtectSystem = "strict";
           ProtectHome = true;
           PrivateTmp = true;
-          # Bundle C: TPM signing needs /dev/tpmrm0 + abrmd dbus. The
-          # private-/dev namespace would hide the device. Drop the
-          # namespace when TPM is active and harden via DeviceAllow
-          # (cgroup BPF) + SupplementaryGroups instead — same posture
-          # as the gitea-runner's TPM access in the lab CI flow.
+          # TPM signing needs /dev/tpmrm0 + abrmd dbus. The private-/dev
+          # namespace would hide the device. Drop the namespace when TPM
+          # is active and harden via DeviceAllow (cgroup BPF) +
+          # SupplementaryGroups instead — same posture as the
+          # gitea-runner's TPM access in the lab CI flow.
           PrivateDevices = cfg.tpmCaSignWrapper == null;
           DeviceAllow = lib.optionals (cfg.tpmCaSignWrapper != null) [
             "/dev/tpmrm0 rw"

@@ -121,6 +121,9 @@ fn write_atomic_json<T: serde::Serialize>(
 }
 
 /// `Ok(None)` for both absent and malformed JSON; `Err` only on FS I/O failures.
+/// Malformed JSON gets a `tracing::warn!` so corrupt-state-dir failures aren't
+/// silent at runtime (silent swallow was hiding a missing required field in
+/// a harness preseed for ~2y before a test caught it).
 fn read_atomic_json<T: for<'de> serde::Deserialize<'de>>(
     state_dir: &Path,
     filename: &str,
@@ -131,7 +134,17 @@ fn read_atomic_json<T: for<'de> serde::Deserialize<'de>>(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
     };
-    Ok(serde_json::from_str::<T>(&raw).ok())
+    match serde_json::from_str::<T>(&raw) {
+        Ok(v) => Ok(Some(v)),
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                path = %path.display(),
+                "read_atomic_json: parse failed; treating as absent",
+            );
+            Ok(None)
+        }
+    }
 }
 
 /// Atomic; failures fall back to next-checkin re-dispatch.

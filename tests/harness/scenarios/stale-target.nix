@@ -12,28 +12,17 @@
     signedFixture = staleFixture;
   };
 
-  # LOADBEARING: huge CP-side window so stale fixture passes CP gate; agent-side gate reads per-channel window from artifact.
+  # LOADBEARING: huge CP-side window so the stale fixture passes the CP
+  # gate; the test exercises the agent-side freshness gate which reads
+  # the per-channel window from the artifact, not the daemon flag.
+  #
+  # Reuses the module-managed ExecStart (which reads artifact/signature/
+  # trust from staleFixture's nix-store path) rather than a hand-rolled
+  # ExecStart referencing /etc/nixfleet-cp/* paths that no longer get
+  # staged. 16_666_666 minutes ≈ 1e9 seconds ≈ 31.7 years.
+  # mkForce overrides cp-real.nix's 43200 (30d) default.
   hugeCpWindowModule = {lib, ...}: {
-    systemd.services.nixfleet-control-plane.serviceConfig.ExecStart = lib.mkForce (
-      lib.concatStringsSep " " [
-        "${cpPkg}/bin/nixfleet-control-plane"
-        "serve"
-        "--listen 0.0.0.0:8443"
-        "--tls-cert /etc/nixfleet-cp/cp-cert.pem"
-        "--tls-key /etc/nixfleet-cp/cp-key.pem"
-        "--client-ca /etc/nixfleet-cp/ca.pem"
-        "--fleet-ca-cert /etc/nixfleet-cp/fleet-ca-cert.pem"
-        "--fleet-ca-key /etc/nixfleet-cp/fleet-ca-key.pem"
-        "--audit-log /var/lib/nixfleet-cp/audit.log"
-        "--artifact /etc/nixfleet-cp/canonical.json"
-        "--signature /etc/nixfleet-cp/canonical.json.sig"
-        "--trust-file /etc/nixfleet-cp/test-trust.json"
-        "--observed /etc/nixfleet-cp/observed.json"
-        "--db-path /var/lib/nixfleet-cp/state.db"
-        "--freshness-window-secs 999999999"
-        "--confirm-deadline-secs 120"
-      ]
-    );
+    services.nixfleet-control-plane.freshnessWindowMinutes = lib.mkForce 16666666;
 
     environment.etc = {
       "harness/agent-cert.pem".source = "${testCerts}/agent-01-cert.pem";

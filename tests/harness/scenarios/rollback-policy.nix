@@ -9,6 +9,7 @@
   agentPkg,
   closureHash,
   agentName ? "agent-01",
+  agentKeypairs,
   ...
 }: let
   cpHostModule = harnessLib.mkRealCpHostModule {
@@ -29,6 +30,7 @@
     inherit testCerts signedFixture agentPkg;
     hostName = agentName;
     pollIntervalSecs = 5;
+    sshHostKey = "${agentKeypairs.${agentName}}/private.openssh";
     extraModules = [preseedModule];
   };
 

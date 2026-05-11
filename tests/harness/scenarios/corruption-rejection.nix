@@ -5,7 +5,7 @@
   ...
 }: let
   now = signedFixture.now;
-  freshnessWindowSecs = 604800;
+  freshnessWindowSecs = 2592000;
 in
   pkgs.runCommand "fleet-harness-corruption-rejection" {} ''
     set -euo pipefail

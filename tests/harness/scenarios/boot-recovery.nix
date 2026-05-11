@@ -6,6 +6,7 @@
   agentPkg,
   pkgs,
   closureHash,
+  agentKeypairs,
   ...
 }: let
   cpHostModule = harnessLib.mkRealCpHostModule {
@@ -16,6 +17,7 @@
     closure_hash = "stale-harness-fake-closure-does-not-match-current-system";
     channel_ref = "stable@harness";
     rollout_id = "stable@harness";
+    confirm_endpoint = "/v1/agent/confirm";
     dispatched_at = "2026-01-01T00:00:00Z";
   };
 
@@ -25,6 +27,7 @@
     inherit testCerts signedFixture agentPkg;
     hostName = "agent-01";
     pollIntervalSecs = 10;
+    sshHostKey = "${agentKeypairs.agent-01}/private.openssh";
     extraModules = [
       preseedModule
       ({lib, ...}: {

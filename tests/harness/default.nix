@@ -35,7 +35,34 @@
     inherit lib pkgs inputs harnessLib;
     testCerts = sharedCerts;
     resolvedJsonPath = ./fixtures/fleet-resolved.json;
+    # Forward declaration — `agentKeypairs` is bound a few lines below;
+    # the `let ... in` lets us reference it here without rearranging
+    # the whole block.
+    inherit agentKeypairs;
   };
+
+  # Deterministic per-agent keypair. Each agent the harness exercises
+  # (or that needs an attested last_confirmed_at / enrolment CSR
+  # validated against fleet.nix) consumes its keypair from here.
+  mkAgentKeypair = hostName:
+    import ./fixtures/agent-keypair {inherit pkgs hostName;};
+
+  # Canonical attrset of agent keypairs the harness uses. agent-01 and
+  # agent-02 power most scenarios; agent-99 is enroll-replay's
+  # never-deployed CN.
+  agentKeypairs = {
+    agent-01 = mkAgentKeypair "agent-01";
+    agent-02 = mkAgentKeypair "agent-02";
+    agent-99 = mkAgentKeypair "agent-99";
+  };
+
+  # OpenSSH-format pubkey strings from each keypair fixture, ready to
+  # paste into hosts.<name>.pubkey via the `agentPubkeys` argument on
+  # the signedFixture builders.
+  agentPubkeys =
+    lib.mapAttrs
+    (_: kp: builtins.readFile "${kp}/public.openssh")
+    agentKeypairs;
 
   signedFixture =
     if nixfleet-canonicalize == null
@@ -48,6 +75,8 @@
     else
       import ./fixtures/signed {
         inherit lib pkgs nixfleet-canonicalize;
+        # enroll-replay only — the other scenarios use convergedSignedFixture.
+        agentPubkeys = {inherit (agentPubkeys) agent-99;};
       };
 
   agenixFixture = import ./fixtures/agenix {inherit pkgs;};
@@ -117,6 +146,10 @@
           "agent-01" = convergedClosureHash;
           "agent-02" = convergedClosureHash;
         };
+        # post-#43: attested last_confirmed_at verifies against
+        # host.pubkey. Without these the soak-state recovery path bails
+        # silently and the post-CP-wipe convergence assertions hang.
+        agentPubkeys = {inherit (agentPubkeys) agent-01 agent-02;};
       };
 
   # Signed far enough in the past that the agent's per-channel freshness

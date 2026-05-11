@@ -183,6 +183,12 @@
     controlPlaneHost ? "10.0.2.2",
     controlPlanePort ? 8443,
     pollIntervalSecs ? 10,
+    # OpenSSH-format private key (e.g. ${agentKeypairs.agent-01}/private.openssh).
+    # When set, lands at /etc/ssh/ssh_host_ed25519_key on the VM so the
+    # agent's evidence_signer signs last_confirmed_at attestations with
+    # a key matching the host's declared pubkey in fleet.nix (#43
+    # contract).
+    sshHostKey ? null,
     extraModules ? [],
   }: {
     imports =
@@ -192,7 +198,7 @@
       ++ extraModules;
 
     _module.args = {
-      inherit inputs testCerts controlPlaneHost controlPlanePort agentPkg signedFixture pollIntervalSecs;
+      inherit inputs testCerts controlPlaneHost controlPlanePort agentPkg signedFixture pollIntervalSecs sshHostKey;
       harnessMicrovmDefaults = microvmGuestDefaults;
       agentHostName = hostName;
     };
