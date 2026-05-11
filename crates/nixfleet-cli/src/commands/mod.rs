@@ -12,3 +12,4 @@
 //! binary is folded.
 
 pub mod derive_pubkey;
+pub mod mint_operator_cert;

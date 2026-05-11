@@ -26,6 +26,8 @@ enum Commands {
     Config(ConfigCommands),
     /// Derive base64 ed25519 pubkey from a raw private key file.
     DerivePubkey(nixfleet_cli::commands::derive_pubkey::Args),
+    /// Mint an mTLS client cert from the offline fleet root CA.
+    MintOperatorCert(nixfleet_cli::commands::mint_operator_cert::Args),
 }
 
 #[derive(Subcommand, Debug)]
@@ -158,6 +160,9 @@ async fn main() -> Result<()> {
         }
         Commands::DerivePubkey(args) => {
             nixfleet_cli::commands::derive_pubkey::run(args)
+        }
+        Commands::MintOperatorCert(args) => {
+            nixfleet_cli::commands::mint_operator_cert::run(args)
         }
     }
 }

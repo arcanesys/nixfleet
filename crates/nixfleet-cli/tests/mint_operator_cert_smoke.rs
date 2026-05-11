@@ -37,11 +37,12 @@ fn bin_resolves_root_paths_via_env() {
     let output_cert = dir.path().join("operator.pem");
     let output_key = dir.path().join("operator.key");
 
-    let bin_path = env!("CARGO_BIN_EXE_nixfleet-mint-operator-cert");
+    let bin_path = env!("CARGO_BIN_EXE_nixfleet");
     let status = Command::new(bin_path)
         .env("NIXFLEET_OPERATOR_FLEET_ROOT_CERT_FILE", &root_cert)
         .env("NIXFLEET_OPERATOR_FLEET_ROOT_KEY_FILE", &root_key)
         .args([
+            "mint-operator-cert",
             "--cn",
             "operator-smoke@host",
             "--output-cert",
@@ -50,7 +51,7 @@ fn bin_resolves_root_paths_via_env() {
             output_key.to_str().unwrap(),
         ])
         .status()
-        .expect("spawn nixfleet-mint-operator-cert");
+        .expect("spawn nixfleet mint-operator-cert");
 
     assert!(status.success(), "bin must exit 0, got {status:?}");
     assert!(output_cert.exists(), "cert must be written");

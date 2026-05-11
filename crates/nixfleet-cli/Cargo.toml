@@ -1,6 +1,6 @@
 [package]
 name = "nixfleet-cli"
-description = "NixFleet v0.2 operator CLI: nixfleet (status, rollout trace, config init, derive-pubkey), nixfleet-mint-token, nixfleet-mint-operator-cert"
+description = "NixFleet v0.2 operator CLI: nixfleet (status, rollout trace, config init, derive-pubkey, mint-operator-cert), nixfleet-mint-token"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,14 +20,6 @@ path = "src/bin/nixfleet.rs"
 [[bin]]
 name = "nixfleet-mint-token"
 path = "src/bin/mint_token.rs"
-
-# Operator cert mint: takes the offline fleet root cert+key (path resolved
-# from --flag / NIXFLEET_OPERATOR_FLEET_ROOT_*_FILE / convention) and
-# writes a clientAuth-EKU child cert + private key under
-# ~/.config/nixfleet/operator.{pem,key}. ECDSA-P-256, 365d default.
-[[bin]]
-name = "nixfleet-mint-operator-cert"
-path = "src/bin/mint_operator_cert.rs"
 
 [dependencies]
 nixfleet-proto = { path = "../nixfleet-proto" }
