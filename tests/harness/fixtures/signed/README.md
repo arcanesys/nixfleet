@@ -55,13 +55,11 @@ randomness, absolute paths) and needs tracing.
 
 ## Consumers
 
-All pending. Updated to links as work lands.
-
-- **`tests/harness/scenarios/signed-roundtrip.nix`** (TODO) - serves
+- [`tests/harness/scenarios/signed-roundtrip.nix`](../../scenarios/signed-roundtrip.nix) - serves
   `canonical.json` + `canonical.json.sig` from the CP stub, mounts
   `test-trust.json` into the agent microVM, asserts verify succeeds
   and the agent logs `harness-roundtrip-ok:`.
-- **`crates/nixfleet-verify-artifact`** (TODO) - thin CLI wrapping
+- [`crates/nixfleet-verify-artifact`](../../../../crates/nixfleet-verify-artifact) - thin CLI wrapping
   `reconciler::verify_artifact`. Receives the four files as
   `--artifact`, `--signature`, `--trust-file`, and a derived `--now`
   / `--freshness-window-secs`.

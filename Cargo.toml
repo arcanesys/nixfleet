@@ -1,0 +1,11 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+repository = "https://github.com/arcanesys/nixfleet"
+homepage = "https://github.com/arcanesys/nixfleet"
+authors = ["nixfleet contributors"]
+license = "MIT OR AGPL-3.0-only"

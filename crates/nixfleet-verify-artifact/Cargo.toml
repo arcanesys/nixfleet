@@ -1,0 +1,21 @@
+[package]
+name = "nixfleet-verify-artifact"
+description = "Offline verifier CLI: fleet.resolved artifacts + signed probe-output evidence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "nixfleet-verify-artifact"
+path = "src/main.rs"
+
+[dependencies]
+nixfleet-proto = { path = "../nixfleet-proto" }
+nixfleet-reconciler = { path = "../nixfleet-reconciler" }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+serde_jcs = "0.2"
