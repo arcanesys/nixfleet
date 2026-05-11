@@ -39,7 +39,7 @@ No imperative deploy/apply endpoints exist on the control plane. The only verb a
 
 ## Status - v0.2 spine
 
-Tracked in [#10](https://github.com/abstracts33d/nixfleet/issues/10):
+The v0.2 architecture is documented end-to-end in [`docs/design/architecture.md`](docs/design/architecture.md); the standing pillars:
 
 | Pillar | Status |
 |--------|--------|
@@ -48,7 +48,7 @@ Tracked in [#10](https://github.com/abstracts33d/nixfleet/issues/10):
 | Signed artifacts (CI release key, attic, host probes) | shipped |
 | Freshness window (agents refuse stale targets) | shipped |
 | Magic rollback (deadline-based auto-revert) | shipped |
-| Compliance as rollout gate (static + runtime) | static shipped; runtime gate enforcing; CLI surfacing in flight |
+| Compliance as rollout gate (static + runtime) | shipped |
 
 ## Quick start
 

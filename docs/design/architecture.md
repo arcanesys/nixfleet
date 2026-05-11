@@ -319,10 +319,8 @@ nixfleet/
 ├── Cargo.toml                     ← Rust workspace root
 ├── crane-workspace.nix            ← Nix wrapper around crane for Rust builds
 │
-├── ARCHITECTURE.md                ← this file
-├── README.md, CHANGELOG.md, etc.  ← consumer-facing docs
-├── DISASTER-RECOVERY.md           ← CP teardown procedure
-├── SECURITY.md                    ← vuln disclosure policy
+├── README.md, CHANGELOG.md, etc.  ← consumer-facing docs (root meta-files)
+├── SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, LICENSE-*
 │
 ├── contracts/                     ← schemas. Top-level so import-tree skips
 │   ├── host-spec.nix              │  them. They declare options; impls
@@ -384,8 +382,12 @@ nixfleet/
 │   └── lib/mk-fleet/              ↓  positive + negative eval fixtures
 │
 └── docs/                          ← human-readable docs
-    ├── README.md, CONTRACTS.md, harness.md, source-layout.md
-    └── rfcs/                      ↓  RFC-0001 / 0002 / 0003 / 0004 / 0005
+    ├── README.md                  │  navigation index
+    ├── design/                    │  this file + contracts.md + source-layout.md
+    ├── reference/                 │  harness.md + per-crate overviews
+    ├── operations/                │  disaster-recovery + operator-cookbook + troubleshooting
+    ├── rfcs/                      │  RFC-0001 ... RFC-0007
+    └── mdbook/                    ↓  composed book; `{{#include}}` wrappers
 ```
 
 Convention: `_*.nix` is **skipped by `import-tree`**. Files like `_agent.nix` are imported *explicitly* by `lib/mk-host.nix`. This is why agent/CP modules end up in every host's module list while test modules under `modules/tests/` only register via their non-prefixed siblings.

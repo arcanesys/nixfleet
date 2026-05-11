@@ -1,47 +1,44 @@
-# nixfleet documentation
+# NixFleet documentation
 
-Map of what lives where. Every doc here is authoritative for its topic; when
-the code disagrees, the code is being built to match.
+The doc tree splits by audience and lifecycle.
 
-## Design + contracts (read first)
-
-| File | What it is | When to read |
-|---|---|---|
-| [`design/architecture.md`](design/architecture.md) | High-level architecture, component roles, trust flow, where v0.2 lands | First read for new contributors |
-| [`source-layout.md`](source-layout.md) | The four Nix layers (`lib/` / `modules/scopes/` / `contracts/` / `impls/`) and what goes where | When adding Nix code and unsure where it belongs |
-| [`CONTRACTS.md`](CONTRACTS.md) | Every artifact, key, and format that crosses a stream boundary (data, trust roots, canonicalization, storage purity) | When adding or changing anything cross-stream |
-| [`harness.md`](harness.md) | microvm.nix harness scope and slot-in points | When extending the integration-test fabric |
-
-## Protocol + data (RFCs)
+## Design (read first for contributors)
 
 | File | Topic |
-|---|---|
-| [`rfcs/0001-fleet-nix.md`](./rfcs/0001-fleet-nix.md) | Declarative fleet shape: `mkFleet`, selectors, rollouts, edges, budgets, `fleet.resolved` artifact |
-| [`rfcs/0002-reconciler.md`](./rfcs/0002-reconciler.md) | Reconciler state machine, decision procedure, verify path, failure handling |
-| [`rfcs/0003-protocol.md`](./rfcs/0003-protocol.md) | Agent ↔ control-plane wire protocol, identity model, endpoints, security model |
+|------|-------|
+| [design/architecture.md](design/architecture.md) | Components, trust flow, scaling envelope, where v0.2 lands |
+| [design/contracts.md](design/contracts.md) | Every artefact, key, and format that crosses a stream boundary |
+| [design/source-layout.md](design/source-layout.md) | The four Nix layers + dependency-pinning policy |
 
-## Operational reference (mdbook)
+## Reference
 
-The [`mdbook/`](mdbook/) subtree is the user-facing manual. Source lives in
-[`mdbook/src/`](mdbook/src/); the table of contents is
-[`mdbook/src/SUMMARY.md`](mdbook/src/SUMMARY.md). Build with `nix run .#docs`.
+| File | Topic |
+|------|-------|
+| [reference/harness.md](reference/harness.md) | microvm.nix integration-test fabric |
+| [reference/crates/](reference/crates/index.md) | One condensed overview per Rust crate, linking to rustdoc |
 
-| Section | Path |
-|---|---|
-| Introduction | [`mdbook/src/introduction.md`](mdbook/src/introduction.md) |
-| Architecture overview | [`mdbook/src/architecture.md`](mdbook/src/architecture.md) |
-| Operator cookbook | [`mdbook/src/operator-cookbook.md`](mdbook/src/operator-cookbook.md) |
-| Troubleshooting | [`mdbook/src/troubleshooting.md`](mdbook/src/troubleshooting.md) |
-| Rust API (generated) | [`mdbook/src/api.md`](mdbook/src/api.md) |
-| Module options (generated) | [`mdbook/src/options.md`](mdbook/src/options.md) |
+## Operations
 
-## Root-level docs
+| File | Topic |
+|------|-------|
+| [operations/disaster-recovery.md](operations/disaster-recovery.md) | CP teardown + recovery runbook |
+| [operations/operator-cookbook.md](operations/operator-cookbook.md) | Tasks the operator does, with concrete commands |
+| [operations/troubleshooting.md](operations/troubleshooting.md) | Known failure modes from real-hardware testing |
+
+## RFCs
+
+See [rfcs/index.md](rfcs/index.md). The v0.2 protocol contract is owned by RFC-0001/0002/0003; the v0.3 trajectory by RFC-0004/0005/0006/0007.
+
+## Composed view (mdbook)
+
+The same content as a browseable book: `nix run .#docs` builds it, `nix run .#docs-serve` opens it locally. Configuration in [mdbook/book.toml](mdbook/book.toml); table of contents in [mdbook/src/SUMMARY.md](mdbook/src/SUMMARY.md). The wrapper files under `mdbook/src/{design,reference,operations,rfcs}/` are 1-line `{{#include}}` shims that pull from the canonical sources above - no duplication.
+
+## Top-level meta-files
 
 | File | What it is |
-|---|---|
-| [`../README.md`](../README.md) | User-facing README: install, quick start, ecosystem |
-| [`../CHANGELOG.md`](../CHANGELOG.md) | Changelog (Keep a Changelog format) |
-| [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Contributor guide: setup, tests, commit conventions, license |
-| [`operations/disaster-recovery.md`](operations/disaster-recovery.md) | Operator runbook for CP teardown + recovery |
-| [`../SECURITY.md`](../SECURITY.md) | Security policy and disclosure |
-| [`../CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md) | Code of conduct |
+|------|-----------|
+| [../README.md](../README.md) | User-facing project README |
+| [../CHANGELOG.md](../CHANGELOG.md) | Release notes |
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | Contributor guide |
+| [../SECURITY.md](../SECURITY.md) | Security policy and disclosure |
+| [../CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) | Code of conduct |
