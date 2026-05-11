@@ -1,6 +1,6 @@
 //! `GET /v1/deferrals` — channels currently held by `channelEdges`.
 //!
-//! Thin wrapper around `crate::deferrals_view::compute_channel_deferrals`
+//! Thin wrapper around `crate::state_view::compute_channel_deferrals`
 //! so the route handler and the Prometheus exporter read the same
 //! domain truth.
 
@@ -11,7 +11,7 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 
 use super::super::state::AppState;
-use crate::deferrals_view::compute_channel_deferrals;
+use crate::state_view::compute_channel_deferrals;
 
 pub(in crate::server) async fn list(
     State(state): State<Arc<AppState>>,
