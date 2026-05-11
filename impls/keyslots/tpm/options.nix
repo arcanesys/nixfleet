@@ -28,7 +28,7 @@
           SHA-256 PCR indices to bind the keyslot's auth policy to. Empty
           list = `userwithauth` (any process with TPM device access can sign;
           no boot-state binding). Default `["0"]` binds to UEFI firmware
-          measurement — stable across kernel/bootloader updates, only
+          measurement - stable across kernel/bootloader updates, only
           changes on firmware update. See abstracts33d/nixfleet#83 for
           broader policy expansion (PCRs 0/2/4/7) once Secure Boot
           (#84) lands.
@@ -117,7 +117,7 @@ in {
       description = ''
         Legacy: TPM2 persistent handle. The default of `0x81010001`
         provisions a keyslot named `legacy` automatically when the
-        scope is enabled — preserves pre-multi-keyslot behaviour. New
+        scope is enabled - preserves pre-multi-keyslot behaviour. New
         consumers should use `keys.<name>.handle` instead and avoid
         re-using `0x81010001` (which the legacy keyslot occupies).
       '';

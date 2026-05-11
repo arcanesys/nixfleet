@@ -148,7 +148,7 @@ pub(super) fn spawn_reconcile_loop(
                 )
             };
 
-            // LOADBEARING: single write-lock atomic swap — dispatch readers
+            // LOADBEARING: single write-lock atomic swap - dispatch readers
             // can never see a half-built snapshot. Compare signed_at (not
             // wall clock) so an out-of-order tick doesn't downgrade fresh state.
             if let Some((fleet, artifact_bytes)) = verified_fleet {
@@ -188,7 +188,7 @@ pub(super) fn spawn_reconcile_loop(
                     // boot artifact at `inputs.artifact_path`. Dispatch decisions
                     // already operate on the live `verified_fleet` cache (kept
                     // fresh by the channel-refs poll), so the log line should
-                    // reflect the same freshness — otherwise `ci_commit` and
+                    // reflect the same freshness - otherwise `ci_commit` and
                     // `signed_at` lag behind reality until the CP itself is
                     // restarted onto a closure containing the new artifact.
                     if let crate::VerifyOutcome::Ok(ok) = &mut out.verify {
@@ -205,7 +205,7 @@ pub(super) fn spawn_reconcile_loop(
                     // Per-tick orphan sweep: rollouts that exist in the
                     // rollouts table (in-flight per the column filter)
                     // but whose channel has zero expected hosts in the
-                    // live fleet snapshot — operator removed the
+                    // live fleet snapshot - operator removed the
                     // channel or stripped closure_hash from every host
                     // on it. Without this, those rollouts sit in
                     // list_active() forever and the reconciler emits
@@ -225,7 +225,7 @@ pub(super) fn spawn_reconcile_loop(
 
 /// Wake the channel-refs poll on relevant state transitions so a
 /// freshly-released channelEdges successor gets its rollout recorded
-/// without waiting up to 60 s. Fire-and-forget — `watch::Sender::send`
+/// without waiting up to 60 s. Fire-and-forget - `watch::Sender::send`
 /// only fails when all receivers are dropped, which means the polling
 /// task has exited; we log + continue so the reconciler doesn't seize.
 fn kick_channel_refs_poll(state: &AppState, reason: &'static str) {
@@ -254,7 +254,7 @@ async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
         crate::VerifyOutcome::Ok(ok) => &ok.actions,
         crate::VerifyOutcome::Failed { .. } => return,
     };
-    // Stamp / clear deferral state BEFORE the DB gate below — deferrals are
+    // Stamp / clear deferral state BEFORE the DB gate below - deferrals are
     // pure-journal and the debounce must work even on a CP started without
     // --db. OpenRollout for a previously-deferred channel clears the entry
     // so a same-ref re-block (rare: predecessor converges → fresh rollout
@@ -379,7 +379,7 @@ async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
                         );
                     }
                 }
-                // Stamp terminal_at on the rollouts table — closes the
+                // Stamp terminal_at on the rollouts table - closes the
                 // lifecycle and stops list_active() from returning this
                 // rollout to subsequent ticks. Without this the
                 // reconciler emits ConvergeRollout every tick for a
@@ -399,9 +399,9 @@ async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
                         tracing::info!(
                             target: "converge",
                             rollout = %rollout,
-                            "converge: stamped rollouts.terminal_at — rollout removed from in-flight",
+                            "converge: stamped rollouts.terminal_at - rollout removed from in-flight",
                         );
-                        // Predecessor just went terminal — channelEdges
+                        // Predecessor just went terminal - channelEdges
                         // for any successor channel can now release.
                         // Wake the poll so the successor's rollout gets
                         // recorded immediately rather than waiting up to
@@ -470,7 +470,7 @@ async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
 ///
 /// Conservative: only stamps terminal when BOTH the channel has zero
 /// hosts with a closure_hash AND the live fleet snapshot is loaded
-/// (skip when verified-fleet is None — better a one-tick delay than a
+/// (skip when verified-fleet is None - better a one-tick delay than a
 /// premature stamp during a cold-boot prime).
 async fn sweep_terminal_orphans(
     state: &AppState,
@@ -514,7 +514,7 @@ async fn sweep_terminal_orphans(
                     target: "converge",
                     rollout = %rollout.rollout_id,
                     channel = %rollout.channel,
-                    "orphan-sweep: stamped terminal_at — channel has no expected hosts in live fleet",
+                    "orphan-sweep: stamped terminal_at - channel has no expected hosts in live fleet",
                 );
             }
             Err(err) => {
@@ -549,7 +549,7 @@ fn run_tick_with_projection(
     // verified the signature when populating the cache; re-verifying here
     // would double-pay verification cost without changing the outcome,
     // and using the static artifact pins reconciler decisions to whatever
-    // fleet.resolved was bundled in the running closure — meaning fleet.nix
+    // fleet.resolved was bundled in the running closure - meaning fleet.nix
     // metadata changes (rolloutPolicies, selectors, channel intervals)
     // wouldn't apply until lab rebuilds onto a fresher closure.
     if let Some(snapshot) = live_fleet {
@@ -559,7 +559,7 @@ fn run_tick_with_projection(
             None => {
                 return (
                     Err(anyhow::anyhow!(
-                        "verified artifact lacks meta.signedAt despite §4 contract — verify layer bug",
+                        "verified artifact lacks meta.signedAt despite §4 contract - verify layer bug",
                     )),
                     None,
                 );
@@ -584,7 +584,7 @@ fn run_tick_with_projection(
                 &trust, inputs.now,
             ));
         }
-        // Snapshot already verified — no fresh bytes; caller's None case
+        // Snapshot already verified - no fresh bytes; caller's None case
         // preserves the live snapshot's existing fleet_resolved_hash.
         return (
             Ok(crate::TickOutput {
@@ -636,7 +636,7 @@ fn run_tick_with_projection(
                 None => {
                     return (
                         Err(anyhow::anyhow!(
-                            "verified artifact lacks meta.signedAt despite §4 contract — verify layer bug",
+                            "verified artifact lacks meta.signedAt despite §4 contract - verify layer bug",
                         )),
                         None,
                     );
@@ -683,7 +683,7 @@ fn run_tick_with_projection(
 }
 
 /// Load each active rollout's `disruption_budgets` snapshot from its signed
-/// manifest. Returns an empty map entry on read or parse failure — the
+/// manifest. Returns an empty map entry on read or parse failure - the
 /// reconciler then dispatches without a budget gate for that rollout, which
 /// is the same as "no budget declared". Deliberately permissive: a missing
 /// manifest blocks dispatch in a more correct way (the host's last-rolled-

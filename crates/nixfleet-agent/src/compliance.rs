@@ -2,7 +2,7 @@
 //! before confirm.
 //!
 //! LOADBEARING: evidence freshness is gated against `activation_completed_at`,
-//! NOT wall-clock — without this, a rollout could promote on stale PASS
+//! NOT wall-clock - without this, a rollout could promote on stale PASS
 //! evidence collected before the closure switched.
 
 use std::path::{Path, PathBuf};
@@ -74,7 +74,7 @@ pub async fn resolve_mode(input: Option<GateMode>) -> GateMode {
             tracing::warn!(
                 ?explicit,
                 "compliance gate configured to enforce/permissive but \
-                 {} not present — skipping. Either deploy \
+                 {} not present - skipping. Either deploy \
                  nixfleet-compliance or set complianceGate.mode = \"disabled\".",
                 COLLECTOR_UNIT
             );
@@ -99,8 +99,7 @@ pub async fn run_runtime_gate(
 ) -> GateOutcome {
     if matches!(effective_mode, GateMode::Disabled) {
         return GateOutcome::Skipped {
-            reason: "gate mode disabled (collector absent or operator-suppressed)"
-                .to_string(),
+            reason: "gate mode disabled (collector absent or operator-suppressed)".to_string(),
         };
     }
 
@@ -149,9 +148,8 @@ pub async fn run_runtime_gate(
         }
     };
 
-    // LOADBEARING: evidence must be >= activation-slack — stale PASS would let rollouts promote on old data.
-    let min_acceptable =
-        activation_completed_at - chrono::Duration::seconds(TIMESTAMP_SLACK_SECS);
+    // LOADBEARING: evidence must be >= activation-slack - stale PASS would let rollouts promote on old data.
+    let min_acceptable = activation_completed_at - chrono::Duration::seconds(TIMESTAMP_SLACK_SECS);
     if evidence.timestamp < min_acceptable {
         return GateOutcome::GateError {
             reason: format!(
@@ -173,10 +171,7 @@ pub async fn run_runtime_gate(
     if failures.is_empty() {
         GateOutcome::Pass { evidence }
     } else {
-        GateOutcome::Failures {
-            evidence,
-            failures,
-        }
+        GateOutcome::Failures { evidence, failures }
     }
 }
 
@@ -211,11 +206,9 @@ async fn trigger_collector_with_timeout(
     match tokio::time::timeout(timeout, spawn_future).await {
         Ok(Ok(status)) if status.success() => Ok(()),
         Ok(Ok(status)) => Err(TriggerError::NonZero(status.code())),
-        Ok(Err(err)) => {
-            Err(TriggerError::Spawn(anyhow::Error::from(err).context(
-                "spawn `systemctl start --wait`",
-            )))
-        }
+        Ok(Err(err)) => Err(TriggerError::Spawn(
+            anyhow::Error::from(err).context("spawn `systemctl start --wait`"),
+        )),
         Err(_) => Err(TriggerError::Timeout),
     }
 }
@@ -224,8 +217,8 @@ async fn read_evidence(path: &Path) -> Result<ComplianceEvidence> {
     let raw = tokio::fs::read_to_string(path)
         .await
         .with_context(|| format!("read {}", path.display()))?;
-    let parsed: ComplianceEvidence = serde_json::from_str(&raw)
-        .with_context(|| format!("parse JSON at {}", path.display()))?;
+    let parsed: ComplianceEvidence =
+        serde_json::from_str(&raw).with_context(|| format!("parse JSON at {}", path.display()))?;
     Ok(parsed)
 }
 
@@ -311,14 +304,14 @@ pub async fn apply_gate_outcome<R: crate::comms::Reporter>(
                 evidence_signer,
             )
             .await;
-            // LOADBEARING: enforce mode must actually enforce — per-control
+            // LOADBEARING: enforce mode must actually enforce - per-control
             // events alone leave the host on a non-compliant closure.
             if resolved_mode == GateMode::Enforce {
                 let reason = compliance_failure_reason(failures);
                 tracing::error!(
                     %reason,
                     failure_count = failures.len(),
-                    "compliance gate: failures — refusing confirm + rolling back (enforce mode)",
+                    "compliance gate: failures - refusing confirm + rolling back (enforce mode)",
                 );
                 trigger_rollback_with_reason(
                     machine_id,
@@ -367,11 +360,11 @@ async fn post_compliance_failures<R: crate::comms::Reporter>(
     reporter: &R,
     evidence_signer: &std::sync::Arc<Option<crate::evidence_signer::EvidenceSigner>>,
 ) {
-    use crate::evidence_signer::{try_sign, ComplianceFailureSignedPayload, sha256_jcs};
+    use crate::evidence_signer::{sha256_jcs, try_sign, ComplianceFailureSignedPayload};
     use nixfleet_proto::agent_wire::ReportEvent;
     tracing::warn!(
         count = failures.len(),
-        "compliance gate: failures — posting per-control events",
+        "compliance gate: failures - posting per-control events",
     );
     for ctrl in failures {
         let articles = flatten_framework_articles(&ctrl.framework_articles);
@@ -425,13 +418,13 @@ async fn post_runtime_gate_error<R: crate::comms::Reporter>(
         tracing::error!(
             %reason,
             ?collector_exit_code,
-            "compliance gate: ERROR — refusing confirm + rolling back (enforce mode)",
+            "compliance gate: ERROR - refusing confirm + rolling back (enforce mode)",
         );
     } else {
         tracing::warn!(
             %reason,
             ?collector_exit_code,
-            "compliance gate: ERROR — posting event, allowing confirm (permissive mode)",
+            "compliance gate: ERROR - posting event, allowing confirm (permissive mode)",
         );
     }
     let signed_payload = RuntimeGateErrorSignedPayload {
@@ -489,7 +482,7 @@ async fn trigger_rollback_with_reason<R: crate::comms::Reporter>(
             tracing::error!(
                 error = %err,
                 reason = %base_reason,
-                "compliance gate: rollback FAILED — host left in inconsistent state",
+                "compliance gate: rollback FAILED - host left in inconsistent state",
             );
             format!("{base_reason}; rollback FAILED: {err}")
         }

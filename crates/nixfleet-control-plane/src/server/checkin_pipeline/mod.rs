@@ -103,7 +103,7 @@ pub(super) async fn confirm(
     }
 
     let db = state.db.as_ref().ok_or_else(|| {
-        tracing::warn!("confirm: no db configured — endpoint unusable");
+        tracing::warn!("confirm: no db configured - endpoint unusable");
         StatusCode::SERVICE_UNAVAILABLE
     })?;
 
@@ -116,10 +116,10 @@ pub(super) async fn confirm(
         if recovery::try_recover_orphan_confirm(&state, &req).await {
         } else {
             // Inline mark_rolled_back so agent's 410-driven local rollback and CP view converge in one round-trip.
-            if let Err(err) = db.host_dispatch_state().mark_rolled_back(&[(
-                req.hostname.clone(),
-                req.rollout.clone(),
-            )]) {
+            if let Err(err) = db
+                .host_dispatch_state()
+                .mark_rolled_back(&[(req.hostname.clone(), req.rollout.clone())])
+            {
                 tracing::warn!(
                     hostname = %req.hostname,
                     rollout = %req.rollout,
@@ -130,7 +130,7 @@ pub(super) async fn confirm(
             tracing::info!(
                 hostname = %req.hostname,
                 rollout = %req.rollout,
-                "confirm: no matching pending row + no recoverable orphan — returning 410"
+                "confirm: no matching pending row + no recoverable orphan - returning 410"
             );
             return Ok(Response::builder()
                 .status(StatusCode::GONE)
@@ -139,7 +139,7 @@ pub(super) async fn confirm(
         }
     } else {
         // transition_host_state SELECTs prev under the same lock and
-        // emits the actual prev→new transition counter from inside —
+        // emits the actual prev→new transition counter from inside  -
         // no synthetic "(any)" tag needed at this call site.
         if let Err(err) = db.rollout_state().transition_host_state(
             &req.hostname,
@@ -186,7 +186,7 @@ pub(super) mod tests {
         closure: Option<&str>,
     ) -> nixfleet_proto::FleetResolved {
         use nixfleet_proto::testing::FleetBuilder;
-        // Pin policy name to "default" — `rollback_signal` tests look it up by that key.
+        // Pin policy name to "default" - `rollback_signal` tests look it up by that key.
         let mut b = FleetBuilder::new()
             .channel("stable", "default")
             .host(hostname, "stable")
@@ -243,8 +243,8 @@ pub(super) mod tests {
             uptime_secs: None,
             last_confirmed_at: attested,
             attestation_signature: None,
-        health_probes: vec![],
-        health_check_mode: None,
+            health_probes: vec![],
+            health_check_mode: None,
         }
     }
 
@@ -254,7 +254,7 @@ pub(super) mod tests {
     /// has `hosts.<hostname>.pubkey` populated with the OpenSSH-format
     /// pubkey of `signing_key`. Callers can then build a CheckinRequest,
     /// sign `LastConfirmedAtSignedPayload` against the returned key, and
-    /// pass through `recover_soak_state_from_attestation` — closing the
+    /// pass through `recover_soak_state_from_attestation` - closing the
     /// real binding (not a `pubkey: None` test escape hatch).
     pub(super) fn signed_attestation_fixture(
         hostname: &str,

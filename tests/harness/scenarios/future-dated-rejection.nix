@@ -1,5 +1,5 @@
 # LOADBEARING: validates `meta.signedAt > now + CLOCK_SKEW_SLACK_SECS` is
-# rejected as `FutureDated` — a CI key compromise (pre-signed manifest with
+# rejected as `FutureDated` - a CI key compromise (pre-signed manifest with
 # future signedAt) shouldn't pass freshness; rotate via `reject_before`.
 {
   pkgs,
@@ -17,7 +17,7 @@ in
   pkgs.runCommand "fleet-harness-future-dated-rejection" {} ''
     set -euo pipefail
 
-    echo "step 1: dt=+2d, expect reject…"
+    echo "step 1: dt=+2d, expect reject..."
     if ${verifyArtifactPkg}/bin/nixfleet-verify-artifact artifact \
          --artifact ${signedFixture}/canonical.json \
          --signature ${signedFixture}/canonical.json.sig \
@@ -41,7 +41,7 @@ in
     fi
     echo "step 1: dt=+2d rejected"
 
-    echo "step 2: dt=+30s, expect accept (within 60s slack)…"
+    echo "step 2: dt=+30s, expect accept (within 60s slack)..."
     ${verifyArtifactPkg}/bin/nixfleet-verify-artifact artifact \
       --artifact ${signedFixture}/canonical.json \
       --signature ${signedFixture}/canonical.json.sig \
@@ -50,7 +50,7 @@ in
       --freshness-window-secs ${toString freshnessWindowSecs}
     echo "step 2: dt=+30s accepted"
 
-    echo "step 3: dt=0, expect accept…"
+    echo "step 3: dt=0, expect accept..."
     ${verifyArtifactPkg}/bin/nixfleet-verify-artifact artifact \
       --artifact ${signedFixture}/canonical.json \
       --signature ${signedFixture}/canonical.json.sig \
@@ -60,7 +60,7 @@ in
     echo "step 3: dt=0 accepted"
 
     # Pair to step 2: same 60s slack on the past side proves symmetry.
-    echo "step 4: dt=-30s, expect accept (past-slack mirror)…"
+    echo "step 4: dt=-30s, expect accept (past-slack mirror)..."
     ${verifyArtifactPkg}/bin/nixfleet-verify-artifact artifact \
       --artifact ${signedFixture}/canonical.json \
       --signature ${signedFixture}/canonical.json.sig \

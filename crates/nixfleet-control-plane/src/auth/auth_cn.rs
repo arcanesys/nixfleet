@@ -3,7 +3,7 @@
 //! FOOTGUN: `axum-server 0.7` does not expose peer certificates publicly.
 //! The `MtlsAcceptor` wrapper reads them post-handshake from the rustls
 //! TlsStream and injects via per-connection tower::Service. Don't remove
-//! without a replacement — the chain is otherwise unreachable.
+//! without a replacement - the chain is otherwise unreachable.
 
 use axum::extract::{Path, Request};
 use axum::http::StatusCode;
@@ -56,7 +56,7 @@ impl PeerCertificates {
         cn
     }
 
-    /// LOADBEARING: revocations are "notBefore < X is bad" — re-enrolling
+    /// LOADBEARING: revocations are "notBefore < X is bad" - re-enrolling
     /// (notBefore > X) re-grants access; don't change to issuance time.
     pub fn leaf_not_before(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         let leaf = self.leaf()?;

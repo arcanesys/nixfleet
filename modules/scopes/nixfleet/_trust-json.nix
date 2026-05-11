@@ -12,7 +12,7 @@ in {
   # ciReleaseKey is already in submodule shape (`{algorithm, public}`)
   # so pass-through is direct. The new `successor` + `retireAt` fields
   # (nixfleet#63) inherit submodule defaults (null) and emit as JSON
-  # null when unset — matches proto's `Option<...>` deserde.
+  # null when unset - matches proto's `Option<...>` deserde.
   ciReleaseKey = trust.ciReleaseKey;
   cacheKeys = trust.cacheKeys;
   orgRootKey = {
@@ -23,7 +23,7 @@ in {
     retireAt = trust.orgRootKey.retireAt;
   };
   # Cert chain emitted only when configured. Pre-bootstrap deployments
-  # emit `null` / empty list — proto `#[serde(default)]` parses both
+  # emit `null` / empty list - proto `#[serde(default)]` parses both
   # shapes seamlessly.
   rootCAPem = trust.rootCAPem;
   issuanceCAPems = trust.issuanceCAPems;

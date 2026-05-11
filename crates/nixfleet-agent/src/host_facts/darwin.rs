@@ -1,4 +1,4 @@
-//! macOS / nix-darwin impl: `pending_generation` is always `Ok(None)` —
+//! macOS / nix-darwin impl: `pending_generation` is always `Ok(None)`  -
 //! darwin-rebuild activates in-process with no booted-vs-activated delta.
 
 use std::mem::MaybeUninit;
@@ -23,8 +23,9 @@ pub fn boot_id() -> Result<String> {
         )
     };
     if rc != 0 {
-        return Err(anyhow::Error::new(std::io::Error::last_os_error())
-            .context("sysctl kern.boottime"));
+        return Err(
+            anyhow::Error::new(std::io::Error::last_os_error()).context("sysctl kern.boottime")
+        );
     }
     let tv = unsafe { tv.assume_init() };
     Ok(format!("{}.{:06}", tv.tv_sec, tv.tv_usec))

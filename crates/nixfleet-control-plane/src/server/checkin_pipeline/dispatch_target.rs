@@ -25,7 +25,7 @@ pub(super) async fn dispatch_target_for_checkin(
         let observed =
             crate::observed_view::build_for_gates_from_state(state, &fleet, &fleet_resolved_hash)
                 .await;
-        // Locate the rollout for this host's channel — host-edges + budget
+        // Locate the rollout for this host's channel - host-edges + budget
         // gates need the host's current rollout to read frozen budgets +
         // host_states. None when no rollout recorded yet (fresh boot /
         // fresh rev); the gates handle that conservatively per their
@@ -123,7 +123,7 @@ pub(super) async fn dispatch_target_for_checkin(
         } => {
             // Compliance wave gate is now part of `gates::evaluate_for_host`
             // (called above pre-decide_target). The legacy
-            // `wave_gate_blocks_dispatch` call here is superseded —
+            // `wave_gate_blocks_dispatch` call here is superseded  -
             // see `gates/compliance_wave.rs`.
             //
             // Behaviour change to note: previously the compliance wave
@@ -159,7 +159,7 @@ pub(super) async fn dispatch_target_for_checkin(
             //
             // This is the only path where we INSERT host_dispatch_state +
             // host_rollout_state for a host without ever sending it a target.
-            // The agent never sees a confirm — the breadcrumb on its
+            // The agent never sees a confirm - the breadcrumb on its
             // checkin still references the LAST rollout it actually
             // confirmed, but the CP's view of "this host is on rollout R"
             // is now authoritative via these rows.
@@ -171,7 +171,7 @@ pub(super) async fn dispatch_target_for_checkin(
                 target: "dispatch",
                 hostname = %req.hostname,
                 current_wave = ?current_wave,
-                "dispatch: wave-promotion gate held target — host's wave hasn't been promoted yet",
+                "dispatch: wave-promotion gate held target - host's wave hasn't been promoted yet",
             );
             None
         }
@@ -188,7 +188,7 @@ pub(super) async fn dispatch_target_for_checkin(
 }
 
 /// LOADBEARING: each row materialization is best-effort + idempotent.
-/// Failures here only delay reconciler convergence — they don't break the
+/// Failures here only delay reconciler convergence - they don't break the
 /// agent (which got `Decision::Converged` and has nothing to confirm anyway).
 fn record_converged_at_dispatch(
     db: &crate::db::Db,
@@ -216,7 +216,7 @@ fn record_converged_at_dispatch(
     let wave = wave_index_for(fleet, &host_decl.channel, &req.hostname).unwrap_or(0);
     let target_channel_ref = rollout_id.clone();
 
-    // record_active_rollout is idempotent — safe to call every checkin.
+    // record_active_rollout is idempotent - safe to call every checkin.
     // (Channel-refs poll also calls it; both converge to the same row.)
     if let Err(err) = db
         .rollouts()
@@ -239,7 +239,7 @@ fn record_converged_at_dispatch(
     //      rollouts × 30s = unbounded growth).
     //   2. Host has a host_rollout_state row but it's NOT Converged
     //      (typically Healthy, set by recover_soak_state_from_attestation
-    //      earlier in the same checkin). Both rows already exist — only
+    //      earlier in the same checkin). Both rows already exist - only
     //      the state transition needs to advance to Converged.
     //   3. No host_rollout_state row at all → full materialisation
     //      (host_dispatch_state + dispatch_history + host_rollout_state).
@@ -264,7 +264,7 @@ fn record_converged_at_dispatch(
     // real dispatch → activation cycle. host_state is currently
     // Dispatched/Activating/ConfirmWindow/Healthy/etc. Jumping
     // straight to Converged would silently bypass the operator's
-    // `soakMinutes` window — the entire point of wave-staging.
+    // `soakMinutes` window - the entire point of wave-staging.
     // Leave the existing state alone; the reconciler's SoakHost
     // (Healthy → Soaked after soak window) and ConvergeRollout
     // (Soaked → Converged when wave_all_soaked + last wave) run the
@@ -277,7 +277,7 @@ fn record_converged_at_dispatch(
     // dispatch attempt (steady-state, or post-state.db-wipe with a
     // host that's been stable). Full atomic materialisation directly
     // to Converged is correct: there's no transient state to ride
-    // out. `last_healthy_since = now` is an audit-trail nicety —
+    // out. `last_healthy_since = now` is an audit-trail nicety  -
     // gates don't read the soak anchor on Converged hosts.
     if let Err(err) = db
         .host_dispatch_state()
@@ -342,7 +342,7 @@ fn record_dispatched_target(
             target: "dispatch",
             hostname = %hostname,
             target_closure = %target.closure_hash,
-            "dispatch: host already deferred for this target — skipping re-issue (awaiting reboot)",
+            "dispatch: host already deferred for this target - skipping re-issue (awaiting reboot)",
         );
         return None;
     }
@@ -399,7 +399,7 @@ fn record_dispatched_target(
 ///
 /// Why: `record_dispatch` is an unconditional UPSERT to state=Pending
 /// with a fresh deadline. Without this guard, every poll on a deferred
-/// host would reset the row to Pending — and once Pending, the 360s
+/// host would reset the row to Pending - and once Pending, the 360s
 /// rollback timer counts down. The agent's `last_deferred` sentinel
 /// silently suppresses re-activation (so no `ActivationDeferred` is re-
 /// posted to bring state back), so the row would expire as Pending and
@@ -438,9 +438,16 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-a", "stable@r1", "system-r1", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-a",
+                "stable@r1",
+                "system-r1",
+                deadline,
+            ))
             .unwrap();
-        db.host_dispatch_state().mark_deferred("host-a", "stable@r1").unwrap();
+        db.host_dispatch_state()
+            .mark_deferred("host-a", "stable@r1")
+            .unwrap();
         assert!(
             is_already_deferred_for_target(&db, "host-a", "system-r1"),
             "deferred row + matching closure must trigger the guard",
@@ -450,13 +457,20 @@ mod tests {
     #[test]
     fn guard_returns_false_when_target_closure_mismatches() {
         // Different closure means CI published a fix / pin advanced /
-        // channel-ref moved — operator wants the new target to land.
+        // channel-ref moved - operator wants the new target to land.
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-a", "stable@r1", "system-r1", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-a",
+                "stable@r1",
+                "system-r1",
+                deadline,
+            ))
             .unwrap();
-        db.host_dispatch_state().mark_deferred("host-a", "stable@r1").unwrap();
+        db.host_dispatch_state()
+            .mark_deferred("host-a", "stable@r1")
+            .unwrap();
         assert!(
             !is_already_deferred_for_target(&db, "host-a", "system-r2-NEW"),
             "deferred row + different closure must NOT trigger the guard",
@@ -468,7 +482,12 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-a", "stable@r1", "system-r1", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-a",
+                "stable@r1",
+                "system-r1",
+                deadline,
+            ))
             .unwrap();
         // Row is Pending (not deferred) → guard must NOT fire.
         assert!(!is_already_deferred_for_target(&db, "host-a", "system-r1"));
@@ -477,22 +496,33 @@ mod tests {
     #[test]
     fn guard_returns_false_when_no_row_exists() {
         let db = fresh_db();
-        // Brand-new host — no row → fail-open, normal dispatch path.
-        assert!(!is_already_deferred_for_target(&db, "fresh-host", "anything"));
+        // Brand-new host - no row → fail-open, normal dispatch path.
+        assert!(!is_already_deferred_for_target(
+            &db,
+            "fresh-host",
+            "anything"
+        ));
     }
 
     #[test]
     fn guard_returns_false_when_row_is_confirmed() {
         // Confirmed = host activated successfully; not relevant for
-        // dispatch decision — re-dispatch path handles convergence
+        // dispatch decision - re-dispatch path handles convergence
         // separately. This test pins the boundary: only deferred state
         // triggers the early-out.
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-a", "stable@r1", "system-r1", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-a",
+                "stable@r1",
+                "system-r1",
+                deadline,
+            ))
             .unwrap();
-        db.host_dispatch_state().confirm("host-a", "stable@r1").unwrap();
+        db.host_dispatch_state()
+            .confirm("host-a", "stable@r1")
+            .unwrap();
         assert!(!is_already_deferred_for_target(&db, "host-a", "system-r1"));
     }
 }

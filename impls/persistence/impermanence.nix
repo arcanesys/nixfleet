@@ -51,7 +51,7 @@ in {
       deps = [];
     };
 
-    # FOOTGUN: btrfs root-wipe — moves @root → old_roots/<ts> and recreates empty @root every boot; prunes past retention.
+    # FOOTGUN: btrfs root-wipe - moves @root → old_roots/<ts> and recreates empty @root every boot; prunes past retention.
     boot.initrd.postResumeCommands = lib.mkAfter ''
       mkdir /btrfs_tmp
       mount ${impl.rootDevice} /btrfs_tmp

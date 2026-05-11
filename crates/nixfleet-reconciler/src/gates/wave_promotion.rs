@@ -1,18 +1,18 @@
-//! Wave-promotion gate — host's wave_index must not exceed rollout's current_wave.
+//! Wave-promotion gate - host's wave_index must not exceed rollout's current_wave.
 //!
 //! Migrated from `nixfleet_control_plane::dispatch::decide_target`'s
 //! inline check (`Decision::WaveNotReached`). The reconciler's
 //! `handle_wave` doesn't trip this gate because it iterates only the
-//! current wave's hosts — but having the check live in the shared
+//! current wave's hosts - but having the check live in the shared
 //! gates module makes the invariant explicit and discoverable, and
 //! catches future code paths that bypass `handle_wave`'s iteration
 //! convention.
 //!
 //! `host_wave = None` (host not in any declared wave for its channel)
-//! is ungated — that path covers single-wave channels with
+//! is ungated - that path covers single-wave channels with
 //! `selector.all = true` where the wave doesn't filter by host.
 //! `current_wave = None` from `rollout` (no rollout recorded yet)
-//! defaults to 0 — start of every staged rollout.
+//! defaults to 0 - start of every staged rollout.
 
 use super::{GateBlock, GateInput};
 

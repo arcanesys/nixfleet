@@ -34,7 +34,7 @@ fn fleet_with_single_wave_host(hostname: &str, closure: &str, soak_minutes: u32)
     c.freshness_window = 60;
     c.signing_interval_minutes = 30;
     // Original fixture left rollout_policies empty (channel references
-    // "default" but no policy registered) — reconcile() doesn't need it
+    // "default" but no policy registered) - reconcile() doesn't need it
     // here. Drop the auto-inserted "default" policy.
     f.rollout_policies = HashMap::new();
     f
@@ -88,8 +88,14 @@ fn soak_loop_end_to_end_healthy_to_soaked_to_converged() {
         "soak marker must surface for projection",
     );
 
-    let observed =
-        observed_projection::project(&HashMap::new(), &HashMap::new(), &rollouts, HashMap::new(), HashMap::new(), &HashMap::new());
+    let observed = observed_projection::project(
+        &HashMap::new(),
+        &HashMap::new(),
+        &rollouts,
+        HashMap::new(),
+        HashMap::new(),
+        &HashMap::new(),
+    );
     assert_eq!(observed.active_rollouts.len(), 1);
 
     let fleet = fleet_with_single_wave_host(host, target_closure, 5);
@@ -124,8 +130,14 @@ fn soak_loop_end_to_end_healthy_to_soaked_to_converged() {
         Some("Soaked"),
         "host must surface as Soaked after the action processor",
     );
-    let observed2 =
-        observed_projection::project(&HashMap::new(), &HashMap::new(), &rollouts2, HashMap::new(), HashMap::new(), &HashMap::new());
+    let observed2 = observed_projection::project(
+        &HashMap::new(),
+        &HashMap::new(),
+        &rollouts2,
+        HashMap::new(),
+        HashMap::new(),
+        &HashMap::new(),
+    );
     let actions2 = reconcile(&fleet, &observed2, now);
     assert!(
         actions2
@@ -170,8 +182,14 @@ fn soak_loop_skips_when_window_not_elapsed() {
         .unwrap();
 
     let rollouts = db.host_dispatch_state().active_rollouts_snapshot().unwrap();
-    let observed =
-        observed_projection::project(&HashMap::new(), &HashMap::new(), &rollouts, HashMap::new(), HashMap::new(), &HashMap::new());
+    let observed = observed_projection::project(
+        &HashMap::new(),
+        &HashMap::new(),
+        &rollouts,
+        HashMap::new(),
+        HashMap::new(),
+        &HashMap::new(),
+    );
     let fleet = fleet_with_single_wave_host(host, target_closure, 5);
     let actions = reconcile(&fleet, &observed, now);
     assert!(

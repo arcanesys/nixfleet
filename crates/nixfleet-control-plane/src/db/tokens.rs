@@ -32,11 +32,7 @@ impl Tokens<'_> {
     }
 
     /// Plain INSERT (not OR IGNORE): PK conflict surfaces as `AlreadyRecorded` for atomic check-and-set.
-    pub fn record_token_nonce(
-        &self,
-        nonce: &str,
-        hostname: &str,
-    ) -> Result<RecordTokenOutcome> {
+    pub fn record_token_nonce(&self, nonce: &str, hostname: &str) -> Result<RecordTokenOutcome> {
         super::read(self.conn, |c| {
             match c.execute(
                 "INSERT INTO token_replay(nonce, hostname) VALUES (?1, ?2)",

@@ -16,7 +16,7 @@ pub(crate) async fn handle_deferred_pending_reboot<R: Reporter>(
     tracing::info!(
         target_closure = %ctx.target.closure_hash,
         component = %component,
-        "agent: activation deferred to next boot — switch-inhibitor on critical component",
+        "agent: activation deferred to next boot - switch-inhibitor on critical component",
     );
     // Persist the sentinel BEFORE posting the event: if the post fails the
     // suppression still kicks in next poll (the next dispatch's re-post is

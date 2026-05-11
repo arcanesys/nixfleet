@@ -92,7 +92,10 @@ fn meta_signature_algorithm_some_round_trips_as_explicit_string() {
 
     let parsed: FleetResolved =
         serde_json::from_str(&value.to_string()).expect("parse with signatureAlgorithm");
-    assert_eq!(parsed.meta.signature_algorithm.as_deref(), Some("ecdsa-p256"));
+    assert_eq!(
+        parsed.meta.signature_algorithm.as_deref(),
+        Some("ecdsa-p256")
+    );
 
     let reserialized = serde_json::to_string(&parsed).expect("serialize");
     assert!(
@@ -110,8 +113,8 @@ fn unknown_fields_at_any_level_are_ignored() {
     value["meta"]["unknownMetaField"] = serde_json::json!(true);
 
     let injected = serde_json::to_string(&value).unwrap();
-    let parsed: FleetResolved = serde_json::from_str(&injected)
-        .expect("unknown fields must parse (forward compat)");
+    let parsed: FleetResolved =
+        serde_json::from_str(&injected).expect("unknown fields must parse (forward compat)");
 
     assert_eq!(parsed.schema_version, 1);
     assert_eq!(parsed.hosts.len(), 1);

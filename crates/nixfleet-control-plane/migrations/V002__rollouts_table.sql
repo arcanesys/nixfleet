@@ -1,4 +1,4 @@
--- Per-rollout lifecycle state. Soft state — fully reconstructible after a
+-- Per-rollout lifecycle state. Soft state - fully reconstructible after a
 -- CP rebuild via channel-refs polling and on-dispatch inserts. Holds the
 -- supersession chain so the active-rollouts panel and dispatch logic can
 -- distinguish "still in flight" from "replaced by a newer rollout for the
@@ -20,7 +20,7 @@ CREATE TABLE rollouts (
     superseded_by   TEXT
 );
 
--- Hot-path query: "is this rollout still active for its channel?" — used
+-- Hot-path query: "is this rollout still active for its channel?" - used
 -- by active_rollouts_snapshot's join and by the supersede UPDATE itself.
 CREATE INDEX rollouts_channel_active_idx
     ON rollouts(channel) WHERE superseded_at IS NULL;

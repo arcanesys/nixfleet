@@ -19,7 +19,7 @@ pub const LAST_DISPATCH_FILENAME: &str = "last_dispatched";
 
 /// Confirm breadcrumb replayed on every checkin so the wave-promotion gate
 /// + outstandingComplianceFailures filter have something to compare against.
-/// Distinct from `last_dispatched` (cleared on confirm) — this one persists.
+/// Distinct from `last_dispatched` (cleared on confirm) - this one persists.
 pub const LAST_TARGET_FILENAME: &str = "last_target";
 
 /// CP's circuit breaker (`Decision::HoldAfterFailure`): a host stuck on bad
@@ -29,11 +29,11 @@ pub const LAST_FETCH_OUTCOME_FILENAME: &str = "last_fetch_outcome";
 /// Written when `fire_switch` returns `DeferredPendingReboot` (issue #56);
 /// suppresses redundant `ActivationDeferred` re-posts on every poll cycle.
 /// The dispatch loop short-circuits when the next target's `closure_hash`
-/// matches the recorded value — same closure, same inhibitor, no point
+/// matches the recorded value - same closure, same inhibitor, no point
 /// re-detecting + re-posting. Cleared by `record_confirm_success` (after
 /// the operator reboots and boot-recovery confirms) and naturally bypassed
 /// when a fresher `closure_hash` arrives (match check fails, dispatch
-/// proceeds normally — and a new `last_deferred` lands if the new closure
+/// proceeds normally - and a new `last_deferred` lands if the new closure
 /// also trips the inhibitor).
 pub const LAST_DEFERRED_FILENAME: &str = "last_deferred";
 
@@ -71,7 +71,7 @@ pub struct LastFailedClosureRecord {
     pub channel_ref: String,
     pub last_failure_at: DateTime<Utc>,
     pub failure_count: u32,
-    /// Most recent failure summary — fed back into `ClosureQuarantined`'s
+    /// Most recent failure summary - fed back into `ClosureQuarantined`'s
     /// `reason` field on suppression posts.
     pub reason: String,
     /// `None` until the first quarantine event posts; updated on each post.
@@ -104,9 +104,8 @@ fn write_atomic(state_dir: &Path, filename: &str, body: &[u8]) -> Result<()> {
     let final_path = state_dir.join(filename);
     let tmp_path = state_dir.join(format!("{filename}.tmp"));
     std::fs::write(&tmp_path, body).with_context(|| format!("write {}", tmp_path.display()))?;
-    std::fs::rename(&tmp_path, &final_path).with_context(|| {
-        format!("rename {} -> {}", tmp_path.display(), final_path.display())
-    })?;
+    std::fs::rename(&tmp_path, &final_path)
+        .with_context(|| format!("rename {} -> {}", tmp_path.display(), final_path.display()))?;
     Ok(())
 }
 
@@ -115,8 +114,7 @@ fn write_atomic_json<T: serde::Serialize>(
     filename: &str,
     value: &T,
 ) -> Result<()> {
-    let body = serde_json::to_string(value)
-        .with_context(|| format!("serialize {filename}"))?;
+    let body = serde_json::to_string(value).with_context(|| format!("serialize {filename}"))?;
     write_atomic(state_dir, filename, body.as_bytes())
 }
 
@@ -176,7 +174,7 @@ pub fn read_last_target(state_dir: &Path) -> Result<Option<EvaluatedTarget>> {
     read_atomic_json(state_dir, LAST_TARGET_FILENAME)
 }
 
-/// Failure is non-fatal — next-fetch will retry.
+/// Failure is non-fatal - next-fetch will retry.
 pub fn write_last_fetch_outcome(state_dir: &Path, outcome: &FetchOutcome) -> Result<()> {
     write_atomic_json(state_dir, LAST_FETCH_OUTCOME_FILENAME, outcome)
 }
@@ -201,7 +199,7 @@ pub fn read_last_deferred(state_dir: &Path) -> Result<Option<LastDeferredRecord>
     read_atomic_json(state_dir, LAST_DEFERRED_FILENAME)
 }
 
-/// Idempotent overwrite — re-posting `ActivationDeferred` for the same
+/// Idempotent overwrite - re-posting `ActivationDeferred` for the same
 /// `closure_hash` happens at most once now (the dispatch suppression check
 /// short-circuits before reaching here), so this is the on-first-defer
 /// write path only.
@@ -210,8 +208,8 @@ pub fn write_last_deferred(state_dir: &Path, record: &LastDeferredRecord) -> Res
 }
 
 /// Cleared on `record_confirm_success` (post-reboot retroactive confirm).
-/// Stale records for non-current `closure_hash` values are inert — the
-/// dispatch suppression check only matches when hashes are equal — so we
+/// Stale records for non-current `closure_hash` values are inert - the
+/// dispatch suppression check only matches when hashes are equal - so we
 /// don't bother clearing on closure_hash advance; the next defer just
 /// overwrites.
 pub fn clear_last_deferred(state_dir: &Path) -> Result<()> {
@@ -232,17 +230,14 @@ pub fn read_last_failed_closure(state_dir: &Path) -> Result<Option<LastFailedClo
 /// increment-or-reset semantics; `write_last_failed_closure` is the raw
 /// persistence path the suppression handler uses to update the
 /// `last_quarantine_post_at` timestamp without touching `failure_count`.
-pub fn write_last_failed_closure(
-    state_dir: &Path,
-    record: &LastFailedClosureRecord,
-) -> Result<()> {
+pub fn write_last_failed_closure(state_dir: &Path, record: &LastFailedClosureRecord) -> Result<()> {
     write_atomic_json(state_dir, LAST_FAILED_CLOSURE_FILENAME, record)
 }
 
 /// Increment `failure_count` if the existing record matches `closure_hash`,
 /// else reset to a fresh record with count=1. Returns the post-write count
 /// so the caller can include it in tracing / event payloads. Single-record
-/// design — the FOOTGUN here is that two distinct closures failing in
+/// design - the FOOTGUN here is that two distinct closures failing in
 /// quick succession only retain the most-recent count (the previous one is
 /// reset to 1 if it later fails again). This is intentional: the
 /// suppression window is closure-scoped, and tracking history of every
@@ -263,7 +258,7 @@ pub fn record_switch_failure(
             failure_count: r.failure_count.saturating_add(1),
             reason: reason.to_string(),
             // Preserve last_quarantine_post_at across same-hash failures so
-            // the throttle window doesn't reset on every new attempt — a
+            // the throttle window doesn't reset on every new attempt - a
             // closure that flaps a second time within the hour shouldn't
             // immediately re-post the operator alert.
             last_quarantine_post_at: r.last_quarantine_post_at,
@@ -296,16 +291,16 @@ pub fn clear_last_failed_closure(state_dir: &Path) -> Result<()> {
     }
 }
 
-// FOOTGUN: closure_hash is the FULL store basename, not the 32-char hash — wire-equality trap.
+// FOOTGUN: closure_hash is the FULL store basename, not the 32-char hash - wire-equality trap.
 const CURRENT_SYSTEM: &str = "/run/current-system";
 
 pub fn current_closure_hash() -> Result<String> {
-    let target = std::fs::read_link(CURRENT_SYSTEM)
-        .with_context(|| format!("readlink {CURRENT_SYSTEM}"))?;
+    let target =
+        std::fs::read_link(CURRENT_SYSTEM).with_context(|| format!("readlink {CURRENT_SYSTEM}"))?;
     Ok(closure_hash_from_path(&target))
 }
 
-/// FOOTGUN: returns full basename, NOT 32-char prefix — byte-equality required across CP/CI/agent.
+/// FOOTGUN: returns full basename, NOT 32-char prefix - byte-equality required across CP/CI/agent.
 pub(crate) fn closure_hash_from_path(p: &Path) -> String {
     let s = p.to_string_lossy();
     s.rsplit('/')
@@ -318,7 +313,7 @@ pub fn uptime_secs(started_at: Instant) -> u64 {
     started_at.elapsed().as_secs()
 }
 
-/// `<closure_hash>\n<rfc3339>\n` plain-text — `read_last_confirmed` does its
+/// `<closure_hash>\n<rfc3339>\n` plain-text - `read_last_confirmed` does its
 /// own line parsing + closure/skew checks, so JSON would just add ceremony.
 pub fn write_last_confirmed(state_dir: &Path, closure_hash: &str, at: DateTime<Utc>) -> Result<()> {
     let body = format!("{closure_hash}\n{}\n", at.to_rfc3339());
@@ -326,7 +321,7 @@ pub fn write_last_confirmed(state_dir: &Path, closure_hash: &str, at: DateTime<U
 }
 
 /// LOADBEARING: same persistence steps in the same order from BOTH
-/// dispatch and boot-recovery — without `write_last_target` the CP's
+/// dispatch and boot-recovery - without `write_last_target` the CP's
 /// outstanding-failure filter sees every recorded event forever. Each step
 /// is best-effort; `clear_last_dispatched` and `clear_last_deferred` run
 /// last so a partial crash leaves the dispatch + defer records around for
@@ -351,7 +346,7 @@ pub fn record_confirm_success(state_dir: &Path, target: &EvaluatedTarget, at: Da
     // Issue #56: confirm succeeded → the deferred dispatch landed via reboot,
     // so the suppression sentinel is stale. Failure here is harmless: a
     // stale record only triggers suppression when closure_hash matches, and
-    // confirm just changed the live state — next dispatch will be a different
+    // confirm just changed the live state - next dispatch will be a different
     // closure.
     if let Err(err) = clear_last_deferred(state_dir) {
         tracing::warn!(error = %err, "clear_last_deferred failed (non-fatal)");
@@ -521,7 +516,6 @@ mod write_read_tests {
         assert!(read_last_fetch_outcome(dir.path()).unwrap().is_none());
     }
 
-
     #[test]
     fn last_dispatched_round_trips() {
         let dir = TempDir::new().unwrap();
@@ -597,7 +591,9 @@ mod write_read_tests {
         let dir = TempDir::new().unwrap();
         let r = sample_failed();
         write_last_failed_closure(dir.path(), &r).unwrap();
-        let got = read_last_failed_closure(dir.path()).unwrap().expect("present");
+        let got = read_last_failed_closure(dir.path())
+            .unwrap()
+            .expect("present");
         assert_eq!(got.closure_hash, r.closure_hash);
         assert_eq!(got.failure_count, 1);
         assert_eq!(got.reason, r.reason);
@@ -646,7 +642,9 @@ mod write_read_tests {
             n, 1,
             "new closure_hash should reset failure_count to 1 (single-record overwrite)",
         );
-        let stored = read_last_failed_closure(dir.path()).unwrap().expect("present");
+        let stored = read_last_failed_closure(dir.path())
+            .unwrap()
+            .expect("present");
         assert_eq!(stored.closure_hash, "h-new");
         assert_eq!(stored.channel_ref, "stable@b");
     }
@@ -675,7 +673,11 @@ mod write_read_tests {
         .unwrap();
         let after = read_last_failed_closure(dir.path()).unwrap().unwrap();
         assert_eq!(after.failure_count, 2);
-        assert_eq!(after.last_quarantine_post_at, Some(now), "post-throttle ts preserved");
+        assert_eq!(
+            after.last_quarantine_post_at,
+            Some(now),
+            "post-throttle ts preserved"
+        );
     }
 
     #[test]
@@ -762,7 +764,7 @@ mod tests {
         assert_eq!(
             got,
             "2zlnf66xlf35xwm7150kx05q93cwp8jk-nixos-system-lab-20260427-0810_5176864f_turbo-otter",
-            "closure_hash must be the full /nix/store basename — same shape the CP declares",
+            "closure_hash must be the full /nix/store basename - same shape the CP declares",
         );
         assert_ne!(got, "2zlnf66xlf35xwm7150kx05q93cwp8jk");
     }

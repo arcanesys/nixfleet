@@ -43,7 +43,7 @@ fn fleet() -> FleetResolved {
         .build()
 }
 
-/// Test-side `Observed` constructor — delegates to the production
+/// Test-side `Observed` constructor - delegates to the production
 /// `list_active_rollouts` helper, then maps each `RolloutDbSnapshot`
 /// into a `Rollout` with the same shape the dispatch path uses.
 ///
@@ -51,28 +51,29 @@ fn fleet() -> FleetResolved {
 /// arbitrary rids (`R-edge`, `R-stable`) that don't match a
 /// `compute_rollout_id_for_channel` output.
 fn build_observed(db: &Db) -> Observed {
-    let active_rollouts: Vec<Rollout> = nixfleet_control_plane::observed_view::list_active_rollouts(db)
-        .into_iter()
-        .map(|s| Rollout {
-            id: s.rollout_id,
-            channel: s.channel,
-            target_ref: s.target_channel_ref,
-            state: RolloutState::Executing,
-            current_wave: s.current_wave as usize,
-            host_states: s
-                .host_states
-                .iter()
-                .filter_map(|(h, st)| {
-                    HostRolloutState::from_db_str(st)
-                        .ok()
-                        .map(|parsed| (h.clone(), parsed))
-                })
-                .collect(),
-            last_healthy_since: s.last_healthy_since,
-            budgets: vec![],
-            terminal_at: s.terminal_at,
-        })
-        .collect();
+    let active_rollouts: Vec<Rollout> =
+        nixfleet_control_plane::observed_view::list_active_rollouts(db)
+            .into_iter()
+            .map(|s| Rollout {
+                id: s.rollout_id,
+                channel: s.channel,
+                target_ref: s.target_channel_ref,
+                state: RolloutState::Executing,
+                current_wave: s.current_wave as usize,
+                host_states: s
+                    .host_states
+                    .iter()
+                    .filter_map(|(h, st)| {
+                        HostRolloutState::from_db_str(st)
+                            .ok()
+                            .map(|parsed| (h.clone(), parsed))
+                    })
+                    .collect(),
+                last_healthy_since: s.last_healthy_since,
+                budgets: vec![],
+                terminal_at: s.terminal_at,
+            })
+            .collect();
 
     Observed {
         active_rollouts,
@@ -81,12 +82,21 @@ fn build_observed(db: &Db) -> Observed {
 }
 
 /// Eval the gate for `host` against `observed` in the requested mode.
-fn gate_for(observed: &Observed, fleet: &FleetResolved, host: &str, mode: GateMode) -> Option<GateBlock> {
+fn gate_for(
+    observed: &Observed,
+    fleet: &FleetResolved,
+    host: &str,
+    mode: GateMode,
+) -> Option<GateBlock> {
     let empty: HashSet<String> = HashSet::new();
-    let rollout = observed
-        .active_rollouts
-        .iter()
-        .find(|r| r.channel == fleet.hosts.get(host).map(|h| h.channel.as_str()).unwrap_or(""));
+    let rollout = observed.active_rollouts.iter().find(|r| {
+        r.channel
+            == fleet
+                .hosts
+                .get(host)
+                .map(|h| h.channel.as_str())
+                .unwrap_or("")
+    });
     let input = GateInput {
         fleet,
         observed,
@@ -142,7 +152,7 @@ fn stage1_edge_active_stable_held_in_both_modes() {
 
     // Dispatch mode: krach blocked.
     let v_dispatch = gate_for(&observed, &fleet, "krach", GateMode::Dispatch);
-    // Reconcile mode: ALSO blocked — predecessor is in observed and active-for-ordering.
+    // Reconcile mode: ALSO blocked - predecessor is in observed and active-for-ordering.
     let v_reconcile = gate_for(&observed, &fleet, "krach", GateMode::Reconcile);
 
     assert!(
@@ -207,7 +217,7 @@ fn stage2_edge_terminal_stable_released_in_both_modes() {
 
     assert_eq!(
         v_dispatch, None,
-        "stage 2 dispatch must release — predecessor in observed with all hosts terminal-for-ordering; got {v_dispatch:?}",
+        "stage 2 dispatch must release - predecessor in observed with all hosts terminal-for-ordering; got {v_dispatch:?}",
     );
     assert_eq!(
         v_reconcile, None,
@@ -215,7 +225,7 @@ fn stage2_edge_terminal_stable_released_in_both_modes() {
     );
 }
 
-/// Stage 3: legitimate divergence. Predecessor truly missing —
+/// Stage 3: legitimate divergence. Predecessor truly missing  -
 /// no rollout recorded for edge yet. Dispatch mode (conservative)
 /// blocks; Reconcile mode (in-tick authority via emitted_opens)
 /// releases. This is the documented mode asymmetry; pinning it
@@ -237,11 +247,11 @@ fn stage3_predecessor_truly_missing_modes_legitimately_diverge() {
 
     assert!(
         matches!(v_dispatch, Some(GateBlock::ChannelEdges { .. })),
-        "stage 3 dispatch must conservative-block — predecessor channel has hosts but no rollout; got {v_dispatch:?}",
+        "stage 3 dispatch must conservative-block - predecessor channel has hosts but no rollout; got {v_dispatch:?}",
     );
     assert_eq!(
         v_reconcile, None,
-        "stage 3 reconcile must permit — emitted_opens_in_tick is the authority; got {v_reconcile:?}",
+        "stage 3 reconcile must permit - emitted_opens_in_tick is the authority; got {v_reconcile:?}",
     );
 }
 
@@ -313,8 +323,14 @@ fn stage4_full_chain_release_to_dispatched_host_passes_in_both_modes() {
     let v_dispatch = gate_for(&observed, &fleet, "krach", GateMode::Dispatch);
     let v_reconcile = gate_for(&observed, &fleet, "krach", GateMode::Reconcile);
 
-    assert_eq!(v_dispatch, None, "stage 4 dispatch passes; got {v_dispatch:?}");
-    assert_eq!(v_reconcile, None, "stage 4 reconcile passes; got {v_reconcile:?}");
+    assert_eq!(
+        v_dispatch, None,
+        "stage 4 dispatch passes; got {v_dispatch:?}"
+    );
+    assert_eq!(
+        v_reconcile, None,
+        "stage 4 reconcile passes; got {v_reconcile:?}"
+    );
 }
 
 /// Stage 5: list_in_flight (UI view) excludes the terminal edge

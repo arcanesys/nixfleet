@@ -23,7 +23,7 @@
 -- (which collapsed input.rollout to None and disabled the gate).
 ALTER TABLE rollouts ADD COLUMN terminal_at TEXT;
 
--- Hot-path: "is this rollout in flight?" — used by list_in_flight and
+-- Hot-path: "is this rollout in flight?" - used by list_in_flight and
 -- by the orphan sweep. Mirrors the existing rollouts_channel_active_idx
 -- (intra-channel supersede) but covers the no-supersede-no-terminal
 -- intersection more directly.

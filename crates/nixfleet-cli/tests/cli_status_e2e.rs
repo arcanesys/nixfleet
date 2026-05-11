@@ -79,7 +79,7 @@ struct PkiBundle {
     ca_pem_path: PathBuf,
     server_cert: PathBuf,
     server_key: PathBuf,
-    /// `(cert_pem_path, key_pem_path)` — one entry per CN passed to mint, in order.
+    /// `(cert_pem_path, key_pem_path)` - one entry per CN passed to mint, in order.
     clients: Vec<(PathBuf, PathBuf)>,
 }
 
@@ -181,7 +181,7 @@ fn build_fleet_resolved(declared: &str) -> (String, Vec<u8>) {
 /// `(artifact, signature, trust)` to `dir`. The trust file uses the
 /// canonical `TrustConfig` shape (schemaVersion + ciReleaseKey.current
 /// as `{algorithm, public}`) the CP's `serde_json::from_str::<TrustConfig>`
-/// expects — the looser list shape is not accepted by the prod parser.
+/// expects - the looser list shape is not accepted by the prod parser.
 fn write_signed_fleet(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf) {
     let signing = SigningKey::generate(&mut OsRng);
     let pub_b64 = base64::engine::general_purpose::STANDARD.encode(signing.verifying_key());
@@ -305,7 +305,7 @@ async fn nixfleet_status_renders_two_real_hosts_after_checkins() {
     };
     let rendered = run_status(&cfg, false, false).await.expect("run_status");
 
-    // Snapshot key facts (not a byte-exact snapshot — the CP timestamps
+    // Snapshot key facts (not a byte-exact snapshot - the CP timestamps
     // row ages from `Utc::now()` at call time, so equality on the whole
     // table is racy. Assert load-bearing substrings instead).
     assert!(rendered.contains("HOST"), "header missing: {rendered}");
@@ -314,7 +314,7 @@ async fn nixfleet_status_renders_two_real_hosts_after_checkins() {
     assert!(rendered.contains(CHANNEL), "channel missing: {rendered}");
 
     // The hosts have just checked in with a "current" closure that does
-    // not match `declared` — they should not be `converged`. Either "in
+    // not match `declared` - they should not be `converged`. Either "in
     // progress" or a state-machine label is acceptable here; assert the
     // negative.
     assert!(

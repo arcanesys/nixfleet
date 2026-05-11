@@ -34,7 +34,7 @@ const HTTP_DRAIN_DEADLINE: Duration = Duration::from_secs(25);
 
 /// `/healthz` outside `/v1`; `/v1/enroll` is anonymous; all other `/v1/*` require mTLS.
 /// `/v1/*` is gated by `require_ready_layer` (#95) so agents get 503 + Retry-After
-/// until the first signed artifact is verified — no stale-state serving.
+/// until the first signed artifact is verified - no stale-state serving.
 fn build_router(state: Arc<AppState>) -> Router {
     let strict = state.strict;
     let auth_state = state.clone();
@@ -109,10 +109,10 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     if args.strict {
         let mut missing: Vec<&str> = Vec::new();
         if args.client_ca.is_none() {
-            missing.push("--client-ca (mTLS verification disabled — TLS-only mode)");
+            missing.push("--client-ca (mTLS verification disabled - TLS-only mode)");
         }
         if args.revocations.is_none() {
-            missing.push("--revocations-{artifact,signature}-url (revocations polling disabled — previously-revoked certs become valid again after CP rebuild)");
+            missing.push("--revocations-{artifact,signature}-url (revocations polling disabled - previously-revoked certs become valid again after CP rebuild)");
         }
         if !missing.is_empty() {
             anyhow::bail!(
@@ -157,7 +157,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         ..Default::default()
     };
     if args.mark_ready_at_startup {
-        // Test-only escape hatch — see ServeArgs::mark_ready_at_startup.
+        // Test-only escape hatch - see ServeArgs::mark_ready_at_startup.
         app_state
             .artifact_primed
             .store(true, std::sync::atomic::Ordering::Release);
@@ -271,7 +271,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
 
     // Pre-listener prime: bundled artifact is always older than upstream (CI commits release after build).
     // #95: success here flips `artifact_primed` so the listener can serve `/v1/*` immediately.
-    // Failure leaves the daemon in not-ready state — the spawned channel-refs / reconcile loops
+    // Failure leaves the daemon in not-ready state - the spawned channel-refs / reconcile loops
     // are responsible for flipping `artifact_primed` once they verify a snapshot.
     if let Some(channel_refs_source) = args.channel_refs.as_ref() {
         match tokio::time::timeout(
@@ -331,7 +331,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
             state.db.clone(),
             state.last_deferrals.clone(),
             channel_refs_source,
-            // Reconciler-driven event kick — closes the timing window
+            // Reconciler-driven event kick - closes the timing window
             // between channelEdges releasing and the rollouts table
             // reflecting the new successor. See AppState::channel_refs_kick.
             Some(state.channel_refs_kick.subscribe()),
@@ -367,7 +367,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     } else {
         tracing::warn!(
             "control plane started without --client-ca: /v1/* endpoints will reject all clients with 401. \
-             Pass --client-ca to enable mTLS — recommended for any production deployment."
+             Pass --client-ca to enable mTLS - recommended for any production deployment."
         );
         "TLS-only"
     };

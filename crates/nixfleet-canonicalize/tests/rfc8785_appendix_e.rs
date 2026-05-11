@@ -5,16 +5,8 @@ use nixfleet_canonicalize::canonicalize;
 const CASES: &[(&str, &str, &str)] = &[
     ("empty_object", "{}", "{}"),
     ("empty_array", "[]", "[]"),
-    (
-        "keys_sorted_simple",
-        r#"{"a":1,"b":2}"#,
-        r#"{"a":1,"b":2}"#,
-    ),
-    (
-        "keys_unsorted",
-        r#"{"b":2,"a":1}"#,
-        r#"{"a":1,"b":2}"#,
-    ),
+    ("keys_sorted_simple", r#"{"a":1,"b":2}"#, r#"{"a":1,"b":2}"#),
+    ("keys_unsorted", r#"{"b":2,"a":1}"#, r#"{"a":1,"b":2}"#),
     // Numeric keys sort as strings: "10" < "2".
     (
         "numeric_keys_sort_lexicographically",

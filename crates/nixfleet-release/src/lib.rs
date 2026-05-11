@@ -32,7 +32,7 @@ pub enum HostsSpec {
     AutoExclude(Vec<String>),
     /// Explicit list (order preserved). Names appearing in both
     /// `nixosConfigurations` and `darwinConfigurations` error out
-    /// at classify time — operator must disambiguate.
+    /// at classify time - operator must disambiguate.
     Explicit(Vec<String>),
 }
 
@@ -88,7 +88,7 @@ pub struct ReleaseConfig {
     /// Optional at the type level; required at runtime iff any
     /// non-expired host pin specifies a commit different from the
     /// current release commit. Validation fires after eval (where
-    /// pins are visible) — see `validate_pin_source_url`.
+    /// pins are visible) - see `validate_pin_source_url`.
     pub pin_source_url: Option<String>,
 }
 
@@ -120,7 +120,7 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
 
     let hosts = enumerate_hosts(config)?;
     if hosts.is_empty() {
-        bail!("no hosts to release — empty enumeration");
+        bail!("no hosts to release - empty enumeration");
     }
     let host_names: Vec<&str> = hosts.iter().map(|(n, _)| n.as_str()).collect();
     tracing::info!(count = hosts.len(), hosts = ?host_names, "enumerated");
@@ -128,7 +128,7 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
     // Issue #88: eval BEFORE build so pin metadata can branch the build
     // path per host. Pre-#88 this happened after build because eval was
     // only used to inject closure_hashes; pins make eval load-bearing for
-    // the build itself. The reorder is safe — eval is its own nix
+    // the build itself. The reorder is safe - eval is its own nix
     // invocation with no build-output dependency.
     let mut resolved = eval_fleet_resolved(config)?;
     let current_commit = git_head_sha(&config.flake_dir).ok();
@@ -153,7 +153,9 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
     inject_closure_hashes(&mut resolved, &hashes);
 
     let release_path = config.release_dir.join(&config.artifact_name);
-    let signature_path = config.release_dir.join(format!("{}.sig", config.artifact_name));
+    let signature_path = config
+        .release_dir
+        .join(format!("{}.sig", config.artifact_name));
     let preserved_signed_at: Option<DateTime<Utc>> = if config.reuse_unchanged_signature {
         load_existing_signed_at_if_unchanged(&release_path, &resolved)?
     } else {
@@ -164,7 +166,12 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
     // Issue #88: `current_commit` was already captured before build to
     // drive pin-source validation; reuse here for `meta.ciCommit`.
     let ci_commit = current_commit.clone();
-    stamp_meta(&mut resolved, signed_at, ci_commit.clone(), &config.signature_algorithm);
+    stamp_meta(
+        &mut resolved,
+        signed_at,
+        ci_commit.clone(),
+        &config.signature_algorithm,
+    );
 
     let canonical = canonicalize_resolved(&resolved)?;
 
@@ -180,9 +187,14 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
         smoke_verify(canonical.as_bytes(), &sig_bytes)?;
     }
 
-    write_release(&config.release_dir, &config.artifact_name, canonical.as_bytes(), &sig_bytes)?;
+    write_release(
+        &config.release_dir,
+        &config.artifact_name,
+        canonical.as_bytes(),
+        &sig_bytes,
+    )?;
 
-    // LOADBEARING: empty list still emits the file — CP-rebuild recovery
+    // LOADBEARING: empty list still emits the file - CP-rebuild recovery
     // primes `cert_revocations` from this and a missing file would unlock
     // every revoked cert on rebuild.
     let mut revocations_paths: Vec<PathBuf> = Vec::new();
@@ -198,13 +210,10 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
                 signature_algorithm: Some(config.signature_algorithm.clone()),
             },
         };
-        let revs_json = serde_json::to_string(&revs)
-            .context("serialise revocations.json")?;
+        let revs_json = serde_json::to_string(&revs).context("serialise revocations.json")?;
         let revs_canonical = nixfleet_canonicalize::canonicalize(&revs_json)
             .context("canonicalize revocations.json")?;
-        let revs_sig_path = config
-            .release_dir
-            .join("revocations.json.sig");
+        let revs_sig_path = config.release_dir.join("revocations.json.sig");
         let revs_path = config.release_dir.join("revocations.json");
         // Reuse-unchanged short-circuit: existing canonical bytes match
         // → reuse on-disk signature (idempotent, byte-stable).
@@ -294,12 +303,13 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
         let mut release_files = vec![release_path.clone(), signature_path.clone()];
         release_files.extend(revocations_paths.iter().cloned());
         release_files.extend(manifest_paths.iter().cloned());
-        let committed = git_commit_release(config, &release_files, ci_commit.as_deref(), signed_at)?;
+        let committed =
+            git_commit_release(config, &release_files, ci_commit.as_deref(), signed_at)?;
         if let Some(c) = &config.git_push {
             if committed {
                 git_push_release(&config.flake_dir, c)?;
             } else {
-                tracing::info!("no release change — skip push");
+                tracing::info!("no release change - skip push");
             }
         }
         commit_sha = if committed {
@@ -370,7 +380,7 @@ fn enumerate_hosts(config: &ReleaseConfig) -> Result<Vec<(String, HostKind)>> {
                 (false, true) => Ok((n.clone(), HostKind::Darwin)),
                 (true, true) => Err(anyhow::anyhow!(
                     "host '{n}' is declared in both nixosConfigurations and \
-                     darwinConfigurations — disambiguate before releasing"
+                     darwinConfigurations - disambiguate before releasing"
                 )),
                 (false, false) => Err(anyhow::anyhow!(
                     "host '{n}' is in neither nixosConfigurations nor \
@@ -388,12 +398,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn eval_revocations(config: &ReleaseConfig, attr: &str) -> Result<Vec<RevocationEntry>> {
     let output = Command::new("nix")
-        .args([
-            "eval",
-            "--json",
-            "--no-warn-dirty",
-            &format!(".#{attr}"),
-        ])
+        .args(["eval", "--json", "--no-warn-dirty", &format!(".#{attr}")])
         .current_dir(&config.flake_dir)
         .output()
         .with_context(|| format!("invoke `nix eval .#{attr}`"))?;
@@ -473,7 +478,7 @@ fn build_hosts(
             }
             Some(commit) => {
                 let url = config.pin_source_url.as_deref().ok_or_else(|| {
-                    // Should be unreachable — `validate_pin_source_url`
+                    // Should be unreachable - `validate_pin_source_url`
                     // catches this earlier. Defensive bail keeps the path
                     // honest in case the validation is bypassed in tests.
                     anyhow::anyhow!(
@@ -494,7 +499,7 @@ fn build_hosts(
 /// `Some(commit)` iff host has a pin AND `pin.commit ≠ current_commit`.
 /// `None` for unpinned hosts and for pins that target the same commit
 /// we're already releasing (the local build path is correct in that
-/// case — no point invoking the flake-ref machinery).
+/// case - no point invoking the flake-ref machinery).
 fn pin_target_commit<'a>(
     resolved: &'a FleetResolved,
     host: &str,
@@ -526,12 +531,7 @@ fn build_local(flake_dir: &Path, attr: &str) -> Result<String> {
 /// lets Nix handle checkout + caching; we don't manage a worktree
 /// ourselves. The host attr path mirrors the local build (Nix vs Darwin
 /// is consumed identically at the pinned source).
-fn build_pinned(
-    pin_source_url: &str,
-    commit: &str,
-    kind: HostKind,
-    host: &str,
-) -> Result<String> {
+fn build_pinned(pin_source_url: &str, commit: &str, kind: HostKind, host: &str) -> Result<String> {
     let attr = format!(
         "{pin_source_url}?rev={commit}#{}.{host}.config.system.build.toplevel",
         kind.attr_prefix()
@@ -543,7 +543,13 @@ fn build_pinned(
         "building pinned host via flake-ref",
     );
     let output = Command::new("nix")
-        .args(["build", "--no-link", "--print-out-paths", "--no-warn-dirty", &attr])
+        .args([
+            "build",
+            "--no-link",
+            "--print-out-paths",
+            "--no-warn-dirty",
+            &attr,
+        ])
         .output()
         .with_context(|| format!("invoke `nix build {attr}`"))?;
     interpret_build_output(&attr, output)
@@ -576,7 +582,7 @@ pub fn filter_expired_pins(resolved: &mut FleetResolved, now: DateTime<Utc>) {
                         host = %host_name,
                         expired_at = %expires,
                         commit = %pin.commit,
-                        "pin expired — falling back to current-commit build",
+                        "pin expired - falling back to current-commit build",
                     );
                     host.pin = None;
                 }
@@ -664,21 +670,13 @@ pub(crate) fn eval_fleet_resolved(config: &ReleaseConfig) -> Result<FleetResolve
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let resolved: FleetResolved =
-        serde_json::from_slice(&output.stdout).with_context(|| {
-            format!(
-                "parse {} as FleetResolved",
-                config.fleet_resolved_attr
-            )
-        })?;
+    let resolved: FleetResolved = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("parse {} as FleetResolved", config.fleet_resolved_attr))?;
     Ok(resolved)
 }
 
 /// Sets `hosts[h].closureHash`. Unknown hosts in `hashes` are silently skipped.
-pub fn inject_closure_hashes(
-    resolved: &mut FleetResolved,
-    hashes: &BTreeMap<String, String>,
-) {
+pub fn inject_closure_hashes(resolved: &mut FleetResolved, hashes: &BTreeMap<String, String>) {
     for (host, hash) in hashes {
         if let Some(h) = resolved.hosts.get_mut(host) {
             h.closure_hash = Some(hash.clone());
@@ -799,7 +797,10 @@ mod tests {
     fn inject_sets_closure_hash_for_known_hosts_and_skips_unknown() {
         let mut r = dummy_resolved();
         let mut hashes = BTreeMap::new();
-        hashes.insert("test-host".to_string(), "abc123-nixos-system-test-host".to_string());
+        hashes.insert(
+            "test-host".to_string(),
+            "abc123-nixos-system-test-host".to_string(),
+        );
         hashes.insert("ghost".to_string(), "should-be-ignored".to_string());
         inject_closure_hashes(&mut r, &hashes);
         assert_eq!(
@@ -1005,7 +1006,9 @@ mod tests {
     fn sha256_hex_is_64_char_lowercase() {
         let h = sha256_hex(b"hello world");
         assert_eq!(h.len(), 64);
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(h
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         // known sha256("hello world")
         assert_eq!(
             h,
@@ -1090,10 +1093,7 @@ mod tests {
 
         let mut r = pin_resolved(Some(fresh_pin("c2", Some(future))));
         filter_expired_pins(&mut r, now);
-        assert!(
-            r.hosts["test-host"].pin.is_some(),
-            "fresh pin must survive",
-        );
+        assert!(r.hosts["test-host"].pin.is_some(), "fresh pin must survive",);
 
         let mut r = pin_resolved(Some(fresh_pin("c3", None)));
         filter_expired_pins(&mut r, now);
@@ -1165,7 +1165,7 @@ mod tests {
     #[test]
     fn validate_pin_source_url_ok_when_pin_matches_release_commit() {
         // Pin that targets the SAME commit being released doesn't need a
-        // source URL — the local build path handles it.
+        // source URL - the local build path handles it.
         let c = base_config();
         let r = pin_resolved(Some(fresh_pin("matching-commit", None)));
         validate_pin_source_url(&c, &r, Some("matching-commit")).unwrap();

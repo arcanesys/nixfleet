@@ -9,9 +9,7 @@ use chrono::{Duration as ChronoDuration, Utc};
 use common::{install_crypto_provider_once, pick_free_port, wait_for_listener_ready};
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_control_plane::server;
-use nixfleet_proto::enroll_wire::{
-    BootstrapToken, EnrollRequest, EnrollResponse, TokenClaims,
-};
+use nixfleet_proto::enroll_wire::{BootstrapToken, EnrollRequest, EnrollResponse, TokenClaims};
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, CertificateSigningRequest, DnType,
     ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, PublicKeyData,
@@ -35,8 +33,7 @@ fn mint_fleet_ca(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let ca_key = KeyPair::generate().unwrap();
     let ca_cert: Certificate = ca_params.self_signed(&ca_key).unwrap();
 
-    let mut server_params =
-        CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+    let mut server_params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
     server_params
         .distinguished_name
         .push(DnType::CommonName, "test-cp-server");
@@ -67,9 +64,7 @@ fn mint_csr_with_seed(hostname: &str, seed: &[u8; 32]) -> (String, Vec<u8>, Stri
     let pkcs8_pem = nixfleet_proto::host_key::ed25519_pkcs8_pem_from_seed(seed);
     let key = KeyPair::from_pem(&pkcs8_pem).unwrap();
     let mut params = CertificateParams::default();
-    params
-        .distinguished_name
-        .push(DnType::CommonName, hostname);
+    params.distinguished_name.push(DnType::CommonName, hostname);
     let csr: CertificateSigningRequest = params.serialize_request(&key).unwrap();
     let pem = csr.pem().unwrap();
 
@@ -108,7 +103,7 @@ fn openssh_pubkey_from_seed(seed: &[u8; 32]) -> String {
 ///
 /// Returns `(artifact, signature, trust)` paths. The single trust.json
 /// is BOTH `args.trust_path` for the polling loop AND
-/// `dirname(fleet_ca_cert)/trust.json` for the enroll handler — same
+/// `dirname(fleet_ca_cert)/trust.json` for the enroll handler - same
 /// file, two readers.
 fn write_signed_fleet_with_host(
     dir: &TempDir,
@@ -118,8 +113,8 @@ fn write_signed_fleet_with_host(
 ) -> (PathBuf, PathBuf, PathBuf) {
     let mut rng = rand::thread_rng();
     let ci_signing_key = SigningKey::generate(&mut rng);
-    let public_b64 = base64::engine::general_purpose::STANDARD
-        .encode(ci_signing_key.verifying_key());
+    let public_b64 =
+        base64::engine::general_purpose::STANDARD.encode(ci_signing_key.verifying_key());
 
     let signed_at = "2026-04-26T00:00:00Z";
     let json = serde_json::json!({
@@ -472,7 +467,7 @@ async fn enroll_rejects_replayed_nonce() {
 /// CSR pubkey doesn't match the host's declared SSH pubkey in
 /// fleet.nix. Closes RFC-0003 §2: even with a valid bootstrap token,
 /// the agent must produce a CSR signed by the SSH host key the
-/// operator already declared — replay/swap of a leaked-token-elsewhere
+/// operator already declared - replay/swap of a leaked-token-elsewhere
 /// can't enrol with a different keypair.
 #[tokio::test]
 async fn enroll_rejects_csr_pubkey_mismatch_with_declared_host() {
@@ -486,7 +481,10 @@ async fn enroll_rejects_csr_pubkey_mismatch_with_declared_host() {
     // CSR signed with a DIFFERENT seed than what fleet.nix declares.
     let mut imposter_seed = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut imposter_seed);
-    assert_ne!(declared_seed, imposter_seed, "test setup: seeds must differ");
+    assert_ne!(
+        declared_seed, imposter_seed,
+        "test setup: seeds must differ"
+    );
     let (csr_pem, _, fingerprint, _) = mint_csr_with_seed("test-host", &imposter_seed);
 
     let now = Utc::now();
@@ -518,7 +516,7 @@ async fn enroll_rejects_csr_pubkey_mismatch_with_declared_host() {
 
 /// Host hasn't been declared in fleet.nix at all. Closes #9: enrollment
 /// is gated on the operator having added the host (with pubkey)
-/// declaratively first — there's no permissive fallback.
+/// declaratively first - there's no permissive fallback.
 #[tokio::test]
 async fn enroll_rejects_when_host_not_declared_in_fleet() {
     use rand::RngCore;

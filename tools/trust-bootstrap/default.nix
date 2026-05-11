@@ -1,4 +1,4 @@
-# nixfleet-trust-bootstrap — operator tool that mints the offline fleet
+# nixfleet-trust-bootstrap - operator tool that mints the offline fleet
 # root CA and signs the TPM-bound issuance CA cert. Standing workflows:
 # new-fleet stand-up, annual issuance-CA renewal, TPM rotation, disaster
 # recovery.
@@ -18,5 +18,5 @@ pkgs.writeShellApplication {
   text = builtins.readFile ./bootstrap.sh;
   # writeShellApplication runs `shellcheck` on the body. The script
   # uses heredocs and printf hex escapes that shellcheck will analyse
-  # cleanly — no excludes needed.
+  # cleanly - no excludes needed.
 }

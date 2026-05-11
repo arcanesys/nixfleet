@@ -25,7 +25,7 @@ use nixfleet_agent::evidence_signer::{try_sign, EvidenceSigner};
 use crate::Args;
 
 /// Shared dispatch context. Handlers are free functions in the sibling
-/// modules — telemetry-only, never propagate errors.
+/// modules - telemetry-only, never propagate errors.
 pub(crate) struct DispatchCtx<'a, R: Reporter> {
     pub target: &'a EvaluatedTarget,
     pub reporter: &'a R,
@@ -52,10 +52,12 @@ mod tests {
     use nixfleet_agent::evidence_signer::EvidenceSigner;
     use nixfleet_proto::agent_wire::{EvaluatedTarget, ReportEvent};
 
-    use super::DispatchCtx;
     use super::deferred::handle_deferred_pending_reboot;
-    use super::quarantined::{evaluate as evaluate_quarantine, post_quarantine_event, QuarantineDecision};
+    use super::quarantined::{
+        evaluate as evaluate_quarantine, post_quarantine_event, QuarantineDecision,
+    };
     use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
+    use super::DispatchCtx;
     use crate::Args;
 
     #[derive(Default)]
@@ -247,7 +249,7 @@ mod tests {
             now,
         )
         .unwrap();
-        // 25 hours later — outside the 24h quarantine window.
+        // 25 hours later - outside the 24h quarantine window.
         let later = now + chrono::Duration::hours(25);
         assert!(matches!(
             evaluate_quarantine(dir.path(), &target, later),
@@ -274,12 +276,14 @@ mod tests {
         args.state_dir = dir.path().to_path_buf();
         let signer: Arc<Option<EvidenceSigner>> = Arc::new(None);
 
-        let record_first =
-            match evaluate_quarantine(&args.state_dir, &target, now + chrono::Duration::seconds(60))
-            {
-                QuarantineDecision::Suppress(r) => r,
-                _ => panic!("expected Suppress"),
-            };
+        let record_first = match evaluate_quarantine(
+            &args.state_dir,
+            &target,
+            now + chrono::Duration::seconds(60),
+        ) {
+            QuarantineDecision::Suppress(r) => r,
+            _ => panic!("expected Suppress"),
+        };
         post_quarantine_event(
             &ctx(&target, &fake, &args, &signer),
             record_first,
@@ -288,13 +292,15 @@ mod tests {
         .await;
         assert_eq!(fake.calls().len(), 1, "first suppression posts");
 
-        // 5 minutes later — inside the 1h throttle window — should NOT re-post.
-        let record_second =
-            match evaluate_quarantine(&args.state_dir, &target, now + chrono::Duration::seconds(360))
-            {
-                QuarantineDecision::Suppress(r) => r,
-                _ => panic!("expected Suppress"),
-            };
+        // 5 minutes later - inside the 1h throttle window - should NOT re-post.
+        let record_second = match evaluate_quarantine(
+            &args.state_dir,
+            &target,
+            now + chrono::Duration::seconds(360),
+        ) {
+            QuarantineDecision::Suppress(r) => r,
+            _ => panic!("expected Suppress"),
+        };
         post_quarantine_event(
             &ctx(&target, &fake, &args, &signer),
             record_second,
@@ -303,13 +309,15 @@ mod tests {
         .await;
         assert_eq!(fake.calls().len(), 1, "throttled within 1h window");
 
-        // 70 minutes after first post — past the throttle — should re-post.
-        let record_third =
-            match evaluate_quarantine(&args.state_dir, &target, now + chrono::Duration::seconds(60 + 4200))
-            {
-                QuarantineDecision::Suppress(r) => r,
-                _ => panic!("expected Suppress"),
-            };
+        // 70 minutes after first post - past the throttle - should re-post.
+        let record_third = match evaluate_quarantine(
+            &args.state_dir,
+            &target,
+            now + chrono::Duration::seconds(60 + 4200),
+        ) {
+            QuarantineDecision::Suppress(r) => r,
+            _ => panic!("expected Suppress"),
+        };
         post_quarantine_event(
             &ctx(&target, &fake, &args, &signer),
             record_third,
@@ -345,11 +353,8 @@ mod tests {
         let args = sample_args();
         let signer: Arc<Option<EvidenceSigner>> = Arc::new(None);
 
-        handle_deferred_pending_reboot(
-            &ctx(&target, &fake, &args, &signer),
-            "dbus".to_string(),
-        )
-        .await;
+        handle_deferred_pending_reboot(&ctx(&target, &fake, &args, &signer), "dbus".to_string())
+            .await;
 
         let calls = fake.calls();
         assert_eq!(calls.len(), 1, "expected exactly one post; got {:?}", calls);

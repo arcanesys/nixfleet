@@ -3,8 +3,8 @@
 mod common;
 
 use common::{
-    install_crypto_provider_once, pick_free_port, wait_for_listener_ready,
-    write_phase2_input_stubs, write_pem,
+    install_crypto_provider_once, pick_free_port, wait_for_listener_ready, write_pem,
+    write_phase2_input_stubs,
 };
 use nixfleet_control_plane::server;
 use rcgen::{generate_simple_self_signed, CertifiedKey};

@@ -1,4 +1,4 @@
-# FOOTGUN: eval-only — don't builtins.readFile the trust.json derivation (IFD).
+# FOOTGUN: eval-only - don't builtins.readFile the trust.json derivation (IFD).
 {
   lib,
   cfg,

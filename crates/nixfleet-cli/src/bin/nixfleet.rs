@@ -160,14 +160,8 @@ async fn main() -> Result<()> {
             eprintln!("wrote {}", written.display());
             Ok(())
         }
-        Commands::DerivePubkey(args) => {
-            nixfleet_cli::commands::derive_pubkey::run(args)
-        }
-        Commands::MintOperatorCert(args) => {
-            nixfleet_cli::commands::mint_operator_cert::run(args)
-        }
-        Commands::MintToken(args) => {
-            nixfleet_cli::commands::mint_token::run(args)
-        }
+        Commands::DerivePubkey(args) => nixfleet_cli::commands::derive_pubkey::run(args),
+        Commands::MintOperatorCert(args) => nixfleet_cli::commands::mint_operator_cert::run(args),
+        Commands::MintToken(args) => nixfleet_cli::commands::mint_token::run(args),
     }
 }

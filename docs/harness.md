@@ -89,7 +89,7 @@ default 256 MB per guest, a 16GB machine can host fleet-20 comfortably
   and signature-verify code land.
 - **No signature verification yet**: the fixture has
   `meta.signatureAlgorithm: null`. Once the Nix layer signs artifacts and
-  the Rust runtime verifies them, the agent stub becomes the wire-up point —
+  the Rust runtime verifies them, the agent stub becomes the wire-up point  - 
   search for `TODO(5)` markers in `nodes/agent.nix`.
 - **Only `fleet-harness-smoke` is registered**: no canary, no rollback,
   no compliance, no freshness scenarios yet. Those are Checkpoint 2

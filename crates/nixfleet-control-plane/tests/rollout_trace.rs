@@ -239,7 +239,7 @@ async fn dispatch_then_confirm_then_trace_round_trips() {
     assert_eq!(event.target_closure_hash, DECLARED_CLOSURE);
     assert_eq!(event.target_channel_ref, target.channel_ref);
     // GOTCHA: confirm flips host_dispatch_state but does NOT terminalise
-    // dispatch_history — that's the reconciler/supersession's job. So the
+    // dispatch_history - that's the reconciler/supersession's job. So the
     // event reads "still open" until a converge sweep stamps it.
     assert!(
         event.terminal_state.is_none(),
@@ -248,7 +248,7 @@ async fn dispatch_then_confirm_then_trace_round_trips() {
         event.terminal_state,
     );
     assert!(event.terminal_at.is_none());
-    // dispatched_at is the SQL `datetime('now')` default — RFC3339-shaped
+    // dispatched_at is the SQL `datetime('now')` default - RFC3339-shaped
     // is contract; just sanity-check non-empty rather than parse.
     assert!(!event.dispatched_at.is_empty(), "dispatched_at populated");
 

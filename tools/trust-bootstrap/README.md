@@ -28,13 +28,13 @@ Outputs (under `--output-dir`):
 
 The script supports four standing operator workflows:
 
-1. **New fleet stand-up** — generate root + sign issuance CA from a
+1. **New fleet stand-up** - generate root + sign issuance CA from a
    freshly-provisioned TPM keyslot. Run once per fleet.
-2. **Issuance CA renewal** — resign the issuance CA cert (default
+2. **Issuance CA renewal** - resign the issuance CA cert (default
    validity 1y) using the same TPM pubkey. Run yearly.
-3. **TPM rotation** — sign a new issuance CA from a new TPM keyslot
+3. **TPM rotation** - sign a new issuance CA from a new TPM keyslot
    after hardware replacement. Same root, new TPM-bound CA.
-4. **Disaster recovery** — rebuild lab CP from scratch; the offline
+4. **Disaster recovery** - rebuild lab CP from scratch; the offline
    root signs whatever new TPM is provisioned. Same root identity, new
    issuance chain.
 
@@ -51,7 +51,7 @@ Default keyslot name is `issuanceCA`; override with
 ## Output dir convention
 
 The script writes to `${HOME}/.config/nixfleet` by default. The fleet
-root key (`fleet-root.key.pem`, mode 0600) stays there permanently —
+root key (`fleet-root.key.pem`, mode 0600) stays there permanently  - 
 the operator's workstation IS the offline root custody location until
 a Yubikey migration lands.
 

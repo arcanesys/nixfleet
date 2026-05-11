@@ -29,23 +29,23 @@
 
     sections = [
       {
-        heading = "Trust roots — `nixfleet.trust.*`";
+        heading = "Trust roots - `nixfleet.trust.*`";
         file = ../contracts/trust.nix;
       }
       {
-        heading = "Agent — `services.nixfleet-agent.*`";
+        heading = "Agent - `services.nixfleet-agent.*`";
         file = ./scopes/nixfleet/_agent-options.nix;
       }
       {
-        heading = "Control plane — `services.nixfleet-control-plane.*`";
+        heading = "Control plane - `services.nixfleet-control-plane.*`";
         file = ./scopes/nixfleet/_control-plane.nix;
       }
       {
-        heading = "Operator workstation tooling — `nixfleet.operator.*`";
+        heading = "Operator workstation tooling - `nixfleet.operator.*`";
         file = ./scopes/nixfleet/_operator.nix;
       }
       {
-        heading = "Binary cache (consumer) — `services.nixfleet-cache.*`";
+        heading = "Binary cache (consumer) - `services.nixfleet-cache.*`";
         file = ./scopes/nixfleet/_cache.nix;
       }
     ];

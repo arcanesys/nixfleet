@@ -22,7 +22,7 @@ impl FileConfig {
             std::fs::create_dir_all(parent)?;
         }
         let body = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
-        // Write 0600 — config holds paths to private key material.
+        // Write 0600 - config holds paths to private key material.
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -113,13 +113,17 @@ pub fn resolve(
         .clone()
         .or_else(|| env.client_cert.clone())
         .or(file.client_cert)
-        .ok_or(ConfigError::Missing { field: "client_cert" })?;
+        .ok_or(ConfigError::Missing {
+            field: "client_cert",
+        })?;
     let client_key = flags
         .client_key
         .clone()
         .or_else(|| env.client_key.clone())
         .or(file.client_key)
-        .ok_or(ConfigError::Missing { field: "client_key" })?;
+        .ok_or(ConfigError::Missing {
+            field: "client_key",
+        })?;
     Ok(crate::ResolvedClientConfig {
         cp_url,
         ca_cert,

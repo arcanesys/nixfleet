@@ -10,7 +10,7 @@
   hostClosureHashes ? {},
   onHealthFailure ? "halt",
   # OpenSSH-format public keys per agent, e.g.
-  # `{ "agent-01" = "ssh-ed25519 AAAA…"; "agent-99" = "ssh-ed25519 …"; }`.
+  # `{ "agent-01" = "ssh-ed25519 AAAA..."; "agent-99" = "ssh-ed25519 ..."; }`.
   # The CP binds agent CSRs (/v1/enroll) and last_confirmed_at
   # attestations against the host's declared pubkey per #43. Entries
   # for the built-in harness hosts (agent-01, agent-02, cp) override

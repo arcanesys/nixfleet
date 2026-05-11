@@ -13,11 +13,13 @@ use crate::Args;
 
 use super::confirm::handle_fired_and_polled;
 use super::deferred::handle_deferred_pending_reboot;
-use super::DispatchCtx;
 use super::manifest_error;
-use super::quarantined::{evaluate as evaluate_quarantine, post_quarantine_event, QuarantineDecision};
+use super::quarantined::{
+    evaluate as evaluate_quarantine, post_quarantine_event, QuarantineDecision,
+};
 use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
 use super::verify_mismatch::{handle_switch_failed, handle_verify_mismatch};
+use super::DispatchCtx;
 
 /// Map a manifest-cache result onto the wire enum the CP circuit-breaker
 /// understands. `Missing` is HTTP-shaped (404 / 5xx / network) → FetchFailed;
@@ -65,7 +67,7 @@ pub(crate) async fn process_dispatch_target(
             signed_at = %signed_at,
             freshness_window_secs,
             age_secs,
-            "agent: refusing stale target — fleet.resolved older than freshness_window + 60s slack",
+            "agent: refusing stale target - fleet.resolved older than freshness_window + 60s slack",
         );
         let stale_payload = nixfleet_agent::evidence_signer::StaleTargetSignedPayload {
             hostname: &args.machine_id,
@@ -93,17 +95,21 @@ pub(crate) async fn process_dispatch_target(
         return;
     }
 
-    // LOADBEARING: verify manifest + membership BEFORE consuming any target field — refuse-to-act.
+    // LOADBEARING: verify manifest + membership BEFORE consuming any target field - refuse-to-act.
     let rollout_id = target.rollout_id.as_str();
-    let cache = nixfleet_agent::manifest_cache::ManifestCache::new(
-        &args.state_dir,
-        &args.trust_file,
-    );
+    let cache =
+        nixfleet_agent::manifest_cache::ManifestCache::new(&args.state_dir, &args.trust_file);
     let wave_index = target.wave_index.unwrap_or(0);
     let fetch_result = cache
-        .ensure(client, &args.control_plane_url, rollout_id, &args.machine_id, wave_index)
+        .ensure(
+            client,
+            &args.control_plane_url,
+            rollout_id,
+            &args.machine_id,
+            wave_index,
+        )
         .await;
-    // Persist outcome BEFORE any branch returns — CP's circuit breaker
+    // Persist outcome BEFORE any branch returns - CP's circuit breaker
     // (Decision::HoldAfterFailure) reads this on the next checkin.
     let _ = nixfleet_agent::checkin_state::write_last_fetch_outcome(
         &args.state_dir,
@@ -125,7 +131,7 @@ pub(crate) async fn process_dispatch_target(
 
     // Boot-recovery is the retroactive-confirm path; for non-confirmable
     // targets (no activate block) there's no recovery work, so skip the
-    // write entirely. GOTCHA: write failure only loses boot-recovery —
+    // write entirely. GOTCHA: write failure only loses boot-recovery  -
     // next-checkin re-dispatches.
     if let Some(activate) = target.activate.as_ref() {
         let dispatch_record = nixfleet_agent::checkin_state::LastDispatchRecord {
@@ -136,10 +142,9 @@ pub(crate) async fn process_dispatch_target(
             confirm_endpoint: activate.confirm_endpoint.clone(),
             dispatched_at: chrono::Utc::now(),
         };
-        if let Err(err) = nixfleet_agent::checkin_state::write_last_dispatched(
-            &args.state_dir,
-            &dispatch_record,
-        ) {
+        if let Err(err) =
+            nixfleet_agent::checkin_state::write_last_dispatched(&args.state_dir, &dispatch_record)
+        {
             tracing::warn!(
                 error = %err,
                 state_dir = %args.state_dir.display(),
@@ -151,10 +156,10 @@ pub(crate) async fn process_dispatch_target(
     // Issue #56: suppress redundant activate-and-defer cycles. If the previous
     // attempt for THIS exact closure_hash already deferred (profile is set,
     // awaiting reboot), there's no point re-running realise + nix-env --set +
-    // inhibitor detection on every poll — the outcome won't change until
+    // inhibitor detection on every poll - the outcome won't change until
     // either reboot or a fresher closure_hash supersedes. Cleared by
     // `record_confirm_success` (post-reboot retroactive confirm). A different
-    // closure_hash naturally bypasses the match — dispatch proceeds normally.
+    // closure_hash naturally bypasses the match - dispatch proceeds normally.
     //
     // Read failure is fail-open (don't suppress): the CP-side
     // `apply_deferred_pending_reboot_transition` is idempotent, so a re-post
@@ -167,7 +172,7 @@ pub(crate) async fn process_dispatch_target(
         tracing::debug!(
             target_closure = %target.closure_hash,
             channel_ref = %target.channel_ref,
-            "agent: skipping dispatch — already deferred for this closure (awaiting reboot)",
+            "agent: skipping dispatch - already deferred for this closure (awaiting reboot)",
         );
         return;
     }

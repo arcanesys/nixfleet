@@ -1,10 +1,10 @@
-//! Disruption-budget gate — `max_in_flight` enforced at dispatch time.
+//! Disruption-budget gate - `max_in_flight` enforced at dispatch time.
 //!
 //! Migrated from `crate::host_state::budgets::{budget_max, in_flight_count}`.
 //! The reconciler's `handle_wave` checks this; this is the missing
 //! enforcement at the dispatch endpoint that bit us during the
 //! supersession test (krach + aether dispatched within seconds despite
-//! `dev maxInFlight=1` — only avoided because aether's closure was
+//! `dev maxInFlight=1` - only avoided because aether's closure was
 //! unchanged and went through `Decision::Converged`).
 //!
 //! Cross-rollout enforcement: budgets match by `selector` equality
@@ -16,7 +16,7 @@
 //!
 //! Budget snapshots are read from `rollout.budgets` (frozen at
 //! OpenRollout time, signed into the rollout manifest). Mid-rollout
-//! retags do NOT reshape budget membership — the cascading-dispatch
+//! retags do NOT reshape budget membership - the cascading-dispatch
 //! hazard from live resolution is structurally impossible by design.
 
 use crate::observed::Observed;
@@ -47,7 +47,7 @@ pub fn check(input: &GateInput) -> Option<GateBlock> {
 
 /// Sum of in-flight hosts across all active rollouts whose snapshot has
 /// a budget with the matching `selector`. Match by selector equality
-/// (not list index) — see module doc.
+/// (not list index) - see module doc.
 fn in_flight_count(observed: &Observed, selector: &Selector) -> u32 {
     observed
         .active_rollouts

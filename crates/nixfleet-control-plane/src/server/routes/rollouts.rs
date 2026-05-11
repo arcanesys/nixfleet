@@ -44,7 +44,7 @@ fn try_load_from_dir(dir: &FsPath, rollout_id: &str) -> Result<Option<ManifestPa
     let sig_bytes = match std::fs::read(&sig_path) {
         Ok(b) => b,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            // GOTCHA: manifest present but sig missing — refuse rather than serve unverifiable bytes.
+            // GOTCHA: manifest present but sig missing - refuse rather than serve unverifiable bytes.
             tracing::warn!(
                 rollout_id = %rollout_id,
                 "rollouts handler: signature file missing for present manifest",
@@ -64,7 +64,7 @@ fn try_load_from_dir(dir: &FsPath, rollout_id: &str) -> Result<Option<ManifestPa
 }
 
 /// LOADBEARING: filename IS the sha256; mismatch means corruption or
-/// wrong-bytes-for-id. Hashes received bytes directly — never re-serialises
+/// wrong-bytes-for-id. Hashes received bytes directly - never re-serialises
 /// a parsed struct (would silently drop fields the CP's proto doesn't know
 /// about, breaking content-addressing across additive schema changes).
 fn verify_content_address(manifest_bytes: &[u8], rollout_id: &str) -> Result<(), StatusCode> {
@@ -80,7 +80,7 @@ fn verify_content_address(manifest_bytes: &[u8], rollout_id: &str) -> Result<(),
         tracing::warn!(
             rollout_id = %rollout_id,
             recomputed = %recomputed,
-            "rollouts handler: manifest hash does not match path — refusing to serve",
+            "rollouts handler: manifest hash does not match path - refusing to serve",
         );
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -132,7 +132,7 @@ async fn load_pair(state: &AppState, rollout_id: &str) -> Result<ManifestPair, S
     Err(StatusCode::NOT_FOUND)
 }
 
-/// `GET /v1/rollouts/{rolloutId}` — manifest bytes; mTLS via router-level `require_cn_layer`.
+/// `GET /v1/rollouts/{rolloutId}` - manifest bytes; mTLS via router-level `require_cn_layer`.
 pub(in crate::server) async fn manifest(
     State(state): State<Arc<AppState>>,
     Path(rollout_id): Path<String>,
@@ -146,7 +146,7 @@ pub(in crate::server) async fn manifest(
     Ok((StatusCode::OK, headers, Bytes::from(manifest_bytes)))
 }
 
-/// `GET /v1/rollouts/{rolloutId}/sig` — raw signature bytes.
+/// `GET /v1/rollouts/{rolloutId}/sig` - raw signature bytes.
 pub(in crate::server) async fn signature(
     State(state): State<Arc<AppState>>,
     Path(rollout_id): Path<String>,
@@ -160,19 +160,19 @@ pub(in crate::server) async fn signature(
     Ok((StatusCode::OK, headers, Bytes::from(sig_bytes)))
 }
 
-/// `GET /v1/rollouts` — enumerate active (non-superseded) rollouts with
+/// `GET /v1/rollouts` - enumerate active (non-superseded) rollouts with
 /// per-host state pulled from `host_rollout_state` (DB-authoritative,
 /// independent of the journal event window).
 ///
 /// Operators (status renderers) use this for "what's actually deployed"
-/// instead of inferring from journal `target=confirm` events — agent
+/// instead of inferring from journal `target=confirm` events - agent
 /// confirms only fire on real dispatches, so converged-at-dispatch hosts
 /// would otherwise look unconfirmed forever in journal-derived views.
 pub(in crate::server) async fn list_active(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let db = state.db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    // UI surface — show only rollouts the operator should still care
+    // UI surface - show only rollouts the operator should still care
     // about (excludes both superseded and terminal). The gate observed
     // builders use `list_active()` directly so converged predecessors
     // stay visible to channel_edges.
@@ -185,10 +185,12 @@ pub(in crate::server) async fn list_active(
         .active_rollouts_snapshot()
         .map_err(internal_warn("active_rollouts_snapshot query failed"))?;
     // host_states keyed by rollout_id; rollouts not in the snapshot get an
-    // empty map (no hosts dispatched yet — happens briefly after a CI sign
+    // empty map (no hosts dispatched yet - happens briefly after a CI sign
     // before agents check in).
-    let mut by_rollout: std::collections::HashMap<String, std::collections::HashMap<String, String>> =
-        std::collections::HashMap::new();
+    let mut by_rollout: std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, String>,
+    > = std::collections::HashMap::new();
     for r in &snap {
         by_rollout.insert(r.rollout_id.clone(), r.host_states.clone());
     }
@@ -215,7 +217,7 @@ pub(in crate::server) async fn list_active(
     Ok((StatusCode::OK, headers, body))
 }
 
-/// `GET /v1/rollouts/{rolloutId}/lifecycle` — supersession state for the
+/// `GET /v1/rollouts/{rolloutId}/lifecycle` - supersession state for the
 /// rollout, sourced solely from the rollouts table. Returns 404 for any
 /// rid not tracked there.
 ///
@@ -238,7 +240,7 @@ pub(in crate::server) async fn lifecycle(
         "rolloutId": rollout_id,
         "supersededAt": status.superseded_at.map(|t| t.to_rfc3339()),
         "supersededBy": status.superseded_by,
-        // Distinct from supersededAt — terminal_at fires on natural
+        // Distinct from supersededAt - terminal_at fires on natural
         // convergence (Action::ConvergeRollout) or orphan-sweep retire
         // (channel has no expected hosts). UI consumers use this to
         // gray out finished rollouts; gates ignore it (they read the
@@ -254,7 +256,7 @@ pub(in crate::server) async fn lifecycle(
     Ok((StatusCode::OK, headers, body))
 }
 
-/// `GET /v1/rollouts/{rolloutId}/trace` — wave-by-wave dispatch history
+/// `GET /v1/rollouts/{rolloutId}/trace` - wave-by-wave dispatch history
 /// rendered for `nixfleet rollout trace`. Returns 404 when the rollout
 /// has no dispatch_history rows (either never dispatched or pruned past
 /// the 90d retention window).

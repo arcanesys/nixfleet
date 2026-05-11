@@ -45,7 +45,7 @@ in
       host.wait_for_unit("nixfleet-control-plane.service")
       host.wait_for_open_port(8443)
 
-      print("step 1: inject expired host_dispatch_state row…")
+      print("step 1: inject expired host_dispatch_state row...")
       host.succeed(
           "sqlite3 /var/lib/nixfleet-cp/state.db \""
           "INSERT INTO host_dispatch_state ("
@@ -68,7 +68,7 @@ in
       ).strip()
       assert pre_state == "pending", f"expected pending pre-confirm, got {pre_state!r}"
 
-      print("step 2: POST /v1/agent/confirm against expired row…")
+      print("step 2: POST /v1/agent/confirm against expired row...")
       confirm_body = {
           "hostname": "agent-01",
           "rollout": "stable@expired1",
@@ -95,7 +95,7 @@ in
       )
       print("step 2: 410 received as expected")
 
-      print("step 3: assert row marked rolled-back…")
+      print("step 3: assert row marked rolled-back...")
       post_state = host.succeed(
           "sqlite3 /var/lib/nixfleet-cp/state.db "
           "\"SELECT state FROM host_dispatch_state WHERE rollout_id='stable@expired1';\""
@@ -105,7 +105,7 @@ in
       )
 
       print(
-          "fleet-harness-deadline-expiry: deadline-expiry contract holds — "
+          "fleet-harness-deadline-expiry: deadline-expiry contract holds - "
           "expired host_dispatch_state returns 410, row transitions to rolled-back."
       )
     '';

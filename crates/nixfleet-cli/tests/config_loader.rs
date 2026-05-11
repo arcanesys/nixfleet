@@ -20,8 +20,14 @@ fn file_round_trips_through_toml() {
     written.save(&path).unwrap();
 
     let parsed = load_file(&path).unwrap();
-    assert_eq!(parsed.cp_url.as_deref(), Some("https://cp.example.com:8080"));
-    assert_eq!(parsed.ca_cert.as_deref(), Some(std::path::Path::new("/etc/nixfleet/ca.pem")));
+    assert_eq!(
+        parsed.cp_url.as_deref(),
+        Some("https://cp.example.com:8080")
+    );
+    assert_eq!(
+        parsed.ca_cert.as_deref(),
+        Some(std::path::Path::new("/etc/nixfleet/ca.pem"))
+    );
 }
 
 #[test]
@@ -77,7 +83,9 @@ fn missing_field_returns_structured_error() {
 #[test]
 fn missing_file_treated_as_empty_layer() {
     let resolved = resolve(
-        Some(std::path::Path::new("/nonexistent/path/that/should/not/exist.toml")),
+        Some(std::path::Path::new(
+            "/nonexistent/path/that/should/not/exist.toml",
+        )),
         &Overrides {
             cp_url: Some("https://cp:8080".into()),
             ca_cert: Some(PathBuf::from("/x/ca.pem")),

@@ -1,7 +1,7 @@
 //! 30s sweep: past-deadline pending rows → 'rolled-back' + audit terminal stamp.
 //!
 //! LOADBEARING: CP marks state independently of the agent's local rollback
-//! outcome — agent and CP halves converge through periodic checkin, not
+//! outcome - agent and CP halves converge through periodic checkin, not
 //! through synchronous coupling here.
 
 use std::sync::Arc;
@@ -88,5 +88,4 @@ mod tests {
         let expired = db.host_dispatch_state().pending_deadlines().unwrap();
         assert!(expired.is_empty());
     }
-
 }

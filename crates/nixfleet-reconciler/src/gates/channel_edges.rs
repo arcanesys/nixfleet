@@ -1,8 +1,8 @@
-//! ChannelEdges gate — predecessor channel must converge before successor opens.
+//! ChannelEdges gate - predecessor channel must converge before successor opens.
 //!
 //! Migrated from `crate::reconcile::predecessor_channel_blocking`. The
 //! reconciler's `reconcile()` main loop still uses
-//! `check_for_channel` directly (channel-level, not host-level — it
+//! `check_for_channel` directly (channel-level, not host-level - it
 //! decides whether to emit `OpenRollout` for a channel whose ref
 //! changed). The dispatch endpoint uses `check` via
 //! `gates::evaluate_for_host`.
@@ -55,19 +55,13 @@ pub fn check_for_channel(
         .iter()
         .filter(|e| e.gated == channel)
         .find_map(|e| {
-            channel_blocked(
-                fleet,
-                observed,
-                emitted_opens_in_tick,
-                &e.gates,
-                mode,
-            )
-            .then(|| e.gates.clone())
+            channel_blocked(fleet, observed, emitted_opens_in_tick, &e.gates, mode)
+                .then(|| e.gates.clone())
         })
 }
 
 /// Single-predecessor check. The shared predicate behind every entry
-/// point — `check`, `check_for_channel`, and the dashboard live read all
+/// point - `check`, `check_for_channel`, and the dashboard live read all
 /// route here.
 ///
 /// Source-of-truth precedence:
@@ -78,7 +72,7 @@ pub fn check_for_channel(
 ///      tick, it counts as active.
 ///   3. Otherwise, in `Dispatch` mode (fresh-boot protection at the
 ///      dispatch endpoint), block if the fleet declares hosts on the
-///      predecessor channel. `Reconcile` mode lets it through —
+///      predecessor channel. `Reconcile` mode lets it through  -
 ///      `emitted_opens_in_tick` is the authoritative in-tick signal
 ///      there.
 fn channel_blocked(
@@ -98,7 +92,7 @@ fn channel_blocked(
             if emitted_opens_in_tick.contains(predecessor) {
                 return true;
             }
-            // Mode is the load-bearing axis here — keep this match
+            // Mode is the load-bearing axis here - keep this match
             // explicit so adding a future mode forces a decision.
             match mode {
                 GateMode::Dispatch => fleet.hosts.values().any(|h| h.channel == predecessor),

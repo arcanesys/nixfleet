@@ -1,4 +1,4 @@
-//! #95 — `/v1/*` returns 503 + `Retry-After` until the daemon primes its
+//! #95 - `/v1/*` returns 503 + `Retry-After` until the daemon primes its
 //! verified-fleet snapshot. `/healthz` (outside `/v1/*`) stays unguarded.
 
 mod common;
@@ -30,7 +30,7 @@ async fn not_ready_serves_503_on_v1_but_keeps_healthz_open() {
     let cert_path = write_pem(&dir, "server.pem", &cert.pem());
     let key_path = write_pem(&dir, "server.key", &key_pair.serialize_pem());
     // write_phase2_input_stubs writes invalid (`{}`) artifact bytes, so the
-    // build-time prime will fail — exactly the not-ready boot path #95 covers.
+    // build-time prime will fail - exactly the not-ready boot path #95 covers.
     let (artifact, signature, trust, observed) = write_phase2_input_stubs(&dir);
 
     let port = pick_free_port().await;
@@ -45,7 +45,7 @@ async fn not_ready_serves_503_on_v1_but_keeps_healthz_open() {
         trust_path: trust,
         observed_path: observed,
         confirm_deadline_secs: 120,
-        // Deliberately NOT set — exercise the production not-ready path.
+        // Deliberately NOT set - exercise the production not-ready path.
         // mark_ready_at_startup: false (default),
         ..Default::default()
     };
@@ -74,7 +74,7 @@ async fn not_ready_serves_503_on_v1_but_keeps_healthz_open() {
     );
 
     // /v1/whoami (mTLS-protected normally; here the readiness layer wraps
-    // the auth layer, so 503 takes precedence over 401 — agents see a
+    // the auth layer, so 503 takes precedence over 401 - agents see a
     // consistent "come back later" signal regardless of cert posture).
     let v1_resp = client
         .get(format!("https://localhost:{port}/v1/whoami"))
@@ -96,7 +96,7 @@ async fn not_ready_serves_503_on_v1_but_keeps_healthz_open() {
     assert_eq!(body["reason"], "awaiting first signed artifact");
 
     // /v1/enroll is anonymous in the production router but still under
-    // /v1/*; the ready gate covers it too. Strict trust footprint —
+    // /v1/*; the ready gate covers it too. Strict trust footprint  -
     // bootstrap can't proceed against a half-initialised daemon.
     let enroll_resp = client
         .post(format!("https://localhost:{port}/v1/enroll"))
@@ -115,7 +115,7 @@ async fn not_ready_serves_503_on_v1_but_keeps_healthz_open() {
 
 /// `mark_ready_at_startup = true` ⇒ `/v1/*` reaches its normal handlers
 /// (which then enforce mTLS, version headers, etc.). 401 here proves the
-/// readiness layer didn't mask auth — it simply opened the gate.
+/// readiness layer didn't mask auth - it simply opened the gate.
 #[tokio::test]
 async fn ready_at_startup_lets_v1_reach_auth_layer() {
     install_crypto_provider_once();
@@ -160,7 +160,7 @@ async fn ready_at_startup_lets_v1_reach_auth_layer() {
         .send()
         .await
         .unwrap();
-    // 401 (auth layer reached) — proves the ready layer doesn't mask auth.
+    // 401 (auth layer reached) - proves the ready layer doesn't mask auth.
     // The exact code from the auth layer when no cert is presented is 401;
     // we only assert NOT 503 here to keep the contract focused on the gate.
     assert_ne!(

@@ -18,7 +18,7 @@ pub struct Observed {
     /// `[rollout_id][host] → count` of outstanding compliance evidence
     /// failures. Aggregates BOTH `ComplianceFailure` events (a probe
     /// returned FAIL) and `RuntimeGateError` events (the collector
-    /// itself broke / evidence is stale) — both classes mean "this
+    /// itself broke / evidence is stale) - both classes mean "this
     /// host's evidence chain is broken", and both block wave promotion
     /// identically under enforce mode (DB-side filter at
     /// `db::reports::outstanding_compliance_events_by_rollout`).
@@ -28,19 +28,19 @@ pub struct Observed {
     pub outstanding_compliance_events_by_rollout: HashMap<String, HashMap<String, usize>>,
     /// Last `RolloutDeferred` the CP successfully journalled per channel.
     /// The reconciler consults this and only emits a fresh `RolloutDeferred`
-    /// when (target_ref, blocked_by) would change — without this debounce,
+    /// when (target_ref, blocked_by) would change - without this debounce,
     /// every reconcile tick on a blocked channel would pollute the journal
     /// with an identical line.
     #[serde(default)]
     pub last_deferrals: HashMap<String, DeferralRecord>,
     /// Issue #86: per-host probe-pass state extracted from each host's
     /// latest checkin. `true` = probes are passing (or the host has no
-    /// declared probes / mode is permissive / disabled — see
+    /// declared probes / mode is permissive / disabled - see
     /// `nixfleet_proto::agent_wire::host_probes_passing`). `false` = at
     /// least one probe is failing or hasn't run yet under enforce mode;
     /// the soak gate holds the Healthy → Soaked transition for this
     /// host. Hosts absent from the map (no checkin yet, or the CP
-    /// projector didn't populate them) default to `true` — the gate
+    /// projector didn't populate them) default to `true` - the gate
     /// fails open so a misconfigured projection can't accidentally
     /// stall every promotion.
     #[serde(default)]
@@ -87,7 +87,7 @@ pub struct Rollout {
     /// Disruption-budget snapshot copied from the rollout's signed
     /// manifest at projection time. Frozen for the rollout's life so
     /// mid-rollout retag does not reshape budget enforcement. Cross-
-    /// rollout in-flight summing matches by `selector` equality — the
+    /// rollout in-flight summing matches by `selector` equality - the
     /// fleet-wide property is preserved even though each rollout
     /// carries its own snapshot.
     #[serde(default)]
@@ -102,7 +102,7 @@ pub struct Rollout {
     /// re-emission of `ConvergeRollout`). Visible to gates so
     /// `channel_edges` can read the host_states (all
     /// terminal-for-ordering by construction at this point) and
-    /// release the successor — the symmetric "predecessor done"
+    /// release the successor - the symmetric "predecessor done"
     /// answer in both conservative + non-conservative modes.
     #[serde(default)]
     pub terminal_at: Option<DateTime<Utc>>,
@@ -112,7 +112,7 @@ impl Rollout {
     /// Active-for-ordering: the rollout still has work outstanding from
     /// the perspective of `channelEdges` / host-edges sequencing. Empty
     /// `host_states` (newly-recorded, no dispatches yet) counts as
-    /// active — the rollout has work to do, just hasn't started.
+    /// active - the rollout has work to do, just hasn't started.
     /// Otherwise: active iff at least one host is non-terminal.
     ///
     /// `Failed` / `Reverted` count as active (predecessor in trouble).

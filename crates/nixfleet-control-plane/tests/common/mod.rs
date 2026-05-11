@@ -47,7 +47,7 @@ pub async fn wait_for_listener_ready(
     while Instant::now() < deadline {
         if handle.is_finished() {
             panic!(
-                "server task exited before listener bound (likely TLS config error — check stderr)"
+                "server task exited before listener bound (likely TLS config error - check stderr)"
             );
         }
         if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
@@ -134,7 +134,7 @@ pub fn build_mtls_client(
         .unwrap()
 }
 
-/// (artifact, signature, trust, observed) PEM paths — empty/no-op stubs that
+/// (artifact, signature, trust, observed) PEM paths - empty/no-op stubs that
 /// satisfy the `serve` startup checks without driving any real polling.
 pub fn write_phase2_input_stubs(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let artifact = write_pem(dir, "fleet.resolved.json", "{}");
@@ -153,7 +153,7 @@ pub fn write_phase2_input_stubs(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf, Pa
 }
 
 /// Returns `(raw_json_to_write, canonical_bytes_to_sign)` for a single-host
-/// `test-host`/`stable` fleet — the shape every CP integration test that
+/// `test-host`/`stable` fleet - the shape every CP integration test that
 /// needs a live fleet uses.
 pub fn build_fleet_resolved_json(declared_closure: &str, ci_commit: &str) -> (String, Vec<u8>) {
     let json = serde_json::json!({

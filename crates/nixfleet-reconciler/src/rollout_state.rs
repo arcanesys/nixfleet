@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 /// Rollout-level state. Wire form is a string via serde shim.
 ///
-/// LOADBEARING: `Halted` is operator-action-required — reconciler stops
+/// LOADBEARING: `Halted` is operator-action-required - reconciler stops
 /// advancing the rollout and emits no further actions until the operator
 /// transitions back to `Executing`. Don't auto-resume.
 ///
@@ -62,7 +62,7 @@ pub(crate) fn advance_rollout(
     // `db.rollouts().list_active()` so channel_edges can read their
     // host_states and detect "predecessor converged" via
     // `is_active_for_ordering()=false`. Re-emitting actions here would
-    // produce an infinite stream of no-op `ConvergeRollout` writes —
+    // produce an infinite stream of no-op `ConvergeRollout` writes  -
     // the original "rollouts emit converge_rollout every tick" noise
     // the lifecycle work was meant to fix. Short-circuit here keeps
     // the action stream clean while preserving gate visibility.
@@ -93,7 +93,7 @@ pub(crate) fn advance_rollout(
     if wave_all_soaked {
         // Wave-promotion gate. `enforce` converts an outstanding failure
         // on any host in waves [0..=current_wave] into `WaveBlocked`
-        // instead of `PromoteWave`. Inclusive range — current wave's
+        // instead of `PromoteWave`. Inclusive range - current wave's
         // failures hold promotion. Compare with
         // `gates::compliance_wave::check` which uses the EXCLUSIVE
         // range 0..host_wave for dispatch gating: the per-rollout
@@ -222,10 +222,7 @@ mod tests {
         }
     }
 
-    fn observed_with_failures(
-        rollout_id: &str,
-        failures: &[(&str, usize)],
-    ) -> Observed {
+    fn observed_with_failures(rollout_id: &str, failures: &[(&str, usize)]) -> Observed {
         let mut by_rollout = HashMap::new();
         let mut per_host = HashMap::new();
         for (h, n) in failures {
@@ -312,7 +309,7 @@ mod tests {
         );
         assert!(
             !kinds.contains(&"wave_blocked"),
-            "stale R0 events must not block R1 — resolution-by-replacement",
+            "stale R0 events must not block R1 - resolution-by-replacement",
         );
     }
 
@@ -350,8 +347,7 @@ mod tests {
         rollout
             .host_states
             .insert("host-b".into(), HostRolloutState::Soaked);
-        let observed =
-            observed_with_failures("R1", &[("host-a", 2), ("host-b", 3)]);
+        let observed = observed_with_failures("R1", &[("host-a", 2), ("host-b", 3)]);
         let actions = advance_rollout(&fleet, &observed, &rollout, Utc::now());
         let wb = actions
             .iter()
@@ -369,7 +365,7 @@ mod tests {
     }
 
     /// **Regression guard**: a rollout marked terminal in the rollouts
-    /// table must short-circuit advance_rollout — no actions emitted.
+    /// table must short-circuit advance_rollout - no actions emitted.
     /// Without this, the reconciler re-emits `ConvergeRollout` every
     /// tick (the original "rollouts emit converge_rollout every tick"
     /// noise the lifecycle work targets), which is functionally a
@@ -378,7 +374,7 @@ mod tests {
     /// DB writes proportional to the number of converged rollouts.
     ///
     /// terminal_at must be checked BEFORE the wave/handle_wave logic
-    /// — otherwise terminal rollouts at the last wave would re-emit
+    /// - otherwise terminal rollouts at the last wave would re-emit
     /// `ConvergeRollout` from the `current_wave + 1 >= waves.len()`
     /// branch in `advance_rollout`.
     #[test]
@@ -395,7 +391,7 @@ mod tests {
     }
 
     /// **Companion**: terminal rollouts must NOT re-emit ConvergeRollout
-    /// even at the last wave with all hosts soaked — the natural
+    /// even at the last wave with all hosts soaked - the natural
     /// trigger condition. Without the short-circuit, this case would
     /// emit ConvergeRollout every tick forever.
     #[test]
@@ -422,4 +418,3 @@ mod tests {
         );
     }
 }
-

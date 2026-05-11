@@ -12,7 +12,7 @@ const TICK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const TOKEN_REPLAY_RETENTION_HOURS: i64 = 24;
 const DISPATCH_HISTORY_RETENTION_HOURS: i64 = 24 * 90;
 const HOST_REPORTS_RETENTION_HOURS: i64 = 24 * 7;
-/// Match `dispatch_history` (90d) — the rollouts table is the
+/// Match `dispatch_history` (90d) - the rollouts table is the
 /// other side of the same audit story. Operators investigating a
 /// 60-day-old release on lab still want to see the per-host
 /// states it produced, not just the dispatch records.

@@ -5,8 +5,8 @@ use nixfleet_proto::agent_wire::ReportEvent;
 use nixfleet_agent::comms::Reporter;
 
 use super::compliance::{process_gate_outcome, run_runtime_gate};
-use nixfleet_agent::evidence_signer::try_sign;
 use super::DispatchCtx;
+use nixfleet_agent::evidence_signer::try_sign;
 
 pub(super) async fn handle_fired_and_polled<R: Reporter>(
     ctx: &DispatchCtx<'_, R>,
@@ -89,4 +89,3 @@ async fn handle_cp_cancellation<R: Reporter>(rollout: &str, ctx: &DispatchCtx<'_
         Err(err) => tracing::error!(error = %err, "rollback after CP-410 transport-failed"),
     }
 }
-

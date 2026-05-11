@@ -26,11 +26,11 @@ use nixfleet_proto::compliance::GateMode;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
-/// Smallest legal probe interval — protects the agent from a misconfigured
+/// Smallest legal probe interval - protects the agent from a misconfigured
 /// 0/1-second probe DOSing the local host. Below this we round up.
 pub const MIN_INTERVAL_SECS: u64 = 5;
 
-/// Per-failure cap to keep the wire body bounded — operators don't need a
+/// Per-failure cap to keep the wire body bounded - operators don't need a
 /// 100-line stderr; the first ~512 bytes are the diagnostic value.
 pub const FAILURE_REASON_MAX_LEN: usize = 512;
 
@@ -108,15 +108,14 @@ fn default_exec_timeout() -> u64 {
     10
 }
 
-/// `Ok(None)` when the path doesn't exist (operator declared no probes —
+/// `Ok(None)` when the path doesn't exist (operator declared no probes  -
 /// agent runs without a scheduler). Errors only on read / parse failures
 /// to surface misconfiguration loudly.
 pub fn load_config(path: &Path) -> Result<Option<HealthChecksConfig>> {
     if !path.exists() {
         return Ok(None);
     }
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let cfg: HealthChecksConfig = serde_json::from_str(&raw)
         .with_context(|| format!("parse {} as HealthChecksConfig", path.display()))?;
     Ok(Some(cfg))
@@ -187,7 +186,7 @@ impl ProbeStateCache {
 
 /// Initial state with one Unknown entry per declared probe so the cache
 /// reports the full set even before any probe has run. Soak gate
-/// reads `Unknown` as non-passing — conservative semantic.
+/// reads `Unknown` as non-passing - conservative semantic.
 pub fn initial_results(cfg: &HealthChecksConfig) -> Vec<ProbeResult> {
     let mut out = Vec::new();
     for p in &cfg.http {
@@ -225,14 +224,14 @@ pub fn initial_results(cfg: &HealthChecksConfig) -> Vec<ProbeResult> {
 
 /// Runs the probe scheduler until the process exits. Spawns one tokio
 /// task per declared probe, each ticking at its own interval. `Disabled`
-/// mode short-circuits — probes don't run, cache stays at Unknown. The
+/// mode short-circuits - probes don't run, cache stays at Unknown. The
 /// caller (main poll loop) is responsible for periodically reading
 /// `cache.snapshot()` into checkin bodies.
 pub async fn run_scheduler(cfg: HealthChecksConfig, cache: Arc<ProbeStateCache>) {
     if matches!(cfg.mode, GateMode::Disabled) {
         tracing::info!(
             target: "health",
-            "healthChecks.mode = disabled — scheduler short-circuited",
+            "healthChecks.mode = disabled - scheduler short-circuited",
         );
         return;
     }
@@ -286,7 +285,7 @@ async fn run_http_probe(cfg: HttpProbeConfig, cache: Arc<ProbeStateCache>) {
                 target: "health",
                 probe = %cfg.name,
                 error = %err,
-                "http probe disabled — failed to build reqwest client",
+                "http probe disabled - failed to build reqwest client",
             );
             return;
         }
@@ -363,8 +362,7 @@ async fn run_tcp_probe(cfg: TcpProbeConfig, cache: Arc<ProbeStateCache>) {
 async fn tcp_check(host: &str, port: u16, timeout_secs: u64, now: DateTime<Utc>) -> ProbeResult {
     let target = format!("{host}:{port}");
     let connect = tokio::net::TcpStream::connect(&target);
-    let outcome =
-        tokio::time::timeout(Duration::from_secs(timeout_secs), connect).await;
+    let outcome = tokio::time::timeout(Duration::from_secs(timeout_secs), connect).await;
     match outcome {
         Ok(Ok(_stream)) => ProbeResult {
             name: String::new(),
@@ -443,7 +441,10 @@ async fn exec_check(command: &[String], timeout_secs: u64, now: DateTime<Utc>) -
             last_pass_at: None,
             failure_reason: Some(truncate_reason(format!(
                 "exit {} stderr: {}",
-                out.status.code().map(|c| c.to_string()).unwrap_or_else(|| "killed".into()),
+                out.status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "killed".into()),
                 String::from_utf8_lossy(&out.stderr).trim(),
             ))),
         },
@@ -507,9 +508,15 @@ mod tests {
         };
         let init = initial_results(&cfg);
         assert_eq!(init.len(), 2);
-        assert!(init.iter().all(|r| matches!(r.status, ProbeStatus::Unknown)));
-        assert!(init.iter().any(|r| r.name == "h1" && matches!(r.kind, ProbeKind::Http)));
-        assert!(init.iter().any(|r| r.name == "t1" && matches!(r.kind, ProbeKind::Tcp)));
+        assert!(init
+            .iter()
+            .all(|r| matches!(r.status, ProbeStatus::Unknown)));
+        assert!(init
+            .iter()
+            .any(|r| r.name == "h1" && matches!(r.kind, ProbeKind::Http)));
+        assert!(init
+            .iter()
+            .any(|r| r.name == "t1" && matches!(r.kind, ProbeKind::Tcp)));
     }
 
     #[tokio::test]
@@ -585,7 +592,11 @@ mod tests {
     async fn exec_check_passes_on_zero_exit() {
         let now = Utc::now();
         let r = exec_check(&["true".into()], 5, now).await;
-        assert!(matches!(r.status, ProbeStatus::Pass), "status={:?}", r.status);
+        assert!(
+            matches!(r.status, ProbeStatus::Pass),
+            "status={:?}",
+            r.status
+        );
         assert_eq!(r.last_pass_at, Some(now));
     }
 
@@ -611,7 +622,7 @@ mod tests {
         // `pkgs.writers.writeJSON` output and the agent's serde
         // deserialiser. A drift here (rename_all attribute change,
         // field rename, mode value casing) breaks every fleet that
-        // declared probes — catch it locally.
+        // declared probes - catch it locally.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("health-checks.json");
         std::fs::write(

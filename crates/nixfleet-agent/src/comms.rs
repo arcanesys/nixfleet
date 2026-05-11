@@ -33,8 +33,8 @@ pub fn build_client(
     }
 
     if let (Some(cert), Some(key)) = (client_cert, client_key) {
-        let mut pem = std::fs::read(cert)
-            .with_context(|| format!("read client cert {}", cert.display()))?;
+        let mut pem =
+            std::fs::read(cert).with_context(|| format!("read client cert {}", cert.display()))?;
         let key_pem = read_client_key_as_pem(key)
             .with_context(|| format!("read client key {}", key.display()))?;
         pem.extend_from_slice(key_pem.as_bytes());
@@ -60,8 +60,7 @@ pub fn build_client(
 /// agent key (legacy fleets pre-#43, or some custom flow) keep
 /// working without code changes.
 fn read_client_key_as_pem(path: &Path) -> Result<String> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     if raw.contains("-----BEGIN OPENSSH PRIVATE KEY-----") {
         let private = ssh_key::PrivateKey::from_openssh(&raw)
             .with_context(|| format!("parse OpenSSH key at {}", path.display()))?;
@@ -73,9 +72,7 @@ fn read_client_key_as_pem(path: &Path) -> Result<String> {
                 other.algorithm(),
             ),
         };
-        Ok(nixfleet_proto::host_key::ed25519_pkcs8_pem_from_seed(
-            &seed,
-        ))
+        Ok(nixfleet_proto::host_key::ed25519_pkcs8_pem_from_seed(&seed))
     } else {
         Ok(raw)
     }
@@ -99,7 +96,9 @@ pub async fn checkin(
         let body = resp.text().await.unwrap_or_default();
         anyhow::bail!("{url}: {status}: {body}");
     }
-    resp.json::<CheckinResponse>().await.context("parse checkin response")
+    resp.json::<CheckinResponse>()
+        .await
+        .context("parse checkin response")
 }
 
 /// 204 → Acknowledged; 410 → Cancelled (agent must rollback); else Other.
@@ -111,7 +110,7 @@ pub enum ConfirmOutcome {
 }
 
 /// `endpoint` is the wire-carried `target.activate.confirm_endpoint` from
-/// the dispatch reply. Required, not optional — the CP must always set it
+/// the dispatch reply. Required, not optional - the CP must always set it
 /// for any target the agent will confirm; agents refuse to confirm against
 /// a target with no activate block.
 pub async fn confirm(
@@ -142,7 +141,7 @@ pub async fn confirm(
         other => {
             tracing::warn!(
                 status = other.as_u16(),
-                "confirm: unexpected status — treating as 'other'"
+                "confirm: unexpected status - treating as 'other'"
             );
             ConfirmOutcome::Other
         }
@@ -150,11 +149,7 @@ pub async fn confirm(
     Ok(outcome)
 }
 
-pub async fn report(
-    client: &Client,
-    cp_url: &str,
-    req: &ReportRequest,
-) -> Result<ReportResponse> {
+pub async fn report(client: &Client, cp_url: &str, req: &ReportRequest) -> Result<ReportResponse> {
     let url = format!("{}/v1/agent/report", cp_url.trim_end_matches('/'));
     let resp = client
         .post(&url)
@@ -168,7 +163,9 @@ pub async fn report(
         let body = resp.text().await.unwrap_or_default();
         anyhow::bail!("{url}: {status}: {body}");
     }
-    resp.json::<ReportResponse>().await.context("parse report response")
+    resp.json::<ReportResponse>()
+        .await
+        .context("parse report response")
 }
 
 /// Best-effort by contract: telemetry must never crash the activation loop.
@@ -234,7 +231,6 @@ impl Reporter for ReqwestReporter {
     }
 }
 
-
 #[cfg(test)]
 mod read_client_key_tests {
     use super::*;
@@ -250,11 +246,8 @@ mod read_client_key_tests {
             public: ssh_key::public::Ed25519PublicKey(sk.verifying_key().to_bytes()),
             private: ssh_key::private::Ed25519PrivateKey::from_bytes(&sk.to_bytes()),
         };
-        let pk = PrivateKey::new(
-            ssh_key::private::KeypairData::Ed25519(kp),
-            "test-host",
-        )
-        .expect("PrivateKey::new");
+        let pk = PrivateKey::new(ssh_key::private::KeypairData::Ed25519(kp), "test-host")
+            .expect("PrivateKey::new");
         let pem = pk.to_openssh(LineEnding::LF).expect("openssh PEM");
         let path = dir.join("ssh_host_ed25519_key");
         std::fs::write(&path, pem.as_bytes()).expect("write key");
@@ -279,7 +272,7 @@ mod read_client_key_tests {
         // If an operator (legacy fleet) supplies a PEM-format key
         // directly, it must be returned unchanged so reqwest sees the
         // exact bytes operator deployed. Helper detects format by
-        // looking for the `BEGIN OPENSSH PRIVATE KEY` header — anything
+        // looking for the `BEGIN OPENSSH PRIVATE KEY` header - anything
         // else is passed through.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("agent.key");
@@ -292,7 +285,7 @@ mod read_client_key_tests {
     #[test]
     fn openssh_to_pkcs8_pubkey_round_trips() {
         // Pubkey derived from the converted PKCS#8 must equal the SSH
-        // host pubkey — protects against accidentally swapping seeds
+        // host pubkey - protects against accidentally swapping seeds
         // during conversion.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write_test_ssh_host_key(dir.path());

@@ -1,5 +1,5 @@
 //! Host SSH key plumbing shared by agent enrollment, CP enroll/renew
-//! validation, and mint_token. Three primitives — kept tiny + pure-rust
+//! validation, and mint_token. Three primitives - kept tiny + pure-rust
 //! so the boundary-contract crate stays lean (no `ssh-key` dep here).
 //!
 //! - [`ed25519_pubkey_raw_from_openssh`] parses an OpenSSH public-key
@@ -48,9 +48,7 @@ pub fn ed25519_pubkey_raw_from_openssh(line: &str) -> Result<[u8; 32], OpenSshPa
     }
     let pubkey = read_ssh_string(&blob, &mut cursor)?;
     if pubkey.len() != 32 {
-        return Err(OpenSshParseError::WrongPubkeyLength {
-            got: pubkey.len(),
-        });
+        return Err(OpenSshParseError::WrongPubkeyLength { got: pubkey.len() });
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(pubkey);
@@ -79,7 +77,7 @@ pub fn ed25519_pkcs8_pem_from_seed(seed: &[u8; 32]) -> String {
 }
 
 /// Extract the 32-byte raw ed25519 pubkey from a SubjectPublicKeyInfo
-/// DER blob (RFC 8410 — what `rcgen::PublicKeyData::der_bytes()` returns
+/// DER blob (RFC 8410 - what `rcgen::PublicKeyData::der_bytes()` returns
 /// for ed25519). Validates the fixed 12-byte SPKI prefix so callers
 /// reject non-ed25519 CSRs cleanly instead of silently slicing.
 pub fn ed25519_pubkey_raw_from_spki_der(spki: &[u8]) -> Result<[u8; 32], OpenSshParseError> {
@@ -91,7 +89,10 @@ pub fn ed25519_pubkey_raw_from_spki_der(spki: &[u8]) -> Result<[u8; 32], OpenSsh
     }
     if spki[..12] != ED25519_SPKI_PREFIX {
         return Err(OpenSshParseError::WrongAlgorithm {
-            got: format!("non-ed25519 SPKI (prefix={:x?})", &spki[..12.min(spki.len())]),
+            got: format!(
+                "non-ed25519 SPKI (prefix={:x?})",
+                &spki[..12.min(spki.len())]
+            ),
         });
     }
     let mut out = [0u8; 32];
@@ -99,7 +100,7 @@ pub fn ed25519_pubkey_raw_from_spki_der(spki: &[u8]) -> Result<[u8; 32], OpenSsh
     Ok(out)
 }
 
-/// `base64(SHA-256(raw_pubkey))` — same shape as the bootstrap-token's
+/// `base64(SHA-256(raw_pubkey))` - same shape as the bootstrap-token's
 /// `expected_pubkey_fingerprint` field. Accepts an OpenSSH pubkey line
 /// directly so callers don't double-parse.
 pub fn fingerprint_openssh_pubkey(line: &str) -> Result<String, OpenSshParseError> {
@@ -108,10 +109,7 @@ pub fn fingerprint_openssh_pubkey(line: &str) -> Result<String, OpenSshParseErro
     Ok(base64::engine::general_purpose::STANDARD.encode(digest))
 }
 
-fn read_ssh_string<'a>(
-    buf: &'a [u8],
-    cursor: &mut usize,
-) -> Result<&'a [u8], OpenSshParseError> {
+fn read_ssh_string<'a>(buf: &'a [u8], cursor: &mut usize) -> Result<&'a [u8], OpenSshParseError> {
     if *cursor + 4 > buf.len() {
         return Err(OpenSshParseError::Truncated);
     }
@@ -213,8 +211,8 @@ mod tests {
         assert_eq!(
             &der[..16],
             &[
-                0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04,
-                0x22, 0x04, 0x20,
+                0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22,
+                0x04, 0x20,
             ]
         );
         // Last 32 bytes = the seed.
@@ -249,7 +247,7 @@ mod tests {
     #[test]
     fn spki_der_rejects_non_ed25519_prefix() {
         let mut spki = vec![0xffu8; 44];
-        // Length matches but prefix doesn't — must be flagged as wrong algorithm.
+        // Length matches but prefix doesn't - must be flagged as wrong algorithm.
         spki[0] = 0x30;
         spki[1] = 0x2a;
         let err = ed25519_pubkey_raw_from_spki_der(&spki).unwrap_err();

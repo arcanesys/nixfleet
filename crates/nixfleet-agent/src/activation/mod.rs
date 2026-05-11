@@ -13,20 +13,20 @@ mod rollback_mod;
 mod types;
 mod verify_poll;
 
-#[cfg(target_os = "linux")]
-mod linux;
 #[cfg(target_os = "macos")]
 mod darwin;
+#[cfg(target_os = "linux")]
+mod linux;
 
 pub use pipeline::activate_with;
 pub use realise::RealiseError;
 pub use rollback_mod::rollback_with;
-pub use types::{ActivationBackend, DefaultBackend, DEFAULT_BACKEND};
-pub use types::{ActivationOutcome, RollbackOutcome, POLL_BUDGET, POLL_INTERVAL};
-#[cfg(target_os = "linux")]
-pub use types::LinuxBackend;
 #[cfg(target_os = "macos")]
 pub use types::DarwinBackend;
+#[cfg(target_os = "linux")]
+pub use types::LinuxBackend;
+pub use types::{ActivationBackend, DefaultBackend, DEFAULT_BACKEND};
+pub use types::{ActivationOutcome, RollbackOutcome, POLL_BUDGET, POLL_INTERVAL};
 
 /// Single attempt per call; retry is the main poll loop's job (in-call retry
 /// would trip the CP confirm deadline since each attempt eats `POLL_BUDGET`).
@@ -72,7 +72,7 @@ pub async fn confirm_target(
         .map(|a| a.confirm_endpoint.as_str())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "target {} has no activate block; refusing to confirm — \
+                "target {} has no activate block; refusing to confirm - \
                  wire contract requires CP to set activate.confirm_endpoint",
                 target.closure_hash,
             )
@@ -91,14 +91,14 @@ pub async fn confirm_target(
             tracing::warn!(
                 target_closure = %target.closure_hash,
                 rollout,
-                "agent: confirm returned 410 — CP says trigger local rollback",
+                "agent: confirm returned 410 - CP says trigger local rollback",
             );
         }
         crate::comms::ConfirmOutcome::Other => {
             tracing::warn!(
                 target_closure = %target.closure_hash,
                 rollout,
-                "agent: confirm returned unexpected status — deadline timer will handle",
+                "agent: confirm returned unexpected status - deadline timer will handle",
             );
         }
     }
@@ -112,9 +112,9 @@ mod tests {
 
     use anyhow::{anyhow, Result};
 
+    use super::realise::looks_like_signature_error;
     use super::types::ActivationBackend;
     use super::types::{ActivationOutcome, RollbackOutcome};
-    use super::realise::looks_like_signature_error;
     use super::verify_poll::{PollOutcome, VerifyPoll};
     use super::DEFAULT_BACKEND;
 
@@ -138,14 +138,17 @@ mod tests {
     #[test]
     fn basename_extracts_from_typical_store_path() {
         let p = PathBuf::from("/nix/store/abc123-nixos-system-test-host-26.05");
-        assert_eq!(basename_of(&p).unwrap(), "abc123-nixos-system-test-host-26.05");
+        assert_eq!(
+            basename_of(&p).unwrap(),
+            "abc123-nixos-system-test-host-26.05"
+        );
     }
 
     #[tokio::test]
     async fn confirm_target_refuses_without_activate_block() {
         // Wire contract: CP must always set activate.confirm_endpoint for
         // any target the agent should confirm. Absence is treated as "not
-        // for confirmation" — the helper errors out before any HTTP call.
+        // for confirmation" - the helper errors out before any HTTP call.
         let target = EvaluatedTarget {
             closure_hash: "abc-test".to_string(),
             channel_ref: "stable@deadbeef".to_string(),
@@ -171,8 +174,7 @@ mod tests {
         .expect_err("must error when activate block is absent");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("activate")
-                && msg.contains("refusing to confirm"),
+            msg.contains("activate") && msg.contains("refusing to confirm"),
             "error message must explain the wire-contract violation; got: {msg}",
         );
     }
@@ -180,7 +182,10 @@ mod tests {
     #[test]
     fn basename_unchanged_by_trailing_slash() {
         let p = PathBuf::from("/nix/store/abc123-nixos-system-test-host-26.05/");
-        assert_eq!(basename_of(&p).unwrap(), "abc123-nixos-system-test-host-26.05");
+        assert_eq!(
+            basename_of(&p).unwrap(),
+            "abc123-nixos-system-test-host-26.05"
+        );
     }
 
     #[test]
@@ -189,9 +194,7 @@ mod tests {
             format!("{:?}", ActivationOutcome::FiredAndPolled),
             format!(
                 "{:?}",
-                ActivationOutcome::RealiseFailed {
-                    reason: "x".into()
-                }
+                ActivationOutcome::RealiseFailed { reason: "x".into() }
             ),
             format!(
                 "{:?}",
@@ -222,7 +225,11 @@ mod tests {
             ),
         ];
         let unique: std::collections::HashSet<_> = outcomes.iter().collect();
-        assert_eq!(unique.len(), outcomes.len(), "outcome variants collide on Debug");
+        assert_eq!(
+            unique.len(),
+            outcomes.len(),
+            "outcome variants collide on Debug"
+        );
     }
 
     fn short_poll<'a>(
@@ -305,7 +312,7 @@ mod tests {
 
     #[test]
     fn switch_failed_phase_strings_are_stable() {
-        // LOADBEARING: phase strings are wire contract — rename breaks CP correlation.
+        // LOADBEARING: phase strings are wire contract - rename breaks CP correlation.
         for phase in &[
             "nix-env-set",
             "systemd-run-fire",
@@ -430,10 +437,7 @@ mod tests {
         ) -> Result<Option<ActivationOutcome>> {
             unreachable!("fire_switch unused in this test")
         }
-        async fn fire_rollback(
-            &self,
-            _target_basename: &str,
-        ) -> Result<Option<RollbackOutcome>> {
+        async fn fire_rollback(&self, _target_basename: &str) -> Result<Option<RollbackOutcome>> {
             unreachable!("fire_rollback unused in this test")
         }
     }

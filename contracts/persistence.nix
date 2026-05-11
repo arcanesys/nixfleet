@@ -10,7 +10,7 @@ in {
       NixFleet system-level persistence. Activates the persistence
       implementation imported by the consumer (e.g.
       `inputs.nixfleet.scopes.persistence.impermanence`). Without
-      that import, this option toggles only the schema — the
+      that import, this option toggles only the schema - the
       framework's own service-module contributions to
       `nixfleet.persistence.directories` are silently merged but
       nothing materialises them.

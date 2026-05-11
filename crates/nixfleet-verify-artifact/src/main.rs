@@ -1,4 +1,4 @@
-//! `nixfleet-verify-artifact` — offline verifier CLI.
+//! `nixfleet-verify-artifact` - offline verifier CLI.
 //!
 //! Exit codes: 0 verified, 1 verify error, 2 argument / I/O / parse error.
 
@@ -106,14 +106,15 @@ fn run_rollout_manifest(
 ) -> ExitCode {
     let manifest_bytes = match std::fs::read(&manifest_path) {
         Ok(v) => v,
-        Err(err) => {
-            return arg_error(format!("read manifest {}: {err}", manifest_path.display()))
-        }
+        Err(err) => return arg_error(format!("read manifest {}: {err}", manifest_path.display())),
     };
     let signature_bytes = match std::fs::read(&signature_path) {
         Ok(v) => v,
         Err(err) => {
-            return arg_error(format!("read signature {}: {err}", signature_path.display()))
+            return arg_error(format!(
+                "read signature {}: {err}",
+                signature_path.display()
+            ))
         }
     };
     let trust_raw = match std::fs::read_to_string(&trust_file) {
@@ -160,9 +161,7 @@ fn run_rollout_manifest(
         }
     };
     if recomputed != expected_rollout_id {
-        eprintln!(
-            "rolloutId mismatch: expected {expected_rollout_id}, recomputed {recomputed}"
-        );
+        eprintln!("rolloutId mismatch: expected {expected_rollout_id}, recomputed {recomputed}");
         return ExitCode::from(1);
     }
 

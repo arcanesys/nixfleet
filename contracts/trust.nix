@@ -20,8 +20,8 @@
         type = lib.types.str;
         description = ''
           Base64-encoded raw public key bytes.
-          - `ed25519` — 32-byte raw pubkey.
-          - `ecdsa-p256` — uncompressed point, 64 bytes (`X ‖ Y`, no
+          - `ed25519` - 32-byte raw pubkey.
+          - `ecdsa-p256` - uncompressed point, 64 bytes (`X ‖ Y`, no
             `0x04` prefix). Consumers convert to SEC1 / DER SPKI at
             verify time.
         '';
@@ -36,7 +36,7 @@
         default = null;
         description = ''
           Current CI release public key. Set to `null` means no key is
-          pinned yet — artifact verification will refuse all signatures.
+          pinned yet - artifact verification will refuse all signatures.
         '';
       };
       previous = lib.mkOption {
@@ -45,7 +45,7 @@
         description = ''
           Previous CI release public key accepted during the 30-day
           rotation grace window (CONTRACTS §II #1 rotation procedure).
-          May differ in algorithm from `current` — consumers accept
+          May differ in algorithm from `current` - consumers accept
           signatures under either algorithm during the overlap. Remove
           when the window closes.
         '';
@@ -120,7 +120,7 @@
         default = null;
         description = ''
           Pre-announced next public key (nixfleet#63). Same semantics
-          as `ciReleaseKey.successor` — paired with `retireAt`,
+          as `ciReleaseKey.successor` - paired with `retireAt`,
           accepted during the overlap window, drives
           `Action::RotateTrustRoot` past the deadline.
         '';
@@ -175,7 +175,7 @@ in {
       default = {};
       description = ''
         Organization root key. Verifies enrollment tokens at the control
-        plane. Rotation is a catastrophic event — see docs/CONTRACTS.md
+        plane. Rotation is a catastrophic event - see docs/CONTRACTS.md
         §II #3.
       '';
     };
@@ -199,7 +199,7 @@ in {
         PEM-encoded issuance CA chain. Each entry is signed by
         `rootCAPem` and represents an issuance CA the fleet currently
         trusts to mint agent certs. Multiple entries during a rotation
-        overlap window — agents accept any cert chain anchored at one
+        overlap window - agents accept any cert chain anchored at one
         of these intermediates. The TPM-bound issuance CA on the CP
         host appears here once it's bootstrapped.
       '';
@@ -211,7 +211,7 @@ in {
       {
         assertion =
           (slot.successor == null) == (slot.retireAt == null);
-        message = "nixfleet.trust.${name}: `successor` and `retireAt` are paired — set both or neither (nixfleet#63 rotation declarative-pre-announcement)";
+        message = "nixfleet.trust.${name}: `successor` and `retireAt` are paired - set both or neither (nixfleet#63 rotation declarative-pre-announcement)";
       }
     ];
   in

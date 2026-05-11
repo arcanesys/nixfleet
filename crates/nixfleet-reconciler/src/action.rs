@@ -24,7 +24,7 @@ pub enum Action {
         reason: String,
     },
     /// Emitted alongside `HaltRollout` for Failed hosts under
-    /// `rollback-and-halt`. Action-plan record only — the CP-side
+    /// `rollback-and-halt`. Action-plan record only - the CP-side
     /// checkin pipeline ships the actual `RollbackSignal`.
     RollbackHost {
         rollout: String,
@@ -71,14 +71,14 @@ pub enum Action {
     /// `retire_at` is past `now` and a `successor` is declared, so
     /// the operator's tooling should rotate `current → previous` and
     /// `successor → current` in the next fleet commit. Emitted from
-    /// `check_trust_rotations`, NOT from the main reconcile loop —
+    /// `check_trust_rotations`, NOT from the main reconcile loop  -
     /// the action is informational; trust mutations are out-of-band
     /// (operator-driven git commits, not CP self-mutation). Once
     /// the operator updates fleet.nix and CI signs the new release,
     /// the slot's `successor` field clears and the action stops
     /// firing on subsequent ticks.
     RotateTrustRoot {
-        /// Which slot rotated — `"ciReleaseKey"` or `"orgRootKey"`.
+        /// Which slot rotated - `"ciReleaseKey"` or `"orgRootKey"`.
         which: String,
         retire_at: chrono::DateTime<chrono::Utc>,
     },

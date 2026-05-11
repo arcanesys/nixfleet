@@ -1,7 +1,7 @@
 //! Per-host rollout state machine.
 //!
 //! LOADBEARING: single source of truth for both CP (SQL CHECK round-trip)
-//! and reconciler decision-procedure. Don't fork the variant set — adding
+//! and reconciler decision-procedure. Don't fork the variant set - adding
 //! a state requires updating the SQL CHECK constraint in the CP migration.
 
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ pub enum HostRolloutState {
 }
 
 impl HostRolloutState {
-    /// Canonical literal — matches the SQL CHECK and `observed.json`.
+    /// Canonical literal - matches the SQL CHECK and `observed.json`.
     pub fn as_db_str(&self) -> &'static str {
         match self {
             HostRolloutState::Queued => "Queued",
@@ -73,7 +73,7 @@ impl HostRolloutState {
     /// Why both `Soaked` and `Converged`: treating only `Converged` as
     /// terminal would leave the gap between SoakHost transitions and the
     /// next reconcile tick's `ConvergeRollout` action holding the
-    /// successor — small in practice but semantically wrong (a Soaked
+    /// successor - small in practice but semantically wrong (a Soaked
     /// host has finished its observable activation).
     ///
     /// `Failed` / `Reverted` are NOT terminal-for-ordering: predecessor
@@ -147,5 +147,4 @@ mod tests {
         assert!(HostRolloutState::from_db_str("soaked").is_err());
         assert!(HostRolloutState::from_db_str("Healhty").is_err());
     }
-
 }

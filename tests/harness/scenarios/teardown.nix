@@ -1,4 +1,4 @@
-# LOADBEARING: post-wipe recovery proof — verifies cert_revocations
+# LOADBEARING: post-wipe recovery proof - verifies cert_revocations
 # replays from disk and `last_confirmed_at` echoes on the first post-wipe
 # checkin. Without this an operator wiping CP state would silently
 # unlock revoked certs and orphan in-flight rollouts.
@@ -54,7 +54,7 @@ in
     testScript = let
       assertRevocationsReplayed = lib.optionalString (revocationsFixture != null) ''
 
-        print("step 4: waiting for revocations sidecar replay…")
+        print("step 4: waiting for revocations sidecar replay...")
         wait_for_journal_match(
             host,
             since_cursor=post_wipe_cursor,
@@ -75,23 +75,23 @@ in
         # Verifies post-wipe recovery via the host_rollout_state row, not
         # a specific log line. Two CP paths can populate
         # host_rollout_state.last_healthy_since:
-        # (1) recover_soak_state_from_attestation — signed attestation
+        # (1) recover_soak_state_from_attestation - signed attestation
         #     path; requires the agent's checkin to carry a
         #     `last_evaluated_target` whose rollout_id matches the CP's
         #     compute_rollout_id_for_channel output.
-        # (2) record_converged_at_dispatch — fires on every checkin where
+        # (2) record_converged_at_dispatch - fires on every checkin where
         #     the agent's current closure equals the fleet's declared
         #     target. Materialises the same row with
         #     last_healthy_since = now.
         # The LOADBEARING property at the top of this file ("CP wipe
         # doesn't lose rollout state") is satisfied by either path, so
-        # the SQL probe accepts either. Path (1) — attestation-specific
-        # — requires the harness to precompute a rollout_id matching the
+        # the SQL probe accepts either. Path (1) - attestation-specific
+        # - requires the harness to precompute a rollout_id matching the
         # CP's projection (project_manifest + sha256 of canonical bytes)
         # so the agent can preseed last_evaluated_target with it; that
         # plumbing isn't here yet and is the right scope for a dedicated
         # follow-up. Until then, path (2) carries the assertion.
-        print("step 5: waiting for soak-state recovery (host_rollout_state row + last_healthy_since)…")
+        print("step 5: waiting for soak-state recovery (host_rollout_state row + last_healthy_since)...")
         soak_deadline = time.monotonic() + 60
         recovered: set[str] = set()
         agents_set: set[str] = set(${builtins.toJSON agentNames})
@@ -176,12 +176,12 @@ in
           return seen_at
 
 
-      print("step 1: waiting for initial checkins…")
+      print("step 1: waiting for initial checkins...")
       pre_wipe_cursor = host.succeed("date '+%Y-%m-%d %H:%M:%S'").strip()
       pre_wipe = wait_for_checkins_since(pre_wipe_cursor, timeout_s=180)
       print(f"step 1: baseline checkins observed: {pre_wipe}")
 
-      print("step 2: simulating CP destruction (stop + DB wipe + restart)…")
+      print("step 2: simulating CP destruction (stop + DB wipe + restart)...")
       host.succeed("systemctl stop nixfleet-control-plane.service")
       host.succeed("rm -rf /var/lib/nixfleet-cp/state.db /var/lib/nixfleet-cp/state.db-wal /var/lib/nixfleet-cp/state.db-shm")
       # 2s gap: journalctl --since rounds to whole seconds, so without
@@ -192,7 +192,7 @@ in
       host.wait_for_unit("nixfleet-control-plane.service")
       host.wait_for_open_port(8443)
 
-      print("step 3: waiting for post-wipe recovery checkins…")
+      print("step 3: waiting for post-wipe recovery checkins...")
       recovery_start = time.monotonic()
       post_wipe = wait_for_checkins_since(post_wipe_cursor, timeout_s=30)
       recovery_end = max(post_wipe.values())

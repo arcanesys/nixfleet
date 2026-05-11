@@ -196,7 +196,7 @@ async fn dispatch_end_to_end_signed_fleet_then_idempotent() {
 /// if already Converged) by sending TWO checkins where current matches
 /// the declared closure. After the first, the CP should have one
 /// dispatch_history row + one host_rollout_state row in `Converged`.
-/// After the second, the count must be unchanged — the guard short-
+/// After the second, the count must be unchanged - the guard short-
 /// circuited the materialisation.
 #[tokio::test]
 async fn converged_at_dispatch_does_not_leak_dispatch_history_rows() {
@@ -235,7 +235,7 @@ async fn converged_at_dispatch_does_not_leak_dispatch_history_rows() {
     let body: CheckinResponse = resp.json().await.unwrap();
     assert!(
         body.target.is_none(),
-        "Decision::Converged returns no target — agent has nothing to confirm",
+        "Decision::Converged returns no target - agent has nothing to confirm",
     );
 
     let count_open_rows = || -> i64 {
@@ -292,7 +292,7 @@ async fn converged_at_dispatch_does_not_leak_dispatch_history_rows() {
 ///
 /// The sequential test pins the host_state-probe guard under repeat
 /// invocation. This one pins the same guard under N parallel checkins
-/// arriving simultaneously — no caller has seen the probe yet, so each
+/// arriving simultaneously - no caller has seen the probe yet, so each
 /// concurrent task believes it must materialise. The host_rollout_state
 /// UNIQUE constraint and the surrounding txn must serialise the writes;
 /// only one row may land.
@@ -326,7 +326,7 @@ async fn converged_at_dispatch_is_idempotent_under_concurrent_checkins() {
     .await;
 
     // Single mTLS client, shared connection pool. Reqwest will fan
-    // requests out across HTTP/2 streams or parallel TCP — either
+    // requests out across HTTP/2 streams or parallel TCP - either
     // is the race we want to exercise.
     let client = build_mtls_client(&ca, &client_cert, &client_key);
     let url = format!("https://localhost:{port}/v1/agent/checkin");
@@ -352,7 +352,7 @@ async fn converged_at_dispatch_is_idempotent_under_concurrent_checkins() {
         let status = t.await.unwrap().unwrap();
         assert_eq!(
             status, 200,
-            "every concurrent checkin must return 200 — converged-at-dispatch is non-mutating from the agent's perspective",
+            "every concurrent checkin must return 200 - converged-at-dispatch is non-mutating from the agent's perspective",
         );
     }
 
@@ -371,7 +371,7 @@ async fn converged_at_dispatch_is_idempotent_under_concurrent_checkins() {
     assert_eq!(
         history_rows, 1,
         "concurrent converged-at-dispatch must produce EXACTLY one open dispatch_history row \
-         (got {history_rows}). If this fails, the guard is not race-safe — multiple concurrent \
+         (got {history_rows}). If this fails, the guard is not race-safe - multiple concurrent \
          checkins materialised in parallel.",
     );
 

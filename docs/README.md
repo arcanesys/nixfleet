@@ -7,7 +7,7 @@ the code disagrees, the code is being built to match.
 
 | File | What it is | When to read |
 |---|---|---|
-| [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | High-level architecture, component roles, trust flow, build order (Phases 0–10) | First read for new contributors |
+| [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | High-level architecture, component roles, trust flow, build order (Phases 0-10) | First read for new contributors |
 | [`source-layout.md`](source-layout.md) | The four Nix layers (`lib/` / `modules/scopes/` / `contracts/` / `impls/`) and what goes where | When adding Nix code and unsure where it belongs |
 | [`CONTRACTS.md`](CONTRACTS.md) | Every artifact, key, and format that crosses a stream boundary (data, trust roots, canonicalization, storage purity) | When adding or changing anything cross-stream |
 | [`commercial-extensions.md`](commercial-extensions.md) | Capabilities deliberately out of scope for the open kernel (HA, SLA observability, audit packages) | When weighing whether a feature belongs in this repo |
@@ -39,7 +39,7 @@ The [`mdbook/`](mdbook/) subtree is the user-facing manual. Source lives in
 
 ## Historical decisions
 
-[`adr/`](adr/) — 11 Architecture Decision Records (001–011) covering `mkHost`,
+[`adr/`](adr/) - 11 Architecture Decision Records (001-011) covering `mkHost`,
 flags-over-roles, agent-as-service-module, hydration, fire-and-forget apply, etc.
 
 ## Root-level docs

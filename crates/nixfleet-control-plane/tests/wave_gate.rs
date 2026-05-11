@@ -47,8 +47,7 @@ fn write_signed_fleet(
     host_ssh_pubkey: Option<&str>,
 ) -> (PathBuf, PathBuf, PathBuf) {
     let signing_key = SigningKey::generate(&mut OsRng);
-    let public_b64 =
-        base64::engine::general_purpose::STANDARD.encode(signing_key.verifying_key());
+    let public_b64 = base64::engine::general_purpose::STANDARD.encode(signing_key.verifying_key());
 
     let signed_at = "2026-04-26T00:00:00Z";
     let json = serde_json::json!({
@@ -205,8 +204,7 @@ fn build_signed_compliance_failure(
     };
     let canonical = serde_jcs::to_vec(&payload).unwrap();
     let signature = sk.sign(&canonical);
-    let signature_b64 =
-        base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+    let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
 
     ReportRequest {
         hostname: HOSTNAME.to_string(),
@@ -242,8 +240,7 @@ fn build_signed_runtime_gate_error(sk: &SigningKey, rollout: &str) -> ReportRequ
     };
     let canonical = serde_jcs::to_vec(&payload).unwrap();
     let signature = sk.sign(&canonical);
-    let signature_b64 =
-        base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+    let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
 
     ReportRequest {
         hostname: HOSTNAME.to_string(),
@@ -282,10 +279,8 @@ async fn enforce_mode_blocks_dispatch_after_signed_compliance_failure() {
 
     let dir = TempDir::new().unwrap();
     let (host_sk, host_pubkey) = fresh_host_keypair();
-    let (artifact, signature, trust) =
-        write_signed_fleet(&dir, "enforce", Some(&host_pubkey));
-    let (ca, server_cert, server_key, client_cert, client_key) =
-        mint_ca_and_certs(&dir, HOSTNAME);
+    let (artifact, signature, trust) = write_signed_fleet(&dir, "enforce", Some(&host_pubkey));
+    let (ca, server_cert, server_key, client_cert, client_key) = mint_ca_and_certs(&dir, HOSTNAME);
     let db_path = dir.path().join("state.db");
     let port = pick_free_port().await;
 
@@ -348,14 +343,14 @@ async fn enforce_mode_blocks_dispatch_after_signed_compliance_failure() {
     let resp2 = post_checkin(&client, port, &checkin_after_failure).await;
     assert!(
         resp2.target.is_none(),
-        "enforce + outstanding failure must block dispatch — got target {:?}",
+        "enforce + outstanding failure must block dispatch - got target {:?}",
         resp2.target
     );
 
     handle.abort();
 }
 
-/// LOADBEARING: gate must stay blocked across CP restart — boot-hydration of the
+/// LOADBEARING: gate must stay blocked across CP restart - boot-hydration of the
 /// in-memory ring from `host_reports` is silent-fail-prone (serde drift would empty
 /// the ring and unlock dispatch).
 #[tokio::test]
@@ -364,10 +359,8 @@ async fn enforce_mode_still_blocks_dispatch_after_cp_restart() {
 
     let dir = TempDir::new().unwrap();
     let (host_sk, host_pubkey) = fresh_host_keypair();
-    let (artifact, signature, trust) =
-        write_signed_fleet(&dir, "enforce", Some(&host_pubkey));
-    let (ca, server_cert, server_key, client_cert, client_key) =
-        mint_ca_and_certs(&dir, HOSTNAME);
+    let (artifact, signature, trust) = write_signed_fleet(&dir, "enforce", Some(&host_pubkey));
+    let (ca, server_cert, server_key, client_cert, client_key) = mint_ca_and_certs(&dir, HOSTNAME);
     let db_path = dir.path().join("state.db");
     let port = pick_free_port().await;
     let client = build_mtls_client(&ca, &client_cert, &client_key);
@@ -421,7 +414,7 @@ async fn enforce_mode_still_blocks_dispatch_after_cp_restart() {
     let resp_pre_restart = post_checkin(&client, port, &checkin_after_failure).await;
     assert!(
         resp_pre_restart.target.is_none(),
-        "pre-restart sanity: gate must already be blocking — got {:?}",
+        "pre-restart sanity: gate must already be blocking - got {:?}",
         resp_pre_restart.target
     );
 
@@ -446,7 +439,7 @@ async fn enforce_mode_still_blocks_dispatch_after_cp_restart() {
     let resp_post_restart = post_checkin(&client, port2, &checkin_after_failure).await;
     assert!(
         resp_post_restart.target.is_none(),
-        "post-restart hydration broken: gate unlocked after CP restart — got target {:?}. \
+        "post-restart hydration broken: gate unlocked after CP restart - got target {:?}. \
          The host_reports SQLite row was not rehydrated into the gate's projection on \
          CP startup.",
         resp_post_restart.target
@@ -461,7 +454,7 @@ async fn enforce_mode_still_blocks_dispatch_after_cp_restart() {
 /// land in `host_reports.event_kind IN ('compliance-failure',
 /// 'runtime-gate-error')`; the SQL aggregator treats them identically.
 /// This test pins the kind-agnostic gate behaviour at the integration
-/// layer — without it, a regression that filtered out runtime-gate-error
+/// layer - without it, a regression that filtered out runtime-gate-error
 /// events from the projection would silently unlock dispatch for hosts
 /// whose evidence chain is broken (the "we couldn't measure" class).
 #[tokio::test]
@@ -470,10 +463,8 @@ async fn enforce_mode_blocks_dispatch_after_signed_runtime_gate_error() {
 
     let dir = TempDir::new().unwrap();
     let (host_sk, host_pubkey) = fresh_host_keypair();
-    let (artifact, signature, trust) =
-        write_signed_fleet(&dir, "enforce", Some(&host_pubkey));
-    let (ca, server_cert, server_key, client_cert, client_key) =
-        mint_ca_and_certs(&dir, HOSTNAME);
+    let (artifact, signature, trust) = write_signed_fleet(&dir, "enforce", Some(&host_pubkey));
+    let (ca, server_cert, server_key, client_cert, client_key) = mint_ca_and_certs(&dir, HOSTNAME);
     let db_path = dir.path().join("state.db");
     let port = pick_free_port().await;
 
@@ -536,7 +527,7 @@ async fn enforce_mode_blocks_dispatch_after_signed_runtime_gate_error() {
     assert!(
         resp2.target.is_none(),
         "enforce + outstanding runtime-gate-error must block dispatch identically to \
-         compliance-failure — got target {:?}",
+         compliance-failure - got target {:?}",
         resp2.target
     );
 
@@ -549,10 +540,8 @@ async fn permissive_mode_does_not_block_dispatch_despite_failure() {
 
     let dir = TempDir::new().unwrap();
     let (host_sk, host_pubkey) = fresh_host_keypair();
-    let (artifact, signature, trust) =
-        write_signed_fleet(&dir, "permissive", Some(&host_pubkey));
-    let (ca, server_cert, server_key, client_cert, client_key) =
-        mint_ca_and_certs(&dir, HOSTNAME);
+    let (artifact, signature, trust) = write_signed_fleet(&dir, "permissive", Some(&host_pubkey));
+    let (ca, server_cert, server_key, client_cert, client_key) = mint_ca_and_certs(&dir, HOSTNAME);
     let db_path = dir.path().join("state.db");
     let port = pick_free_port().await;
 

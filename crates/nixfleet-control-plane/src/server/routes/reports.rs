@@ -11,7 +11,7 @@ use nixfleet_proto::agent_wire::{ReportRequest, ReportResponse};
 use super::super::middleware::AuthenticatedCn;
 use super::super::state::{AppState, ReportRecord, REPORT_RING_CAP};
 
-/// `POST /v1/agent/report` — persists to SQLite and mirrors into a per-host ring buffer.
+/// `POST /v1/agent/report` - persists to SQLite and mirrors into a per-host ring buffer.
 pub(in crate::server) async fn report(
     State(state): State<Arc<AppState>>,
     Extension(cn): Extension<AuthenticatedCn>,
@@ -37,7 +37,7 @@ pub(in crate::server) async fn report(
 
     // Bump per-event counters before any further work. Bounded label set:
     // control_id is from the closed compliance crate; runtime_gate_error
-    // is unlabeled. Counters drive Alertmanager rules — `rate()` queries
+    // is unlabeled. Counters drive Alertmanager rules - `rate()` queries
     // are cheaper than LogQL `count_over_time()` on the same data.
     use nixfleet_proto::agent_wire::ReportEvent;
     if let ReportEvent::ComplianceFailure { control_id, .. } = &req.event {
@@ -127,9 +127,9 @@ pub(in crate::server) async fn report(
     Ok(Json(ReportResponse { event_id }))
 }
 
-/// `GET /v1/host-reports?limit=N` — fleet-wide recent host reports from
+/// `GET /v1/host-reports?limit=N` - fleet-wide recent host reports from
 /// the durable `host_reports` table. Backs the dashboard's "recent reports"
-/// panel — DB-sourced, so it stays accurate regardless of the journal
+/// panel - DB-sourced, so it stays accurate regardless of the journal
 /// rotation window. Default limit 15, max 200.
 pub(in crate::server) async fn list_recent(
     State(state): State<Arc<AppState>>,
@@ -138,17 +138,14 @@ pub(in crate::server) async fn list_recent(
     use axum::response::IntoResponse as _;
     let db = state.db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let limit = params.limit.unwrap_or(15).clamp(1, 200);
-    let rows = db
-        .reports()
-        .recent_across_hosts(limit)
-        .map_err(super::super::route_error::internal_warn(
-            "list_recent host_reports failed",
-        ))?;
+    let rows = db.reports().recent_across_hosts(limit).map_err(
+        super::super::route_error::internal_warn("list_recent host_reports failed"),
+    )?;
     let reports: Vec<serde_json::Value> = rows
         .into_iter()
         .map(|(host, r)| {
             // Try to surface the inner ReportEvent details for downstream
-            // panels — render.sh wants control_id / status etc. without
+            // panels - render.sh wants control_id / status etc. without
             // re-parsing the whole envelope itself.
             let parsed: Option<serde_json::Value> = serde_json::from_str(&r.report_json).ok();
             let event_details = parsed.as_ref().and_then(|v| v.get("event").cloned());
@@ -254,7 +251,7 @@ fn apply_rollback_state_transition(db: &crate::db::Db, req: &ReportRequest) {
 
 /// Park the operational dispatch row in `DeferredPendingReboot` so the 360s
 /// rollback timer skips it. Issue #56's switch-inhibitor carve-out means the
-/// dispatch lifecycle is now bound to the operator's reboot — not the agent's
+/// dispatch lifecycle is now bound to the operator's reboot - not the agent's
 /// 360s confirm window. `mark_deferred` is idempotent: a re-posted
 /// `ActivationDeferred` for the same closure_hash leaves the row untouched.
 fn apply_deferred_pending_reboot_transition(db: &crate::db::Db, req: &ReportRequest) {
@@ -272,9 +269,12 @@ fn apply_deferred_pending_reboot_transition(db: &crate::db::Db, req: &ReportRequ
         );
         return;
     };
-    match db.host_dispatch_state().mark_deferred(&req.hostname, rollout) {
+    match db
+        .host_dispatch_state()
+        .mark_deferred(&req.hostname, rollout)
+    {
         Ok(0) => {
-            // Row not in Pending — could be already-deferred (re-post on a
+            // Row not in Pending - could be already-deferred (re-post on a
             // re-poll), Confirmed (a race), or absent (dispatch row missing).
             // Re-post is the common case; debug, not warn.
             tracing::debug!(
@@ -383,7 +383,9 @@ async fn compute_signature_status(
             stderr_tail,
             signature,
         } => {
-            let stderr_tail_sha256 = nixfleet_canonicalize::sha256_jcs_hex(&stderr_tail.as_deref().unwrap_or("")).ok()?;
+            let stderr_tail_sha256 =
+                nixfleet_canonicalize::sha256_jcs_hex(&stderr_tail.as_deref().unwrap_or(""))
+                    .ok()?;
             let payload = ActivationFailedSignedPayload {
                 hostname: &req.hostname,
                 rollout: req.rollout.as_deref(),
@@ -537,7 +539,7 @@ async fn compute_signature_status(
         }
 
         // UNSIGNED: ActivationDeferred + ClosureQuarantined are operator-
-        // surface only — neither parks a row that fleet-level gates read by
+        // surface only - neither parks a row that fleet-level gates read by
         // signature, both are derived from durable CP-side state (deferred
         // = host_dispatch_state row, quarantined = event ring) so a forged
         // event without a signed payload can't drive a wrong gate decision.
@@ -552,7 +554,6 @@ async fn compute_signature_status(
         | ReportEvent::Other { .. } => None,
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -629,10 +630,7 @@ mod tests {
             .unwrap()
             .expect("operational row present");
         assert_eq!(op.state, "rolled-back");
-        let history = db
-            .dispatch_history()
-            .recent_for_host("ohm", 10)
-            .unwrap();
+        let history = db.dispatch_history().recent_for_host("ohm", 10).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].terminal_state.as_deref(), Some("rolled-back"));
         assert!(history[0].terminal_at.is_some());

@@ -27,10 +27,14 @@ pub(super) async fn read_current_system_basename() -> Result<String> {
 pub enum PollOutcome {
     Settled,
     /// `last_observed` distinguishes "still running" from "switch died".
-    Timeout { last_observed: String },
-    /// Symlink at a third basename — caller must roll back.
+    Timeout {
+        last_observed: String,
+    },
+    /// Symlink at a third basename - caller must roll back.
     /// Only produced when caller set `previous_basename = Some(_)`.
-    FlippedToUnexpected { observed: String },
+    FlippedToUnexpected {
+        observed: String,
+    },
 }
 
 /// `previous_basename = Some(p)` enables hard-mismatch detection: any third
@@ -73,15 +77,13 @@ impl<'a> VerifyPoll<'a> {
                     }
                     if let Some(prev) = self.previous_basename {
                         if basename != prev {
-                            return PollOutcome::FlippedToUnexpected {
-                                observed: basename,
-                            };
+                            return PollOutcome::FlippedToUnexpected { observed: basename };
                         }
                     }
                     last_observed = Some(basename);
                 }
                 Err(err) => {
-                    // GOTCHA: symlink briefly absent mid-activation — read errors are non-fatal.
+                    // GOTCHA: symlink briefly absent mid-activation - read errors are non-fatal.
                     last_observed = Some(format!("<read-error: {err}>"));
                 }
             }

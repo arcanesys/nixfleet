@@ -1,4 +1,4 @@
-//! Tiny ANSI helper. No `colored`/`owo-colors` dep — these are 4 codes.
+//! Tiny ANSI helper. No `colored`/`owo-colors` dep - these are 4 codes.
 
 #[derive(Copy, Clone, Debug)]
 pub enum Style {

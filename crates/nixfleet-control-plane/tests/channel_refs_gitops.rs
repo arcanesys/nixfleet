@@ -9,7 +9,9 @@ use std::time::Duration;
 use base64::Engine as _;
 use common::build_fleet_resolved_json;
 use ed25519_dalek::{Signer, SigningKey};
-use nixfleet_control_plane::polling::channel_refs_poll::{spawn, ChannelRefsCache, ChannelRefsSource};
+use nixfleet_control_plane::polling::channel_refs_poll::{
+    spawn, ChannelRefsCache, ChannelRefsSource,
+};
 use nixfleet_proto::FleetResolved;
 use rand::rngs::OsRng;
 use tempfile::TempDir;
@@ -62,7 +64,11 @@ async fn spawn_stub_http(
                         header.extend_from_slice(&body);
                         header
                     }
-                    None => "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".as_bytes().to_vec(),
+                    None => {
+                        "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                            .as_bytes()
+                            .to_vec()
+                    }
                 };
                 let _ = socket.write_all(&resp).await;
                 let _ = socket.flush().await;
@@ -80,8 +86,11 @@ fn init_tracing() {
         let _ = tracing_subscriber::fmt()
             .with_test_writer()
             .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,nixfleet_control_plane::polling::channel_refs_poll=debug")),
+                tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                    tracing_subscriber::EnvFilter::new(
+                        "warn,nixfleet_control_plane::polling::channel_refs_poll=debug",
+                    )
+                }),
             )
             .try_init();
     });
@@ -126,9 +135,8 @@ async fn poll_refreshes_verified_fleet_snapshot() {
     .await;
 
     let cache = Arc::new(RwLock::new(ChannelRefsCache::default()));
-    let verified_fleet: Arc<
-        RwLock<Option<nixfleet_control_plane::server::VerifiedFleetSnapshot>>,
-    > = Arc::new(RwLock::new(None));
+    let verified_fleet: Arc<RwLock<Option<nixfleet_control_plane::server::VerifiedFleetSnapshot>>> =
+        Arc::new(RwLock::new(None));
 
     let cfg = ChannelRefsSource {
         artifact_url: format!("http://127.0.0.1:{port}{artifact_route}"),
@@ -164,17 +172,23 @@ async fn poll_refreshes_verified_fleet_snapshot() {
     let fleet =
         last_snapshot.expect("verified_fleet snapshot should have been refreshed by the poll");
     assert_eq!(
-        fleet.hosts.get("test-host").and_then(|h| h.closure_hash.as_deref()),
+        fleet
+            .hosts
+            .get("test-host")
+            .and_then(|h| h.closure_hash.as_deref()),
         Some("decl0001-nixos-system-test-host-26.05"),
         "snapshot should carry the fetched closureHash",
     );
     assert_eq!(fleet.meta.ci_commit.as_deref(), Some("deadbeef00000000"));
 
     let refs = cache.read().await.refs.clone();
-    assert!(refs.contains_key("stable"), "channel_refs should include stable: {refs:?}");
+    assert!(
+        refs.contains_key("stable"),
+        "channel_refs should include stable: {refs:?}"
+    );
 
     // #95: the first successful poll must flip the readiness flag so /v1/*
-    // opens up — without this the daemon would serve 503 forever even
+    // opens up - without this the daemon would serve 503 forever even
     // though the fleet snapshot is verified and live.
     assert!(
         artifact_primed.load(Ordering::Acquire),
@@ -233,14 +247,13 @@ async fn poll_retains_snapshot_on_verify_failure() {
     }).to_string()).unwrap();
 
     let cache = Arc::new(RwLock::new(ChannelRefsCache::default()));
-    let verified_fleet: Arc<
-        RwLock<Option<nixfleet_control_plane::server::VerifiedFleetSnapshot>>,
-    > = Arc::new(RwLock::new(Some(
-        nixfleet_control_plane::server::VerifiedFleetSnapshot {
-            fleet: Arc::new(sentinel),
-            fleet_resolved_hash: "sentinel-hash".to_string(),
-        },
-    )));
+    let verified_fleet: Arc<RwLock<Option<nixfleet_control_plane::server::VerifiedFleetSnapshot>>> =
+        Arc::new(RwLock::new(Some(
+            nixfleet_control_plane::server::VerifiedFleetSnapshot {
+                fleet: Arc::new(sentinel),
+                fleet_resolved_hash: "sentinel-hash".to_string(),
+            },
+        )));
 
     let cfg = ChannelRefsSource {
         artifact_url: format!("http://127.0.0.1:{port}{artifact_route}"),
@@ -263,17 +276,22 @@ async fn poll_retains_snapshot_on_verify_failure() {
         artifact_primed.clone(),
     );
 
-    // GOTCHA: negative-observation test — fixed sleep is correct because no positive condition can converge.
+    // GOTCHA: negative-observation test - fixed sleep is correct because no positive condition can converge.
     tokio::time::sleep(Duration::from_secs(2)).await;
     let snapshot = verified_fleet.read().await.clone();
-    let fleet = snapshot.expect("sentinel must be retained on verify failure").fleet;
+    let fleet = snapshot
+        .expect("sentinel must be retained on verify failure")
+        .fleet;
     assert_eq!(
-        fleet.hosts.get("sentinel").and_then(|h| h.closure_hash.as_deref()),
+        fleet
+            .hosts
+            .get("sentinel")
+            .and_then(|h| h.closure_hash.as_deref()),
         Some("sentinel-hash"),
         "verify-failure must NOT overwrite sentinel snapshot",
     );
 
-    // #95: a verify-failed poll must NOT flip the readiness flag — even
+    // #95: a verify-failed poll must NOT flip the readiness flag - even
     // with a sentinel snapshot already in place from a prior boot.
     // Otherwise the rebuild-resurrects-revoked-cert path opens up.
     assert!(

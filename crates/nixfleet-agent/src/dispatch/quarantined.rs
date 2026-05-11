@@ -5,7 +5,7 @@
 //! Skip is paired with a throttled `ClosureQuarantined` event post: the first
 //! suppression fires the event, subsequent suppressions within
 //! `QUARANTINE_REPOST_THROTTLE_SECS` are silent. `failure_count` tracks
-//! distinct switch failures, NOT suppression hits — flapping the event log
+//! distinct switch failures, NOT suppression hits - flapping the event log
 //! on every poll would flood the operator's dashboard.
 
 use chrono::{DateTime, Utc};
@@ -30,7 +30,7 @@ pub(crate) enum QuarantineDecision {
 /// Decides whether to short-circuit the dispatch. Suppression matches when
 /// the recorded `closure_hash` equals `target.closure_hash` AND the failure
 /// is recent (within `QUARANTINE_WINDOW_SECS`). Read failures are fail-open
-/// (Proceed) — the agent will re-attempt and either succeed or re-record
+/// (Proceed) - the agent will re-attempt and either succeed or re-record
 /// the failure.
 pub(crate) fn evaluate(
     state_dir: &std::path::Path,
@@ -61,16 +61,14 @@ pub(crate) async fn post_quarantine_event<R: Reporter>(
 ) {
     let should_post = match record.last_quarantine_post_at {
         None => true,
-        Some(ts) => {
-            now.signed_duration_since(ts).num_seconds() >= QUARANTINE_REPOST_THROTTLE_SECS
-        }
+        Some(ts) => now.signed_duration_since(ts).num_seconds() >= QUARANTINE_REPOST_THROTTLE_SECS,
     };
 
     tracing::info!(
         target_closure = %ctx.target.closure_hash,
         failure_count = record.failure_count,
         will_post = should_post,
-        "agent: skipping dispatch — closure quarantined after prior activation failure",
+        "agent: skipping dispatch - closure quarantined after prior activation failure",
     );
 
     if !should_post {

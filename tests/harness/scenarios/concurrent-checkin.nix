@@ -1,4 +1,4 @@
-# LOADBEARING: regression for the atomic VerifiedFleetSnapshot pair —
+# LOADBEARING: regression for the atomic VerifiedFleetSnapshot pair  -
 # `(fleet, fleet_resolved_hash)` are held under one RwLock so a concurrent
 # checkin reader never sees a half-swapped snapshot from a torn write.
 {
@@ -103,14 +103,14 @@ in
       host.succeed("sleep 1")
 
       print(f"step 1: spawning {len(hostnames)} concurrent checkin loops "
-            f"for {soak_secs}s…")
+            f"for {soak_secs}s...")
       bg_cmd = " & ".join(
           f"${loopDriverScript} {h} {soak_secs}" for h in hostnames
       ) + " & wait"
       host.succeed(f"bash -c '{bg_cmd}'", timeout=soak_secs + 60)
       print("step 1: soak complete")
 
-      print("step 2: harvesting dispatched rollout_ids from CP journal…")
+      print("step 2: harvesting dispatched rollout_ids from CP journal...")
       journal = host.succeed(
           "journalctl -u nixfleet-control-plane.service "
           f"--since='{soak_cursor}' --no-pager"
@@ -129,13 +129,13 @@ in
 
       assert len(rollout_ids) <= 1, (
           f"torn-snapshot regression: {len(rollout_ids)} distinct "
-          f"rollout_ids observed under steady-state fleet — expected "
+          f"rollout_ids observed under steady-state fleet - expected "
           f"≤ 1. Set: {sorted(rollout_ids)}"
       )
 
       if len(rollout_ids) == 0:
           print(
-              "step 3: 0 dispatches issued during soak — fixture's "
+              "step 3: 0 dispatches issued during soak - fixture's "
               "stub closureHashes may produce NoDeclaration. Atomic "
               "pair contract holds vacuously; "
               "${toString agentLoopCount} loops × "
@@ -145,7 +145,7 @@ in
       else:
           print(
               f"step 3: 1 stable rollout_id across "
-              f"{len(dispatch_lines)} dispatches — atomic "
+              f"{len(dispatch_lines)} dispatches - atomic "
               f"VerifiedFleetSnapshot pair held under "
               f"${toString agentLoopCount} concurrent loops × "
               f"${toString soakDurationSecs}s soak."
@@ -172,7 +172,7 @@ in
 
       print(
           "fleet-harness-concurrent-checkin: atomic VerifiedFleetSnapshot "
-          "contract holds — under "
+          "contract holds - under "
           + str(${toString agentLoopCount})
           + " concurrent checkin loops × "
           + str(${toString soakDurationSecs})

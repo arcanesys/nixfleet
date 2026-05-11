@@ -24,12 +24,12 @@ serde_with = { version = "3", default-features = false, features = ["macros"] }
 # the heavier `ssh-key` crate into the boundary-contract surface.
 base64 = "0.22"
 sha2 = "0.10"
-# Optional: ToSql/FromSql for HostRolloutState — only the CP enables it.
+# Optional: ToSql/FromSql for HostRolloutState - only the CP enables it.
 rusqlite = { version = "0.32", optional = true }
 
 [features]
 rusqlite = ["dep:rusqlite"]
-# `testing` exposes nixfleet_proto::testing::FleetBuilder and friends —
+# `testing` exposes nixfleet_proto::testing::FleetBuilder and friends  - 
 # fluent fixture construction shared across reconciler/CP/release tests.
 testing = []
 

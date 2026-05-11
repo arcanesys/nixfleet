@@ -309,7 +309,7 @@ mod tests {
         }
         let rows = db.reports().recent_across_hosts(10).unwrap();
         assert_eq!(rows.len(), 3);
-        // DESC chronological — newest first regardless of host.
+        // DESC chronological - newest first regardless of host.
         let event_ids: Vec<&str> = rows.iter().map(|(_, r)| r.event_id.as_str()).collect();
         assert_eq!(event_ids, vec!["evt-3-newest", "evt-2-mid", "evt-1-oldest"]);
         // Hostname is the first tuple element so callers can filter without

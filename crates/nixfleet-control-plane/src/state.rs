@@ -15,7 +15,7 @@ pub enum PendingConfirmState {
     /// critical-component swap (dbus impl, systemd, kernel, init) would have
     /// been refused by `nixos-rebuild`'s switchInhibitors check (issue #56).
     /// New generation activates on next reboot. Distinct from `Pending` so
-    /// the rollback timer's 360s deadline doesn't apply — the lifecycle is
+    /// the rollback timer's 360s deadline doesn't apply - the lifecycle is
     /// human-paced. Confirm POST after reboot transitions this directly to
     /// `Confirmed`, bypassing the deadline gate.
     DeferredPendingReboot,

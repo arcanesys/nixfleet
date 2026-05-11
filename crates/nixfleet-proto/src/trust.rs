@@ -1,7 +1,7 @@
 //! Trust root declarations.
 //!
 //! LOADBEARING: algorithm is a property of the key, not the artifact.
-//! Verifier matches `(artifact, sig) → trust root → algorithm` — artifacts
+//! Verifier matches `(artifact, sig) → trust root → algorithm` - artifacts
 //! MUST NOT carry their own algorithm claim (an attacker could otherwise
 //! downgrade by lying about which algo signed the bytes).
 
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// `algorithm` is `String` (not enum) for forward-compat with future
 /// algorithms. Unknown values surface as `UnsupportedAlgorithm` at verify
-/// time. Today: ed25519 — `public` is 32-byte base64 (padded).
+/// time. Today: ed25519 - `public` is 32-byte base64 (padded).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrustedPubkey {
@@ -44,7 +44,7 @@ pub struct TrustConfig {
     /// PEM-encoded issuance CA chain. Each entry is signed by
     /// `root_ca_pem` and represents an issuance CA the fleet currently
     /// trusts to mint agent certs. Multiple entries during a rotation
-    /// overlap window — agents accept any cert chain anchored at one
+    /// overlap window - agents accept any cert chain anchored at one
     /// of these intermediates. The TPM-bound issuance CA on the CP
     /// host appears here once it's bootstrapped.
     #[serde(default)]
@@ -55,7 +55,7 @@ impl TrustConfig {
     pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 }
 
-/// LOADBEARING: `reject_before` is the compromise kill-switch — artifacts
+/// LOADBEARING: `reject_before` is the compromise kill-switch - artifacts
 /// signed before this timestamp are refused regardless of which key signed.
 ///
 /// `successor` + `retire_at` declare a planned rotation in advance:
@@ -78,10 +78,10 @@ pub struct KeySlot {
 
     /// Pre-announced next key. Accepted by verifiers when
     /// `now < retire_at` (overlap window). Past `retire_at`, the
-    /// reconciler emits `Action::RotateTrustRoot` — the actual
+    /// reconciler emits `Action::RotateTrustRoot` - the actual
     /// promotion (`current → previous`, `successor → current`) is an
     /// out-of-band tooling step in fleet.nix, not an automated CP
-    /// mutation. Paired with `retire_at` — both must be set together
+    /// mutation. Paired with `retire_at` - both must be set together
     /// (Nix-side assertion in contracts/trust.nix).
     #[serde(default)]
     pub successor: Option<TrustedPubkey>,

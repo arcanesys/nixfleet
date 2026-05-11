@@ -25,7 +25,7 @@ pub fn run(args: Args) -> Result<()> {
     let arr: [u8; 32] = if bytes.len() >= 32 {
         bytes[..32]
             .try_into()
-            .expect("slice of length 32 fits [u8; 32] — len checked above")
+            .expect("slice of length 32 fits [u8; 32] - len checked above")
     } else {
         anyhow::bail!("expected at least 32 bytes, got {}", bytes.len());
     };

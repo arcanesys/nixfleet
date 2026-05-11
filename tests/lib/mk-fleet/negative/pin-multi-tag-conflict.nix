@@ -3,7 +3,7 @@ mkFleet {
   hosts.web-01 = {
     system = "x86_64-linux";
     configuration = import ../fixtures/_stub-configuration.nix {};
-    # Carries TWO tags whose pins both apply — eval-time error.
+    # Carries TWO tags whose pins both apply - eval-time error.
     tags = ["infra" "audit-2026q2"];
     channel = "stable";
   };

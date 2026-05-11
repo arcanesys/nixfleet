@@ -63,7 +63,7 @@ in
       host.wait_for_unit("microvms.target", timeout=300)
       host.wait_for_unit("microvm@agent-01.service", timeout=300)
 
-      print("step 1: waiting for agent first checkin (post-recovery)…")
+      print("step 1: waiting for agent first checkin (post-recovery)...")
       deadline = time.monotonic() + 180
       checked_in = False
       while time.monotonic() < deadline:
@@ -78,7 +78,7 @@ in
       assert checked_in, "agent never checked in within 90s"
       print("step 1: agent checked in, recovery hook has fired")
 
-      print("step 2: checking agent journal for StaleClearedMismatch action…")
+      print("step 2: checking agent journal for StaleClearedMismatch action...")
       rc, out = host.execute(
           "journalctl -u microvm@agent-01.service --no-pager "
           "| grep -E 'boot-recovery: cleared stale dispatch record|StaleClearedMismatch|current/dispatched mismatch'"

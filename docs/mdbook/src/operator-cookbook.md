@@ -9,7 +9,7 @@ Tasks the operator does, with concrete commands. Add new recipes when something 
 $EDITOR ~/dev/arcanesys/fleet/...
 
 # 2. Commit + push to origin (lab Forgejo)
-git -C ~/dev/arcanesys/fleet commit -am "feat: …"
+git -C ~/dev/arcanesys/fleet commit -am "feat: ..."
 git -C ~/dev/arcanesys/fleet push origin main
 
 # 3. CI runs; commits a [skip ci] release commit ~minutes later
@@ -29,7 +29,7 @@ nh os switch .#lab --target-host root@lab --use-remote-sudo
 ## Mint a bootstrap token for a new host
 
 ```sh
-# On an operator workstation (krach or aether — both have nixfleet.operator)
+# On an operator workstation (krach or aether - both have nixfleet.operator)
 nixfleet mint-token \
   --hostname newhost \
   --csr-pubkey-fingerprint <SHA-256-base64-of-newhost-pubkey> \
@@ -98,7 +98,7 @@ Look for: rows in `pending` long after deadline (rollback timer broken), repeate
 
 ## Add a host to the fleet
 
-1. Add the host's `mkHost { … }` call in `fleet/flake.nix`.
+1. Add the host's `mkHost { ... }` call in `fleet/flake.nix`.
 2. Mint a bootstrap token (recipe above).
 3. Add the host to `fleet-secrets/secrets.nix` recipient lists for the secrets it should have access to.
 4. `nixos-anywhere --flake .#newhost root@<bootstrap-ip>`.
@@ -107,7 +107,7 @@ Look for: rows in `pending` long after deadline (rollback timer broken), repeate
 ## Tag a release
 
 ```sh
-# Tag a stable point — useful before major refactors so we have a known-good restore.
+# Tag a stable point - useful before major refactors so we have a known-good restore.
 git -C ~/dev/arcanesys/nixfleet tag -m "v0.2.0-rc1: Phase 4 dispatch chain on hardware" v0.2.0-rc1
 git -C ~/dev/arcanesys/nixfleet push lab v0.2.0-rc1
 ```

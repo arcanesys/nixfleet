@@ -1,6 +1,6 @@
 //! Declarative key rotation: emit `Action::RotateTrustRoot` when a
 //! trust slot's `retire_at` deadline has passed AND a `successor` is
-//! declared. Pure function — informational only. The action signals
+//! declared. Pure function - informational only. The action signals
 //! the operator's out-of-band tooling to rotate
 //! `current → previous, successor → current` in the next fleet
 //! commit. The CP NEVER self-mutates trust roots; that's the
@@ -15,7 +15,7 @@ use crate::action::Action;
 
 /// Returns one `Action::RotateTrustRoot` per trust slot whose
 /// `retire_at <= now` AND `successor.is_some()`. Each slot is
-/// checked independently — both `ciReleaseKey` and `orgRootKey`
+/// checked independently - both `ciReleaseKey` and `orgRootKey`
 /// can carry rotation metadata.
 ///
 /// Idempotent: emits the same action every tick until the operator
@@ -69,10 +69,7 @@ mod tests {
         }
     }
 
-    fn slot_with(
-        successor: Option<TrustedPubkey>,
-        retire_at: Option<DateTime<Utc>>,
-    ) -> KeySlot {
+    fn slot_with(successor: Option<TrustedPubkey>, retire_at: Option<DateTime<Utc>>) -> KeySlot {
         KeySlot {
             current: Some(key("AAAA")),
             previous: None,
@@ -111,7 +108,10 @@ mod tests {
         let actions = check_trust_rotations(&trust_with(slot, None), now);
         assert_eq!(actions.len(), 1);
         match &actions[0] {
-            Action::RotateTrustRoot { which, retire_at: r } => {
+            Action::RotateTrustRoot {
+                which,
+                retire_at: r,
+            } => {
                 assert_eq!(which, "ciReleaseKey");
                 assert_eq!(*r, retire_at);
             }
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn exactly_at_deadline_is_rotation_due() {
-        // `now >= retire_at` per spec — equality is the moment of rotation,
+        // `now >= retire_at` per spec - equality is the moment of rotation,
         // not the last instant of overlap.
         let now = Utc::now();
         let slot = slot_with(Some(key("CCCC")), Some(now));

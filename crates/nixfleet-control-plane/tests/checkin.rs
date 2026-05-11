@@ -9,8 +9,8 @@ use common::{
 };
 use nixfleet_control_plane::server;
 use nixfleet_proto::agent_wire::{
-    CheckinRequest, CheckinResponse, FetchOutcome, FetchResult, GenerationRef,
-    ReportEvent, ReportRequest, ReportResponse,
+    CheckinRequest, CheckinResponse, FetchOutcome, FetchResult, GenerationRef, ReportEvent,
+    ReportRequest, ReportResponse,
 };
 use tempfile::TempDir;
 
@@ -71,7 +71,10 @@ async fn checkin_records_request_and_returns_null_target() {
         .await
         .unwrap();
 
-    assert!(resp.target.is_none(), "should not dispatch in this scenario");
+    assert!(
+        resp.target.is_none(),
+        "should not dispatch in this scenario"
+    );
     assert_eq!(resp.next_checkin_secs, 60);
 
     server_handle.abort();
@@ -165,7 +168,7 @@ async fn report_records_event_and_returns_event_id() {
         rollout: Some("stable@abc12345".to_string()),
         event: ReportEvent::RealiseFailed {
             closure_hash: "abc123".to_string(),
-            reason: "substituter 503 — upstream unavailable".to_string(),
+            reason: "substituter 503 - upstream unavailable".to_string(),
             signature: None,
         },
     };

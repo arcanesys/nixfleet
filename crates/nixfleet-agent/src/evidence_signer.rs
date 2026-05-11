@@ -11,11 +11,9 @@ use serde::Serialize;
 
 pub use nixfleet_proto::evidence_signing::{
     ActivationFailedSignedPayload, ClosureSignatureMismatchSignedPayload,
-    ComplianceFailureSignedPayload, ManifestMismatchSignedPayload,
-    ManifestMissingSignedPayload, ManifestVerifyFailedSignedPayload,
-    RealiseFailedSignedPayload, RollbackTriggeredSignedPayload,
-    RuntimeGateErrorSignedPayload, StaleTargetSignedPayload,
-    VerifyMismatchSignedPayload,
+    ComplianceFailureSignedPayload, ManifestMismatchSignedPayload, ManifestMissingSignedPayload,
+    ManifestVerifyFailedSignedPayload, RealiseFailedSignedPayload, RollbackTriggeredSignedPayload,
+    RuntimeGateErrorSignedPayload, StaleTargetSignedPayload, VerifyMismatchSignedPayload,
 };
 
 pub const DEFAULT_SSH_HOST_KEY_PATH: &str = "/etc/ssh/ssh_host_ed25519_key";
@@ -32,13 +30,12 @@ impl EvidenceSigner {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 tracing::warn!(
                     path = %path.display(),
-                    "ssh host key not found — evidence signing disabled (no auditor chain)",
+                    "ssh host key not found - evidence signing disabled (no auditor chain)",
                 );
                 return Ok(None);
             }
             Err(err) => {
-                return Err(err)
-                    .with_context(|| format!("read {}", path.display()));
+                return Err(err).with_context(|| format!("read {}", path.display()));
             }
         };
 
@@ -111,14 +108,9 @@ mod tests {
             public: ssh_key::public::Ed25519PublicKey(sk.verifying_key().to_bytes()),
             private: ssh_key::private::Ed25519PrivateKey::from_bytes(&sk.to_bytes()),
         };
-        let pk = ssh_key::PrivateKey::new(
-            ssh_key::private::KeypairData::Ed25519(kp),
-            "test-host",
-        )
-        .expect("ssh PrivateKey::new");
-        let pem = pk
-            .to_openssh(ssh_key::LineEnding::LF)
-            .expect("to_openssh");
+        let pk = ssh_key::PrivateKey::new(ssh_key::private::KeypairData::Ed25519(kp), "test-host")
+            .expect("ssh PrivateKey::new");
+        let pem = pk.to_openssh(ssh_key::LineEnding::LF).expect("to_openssh");
         let path = dir.join("ssh_host_ed25519_key");
         std::fs::write(&path, pem.as_bytes()).expect("write key");
         path

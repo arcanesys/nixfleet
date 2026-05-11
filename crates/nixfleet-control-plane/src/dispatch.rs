@@ -26,7 +26,7 @@ pub enum Decision {
     /// Host's `wave_index` exceeds the rollout's `current_wave`. The
     /// reconciler's PromoteWave action advances `current_wave` when the
     /// previous wave reaches Soaked. Until then, hosts in later waves
-    /// are held at the dispatch endpoint — without this, the agent-
+    /// are held at the dispatch endpoint - without this, the agent-
     /// facing checkin would serve targets to wave-N hosts before
     /// wave-(N-1) had soaked, defeating wave-staged rollouts.
     WaveNotReached,
@@ -38,10 +38,10 @@ pub enum Decision {
 }
 
 /// LOADBEARING: `fleet_resolved_hash` anchors rolloutId to the verified
-/// snapshot's canonical bytes — different snapshot at the same channel ref
+/// snapshot's canonical bytes - different snapshot at the same channel ref
 /// produces a different rolloutId, by design. Drift breaks the wire promise
 /// that every advertised rolloutId resolves to a CI-signed manifest.
-/// `current_wave`: `None` means "no rollout recorded in DB yet" —
+/// `current_wave`: `None` means "no rollout recorded in DB yet"  -
 /// interpreted as `current_wave = 0` for gating purposes (the wave-
 /// staging contract always opens at wave 0). Reconciler's PromoteWave
 /// action persists advancement; the checkin path reads the same column
@@ -119,7 +119,7 @@ pub fn decide_target(
     // `current_wave = None` means the rollout hasn't been recorded in
     // the DB yet; treat as wave 0 (the start of every staged rollout).
     // Hosts not in any declared wave (`wave_index = None`) are
-    // ungated — that path is exercised by single-wave channels with
+    // ungated - that path is exercised by single-wave channels with
     // `selector.all = true` where the wave doesn't filter by host.
     if let Some(host_wave) = wave_index {
         let effective_current_wave = current_wave.unwrap_or(0);
@@ -195,7 +195,7 @@ mod tests {
             .build();
         // Caller passes in a fully-formed Host (varies per test), so insert
         // raw rather than going through host() defaults. Channel "stable"
-        // declares rollout_policy "p" — match what host.channel references.
+        // declares rollout_policy "p" - match what host.channel references.
         f.hosts.insert(hostname.to_string(), host);
         f
     }
@@ -229,8 +229,8 @@ mod tests {
             uptime_secs: None,
             last_confirmed_at: None,
             attestation_signature: None,
-        health_probes: vec![],
-        health_check_mode: None,
+            health_probes: vec![],
+            health_check_mode: None,
         }
     }
 

@@ -1,4 +1,4 @@
-//! `verify_artifact` — signature, freshness window, schema, algorithm rotation.
+//! `verify_artifact` - signature, freshness window, schema, algorithm rotation.
 
 mod common;
 
@@ -380,7 +380,7 @@ fn verify_skips_unknown_algorithm_when_known_also_present() {
     );
 }
 
-/// P-256 curve order `n` big-endian — used to build high-s twin sigs.
+/// P-256 curve order `n` big-endian - used to build high-s twin sigs.
 const P256_N_BE: [u8; 32] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51,
@@ -500,7 +500,7 @@ fn verify_rotation_cross_algorithm() {
     let result = verify_artifact(canonical.as_bytes(), &p256_sig, &trusted, now, window, None);
     assert!(
         result.is_ok(),
-        "p256 current + ed25519 previous — p256 sig must verify via first entry: {result:?}"
+        "p256 current + ed25519 previous - p256 sig must verify via first entry: {result:?}"
     );
 }
 
@@ -603,8 +603,7 @@ fn reject_before_exact_equal_is_accepted() {
     .expect("signed_at == reject_before must be accepted under strict < semantic");
 }
 
-
-/// `RejectedBeforeTimestamp` wins over `Stale` when both hold — alert
+/// `RejectedBeforeTimestamp` wins over `Stale` when both hold - alert
 /// class must distinguish compromise from staleness.
 #[test]
 fn reject_before_takes_precedence_over_stale() {

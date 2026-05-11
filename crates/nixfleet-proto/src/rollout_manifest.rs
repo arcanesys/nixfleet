@@ -1,9 +1,9 @@
-//! `releases/rollouts/<rolloutId>.json` — signed per-channel rollout manifest.
+//! `releases/rollouts/<rolloutId>.json` - signed per-channel rollout manifest.
 //!
 //! LOADBEARING: rolloutId is the SHA-256 of canonical bytes (not a label).
 //! Verifiers MUST canonicalize the **received bytes** and assert the hash
 //! matches the advertised rolloutId before consuming any other field. They
-//! MUST NOT re-serialise a parsed `RolloutManifest` and hash that — re-
+//! MUST NOT re-serialise a parsed `RolloutManifest` and hash that - re-
 //! serialisation drops fields the verifier's proto doesn't know about,
 //! breaking content-addressing across additive schema changes (see
 //! `nixfleet_reconciler::verify::rollout_id_from_bytes`). `display_name`
@@ -19,7 +19,7 @@ use crate::fleet_resolved::{HealthGate, Meta, Selector};
 pub struct RolloutManifest {
     pub schema_version: u32,
 
-    /// `<channel>@<short-ci-commit>` — display only, not the identifier.
+    /// `<channel>@<short-ci-commit>` - display only, not the identifier.
     pub display_name: String,
 
     pub channel: String,
@@ -27,11 +27,11 @@ pub struct RolloutManifest {
     pub channel_ref: String,
 
     /// LOADBEARING: anchors the manifest to one signed `fleet.resolved`
-    /// snapshot — different snapshot produces a different rolloutId,
+    /// snapshot - different snapshot produces a different rolloutId,
     /// preventing cross-snapshot mix-and-match.
     pub fleet_resolved_hash: String,
 
-    /// FOOTGUN: MUST be sorted by `hostname` ascending — JCS sorts object
+    /// FOOTGUN: MUST be sorted by `hostname` ascending - JCS sorts object
     /// keys but not array elements; producer's order IS the canonical order.
     pub host_set: Vec<HostWave>,
 
@@ -42,11 +42,11 @@ pub struct RolloutManifest {
 
     /// Disruption-budget snapshot: each `fleet.disruptionBudgets[i]` resolved
     /// against `fleet.hosts.tags` at projection time. Frozen for the
-    /// rollout's life — mid-rollout retag does NOT reshape these. Cross-
+    /// rollout's life - mid-rollout retag does NOT reshape these. Cross-
     /// rollout in-flight counting matches by `selector` equality so the
     /// fleet-wide enforcement property survives the snapshot model.
     /// Empty vec when fleet declares no budgets.
-    /// FOOTGUN: per-budget `hosts` MUST be sorted alphabetically — JCS
+    /// FOOTGUN: per-budget `hosts` MUST be sorted alphabetically - JCS
     /// canonicalizes object keys but not array elements.
     #[serde(default)]
     pub disruption_budgets: Vec<RolloutBudget>,
@@ -74,7 +74,7 @@ pub struct HostWave {
     pub hostname: String,
     /// Frozen at projection time; reshaping waves produces a new rolloutId.
     pub wave_index: u32,
-    /// Per-host (not channel-level) — agent re-asserts this against the
+    /// Per-host (not channel-level) - agent re-asserts this against the
     /// CP-advertised closure to detect retargeting.
     pub target_closure: String,
 }
@@ -100,8 +100,8 @@ mod tests {
             display_name: "stable@def4567".into(),
             channel: "stable".into(),
             channel_ref: "def4567abc123def4567abc123def4567abc123d".into(),
-            fleet_resolved_hash:
-                "1111111111111111111111111111111111111111111111111111111111111111".into(),
+            fleet_resolved_hash: "1111111111111111111111111111111111111111111111111111111111111111"
+                .into(),
             host_set: vec![
                 HostWave {
                     hostname: "agent-01".into(),
@@ -181,8 +181,7 @@ mod tests {
     fn host_target_closure_change_changes_canonical_bytes() {
         let m1 = sample_manifest();
         let mut m2 = sample_manifest();
-        m2.host_set[0].target_closure =
-            "9999999999999999999999999999999999999999-perturbed".into();
+        m2.host_set[0].target_closure = "9999999999999999999999999999999999999999-perturbed".into();
 
         let canon1 = canonicalize(&serde_json::to_string(&m1).unwrap()).unwrap();
         let canon2 = canonicalize(&serde_json::to_string(&m2).unwrap()).unwrap();

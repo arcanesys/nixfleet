@@ -1,6 +1,6 @@
 //! Operational dispatch row, one per host (soft state); orphan-confirm recovers from loss.
 //!
-//! LOADBEARING: paired with `dispatch_history` (append-only audit) — UPSERT replaces
+//! LOADBEARING: paired with `dispatch_history` (append-only audit) - UPSERT replaces
 //! the operational row on every new dispatch; audit trail must survive in history.
 //!
 //! `confirm_deadline` filtering convention across the four readers:
@@ -21,7 +21,7 @@
 //! inhibitor carve-out: the agent ran `nix-env --set` but skipped live
 //! activation because a critical-component swap (dbus impl, systemd, kernel,
 //! init) requires a reboot. The 360s rollback timer must NOT sweep these
-//! rows — `pending_deadlines()` filters them out via `state='pending'`. The
+//! rows - `pending_deadlines()` filters them out via `state='pending'`. The
 //! confirm endpoint accepts post-reboot confirms against deferred rows
 //! without the deadline check (`confirm()` above). When the operator finally
 //! reboots, the agent's boot-recovery POSTs confirm and the row transitions
@@ -56,7 +56,7 @@ pub struct RolloutDbSnapshot {
     pub target_channel_ref: String,
     /// `host_rollout_state` wins when present; otherwise derived from operational state.
     pub host_states: HashMap<String, String>,
-    /// `hds.wave` per host — the wave the host was dispatched into. Stays
+    /// `hds.wave` per host - the wave the host was dispatched into. Stays
     /// constant once dispatched; distinct from rollout-level `current_wave`
     /// which advances as PromoteWave fires. Read by the dashboard's
     /// per-host detail rows.
@@ -85,7 +85,7 @@ pub struct HostDispatchState<'a> {
 }
 
 impl HostDispatchState<'_> {
-    /// LOADBEARING: operational UPSERT + history append in one txn — partial
+    /// LOADBEARING: operational UPSERT + history append in one txn - partial
     /// failure leaves audit trail aligned with operational state.
     pub fn record_dispatch(&self, row: &DispatchInsert<'_>) -> Result<()> {
         super::txn(self.conn, "dispatch", |t| {
@@ -127,7 +127,7 @@ impl HostDispatchState<'_> {
             upsert_operational(t, &row, PendingConfirmState::Confirmed, Some(confirmed_at))?;
             super::dispatch_history::insert_history(t, &row)?;
             // Shared with RolloutState::transition_host_state via the free fn so
-            // the host_rollout_state row lands in the same txn — partial commit
+            // the host_rollout_state row lands in the same txn - partial commit
             // would leave hrs NULL and the soak timer never fires.
             super::rollout_state::transition_host_state_inner(
                 t,
@@ -161,7 +161,7 @@ impl HostDispatchState<'_> {
     ///   - `DeferredPendingReboot` (post-reboot confirm; deadline is irrelevant
     ///     because the lifecycle was paused waiting for the operator's reboot)
     ///
-    /// The deadline gate continues to reject late `Pending` confirms — that
+    /// The deadline gate continues to reject late `Pending` confirms - that
     /// safety property is what ensures the rollback timer can't be raced by a
     /// stale confirm. The deferred branch explicitly opts out of the gate.
     pub fn confirm(&self, hostname: &str, rollout_id: &str) -> Result<usize> {
@@ -366,7 +366,7 @@ impl HostDispatchState<'_> {
                         PendingConfirmState::Pending => HostRolloutState::ConfirmWindow,
                         PendingConfirmState::Confirmed => HostRolloutState::Healthy,
                         // Deferred maps to ConfirmWindow for reconciler purposes:
-                        // the host is still "in the confirm window" — just paused
+                        // the host is still "in the confirm window" - just paused
                         // waiting for the operator's reboot. Wave promotion treats
                         // it as in-flight, which is correct (we don't want to
                         // promote past a host whose new gen hasn't actually
@@ -382,21 +382,22 @@ impl HostDispatchState<'_> {
                     .to_string(),
                 };
 
-                let entry = by_rollout
-                    .entry(rollout_id.clone())
-                    .or_insert_with(|| RolloutDbSnapshot {
-                        rollout_id: rollout_id.clone(),
-                        channel: row_channel.clone(),
-                        target_closure_hash: target_closure.clone(),
-                        target_channel_ref: target_ref.clone(),
-                        host_states: HashMap::new(),
-                        host_waves: HashMap::new(),
-                        last_healthy_since: HashMap::new(),
-                        current_wave: current_wave as u32,
-                        // terminal_at lives on the rollouts table; gate observed
-                        // builders merge from db.rollouts().list_active().
-                        terminal_at: None,
-                    });
+                let entry =
+                    by_rollout
+                        .entry(rollout_id.clone())
+                        .or_insert_with(|| RolloutDbSnapshot {
+                            rollout_id: rollout_id.clone(),
+                            channel: row_channel.clone(),
+                            target_closure_hash: target_closure.clone(),
+                            target_channel_ref: target_ref.clone(),
+                            host_states: HashMap::new(),
+                            host_waves: HashMap::new(),
+                            last_healthy_since: HashMap::new(),
+                            current_wave: current_wave as u32,
+                            // terminal_at lives on the rollouts table; gate observed
+                            // builders merge from db.rollouts().list_active().
+                            terminal_at: None,
+                        });
                 entry.host_states.insert(hostname.clone(), host_state);
                 entry.host_waves.insert(hostname.clone(), host_wave as u32);
                 if let Some(ts) = hrs_ts {
@@ -491,12 +492,7 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert(
-                "ohm",
-                "stable@abc",
-                "system-r1",
-                deadline,
-            ))
+            .record_dispatch(&dispatch_insert("ohm", "stable@abc", "system-r1", deadline))
             .unwrap();
         let row = db.host_dispatch_state().host_state("ohm").unwrap().unwrap();
         assert_eq!(row.rollout_id, "stable@abc");
@@ -531,7 +527,10 @@ mod tests {
         db.host_dispatch_state()
             .record_dispatch(&dispatch_insert("ohm", "stable@r1", "system-r1", deadline))
             .unwrap();
-        let n = db.host_dispatch_state().confirm("ohm", "stable@r1").unwrap();
+        let n = db
+            .host_dispatch_state()
+            .confirm("ohm", "stable@r1")
+            .unwrap();
         assert_eq!(n, 1);
         let row = db.host_dispatch_state().host_state("ohm").unwrap().unwrap();
         assert_eq!(row.state, "confirmed");
@@ -572,7 +571,10 @@ mod tests {
         db.host_dispatch_state()
             .record_dispatch(&dispatch_insert("ohm", "stable@r1", "system-r1", deadline))
             .unwrap();
-        let n = db.host_dispatch_state().confirm("ohm", "stable@r2").unwrap();
+        let n = db
+            .host_dispatch_state()
+            .confirm("ohm", "stable@r2")
+            .unwrap();
         assert_eq!(n, 0);
         let row = db.host_dispatch_state().host_state("ohm").unwrap().unwrap();
         assert_eq!(row.state, "pending");
@@ -620,7 +622,12 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("ohm", "stable@new", "system-new", deadline))
+            .record_dispatch(&dispatch_insert(
+                "ohm",
+                "stable@new",
+                "system-new",
+                deadline,
+            ))
             .unwrap();
         let n = db
             .host_dispatch_state()
@@ -726,7 +733,9 @@ mod tests {
                 future,
             ))
             .unwrap();
-        db.host_dispatch_state().confirm("ohm", "stable@abc12345").unwrap();
+        db.host_dispatch_state()
+            .confirm("ohm", "stable@abc12345")
+            .unwrap();
         mark_healthy(&db, "ohm", "stable@abc12345", now);
         let snap = db.host_dispatch_state().active_rollouts_snapshot().unwrap();
         assert_eq!(snap.len(), 1);
@@ -735,7 +744,10 @@ mod tests {
             r.host_states.get("ohm").map(String::as_str),
             Some("Healthy"),
         );
-        let stored = r.last_healthy_since.get("ohm").expect("Healthy host has soak ts");
+        let stored = r
+            .last_healthy_since
+            .get("ohm")
+            .expect("Healthy host has soak ts");
         assert_eq!(stored.timestamp(), now.timestamp());
     }
 
@@ -781,7 +793,9 @@ mod tests {
         db.host_dispatch_state()
             .record_dispatch(&dispatch_insert("ohm", "stable@r1", "system-r1", deadline))
             .unwrap();
-        db.host_dispatch_state().confirm("ohm", "stable@r1").unwrap();
+        db.host_dispatch_state()
+            .confirm("ohm", "stable@r1")
+            .unwrap();
         // Confirmed → not flipped to deferred.
         let n = db
             .host_dispatch_state()
@@ -800,13 +814,21 @@ mod tests {
         let db = fresh_db();
         let past_deadline = Utc::now() - chrono::Duration::seconds(7200);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("ohm", "stable@r1", "system-r1", past_deadline))
+            .record_dispatch(&dispatch_insert(
+                "ohm",
+                "stable@r1",
+                "system-r1",
+                past_deadline,
+            ))
             .unwrap();
         db.host_dispatch_state()
             .mark_deferred("ohm", "stable@r1")
             .unwrap();
         // Two hours after deadline, the host finally reboots and confirms.
-        let n = db.host_dispatch_state().confirm("ohm", "stable@r1").unwrap();
+        let n = db
+            .host_dispatch_state()
+            .confirm("ohm", "stable@r1")
+            .unwrap();
         assert_eq!(n, 1, "deferred confirm must succeed despite stale deadline");
         let row = db.host_dispatch_state().host_state("ohm").unwrap().unwrap();
         assert_eq!(row.state, "confirmed");
@@ -815,12 +837,17 @@ mod tests {
 
     #[test]
     fn pending_deadlines_skips_deferred_rows() {
-        // Rollback timer must NEVER sweep deferred rows — that's the whole
+        // Rollback timer must NEVER sweep deferred rows - that's the whole
         // correctness guarantee for issue #56's human-paced lifecycle.
         let db = fresh_db();
         let past = Utc::now() - chrono::Duration::seconds(7200);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("ohm", "stable@deferred", "system-r1", past))
+            .record_dispatch(&dispatch_insert(
+                "ohm",
+                "stable@deferred",
+                "system-r1",
+                past,
+            ))
             .unwrap();
         db.host_dispatch_state()
             .mark_deferred("ohm", "stable@deferred")
@@ -828,11 +855,19 @@ mod tests {
         // Also seed a genuinely-expired Pending row to confirm the sweep
         // still picks up that one (sanity check).
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("krach", "stable@pending", "system-r1", past))
+            .record_dispatch(&dispatch_insert(
+                "krach",
+                "stable@pending",
+                "system-r1",
+                past,
+            ))
             .unwrap();
         let expired = db.host_dispatch_state().pending_deadlines().unwrap();
         assert_eq!(expired.len(), 1);
-        assert_eq!(expired[0].0, "krach", "deferred ohm must not appear in expired set");
+        assert_eq!(
+            expired[0].0, "krach",
+            "deferred ohm must not appear in expired set"
+        );
     }
 
     #[test]
@@ -862,17 +897,24 @@ mod tests {
         db.host_dispatch_state()
             .record_dispatch(&dispatch_insert("ohm", "stable@r1", "system", future))
             .unwrap();
-        assert!(db.host_dispatch_state().pending_dispatch_exists("ohm").unwrap());
-        db.host_dispatch_state().confirm("ohm", "stable@r1").unwrap();
+        assert!(db
+            .host_dispatch_state()
+            .pending_dispatch_exists("ohm")
+            .unwrap());
+        db.host_dispatch_state()
+            .confirm("ohm", "stable@r1")
+            .unwrap();
         assert!(
-            !db.host_dispatch_state().pending_dispatch_exists("ohm").unwrap(),
+            !db.host_dispatch_state()
+                .pending_dispatch_exists("ohm")
+                .unwrap(),
             "confirmed row is not pending",
         );
     }
 
     /// **Regression guard**: the recovery path must land BOTH the
     /// host_dispatch_state operational row AND the host_rollout_state
-    /// Healthy marker — never one without the other.
+    /// Healthy marker - never one without the other.
     ///
     /// If the two writes ever split into separate transactions, a
     /// second-write failure leaves the operational row at `confirmed`
@@ -886,7 +928,7 @@ mod tests {
     /// at the engine level; we can't inject partial failure without
     /// a fault injector. If a future refactor splits the txn the
     /// `last_healthy_since populated` assertion catches the
-    /// regression — because the bug only triggers when the SECOND
+    /// regression - because the bug only triggers when the SECOND
     /// write fails under DB lock contention or process kill.
     #[test]
     fn orphan_confirm_lands_both_rows_atomically() {
@@ -911,7 +953,7 @@ mod tests {
         assert_eq!(op.state, "confirmed");
         assert_eq!(op.rollout_id, "stable@r1");
 
-        // host_rollout_state Healthy marker landed in the SAME txn —
+        // host_rollout_state Healthy marker landed in the SAME txn  -
         // the LEFT JOIN in active_rollouts_snapshot will now find it
         // and the soak timer will fire.
         let snap = db.host_dispatch_state().active_rollouts_snapshot().unwrap();

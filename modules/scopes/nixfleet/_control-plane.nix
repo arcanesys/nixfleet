@@ -64,7 +64,7 @@ in {
         `bin/nixfleet-control-plane`. Defaults to the flake's
         crane-built package; tests and pinned-version deploys override
         with their own derivation. Standard NixOS `services.<x>.package`
-        escape hatch — accepted as-is, no further resolution.
+        escape hatch - accepted as-is, no further resolution.
       '';
     };
 
@@ -74,7 +74,7 @@ in {
       example = "0.0.0.0:8080";
       description = ''
         HOST:PORT the control plane listens on. Default 8080 per spec
-        D3 — port < 1024 would require CAP_NET_BIND_SERVICE, and 443
+        D3 - port < 1024 would require CAP_NET_BIND_SERVICE, and 443
         is typically already taken by a reverse proxy on the same host.
       '';
     };
@@ -118,7 +118,7 @@ in {
         example = "/etc/nixfleet/fleet-ca.pem";
         description = ''
           Path to the client CA PEM file. When set, the server
-          requires verified client certs (mTLS). Optional — the
+          requires verified client certs (mTLS). Optional - the
           server starts in TLS-only mode if unset and logs a warning.
           Standard deploys set this; production hosts should always
           have it.
@@ -132,7 +132,7 @@ in {
       description = ''
         Path to the canonical fleet.resolved.json bytes (the file CI
         signed). Operator is responsible for keeping this path
-        up-to-date with the fleet repo's HEAD — typically a separate
+        up-to-date with the fleet repo's HEAD - typically a separate
         timer that pulls the fleet repo into
         `/var/lib/nixfleet-cp/fleet/`. The CP module does not pull
         git itself; in-process Forgejo polling can refresh this
@@ -150,7 +150,7 @@ in {
       type = lib.types.str;
       default = "/var/lib/nixfleet-cp/observed.json";
       description = ''
-        Path to the JSON file holding observed fleet state — shape
+        Path to the JSON file holding observed fleet state - shape
         per `nixfleet_reconciler::Observed`. Hand-written by the
         operator (auto-bootstrapped to an empty skeleton on first
         deploy via systemd-tmpfiles). The live in-memory projection
@@ -198,11 +198,11 @@ in {
         security-relevant flags are unset:
 
         - `tls.clientCa` (without it, mTLS verification is disabled and
-          all `/v1/*` endpoints serve TLS-only — the `auth_cn` middleware
+          all `/v1/*` endpoints serve TLS-only - the `auth_cn` middleware
           falls through and identity-bound checks become no-ops).
         - `revocationsSource.{artifactUrl,signatureUrl}` (without them,
           revocations polling is silently disabled, so previously revoked
-          certs become valid again after a CP rebuild — contradicts the
+          certs become valid again after a CP rebuild - contradicts the
           §6 Phase 10 promise that CP-rebuild recovery preserves
           revocations).
         - `X-Nixfleet-Protocol` header on incoming requests (strict mode
@@ -224,7 +224,7 @@ in {
         Default 360s: agents activate via fire-and-forget (ADR-011,
         ~300s polling `/run/current-system` after the detached
         `systemd-run` is fired) plus 60s slack. Dropping below ~310s
-        creates a chaos cascade — CP rolls back while the agent is
+        creates a chaos cascade - CP rolls back while the agent is
         still polling, agent eventually polls success, posts confirm,
         CP returns 410, agent triggers local rollback.
 
@@ -253,7 +253,7 @@ in {
         Fleet CA private key path (decrypted by the fleet's secrets
         backend). Used to sign agent certs in /v1/enroll and
         /v1/agent/renew via the file-backed `FileCaSigner`. Mutually
-        exclusive with the `tpmCa*` options at runtime — when TPM
+        exclusive with the `tpmCa*` options at runtime - when TPM
         flags are set, the CP picks `TpmCaSigner` and this path is
         ignored. Keep set as a fallback so a revert (drop `tpmCa*`
         options) restores file-backed signing without re-deriving a
@@ -326,7 +326,7 @@ in {
         Path to the SQLite database. Default lives under
         StateDirectory so impermanent hosts can persist via
         environment.persistence (already declared below). Set to
-        `null` to disable persistence — e.g. for dev/test or until
+        `null` to disable persistence - e.g. for dev/test or until
         the operator is ready for the full stateful CP.
       '';
     };
@@ -351,7 +351,7 @@ in {
         description = ''
           Fully-formed URL that yields the raw bytes of the matching
           signature. The poll task fetches both files together and
-          runs verify_artifact — this is what closes the GitOps loop
+          runs verify_artifact - this is what closes the GitOps loop
           (push → CI re-sign → poll picks up new closureHashes within
           ~60s, no CP redeploy).
         '';
@@ -363,7 +363,7 @@ in {
         example = "/run/secrets/cp-channel-refs-token";
         description = ''
           Path to a file containing the upstream API token (sent as
-          `Authorization: Bearer <token>`). Optional — leave null for
+          `Authorization: Bearer <token>`). Optional - leave null for
           public sources (e.g. unauthenticated raw URLs on a public
           forge or a plain HTTPS file server). Read on each poll so
           token rotation propagates without restart.
@@ -591,7 +591,7 @@ in {
           # TPM signing needs /dev/tpmrm0 + abrmd dbus. The private-/dev
           # namespace would hide the device. Drop the namespace when TPM
           # is active and harden via DeviceAllow (cgroup BPF) +
-          # SupplementaryGroups instead — same posture as the
+          # SupplementaryGroups instead - same posture as the
           # gitea-runner's TPM access in the lab CI flow.
           PrivateDevices = cfg.tpmCaSignWrapper == null;
           DeviceAllow = lib.optionals (cfg.tpmCaSignWrapper != null) [
@@ -609,7 +609,7 @@ in {
       };
 
       # GOTCHA: tmpfiles `C` (no `+`) copies only if target absent.
-      # The artifact directory is always created — daemon writes there on
+      # The artifact directory is always created - daemon writes there on
       # each successful poll (the channel-refs poll layer no longer needs
       # a bootstrap unit; see #95).
       systemd.tmpfiles.rules = [

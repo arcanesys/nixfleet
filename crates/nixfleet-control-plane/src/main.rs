@@ -136,7 +136,7 @@ struct ServeFlags {
     #[arg(long, env = "NIXFLEET_CP_ROLLOUTS_SOURCE_ARTIFACT_URL_TEMPLATE")]
     rollouts_source_artifact_url_template: Option<String>,
 
-    /// Paired with artifact template — both required to enable HTTP fetch.
+    /// Paired with artifact template - both required to enable HTTP fetch.
     #[arg(long, env = "NIXFLEET_CP_ROLLOUTS_SOURCE_SIGNATURE_URL_TEMPLATE")]
     rollouts_source_signature_url_template: Option<String>,
 
@@ -174,25 +174,25 @@ fn install_crypto_provider() {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // `.json()` — one structured JSON object per log entry. Downstream
+    // `.json()` - one structured JSON object per log entry. Downstream
     // Loki/Grafana panels consume `target`, `level`, `fields.hostname`,
-    // `fields.rollout` directly — no regex on free-text. For direct
+    // `fields.rollout` directly - no regex on free-text. For direct
     // ops use: `journalctl --output=cat -u nixfleet-control-plane.service | jq`.
     //
     // Tracing-target contract for log-based dashboards (modules/scopes/
     // server/grafana-dashboards/nixfleet-events.json depends on these
     // names being stable):
-    //   - `dispatch`           — per-host dispatch decisions (target
+    //   - `dispatch`           - per-host dispatch decisions (target
     //                            issued, held by gate)
-    //   - `confirm`            — agent-side confirms acknowledged at CP
-    //   - `soak`               — Healthy → Soaked transitions
-    //   - `converge`           — final stamp per rollout
-    //   - `promote`            — wave promotions
-    //   - `rollback`           — rollback timer firings (WARN)
-    //   - `closure_proxy`      — manifest fetch / signature anomalies
-    //   - `report`             — agent compliance + runtime-gate reports
-    //   - `checkin`            — agent checkins arriving at CP
-    //   - `channel_refs_poll`  — CP detects new signed artifact
+    //   - `confirm`            - agent-side confirms acknowledged at CP
+    //   - `soak`               - Healthy → Soaked transitions
+    //   - `converge`           - final stamp per rollout
+    //   - `promote`            - wave promotions
+    //   - `rollback`           - rollback timer firings (WARN)
+    //   - `closure_proxy`      - manifest fetch / signature anomalies
+    //   - `report`             - agent compliance + runtime-gate reports
+    //   - `checkin`            - agent checkins arriving at CP
+    //   - `channel_refs_poll`  - CP detects new signed artifact
     //
     // Renaming any of these breaks the corresponding dashboard panel
     // silently; add a new target alongside, then migrate panels.
@@ -223,16 +223,19 @@ async fn main() -> ExitCode {
 }
 
 /// Both flags Some → build; both None → None; mixed → bail with `name` in the message.
-fn paired_source<A, B, T, F>(name: &str, a: Option<A>, b: Option<B>, build: F) -> anyhow::Result<Option<T>>
+fn paired_source<A, B, T, F>(
+    name: &str,
+    a: Option<A>,
+    b: Option<B>,
+    build: F,
+) -> anyhow::Result<Option<T>>
 where
     F: FnOnce(A, B) -> anyhow::Result<T>,
 {
     match (a, b) {
         (Some(a), Some(b)) => Ok(Some(build(a, b)?)),
         (None, None) => Ok(None),
-        _ => anyhow::bail!(
-            "{name}: both URL flags must be passed together (or both omitted)."
-        ),
+        _ => anyhow::bail!("{name}: both URL flags must be passed together (or both omitted)."),
     }
 }
 
@@ -249,14 +252,16 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
         flags.channel_refs_artifact_url,
         flags.channel_refs_signature_url,
         |artifact_url, signature_url| {
-            Ok(nixfleet_control_plane::polling::channel_refs_poll::ChannelRefsSource {
-                artifact_url,
-                signature_url,
-                token_file: flags.channel_refs_token_file.clone(),
-                // Re-read each poll so trust-root rotation propagates without restart.
-                trust_path: flags.trust_file.clone(),
-                freshness_window,
-            })
+            Ok(
+                nixfleet_control_plane::polling::channel_refs_poll::ChannelRefsSource {
+                    artifact_url,
+                    signature_url,
+                    token_file: flags.channel_refs_token_file.clone(),
+                    // Re-read each poll so trust-root rotation propagates without restart.
+                    trust_path: flags.trust_file.clone(),
+                    freshness_window,
+                },
+            )
         },
     )?;
 
@@ -281,15 +286,17 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
         flags.revocations_artifact_url,
         flags.revocations_signature_url,
         |artifact_url, signature_url| {
-            Ok(nixfleet_control_plane::polling::revocations_poll::RevocationsSource {
-                artifact_url,
-                signature_url,
-                token_file: flags
-                    .revocations_token_file
-                    .or(flags.channel_refs_token_file.clone()),
-                trust_path: flags.trust_file.clone(),
-                freshness_window,
-            })
+            Ok(
+                nixfleet_control_plane::polling::revocations_poll::RevocationsSource {
+                    artifact_url,
+                    signature_url,
+                    token_file: flags
+                        .revocations_token_file
+                        .or(flags.channel_refs_token_file.clone()),
+                    trust_path: flags.trust_file.clone(),
+                    freshness_window,
+                },
+            )
         },
     )?;
 

@@ -14,7 +14,7 @@ use rand::TryRngCore;
 pub const FIXTURE_SIGNED: &str =
     include_str!("../../../nixfleet-proto/tests/fixtures/signed-artifact.json");
 
-/// `SigningKey::generate` wants rand_core 0.6, but we're on rand 0.9 —
+/// `SigningKey::generate` wants rand_core 0.6, but we're on rand 0.9  -
 /// feed OsRng bytes to `SigningKey::from_bytes` instead.
 pub fn fresh_signing_key() -> SigningKey {
     let mut seed = [0u8; 32];

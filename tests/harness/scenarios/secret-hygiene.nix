@@ -99,7 +99,7 @@ in
       )
       print(f"decrypt unit landed {decrypted_bytes}-byte plaintext on agent")
 
-      print("waiting 45s for checkin traffic to accumulate…")
+      print("waiting 45s for checkin traffic to accumulate...")
       time.sleep(45)
 
       # `grep -aFf needle` reads plaintext from the file so it never

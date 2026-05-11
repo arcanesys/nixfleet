@@ -99,9 +99,9 @@ impl GateBlock {
 /// and bypass channelEdges).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateMode {
-    /// Reconciler tick — non-conservative on missing predecessor.
+    /// Reconciler tick - non-conservative on missing predecessor.
     Reconcile,
-    /// Per-checkin dispatch endpoint — conservative on missing.
+    /// Per-checkin dispatch endpoint - conservative on missing.
     Dispatch,
 }
 
@@ -113,7 +113,7 @@ impl GateMode {
     }
 }
 
-/// Superset bundle — gates pick the fields they care about.
+/// Superset bundle - gates pick the fields they care about.
 pub struct GateInput<'a> {
     pub fleet: &'a FleetResolved,
     pub observed: &'a Observed,

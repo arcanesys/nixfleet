@@ -9,7 +9,7 @@
 //!   4. After a fleet bump (new fleet_resolved_hash → new rollout_id), the
 //!      previous rid is marked superseded by the new one.
 //!   5. Across a "rebuild" (drop DB + fresh DB + replay polling), the table
-//!      converges to the same state as if the rebuild had never happened —
+//!      converges to the same state as if the rebuild had never happened  -
 //!      modulo the previous rid disappearing entirely (no historical state).
 
 mod common;
@@ -77,7 +77,11 @@ async fn spawn_stub_http(
                         header.extend_from_slice(&body);
                         header
                     }
-                    None => "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".as_bytes().to_vec(),
+                    None => {
+                        "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                            .as_bytes()
+                            .to_vec()
+                    }
                 };
                 let _ = socket.write_all(&resp).await;
                 let _ = socket.flush().await;
@@ -190,7 +194,7 @@ async fn polling_populates_rollouts_after_rebuild_and_supersedes_on_bump() {
     )
     .await;
 
-    // Fresh DB — simulating CP rebuild with empty state.db.
+    // Fresh DB - simulating CP rebuild with empty state.db.
     let db_dir = TempDir::new().unwrap();
     let db = Arc::new(Db::open(&db_dir.path().join("state.db")).unwrap());
     db.migrate().unwrap();
@@ -207,9 +211,8 @@ async fn polling_populates_rollouts_after_rebuild_and_supersedes_on_bump() {
     );
 
     let cache = Arc::new(RwLock::new(ChannelRefsCache::default()));
-    let verified_fleet: Arc<
-        RwLock<Option<nixfleet_control_plane::server::VerifiedFleetSnapshot>>,
-    > = Arc::new(RwLock::new(None));
+    let verified_fleet: Arc<RwLock<Option<nixfleet_control_plane::server::VerifiedFleetSnapshot>>> =
+        Arc::new(RwLock::new(None));
 
     let cancel = CancellationToken::new();
     let last_deferrals = Arc::new(RwLock::new(std::collections::HashMap::new()));
@@ -263,13 +266,10 @@ async fn polling_populates_rollouts_after_rebuild_and_supersedes_on_bump() {
         .clone()
         .expect("verified-fleet snapshot must exist after first poll");
     let bumped_hash = format!("11{}", &snap.fleet_resolved_hash[2..]);
-    let bumped_rid = nixfleet_reconciler::compute_rollout_id_for_channel(
-        &snap.fleet,
-        &bumped_hash,
-        "stable",
-    )
-    .unwrap()
-    .expect("stable channel resolves a rollout id");
+    let bumped_rid =
+        nixfleet_reconciler::compute_rollout_id_for_channel(&snap.fleet, &bumped_hash, "stable")
+            .unwrap()
+            .expect("stable channel resolves a rollout id");
     assert_ne!(
         bumped_rid, first_rid,
         "bumping fleet_resolved_hash must yield a fresh rollout id",
@@ -307,6 +307,6 @@ async fn polling_populates_rollouts_after_rebuild_and_supersedes_on_bump() {
             .supersede_status("ancient-rid-from-before-the-rebuild")
             .unwrap()
             .is_none(),
-        "rids never recorded must stay absent — no historical reconstruction",
+        "rids never recorded must stay absent - no historical reconstruction",
     );
 }

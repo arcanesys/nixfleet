@@ -14,12 +14,12 @@ pub struct RolloutState<'a> {
 
 /// Single-source-of-truth host_rollout_state transition. Takes a
 /// `&Connection` so it composes inside a `Transaction` (rusqlite
-/// `Transaction` derefs to `Connection`) — used both by
+/// `Transaction` derefs to `Connection`) - used both by
 /// `RolloutState::transition_host_state` (lock-and-delegate) and by
 /// `host_dispatch_state::record_confirmed_dispatch_with_state`'s
 /// atomic txn. One SQL definition for both paths.
 ///
-/// `expected_from = Some(prev)` is the state-machine guard — concurrent
+/// `expected_from = Some(prev)` is the state-machine guard - concurrent
 /// reconcilers can't both flip `Failed → Reverted`; the second UPDATE
 /// is a no-op (returns 0). `None` upserts unconditionally.
 pub(super) fn transition_host_state_inner(
@@ -72,7 +72,7 @@ pub(super) fn transition_host_state_inner(
 impl RolloutState<'_> {
     /// Lock-and-delegate wrapper around `transition_host_state_inner`.
     /// The inner function holds the canonical UPSERT SQL and is shared
-    /// with the orphan-confirm atomic txn — both paths write through one
+    /// with the orphan-confirm atomic txn - both paths write through one
     /// definition.
     pub fn transition_host_state(
         &self,
@@ -103,7 +103,7 @@ impl RolloutState<'_> {
         })
     }
 
-    /// GOTCHA: nulls only `last_healthy_since` — `host_state` is left for the
+    /// GOTCHA: nulls only `last_healthy_since` - `host_state` is left for the
     /// reconciler. The soak timer must restart on next Healthy attestation.
     pub fn clear_healthy_marker(&self, hostname: &str, rollout_id: &str) -> Result<usize> {
         super::read(self.conn, |c| {
@@ -197,10 +197,9 @@ impl RolloutState<'_> {
                    AND hds.state = ?2",
             )?;
             let rows = stmt
-                .query_map(
-                    params![hostname, PendingConfirmState::Confirmed],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                )?
+                .query_map(params![hostname, PendingConfirmState::Confirmed], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(rows)
         })
@@ -355,7 +354,10 @@ mod tests {
             "must not surface rollouts whose operational row is still pending: {pre:?}"
         );
 
-        let n = db.host_dispatch_state().confirm("test-host", "stable@r1").unwrap();
+        let n = db
+            .host_dispatch_state()
+            .confirm("test-host", "stable@r1")
+            .unwrap();
         assert_eq!(n, 1);
         let post = db
             .rollout_state()
@@ -378,7 +380,9 @@ mod tests {
                 future,
             ))
             .unwrap();
-        db.host_dispatch_state().confirm("test-host", "stable@r1").unwrap();
+        db.host_dispatch_state()
+            .confirm("test-host", "stable@r1")
+            .unwrap();
         mark_healthy(&db, "test-host", "stable@r1", Utc::now());
         assert_eq!(
             db.rollout_state()
@@ -421,7 +425,9 @@ mod tests {
         db.host_dispatch_state()
             .record_dispatch(&dispatch_insert("ohm", "stable@r1", "target", future))
             .unwrap();
-        db.host_dispatch_state().confirm("ohm", "stable@r1").unwrap();
+        db.host_dispatch_state()
+            .confirm("ohm", "stable@r1")
+            .unwrap();
         let snap = db.host_dispatch_state().active_rollouts_snapshot().unwrap();
         assert_eq!(snap.len(), 1);
         assert_eq!(

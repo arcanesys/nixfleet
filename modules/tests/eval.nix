@@ -15,7 +15,7 @@
           pkgs.runCommand "mkFleet-eval-tests" {} (
             if allOk
             then ''
-              echo "PASS: mkFleet harness — ${toString (builtins.length results)} fixtures ok"
+              echo "PASS: mkFleet harness - ${toString (builtins.length results)} fixtures ok"
               printf '%s\n' ${lib.concatMapStringsSep " " (r: ''"${r}"'') results} > $out
             ''
             else ''

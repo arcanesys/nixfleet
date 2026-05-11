@@ -1,4 +1,4 @@
-# Disaster recovery — destroying the control plane
+# Disaster recovery - destroying the control plane
 
 Background: see `ARCHITECTURE.md` §6 Phase 10 + §8.
 
@@ -19,7 +19,7 @@ Before destroying state, confirm:
    working without it.
 4. At least one agent currently online.
 
-If any check fails, fix the prerequisite first — do not proceed.
+If any check fails, fix the prerequisite first - do not proceed.
 
 ## Procedure
 
@@ -52,7 +52,7 @@ With production 60s polling, expect full agent repopulation in 70-120s.
 # CP healthy, snapshot primed (within ~30s of restart).
 curl -sk https://localhost:8443/healthz | jq '.last_tick_at != null'
 
-# Verified-fleet snapshot is fresh (mTLS — substitute your operator pair).
+# Verified-fleet snapshot is fresh (mTLS - substitute your operator pair).
 curl -sk \
   --cacert /etc/nixfleet/cp/ca.pem \
   --cert <CLIENT_CERT_PEM> --key <CLIENT_KEY_PEM> \
@@ -76,7 +76,7 @@ All four pass → recovery is complete.
   commit), or unexpected schema state on a non-empty DB (file a bug if
   you wiped per Step 2).
 - **Agents don't reconnect.** `journalctl -u nixfleet-agent.service`
-  on the host — usually cert expiry or revocation. Re-enroll via the
+  on the host - usually cert expiry or revocation. Re-enroll via the
   bootstrap-token flow.
 - **Recovery > 10× target.** Upstream-fetch issue: Forgejo down, expired
   auth token, network partition. `journalctl -u

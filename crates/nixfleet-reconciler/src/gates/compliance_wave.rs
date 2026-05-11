@@ -1,10 +1,10 @@
-//! Compliance-wave gate — earlier-wave hosts with outstanding compliance
+//! Compliance-wave gate - earlier-wave hosts with outstanding compliance
 //! evidence failures hold dispatch of later-wave hosts under `enforce`.
 //!
 //! Event-kind agnostic: aggregates BOTH `ComplianceFailure` (a probe
 //! returned FAIL) and `RuntimeGateError` (collector itself broke /
 //! evidence stale). Both classes mean "this host's evidence chain is
-//! broken" and gate identically — the SQL `IN ('compliance-failure',
+//! broken" and gate identically - the SQL `IN ('compliance-failure',
 //! 'runtime-gate-error')` predicate at
 //! `db::reports::outstanding_compliance_events_by_rollout` is the single
 //! decision site for what counts.
@@ -13,7 +13,7 @@
 //! The migration uses the AGGREGATED form
 //! (`Observed.outstanding_compliance_events_by_rollout`, populated from
 //! the DB-side query that already excludes `mismatch`/`malformed`
-//! signature statuses) — same data the reconciler's `wave_blocked`
+//! signature statuses) - same data the reconciler's `wave_blocked`
 //! event reads. Both layers go through this gate at the dispatch
 //! decision; the reconciler's `Action::WaveBlocked` is a separate
 //! concern (wave-promotion gate inside rollout_state.rs).
@@ -43,9 +43,9 @@ use super::{GateBlock, GateInput};
 /// (DB filter is the kind-discriminator; this helper sees only sums).
 ///
 /// LOADBEARING: same predicate consumed by both the dispatch gate
-/// (waves 0..host_wave, exclusive — only EARLIER waves count) and the
+/// (waves 0..host_wave, exclusive - only EARLIER waves count) and the
 /// reconciler's wave-promotion `Action::WaveBlocked` emission (waves
-/// 0..=current_wave, inclusive — current wave's failures hold
+/// 0..=current_wave, inclusive - current wave's failures hold
 /// promotion). Range is the only difference between call sites; one
 /// helper means a fix to filtering / signature handling / per-host
 /// grouping covers both.
@@ -106,7 +106,8 @@ pub fn check(input: &GateInput) -> Option<GateBlock> {
     let rollout = input.rollout?;
     let waves = input.fleet.waves.get(host_channel)?;
 
-    let earlier = outstanding_failures_in_waves(input.observed, &rollout.id, waves, 0..host_wave_idx);
+    let earlier =
+        outstanding_failures_in_waves(input.observed, &rollout.id, waves, 0..host_wave_idx);
     let failing_count: usize = earlier.iter().map(|(_, n)| *n).sum();
 
     if failing_count > 0 {

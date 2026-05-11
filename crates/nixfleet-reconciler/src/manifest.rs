@@ -19,7 +19,7 @@ use nixfleet_proto::{FleetResolved, HostWave, Meta, RolloutBudget, RolloutManife
 /// Channels whose `compute_rollout_id_for_channel` errors are silently
 /// dropped; callers handle the empty case as "no current rollout".
 /// Errors are logged at the call site that has tracing infrastructure
-/// — keeping this fn pure means the reconciler crate remains
+/// - keeping this fn pure means the reconciler crate remains
 /// dependency-light.
 pub fn current_rollout_ids(
     fleet: &FleetResolved,
@@ -46,7 +46,7 @@ pub fn compute_rollout_id_for_channel(
     let signed_at = fleet
         .meta
         .signed_at
-        .ok_or_else(|| anyhow!("fleet.meta.signedAt is None — cannot project manifest"))?;
+        .ok_or_else(|| anyhow!("fleet.meta.signedAt is None - cannot project manifest"))?;
     let ci_commit = fleet.meta.ci_commit.as_deref();
     let manifest = match project_manifest(
         fleet,

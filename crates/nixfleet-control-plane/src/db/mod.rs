@@ -136,8 +136,7 @@ where
         .transaction()
         .with_context(|| format!("begin {label} txn"))?;
     let v = f(&tx)?;
-    tx.commit()
-        .with_context(|| format!("commit {label} txn"))?;
+    tx.commit().with_context(|| format!("commit {label} txn"))?;
     Ok(v)
 }
 
@@ -181,7 +180,6 @@ mod tests {
             );
         }
     }
-
 
     #[allow(dead_code)]
     fn columns_of(conn: &Connection, table: &str) -> Vec<String> {

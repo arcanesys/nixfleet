@@ -1,5 +1,5 @@
 # Dormant. Lab forgejo (.forgejo/workflows/ci.yml) is the primary CI
-# path — the operator pushes to lab as the source of truth. This
+# path - the operator pushes to lab as the source of truth. This
 # workflow only runs if someone pushes the same ref to github, which
 # is intended as off-site backup / second-opinion validation. The
 # job spec here mirrors the forgejo workflow but uses hosted ubuntu
@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   format:
-    # Skipped on schedule — the nightly job's `validate --all` runs
+    # Skipped on schedule - the nightly job's `validate --all` runs
     # `nix fmt --fail-on-change` as its first step.
     if: github.event_name != 'schedule'
     name: Format check
@@ -38,9 +38,9 @@ jobs:
       - run: nix fmt -- --ci
 
   validate:
-    # Small tier — every PR + every push to main + manual dispatch.
+    # Small tier - every PR + every push to main + manual dispatch.
     # `validate --rust` covers fmt + flake check + eval-tests + cargo
-    # nextest + clippy + host builds + per-package builds. ~15–30 min.
+    # nextest + clippy + host builds + per-package builds. ~15-30 min.
     if: github.event_name != 'schedule'
     name: validate --rust (small tier)
     runs-on: ubuntu-latest
@@ -58,12 +58,12 @@ jobs:
           NIX_CONFIG: "warn-dirty = false"
 
   nightly:
-    # Full tier — scheduled nightly + manual dispatch. Adds every
+    # Full tier - scheduled nightly + manual dispatch. Adds every
     # fleet-harness-* scenario (smoke, teardown, rollback-policy,
     # auditor-chain, signed-roundtrip, deadline-expiry, secret-hygiene,
     # stale-target, boot-recovery, manifest-tamper-rejection,
     # corruption-rejection, module-rollouts-wire) and the fleet-N
-    # scaling variants (fleet-2, fleet-5, fleet-10). 60–120 min.
+    # scaling variants (fleet-2, fleet-5, fleet-10). 60-120 min.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     name: validate --all (full tier)
     runs-on: ubuntu-latest

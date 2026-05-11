@@ -1,7 +1,7 @@
 //! Canonical `Observed` builder for fleet-level gate evaluation.
 //! Consumed by dispatch checkin, reconcile tick, and disruption-budget metrics.
 //!
-//! LOADBEARING source ordering: `rollouts.list_active()` (keeps terminal — gates
+//! LOADBEARING source ordering: `rollouts.list_active()` (keeps terminal - gates
 //! need them to detect predecessor convergence) LEFT JOINed with
 //! `host_dispatch_state.active_rollouts_snapshot()`. Opposite ordering would
 //! drop freshly-opened rollouts and bypass host-edges/budget/compliance gates.
@@ -51,7 +51,7 @@ pub fn snapshot_to_rollout(
                         rollout = %snap.rollout_id,
                         hostname = %h,
                         unknown_state = %s,
-                        "host_rollout_state value not in HostRolloutState enum — \
+                        "host_rollout_state value not in HostRolloutState enum - \
                          halting rollout (Failed fallback). Likely a SQL CHECK \
                          extension that wasn't propagated to the typed enum.",
                     );
@@ -77,7 +77,7 @@ pub fn snapshot_to_rollout(
 ///
 /// Canonical "what's in flight" view shared by reconciler and dispatch. Rows
 /// without operational state get an empty-host_states snapshot (correct for
-/// freshly-opened rollouts that haven't dispatched yet — peers default Queued,
+/// freshly-opened rollouts that haven't dispatched yet - peers default Queued,
 /// gates fire correctly). Empty vec on DB read failure (caller's permissive
 /// path: gates no-op rather than hard-blocking).
 pub fn list_active_rollouts(db: &Db) -> Vec<RolloutDbSnapshot> {
@@ -89,14 +89,16 @@ pub fn list_active_rollouts(db: &Db) -> Vec<RolloutDbSnapshot> {
         }
     };
 
-    let host_state_by_rollout: HashMap<String, RolloutDbSnapshot> =
-        match db.host_dispatch_state().active_rollouts_snapshot() {
-            Ok(v) => v.into_iter().map(|s| (s.rollout_id.clone(), s)).collect(),
-            Err(err) => {
-                tracing::warn!(error = %err, "observed_view: active_rollouts_snapshot failed; merging with empty host states");
-                HashMap::new()
-            }
-        };
+    let host_state_by_rollout: HashMap<String, RolloutDbSnapshot> = match db
+        .host_dispatch_state()
+        .active_rollouts_snapshot()
+    {
+        Ok(v) => v.into_iter().map(|s| (s.rollout_id.clone(), s)).collect(),
+        Err(err) => {
+            tracing::warn!(error = %err, "observed_view: active_rollouts_snapshot failed; merging with empty host states");
+            HashMap::new()
+        }
+    };
 
     in_flight
         .into_iter()
@@ -153,7 +155,7 @@ pub async fn build_for_gates(
         }
     }
 
-    // Same query as the reconciler tick — both call sites see identical input.
+    // Same query as the reconciler tick - both call sites see identical input.
     // Permissive on read failure: gate no-ops (matches `disabled` mode).
     let outstanding_compliance_events_by_rollout = db
         .reports()

@@ -13,7 +13,7 @@ use crate::server::HostCheckinRecord;
 
 /// `rollout_budgets`: per-rollout budget snapshot from the signed
 /// manifest. Empty entry when no manifest is loaded yet (CP just primed)
-/// — budget gates then no-op, which is correct: a rollout with no known
+/// - budget gates then no-op, which is correct: a rollout with no known
 /// budgets has no constraint until its manifest is verified.
 pub fn project(
     host_checkins: &HashMap<String, HostCheckinRecord>,
@@ -39,7 +39,7 @@ pub fn project(
         .collect();
 
     // Issue #86: derive each host's probe-pass state from its latest
-    // checkin. The helper handles mode + Unknown semantics — see
+    // checkin. The helper handles mode + Unknown semantics - see
     // `nixfleet_proto::agent_wire::host_probes_passing`. Hosts without
     // a checkin record are absent from the map; the soak gate's
     // unwrap_or(true) treats absence as "no constraint" (fail open
@@ -65,7 +65,7 @@ pub fn project(
         })
         .collect();
 
-    // last_rolled_refs: channel → recorded ref. LOADBEARING — without
+    // last_rolled_refs: channel → recorded ref. LOADBEARING - without
     // it the reconciler re-emits OpenRollout every tick (channel_refs ↔
     // last_rolled_refs equality never matches with an empty map).
     let last_rolled_refs: HashMap<String, String> = rollouts
@@ -120,7 +120,14 @@ mod tests {
         checkins.insert("ohm".to_string(), checkin_for("ohm", "def"));
 
         let channel_refs = HashMap::from([("dev".to_string(), "deadbeef".to_string())]);
-        let observed = project(&checkins, &channel_refs, &[], HashMap::new(), HashMap::new(), &HashMap::new());
+        let observed = project(
+            &checkins,
+            &channel_refs,
+            &[],
+            HashMap::new(),
+            HashMap::new(),
+            &HashMap::new(),
+        );
 
         assert_eq!(observed.host_state.len(), 2);
         assert_eq!(
@@ -135,7 +142,14 @@ mod tests {
 
     #[test]
     fn projection_with_no_checkins_yields_empty_host_state() {
-        let observed = project(&HashMap::new(), &HashMap::new(), &[], HashMap::new(), HashMap::new(), &HashMap::new());
+        let observed = project(
+            &HashMap::new(),
+            &HashMap::new(),
+            &[],
+            HashMap::new(),
+            HashMap::new(),
+            &HashMap::new(),
+        );
         assert!(observed.host_state.is_empty());
         assert!(observed.channel_refs.is_empty());
         assert!(observed.active_rollouts.is_empty());

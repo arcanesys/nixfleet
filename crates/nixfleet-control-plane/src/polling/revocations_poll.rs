@@ -25,7 +25,7 @@ pub struct RevocationsSource {
 /// `revocations_primed` flips to `true` after the first successful verify
 /// + apply. The `/v1/*` ready gate (#95) consults this when
 /// `revocations_required` is set so the daemon won't serve agents until
-/// the full trust footprint is loaded — preventing the rebuild-revives-
+/// the full trust footprint is loaded - preventing the rebuild-revives-
 /// revoked-certs window noted in #70.
 pub fn spawn(
     cancel: tokio_util::sync::CancellationToken,

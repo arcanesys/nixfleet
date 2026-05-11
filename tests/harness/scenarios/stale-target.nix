@@ -70,7 +70,7 @@ in
           },
       }
 
-      print("step 1: POST /v1/agent/checkin against stale-fixture CP…")
+      print("step 1: POST /v1/agent/checkin against stale-fixture CP...")
       rc, out = host.execute(
           "curl -sk "
           "--cacert /etc/harness/ca.pem "
@@ -87,15 +87,15 @@ in
 
       if target is None:
           print(
-              "step 2: CP returned no target — fixture's stub closureHash "
+              "step 2: CP returned no target - fixture's stub closureHash "
               "produces NoDeclaration. Test passes vacuously; future "
               "fixture rev with a non-stub closureHash will exercise the "
               "full relay assertion below."
           )
       else:
-          print("step 2: CP dispatched a target — verifying freshness fields…")
+          print("step 2: CP dispatched a target - verifying freshness fields...")
           assert "signedAt" in target, (
-              f"target missing signedAt — CP dispatch failed to relay freshness fields: {target!r}"
+              f"target missing signedAt - CP dispatch failed to relay freshness fields: {target!r}"
           )
           assert "freshnessWindowSecs" in target, (
               f"target missing freshnessWindowSecs: {target!r}"
@@ -105,7 +105,7 @@ in
           freshness_window_secs = target["freshnessWindowSecs"]
 
           assert signed_at.startswith("2025-01-01"), (
-              f"expected stale fixture signedAt 2025-01-01…, got {signed_at!r}"
+              f"expected stale fixture signedAt 2025-01-01..., got {signed_at!r}"
           )
           assert freshness_window_secs == 7200, (
               f"expected freshness_window_secs=7200, got {freshness_window_secs}"
@@ -128,7 +128,7 @@ in
           )
 
       print(
-          "fleet-harness-stale-target: wire-relay holds — "
+          "fleet-harness-stale-target: wire-relay holds - "
           "CP populates target.signedAt and target.freshnessWindowSecs, "
           "values trip the agent's freshness gate as expected."
       )

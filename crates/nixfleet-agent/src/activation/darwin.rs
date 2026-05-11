@@ -42,7 +42,7 @@ async fn fire_switch(
         "agent: firing darwin activation (setsid-detached activate-user + activate)",
     );
 
-    // GOTCHA: activate-user is legacy — modern closures often omit it; spawn errors non-fatal.
+    // GOTCHA: activate-user is legacy - modern closures often omit it; spawn errors non-fatal.
     let activate_user = format!("{store_path}/activate-user");
     if std::path::Path::new(&activate_user).exists() {
         let mut cmd = std::process::Command::new(&activate_user);

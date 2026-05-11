@@ -170,7 +170,7 @@
             if [ "$VM" = "1" ]; then
               echo ""
               echo "=== Harness Integration Tests ==="
-              # Match every `fleet-harness-*` flake check — pure-runCommand
+              # Match every `fleet-harness-*` flake check - pure-runCommand
               # auditor scenarios (auditor-chain, corruption-rejection,
               # manifest-tamper-rejection) and microvm-based scenarios
               # (smoke, teardown, signed-roundtrip, deadline-expiry,

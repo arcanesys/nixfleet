@@ -16,7 +16,7 @@
         The agent package that provides `bin/nixfleet-agent`. Defaults
         to the flake's crane-built package; tests and pinned-version
         deploys override with their own derivation. Standard NixOS
-        `services.<x>.package` escape hatch — accepted as-is, no
+        `services.<x>.package` escape hatch - accepted as-is, no
         further resolution.
       '';
     };
@@ -66,7 +66,7 @@
         description = ''
           Path to the client certificate PEM file for mTLS
           authentication. Defaults to `/var/lib/nixfleet/agent-cert.pem`
-          — a writable, persistent location under the agent's
+          - a writable, persistent location under the agent's
           stateDir (already in `nixfleet.persistence.directories`).
 
           Post-RFC-0003-§2 (closed nixfleet#43): the cert is ISSUED
@@ -74,7 +74,7 @@
           operator-deployed, so the path must be writable + survive
           reboots. tmpfs paths (e.g. `/run/agenix/...`) break the
           agent's enrollment loop because the bootstrap token is
-          one-shot — losing the cert on reboot means the agent can't
+          one-shot - losing the cert on reboot means the agent can't
           re-enroll on its own.
         '';
       };
@@ -89,7 +89,7 @@
           SSH ed25519 host key (RFC-0003 §2 binding).
 
           The CP rejects any CSR whose pubkey doesn't match the host's
-          declared `nixfleet.fleetSchema.hosts.<hostname>.pubkey` —
+          declared `nixfleet.fleetSchema.hosts.<hostname>.pubkey`  -
           declare it in `fleet.nix` BEFORE first enrollment. Operators
           previously deploying per-host agent keys via agenix should
           drop those entries (`agents/<host>-key.age` from
@@ -106,7 +106,7 @@
       description = ''
         Path to a one-shot bootstrap token (operator-minted by
         `nixfleet mint-token`, signed with the org root key). Used
-        by the agent's first-boot enrollment flow only — once the
+        by the agent's first-boot enrollment flow only - once the
         cert exists at `tls.clientCert`, the token is never read
         again. Renewal at 50% of cert validity uses the existing
         cert (mTLS-authenticated /v1/agent/renew), not this token.
@@ -118,7 +118,7 @@
       default = "/var/lib/nixfleet-agent";
       description = ''
         Directory the agent uses for per-host persistent state.
-        Currently holds `last_confirmed_at` — a two-line plaintext
+        Currently holds `last_confirmed_at` - a two-line plaintext
         file binding the agent's most recent successful confirm
         timestamp to the closure it applies to. Pre-created with
         mode 0700 by the platform supervisor (systemd's
@@ -153,19 +153,19 @@
     healthChecks = lib.mkOption {
       default = {};
       description = ''
-        Operator-declared health probes (issue #86) — load-bearing for
+        Operator-declared health probes (issue #86) - load-bearing for
         wave promotion. Each declared probe runs in-agent on its own
         interval; the latest result is reported with every checkin.
         The reconciler gates Healthy → Soaked promotion on
         `all-probes-passing`, so a host with even one failing probe
-        will never advance the wave (mode-dependent — see `mode`
+        will never advance the wave (mode-dependent - see `mode`
         below).
 
         Distinct from `complianceGate` (which fronts the external
         `nixfleet-compliance` collector for framework-controls
         evidence): `healthChecks` runs in-process for application-level
         liveness signals declared per host, no external service
-        required. The two coexist — a host can have both, and they
+        required. The two coexist - a host can have both, and they
         gate at different points in the lifecycle (compliance → confirm,
         health → soak).
       '';
@@ -307,7 +307,7 @@
           (systemd `compliance-evidence-collector.service` on NixOS;
           launchd `compliance-evidence-collector` on darwin), disabled
           when absent. Safe for fleets that haven't deployed
-          `nixfleet-compliance` — no events posted, no rollouts blocked.
+          `nixfleet-compliance` - no events posted, no rollouts blocked.
         - `permissive`: the gate runs and posts `RuntimeGateError`
           and `ComplianceFailure` events on failure, but does NOT
           block the activation confirm. Use during incremental

@@ -76,7 +76,7 @@ impl RolloutsSource {
         let computed = format!("{:x}", hasher.finalize());
         if computed != rollout_id {
             return Err(anyhow!(
-                "rollouts source: content-address mismatch — \
+                "rollouts source: content-address mismatch - \
                  url claimed {rollout_id} but sha256(bytes) = {computed}",
             ));
         }

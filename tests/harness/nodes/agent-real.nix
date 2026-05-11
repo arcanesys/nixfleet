@@ -45,7 +45,7 @@
       "nixfleet-agent/test-trust.json".source = "${signedFixture}/test-trust.json";
     }
     // lib.optionalAttrs (sshHostKey != null) {
-      # mode 0600 on the etc symlink — the agent's evidence_signer
+      # mode 0600 on the etc symlink - the agent's evidence_signer
       # opens this directly; ssh-key-derived agents (RFC-0003 §2) don't
       # need anything else on the SSH side because sshd is disabled in
       # the harness microvms.

@@ -68,7 +68,7 @@ impl std::fmt::Display for TrustVerifyError {
             Self::TrustFileParse { source } => write!(f, "parse trust.json: {source}"),
             Self::NoOrgRootKey => write!(
                 f,
-                "trust.json has no orgRootKey — set nixfleet.trust.orgRootKey.current"
+                "trust.json has no orgRootKey - set nixfleet.trust.orgRootKey.current"
             ),
             Self::NoActiveKeys => write!(f, "orgRootKey has no current/previous keys"),
             Self::SignatureMismatch => write!(
@@ -220,7 +220,7 @@ pub fn extract_private_key_pem_block(pem_text: &str) -> Result<String> {
     }
 
     anyhow::bail!(
-        "no PEM block matching {ACCEPTED:?} found — supply a PKCS#8 \
+        "no PEM block matching {ACCEPTED:?} found - supply a PKCS#8 \
          (`BEGIN PRIVATE KEY`) or SEC1 (`BEGIN EC PRIVATE KEY`) key",
     )
 }
@@ -233,22 +233,19 @@ pub fn extract_private_key_pem_block(pem_text: &str) -> Result<String> {
 /// Fail-closed: a host with no `pubkey` declared in fleet.nix CANNOT
 /// enroll. The expected workflow is "operator declares host (with
 /// pubkey) in fleet.nix → CI signs new fleet.resolved → agent enrols"
-/// — there's no permissive fallback.
+/// - there's no permissive fallback.
 pub fn validate_csr_against_fleet_host(
     csr_pubkey_raw: &[u8],
     declared_openssh_pubkey: Option<&str>,
 ) -> Result<()> {
     let openssh = declared_openssh_pubkey.ok_or_else(|| {
         anyhow::anyhow!(
-            "host has no `pubkey` declared in fleet.nix — \
+            "host has no `pubkey` declared in fleet.nix - \
              enrollment refused (declarative-enrollment policy)"
         )
     })?;
-    let declared_raw =
-        nixfleet_proto::host_key::ed25519_pubkey_raw_from_openssh(openssh)
-            .with_context(|| {
-                format!("parse declared OpenSSH pubkey for fleet host: {openssh}")
-            })?;
+    let declared_raw = nixfleet_proto::host_key::ed25519_pubkey_raw_from_openssh(openssh)
+        .with_context(|| format!("parse declared OpenSSH pubkey for fleet host: {openssh}"))?;
     if csr_pubkey_raw != declared_raw {
         anyhow::bail!(
             "CSR pubkey does not match host's declared SSH host pubkey \
@@ -332,13 +329,13 @@ impl FileCaSigner {
         let ca_key_pem_raw = std::fs::read_to_string(ca_key_path)
             .with_context(|| format!("read fleet CA key {}", ca_key_path.display()))?;
         // FOOTGUN: rcgen's `from_pem` reads only the first block. OpenSSL
-        // EC keys ship `EC PARAMETERS` first and `EC PRIVATE KEY` second —
+        // EC keys ship `EC PARAMETERS` first and `EC PRIVATE KEY` second  -
         // strip the parameters block before handing to rcgen.
         let ca_key_pem = extract_private_key_pem_block(&ca_key_pem_raw)
             .context("extract private-key block from fleet CA key PEM")?;
         let ca_key = KeyPair::from_pem(&ca_key_pem).context("parse fleet CA key PEM")?;
-        let ca_params = CertificateParams::from_ca_cert_pem(&ca_cert_pem)
-            .context("parse fleet CA cert PEM")?;
+        let ca_params =
+            CertificateParams::from_ca_cert_pem(&ca_cert_pem).context("parse fleet CA cert PEM")?;
         let issuer_cert = ca_params
             .self_signed(&ca_key)
             .context("rebuild fleet CA from PEM (rcgen quirk)")?;
@@ -356,14 +353,13 @@ impl CaSigner for FileCaSigner {
     fn make_key_pair(&self) -> Result<KeyPair> {
         let raw = std::fs::read_to_string(&self.key_path)
             .with_context(|| format!("read fleet CA key {}", self.key_path.display()))?;
-        let pem =
-            extract_private_key_pem_block(&raw).context("extract CA key PEM block")?;
+        let pem = extract_private_key_pem_block(&raw).context("extract CA key PEM block")?;
         KeyPair::from_pem(&pem).context("parse fleet CA key PEM")
     }
 }
 
 /// TPM-backed CA. Holds uncompressed SEC1 P-256 pubkey (`0x04 || X || Y`,
-/// 65 bytes — rcgen's ECDSA shape) + the `tpm-sign-<keyname>` wrapper path.
+/// 65 bytes - rcgen's ECDSA shape) + the `tpm-sign-<keyname>` wrapper path.
 /// Issuer cert is self-signed via TPM once at construction; the real CA
 /// signature (by the offline fleet root) lives on disk and rcgen never
 /// reads it (only DN + pubkey), so the re-self-sign is sound.
@@ -401,8 +397,7 @@ impl TpmCaSigner {
             pubkey_uncompressed: pubkey_uncompressed.clone(),
             sign_wrapper_path: sign_wrapper_path.to_path_buf(),
         };
-        let key_pair =
-            KeyPair::from_remote(Box::new(signer)).context("rcgen from_remote (TPM)")?;
+        let key_pair = KeyPair::from_remote(Box::new(signer)).context("rcgen from_remote (TPM)")?;
         let ca_params = CertificateParams::from_ca_cert_pem(&ca_cert_pem)
             .context("parse issuance CA cert PEM")?;
         let issuer_cert = ca_params
@@ -478,7 +473,7 @@ fn invoke_tpm_sign(wrapper: &Path, msg: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Convert raw `R || S` (64 bytes for P-256) to DER `Ecdsa-Sig-Value
-/// SEQUENCE { r INTEGER, s INTEGER }` — what rcgen expects from a
+/// SEQUENCE { r INTEGER, s INTEGER }` - what rcgen expects from a
 /// `RemoteKeyPair::sign` for ECDSA P-256.
 fn der_encode_ecdsa_p256_sig(raw: &[u8]) -> Result<Vec<u8>> {
     if raw.len() != 64 {
@@ -565,7 +560,7 @@ pub fn issue_cert(
     new_dn.push(DnType::CommonName, &*canonical_cn);
     params.distinguished_name = new_dn;
 
-    // FOOTGUN: rustls/webpki rejects CN-only certs — SAN dNSName=CN is required for mTLS to work.
+    // FOOTGUN: rustls/webpki rejects CN-only certs - SAN dNSName=CN is required for mTLS to work.
     params.subject_alt_names = vec![rcgen::SanType::DnsName(
         canonical_cn
             .clone()
@@ -683,11 +678,23 @@ mod der_encode_tests {
     fn der_encode_int_handles_padding_and_stripping() {
         // (label, input, expected)
         let cases: &[(&str, &[u8], &[u8])] = &[
-            ("minimal positive: no pad/strip", &[0x01], &[0x02, 0x01, 0x01]),
+            (
+                "minimal positive: no pad/strip",
+                &[0x01],
+                &[0x02, 0x01, 0x01],
+            ),
             ("MSB set: prepend 0x00", &[0x80], &[0x02, 0x02, 0x00, 0x80]),
-            ("strip leading zeros", &[0x00, 0x00, 0x42], &[0x02, 0x01, 0x42]),
+            (
+                "strip leading zeros",
+                &[0x00, 0x00, 0x42],
+                &[0x02, 0x01, 0x42],
+            ),
             // DER INTEGER 0 must be a single 0x00 byte.
-            ("zero stays as 0x00", &[0x00, 0x00, 0x00], &[0x02, 0x01, 0x00]),
+            (
+                "zero stays as 0x00",
+                &[0x00, 0x00, 0x00],
+                &[0x02, 0x01, 0x00],
+            ),
             (
                 "strip then pad when MSB still set",
                 &[0x00, 0x80, 0x01],
@@ -695,11 +702,7 @@ mod der_encode_tests {
             ),
         ];
         for (label, input, expected) in cases {
-            assert_eq!(
-                der_encode_int(input).as_slice(),
-                *expected,
-                "case: {label}"
-            );
+            assert_eq!(der_encode_int(input).as_slice(), *expected, "case: {label}");
         }
     }
 
@@ -711,10 +714,16 @@ mod der_encode_tests {
 
     #[test]
     fn encodes_p256_sig_typical_shape() {
-        // Mid-range r and s without MSB set — clean encoding, no padding.
+        // Mid-range r and s without MSB set - clean encoding, no padding.
         let mut raw = [0u8; 64];
-        raw[..32].iter_mut().enumerate().for_each(|(i, b)| *b = 1 + i as u8);
-        raw[32..].iter_mut().enumerate().for_each(|(i, b)| *b = 0x40 + i as u8);
+        raw[..32]
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, b)| *b = 1 + i as u8);
+        raw[32..]
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, b)| *b = 0x40 + i as u8);
         let der = der_encode_ecdsa_p256_sig(&raw).expect("encode");
         // SEQUENCE
         assert_eq!(der[0], 0x30);
@@ -770,13 +779,12 @@ mod ca_signer_tests {
         std::fs::write(&cert_path, ca_cert.pem()).unwrap();
         std::fs::write(&key_path, ca_key.serialize_pem()).unwrap();
 
-        let signer =
-            FileCaSigner::from_paths(&cert_path, &key_path).expect("build FileCaSigner");
+        let signer = FileCaSigner::from_paths(&cert_path, &key_path).expect("build FileCaSigner");
 
         // Build a CSR for an agent with a fresh keypair. Agents emit
         // CSRs with CN = bare machineId; the CP rewrites to canonical.
-        let agent_key = RcgenKeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
-            .expect("agent keypair");
+        let agent_key =
+            RcgenKeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("agent keypair");
         let mut agent_params = CertificateParams::new(vec!["krach".to_string()]).unwrap();
         agent_params
             .distinguished_name
@@ -797,8 +805,8 @@ mod ca_signer_tests {
 
         // Verify the issued PEM parses as an X.509 cert + CN was
         // canonicalised to `agent-<machineId>.<suffix>` (D14).
-        let parsed = rcgen::CertificateParams::from_ca_cert_pem(&cert_pem)
-            .expect("parse issued cert");
+        let parsed =
+            rcgen::CertificateParams::from_ca_cert_pem(&cert_pem).expect("parse issued cert");
         let cn = parsed
             .distinguished_name
             .iter()
@@ -857,17 +865,13 @@ mod validate_csr_tests {
         let csr_raw = [0x42u8; 32];
         let err = validate_csr_against_fleet_host(&csr_raw, None).unwrap_err();
         let msg = format!("{err}");
-        assert!(
-            msg.contains("declarative-enrollment policy"),
-            "msg = {msg}",
-        );
+        assert!(msg.contains("declarative-enrollment policy"), "msg = {msg}",);
     }
 
     #[test]
     fn rejects_when_declared_pubkey_unparseable() {
         let csr_raw = [0x42u8; 32];
-        let err =
-            validate_csr_against_fleet_host(&csr_raw, Some("ssh-rsa garbage")).unwrap_err();
+        let err = validate_csr_against_fleet_host(&csr_raw, Some("ssh-rsa garbage")).unwrap_err();
         let msg = format!("{err}");
         // The error chain mentions the parse failure context.
         assert!(msg.contains("parse declared"), "msg = {msg}");
@@ -880,13 +884,17 @@ mod extract_pem_tests {
 
     #[test]
     fn accepts_single_block_key_pem() {
-        // Body is opaque to the extractor — it just needs the labels.
+        // Body is opaque to the extractor - it just needs the labels.
         // PKCS#8 = rcgen / mkcert / openssl pkcs8 -topk8; SEC1 = openssl ecparam -genkey.
         let cases = [
-            ("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
-             "-----BEGIN PRIVATE KEY-----"),
-            ("-----BEGIN EC PRIVATE KEY-----\nBBBB\n-----END EC PRIVATE KEY-----\n",
-             "-----BEGIN EC PRIVATE KEY-----"),
+            (
+                "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+                "-----BEGIN PRIVATE KEY-----",
+            ),
+            (
+                "-----BEGIN EC PRIVATE KEY-----\nBBBB\n-----END EC PRIVATE KEY-----\n",
+                "-----BEGIN EC PRIVATE KEY-----",
+            ),
         ];
         for (input, expected_label) in cases {
             let got = extract_private_key_pem_block(input).expect("single block");
@@ -908,14 +916,17 @@ MHcCAQEEIBoldKey...
 ";
         let got = extract_private_key_pem_block(input).expect("multi-block extract");
         assert!(got.starts_with("-----BEGIN EC PRIVATE KEY-----"));
-        assert!(!got.contains("EC PARAMETERS"), "must drop the parameters block");
+        assert!(
+            !got.contains("EC PARAMETERS"),
+            "must drop the parameters block"
+        );
         assert!(got.contains("MHcCAQEEIBoldKey"));
     }
 
     #[test]
     fn rejects_input_without_key_block() {
         // All non-key inputs must surface the same error mentioning the
-        // accepted PEM labels — the operator-facing hint.
+        // accepted PEM labels - the operator-facing hint.
         let cases: &[(&str, &str)] = &[
             (
                 "no key block (only EC PARAMETERS)",
@@ -970,15 +981,15 @@ SECOND
     /// LOADBEARING: an actual OpenSSL-generated `prime256v1` SEC1 PEM
     /// (multi-block: EC PARAMETERS + EC PRIVATE KEY) must extract to a
     /// single-block SEC1 PEM that rcgen accepts. This is the shape lab's
-    /// `fleet-ca-key.age` had — pre-fix, rcgen's `from_pem` (on the
+    /// `fleet-ca-key.age` had - pre-fix, rcgen's `from_pem` (on the
     /// default `ring` feature) rejected it. The fix combines: extract
     /// the SEC1 block here + rcgen built with `aws_lc_rs` feature
     /// (Cargo.toml) so SEC1 is accepted natively.
     ///
-    /// Key bytes are throwaway test material (no secrets) — generated
+    /// Key bytes are throwaway test material (no secrets) - generated
     /// with `openssl ecparam -genkey -name prime256v1` for this test.
     /// Wrapped with the `EC PARAMETERS` block to match the shape
-    /// `-text` mode emits — same as lab's pre-fix `fleet-ca-key.age`.
+    /// `-text` mode emits - same as lab's pre-fix `fleet-ca-key.age`.
     #[test]
     fn handles_openssl_generated_multi_block_sec1() {
         use rcgen::KeyPair;
@@ -992,14 +1003,14 @@ AwEHoUQDQgAEm9EgwijVZ1xORnA9p5crCZ60IGnjUJ4LZIXzk2hlxYeiifsnGk7H
 QzkM5XocGuChmeKIaGD20dCxzEIuW+HP4Q==
 -----END EC PRIVATE KEY-----
 ";
-        let extracted = extract_private_key_pem_block(openssl_pem)
-            .expect("multi-block SEC1 extraction");
+        let extracted =
+            extract_private_key_pem_block(openssl_pem).expect("multi-block SEC1 extraction");
         // Must extract just the EC PRIVATE KEY block.
         assert!(extracted.starts_with("-----BEGIN EC PRIVATE KEY-----"));
         assert!(!extracted.contains("EC PARAMETERS"));
         // And rcgen (on aws_lc_rs feature) must parse the result.
         let _key = KeyPair::from_pem(&extracted).expect(
-            "rcgen on aws_lc_rs must accept SEC1 — if this fails, \
+            "rcgen on aws_lc_rs must accept SEC1 - if this fails, \
              check the rcgen feature flags in Cargo.toml",
         );
     }

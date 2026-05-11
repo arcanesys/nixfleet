@@ -9,9 +9,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
-use rcgen::{
-    CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
-};
+use rcgen::{CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose};
 
 pub struct MintOperatorCertArgs {
     pub root_cert_path: PathBuf,
@@ -40,7 +38,10 @@ pub fn mint_operator_cert(args: MintOperatorCertArgs) -> Result<MintOutcome> {
     }
     for path in [&args.output_cert_path, &args.output_key_path] {
         if path.exists() && !args.overwrite {
-            bail!("{} already exists; pass --force to overwrite", path.display());
+            bail!(
+                "{} already exists; pass --force to overwrite",
+                path.display()
+            );
         }
     }
 
@@ -61,8 +62,8 @@ pub fn mint_operator_cert(args: MintOperatorCertArgs) -> Result<MintOutcome> {
             algo,
         );
     }
-    let ca_params = CertificateParams::from_ca_cert_pem(&ca_cert_pem)
-        .context("parse fleet root cert PEM")?;
+    let ca_params =
+        CertificateParams::from_ca_cert_pem(&ca_cert_pem).context("parse fleet root cert PEM")?;
     let ca_cert = ca_params
         .self_signed(&ca_key)
         .context("rebuild fleet root CA from PEM")?;
@@ -90,7 +91,7 @@ pub fn mint_operator_cert(args: MintOperatorCertArgs) -> Result<MintOutcome> {
         .push(DnType::OrganizationalUnitName, "fleet");
     child_params.is_ca = IsCa::ExplicitNoCa;
     child_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-    // CN-only is fine for client auth — webpki's dNSName check is
+    // CN-only is fine for client auth - webpki's dNSName check is
     // server-side only. CP issuance sets a SAN dNSName because agent
     // certs are also reachable via TLS server (closure proxy); operator
     // certs never serve, so no SAN is needed.
@@ -136,7 +137,8 @@ fn write_atomic_with_mode(path: &std::path::Path, body: &[u8], mode: u32) -> Res
             .with_context(|| format!("create temp {}", tmp.display()))?;
         f.write_all(body)
             .with_context(|| format!("write temp {}", tmp.display()))?;
-        f.sync_all().with_context(|| format!("fsync {}", tmp.display()))?;
+        f.sync_all()
+            .with_context(|| format!("fsync {}", tmp.display()))?;
     }
     #[cfg(not(unix))]
     {
@@ -290,7 +292,9 @@ mod tests {
         let (_, parsed) = x509_parser::pem::parse_x509_pem(pem.as_bytes()).unwrap();
         let cert = parsed.parse_x509().unwrap();
         assert!(
-            cert.subject().to_string().contains("CN=operator-replaced@host"),
+            cert.subject()
+                .to_string()
+                .contains("CN=operator-replaced@host"),
             "force overwrite should produce new CN: got {}",
             cert.subject(),
         );

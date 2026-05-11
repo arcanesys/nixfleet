@@ -33,7 +33,7 @@ if [[ -f Cargo.toml ]]; then
 fi
 
 # Clippy gate. Catches the lint class that landed via 166b898 (clippy
-# hygiene) — slipped in because lab CI was broken and the previous
+# hygiene) - slipped in because lab CI was broken and the previous
 # pre-push only ran nextest (functional tests, not lints). Same flags
 # as `validate --rust` (modules/apps.nix) so local gate matches CI.
 echo "=== Clippy ==="

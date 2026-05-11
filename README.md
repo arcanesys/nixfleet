@@ -24,7 +24,7 @@ Every component below serves that inversion. In v0.1, the control plane was the 
 
 ## Architecture
 
-The runtime is a Rust stack. The **agent** runs on each managed host, polls the control plane for desired state, fetches the target NixOS closure, applies it as a new generation, and reports health back. The **control plane** is an Axum HTTP server with mTLS authentication, SQLite storage, and role-based access control. Agent identity is bound to the TLS client certificate. **Operator binaries** mint bootstrap tokens and derive trust-root pubkeys; there is no long-lived operator daemon — fleet changes are git pushes, the control plane picks them up via signed-artifact poll.
+The runtime is a Rust stack. The **agent** runs on each managed host, polls the control plane for desired state, fetches the target NixOS closure, applies it as a new generation, and reports health back. The **control plane** is an Axum HTTP server with mTLS authentication, SQLite storage, and role-based access control. Agent identity is bound to the TLS client certificate. **Operator binaries** mint bootstrap tokens and derive trust-root pubkeys; there is no long-lived operator daemon - fleet changes are git pushes, the control plane picks them up via signed-artifact poll.
 
 ```
 Operator             Forgejo (fleet repo)         Control Plane              Hosts
@@ -37,7 +37,7 @@ Operator             Forgejo (fleet repo)         Control Plane              Hos
 
 No imperative deploy/apply endpoints exist on the control plane. The only verb available to operators is "commit and push."
 
-## Status — v0.2 spine
+## Status - v0.2 spine
 
 Tracked in [#10](https://github.com/abstracts33d/nixfleet/issues/10):
 
@@ -186,13 +186,13 @@ Override config-file values per-invocation with `--cp-url`, `--ca-cert`, `--clie
 | [nixfleet-compliance](https://github.com/arcanesys/nixfleet-compliance) | Typed compliance controls (NIS2, DORA, ISO 27001, ANSSI), signed evidence, the rollout-gate moat | MIT |
 | [nixfleet-demo](https://github.com/arcanesys/nixfleet-demo) | Reference 6-host QEMU fleet with pre-baked credentials | MIT |
 
-The framework ships kernel + contract impls. Service wraps, hardware bundles, role taxonomies, and other deployment opinions live in the consuming fleet repo — not in nixfleet — so the framework stays generic and the consumer keeps full ownership of its shape.
+The framework ships kernel + contract impls. Service wraps, hardware bundles, role taxonomies, and other deployment opinions live in the consuming fleet repo - not in nixfleet - so the framework stays generic and the consumer keeps full ownership of its shape.
 
 > **Try it now:** [nixfleet-demo](https://github.com/arcanesys/nixfleet-demo) ships a complete 6-host QEMU fleet. Clone, build VMs, deploy.
 
 ## Non-goals
 
-- **Not a general-purpose imperative runner.** No "run this script on all hosts" — the only vocabulary is "target closure hash."
+- **Not a general-purpose imperative runner.** No "run this script on all hosts" - the only vocabulary is "target closure hash."
 - **Not a multi-tenant SaaS.** Single administrative domain.
 - **Not a replacement for NixOS tooling.** `nixos-rebuild`, `nix flake`, `nix-store --verify` remain ground truth.
 - **Not a cloud provisioning tool.** Fleet membership is declared; hosts aren't auto-created from templates.
@@ -203,7 +203,7 @@ The framework ships kernel + contract impls. Service wraps, hardware bundles, ro
 - Full docs: [arcanesys.github.io/nixfleet](https://arcanesys.github.io/nixfleet)
 - Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - ADRs: [`docs/adr/`](docs/adr/) (12 records)
-- RFCs: [`docs/rfcs/`](docs/rfcs/) — fleet.nix schema, reconciler, wire protocol
+- RFCs: [`docs/rfcs/`](docs/rfcs/) - fleet.nix schema, reconciler, wire protocol
 
 ## Development
 
@@ -221,4 +221,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor guidelines.
 
 Framework, agent, and CLI: [MIT](LICENSE-MIT). Control plane: [AGPL-3.0](LICENSE-AGPL).
 
-Your fleet configurations, custom modules, and agent deployments remain fully private — the AGPL applies only to modifications of the control plane itself.
+Your fleet configurations, custom modules, and agent deployments remain fully private - the AGPL applies only to modifications of the control plane itself.

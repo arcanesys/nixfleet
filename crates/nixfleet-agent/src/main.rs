@@ -1,5 +1,5 @@
 #![allow(clippy::doc_lazy_continuation)]
-//! `nixfleet-agent` — main poll + activation loop.
+//! `nixfleet-agent` - main poll + activation loop.
 
 mod dispatch;
 
@@ -16,11 +16,7 @@ use dispatch::{handle_cp_rollback_signal, process_dispatch_target};
 const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "nixfleet-agent",
-    version,
-    about = "NixFleet fleet agent."
-)]
+#[command(name = "nixfleet-agent", version, about = "NixFleet fleet agent.")]
 pub(crate) struct Args {
     #[arg(long, env = "NIXFLEET_AGENT_CP_URL")]
     pub(crate) control_plane_url: String,
@@ -48,7 +44,11 @@ pub(crate) struct Args {
     #[arg(long, env = "NIXFLEET_AGENT_BOOTSTRAP_TOKEN_FILE")]
     bootstrap_token_file: Option<PathBuf>,
 
-    #[arg(long, env = "NIXFLEET_AGENT_STATE_DIR", default_value = "/var/lib/nixfleet-agent")]
+    #[arg(
+        long,
+        env = "NIXFLEET_AGENT_STATE_DIR",
+        default_value = "/var/lib/nixfleet-agent"
+    )]
     state_dir: PathBuf,
 
     /// One of `"disabled"`, `"permissive"`, `"enforce"`, `"auto"`.
@@ -114,7 +114,9 @@ async fn main() -> anyhow::Result<()> {
         args.machine_id.clone(),
         AGENT_VERSION,
     );
-    if let Err(err) = check_boot_recovery(&client, &args, &recovery_reporter, &evidence_signer).await {
+    if let Err(err) =
+        check_boot_recovery(&client, &args, &recovery_reporter, &evidence_signer).await
+    {
         tracing::warn!(
             error = %err,
             "boot-recovery path errored (non-fatal); main loop will re-converge",
@@ -130,18 +132,16 @@ async fn main() -> anyhow::Result<()> {
 
     // Issue #86: load health-check config + spawn the probe scheduler
     // before entering the poll loop. Absent config → no scheduler runs;
-    // checkin omits `healthProbes`. Parse failures are fatal — the
+    // checkin omits `healthProbes`. Parse failures are fatal - the
     // operator declared probes and we couldn't honour them.
     let health_cache = match args.health_checks_config.as_deref() {
         Some(path) => match nixfleet_agent::health::load_config(path) {
             Ok(Some(cfg)) => {
                 let mode = cfg.mode;
-                let cache = std::sync::Arc::new(
-                    nixfleet_agent::health::ProbeStateCache::new(
-                        nixfleet_agent::health::initial_results(&cfg),
-                        mode,
-                    ),
-                );
+                let cache = std::sync::Arc::new(nixfleet_agent::health::ProbeStateCache::new(
+                    nixfleet_agent::health::initial_results(&cfg),
+                    mode,
+                ));
                 tokio::spawn({
                     let cache = cache.clone();
                     async move { nixfleet_agent::health::run_scheduler(cfg, cache).await }
@@ -151,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(None) => {
                 tracing::info!(
                     path = %path.display(),
-                    "health-checks config absent at declared path — proceeding without probe scheduler",
+                    "health-checks config absent at declared path - proceeding without probe scheduler",
                 );
                 std::sync::Arc::new(nixfleet_agent::health::ProbeStateCache::default())
             }
@@ -197,7 +197,7 @@ fn load_evidence_signer(
         Ok(Some(s)) => {
             tracing::info!(
                 path = %path.display(),
-                "loaded SSH host key — evidence signing active",
+                "loaded SSH host key - evidence signing active",
             );
             Some(s)
         }
@@ -206,7 +206,7 @@ fn load_evidence_signer(
             tracing::warn!(
                 path = %path.display(),
                 error = %format!("{err:#}"),
-                "ssh host key parse error — evidence signing disabled",
+                "ssh host key parse error - evidence signing disabled",
             );
             None
         }
@@ -219,10 +219,7 @@ fn load_evidence_signer(
 /// operator-visible breadcrumb on the CP. Skips when the bootstrap token
 /// or CA cert paths aren't configured (no plausible auth route from
 /// here).
-async fn report_pre_cert_failure(
-    args: &Args,
-    event: nixfleet_proto::agent_wire::ReportEvent,
-) {
+async fn report_pre_cert_failure(args: &Args, event: nixfleet_proto::agent_wire::ReportEvent) {
     let Some(token_file) = args.bootstrap_token_file.as_deref() else {
         return;
     };
@@ -265,7 +262,7 @@ async fn maybe_run_first_boot_enrollment(args: &Args) -> anyhow::Result<()> {
     if cert_path.exists() {
         return Ok(());
     }
-    tracing::info!(token = %token_file.display(), "no client cert — starting enrollment");
+    tracing::info!(token = %token_file.display(), "no client cert - starting enrollment");
     let enroll_client = comms::build_client(args.ca_cert.as_deref(), None, None)?;
     nixfleet_agent::enrollment::enroll(
         &enroll_client,
@@ -304,8 +301,10 @@ async fn run_poll_loop(
         }
         ticker.tick().await;
 
-        // LOADBEARING: retry boot-recovery every tick — startup POST races CP restart; missed confirm rolls back healthy host.
-        if let Err(err) = check_boot_recovery(&client_handle, args, &reporter, &evidence_signer).await {
+        // LOADBEARING: retry boot-recovery every tick - startup POST races CP restart; missed confirm rolls back healthy host.
+        if let Err(err) =
+            check_boot_recovery(&client_handle, args, &reporter, &evidence_signer).await
+        {
             tracing::warn!(
                 error = %err,
                 "boot-recovery retry (poll loop): non-fatal error; main loop continues",
@@ -317,10 +316,18 @@ async fn run_poll_loop(
             reporter.replace_client(client_handle.clone());
         }
 
-        match send_checkin(&client_handle, args, started_at, &evidence_signer, &health_cache).await {
+        match send_checkin(
+            &client_handle,
+            args,
+            started_at,
+            &evidence_signer,
+            &health_cache,
+        )
+        .await
+        {
             Ok(resp) => {
                 consecutive_failures = 0;
-                // LOADBEARING: process CP rollback before new dispatch — host must step away from failed gen first.
+                // LOADBEARING: process CP rollback before new dispatch - host must step away from failed gen first.
                 if let Some(rb) = &resp.rollback {
                     handle_cp_rollback_signal(rb, &reporter, args, &evidence_signer).await;
                 }
@@ -337,7 +344,7 @@ async fn run_poll_loop(
             }
             Err(err) => {
                 consecutive_failures = consecutive_failures.saturating_add(1);
-                // FOOTGUN: `{:#}` walks anyhow chain — `%err` alone hides TLS/connect cause below POST context.
+                // FOOTGUN: `{:#}` walks anyhow chain - `%err` alone hides TLS/connect cause below POST context.
                 tracing::warn!(
                     error = %format!("{err:#}"),
                     consecutive_failures,
@@ -380,7 +387,7 @@ async fn maybe_renew_cert(
     if remaining >= 0.5 {
         return None;
     }
-    tracing::info!(remaining, "cert past 50% — renewing");
+    tracing::info!(remaining, "cert past 50% - renewing");
     if let Err(err) = nixfleet_agent::enrollment::renew(
         client,
         &args.control_plane_url,
@@ -468,13 +475,13 @@ async fn send_checkin(
     };
     // Suppress + delete the outcome file when no fetch is in flight.
     // `last_fetch_outcome` is the result of the agent's most recent
-    // FETCH attempt — meaningful while a target is pending, ancient
+    // FETCH attempt - meaningful while a target is pending, ancient
     // history once the host has settled. Reporting a stale failure
     // surfaces as a red badge on the dashboard for hosts that have
     // long since recovered (saw this on aether after a manual
     // darwin-rebuild bypassed the dispatch path). CP's circuit
     // breaker (`Decision::HoldAfterFailure`) is only relevant when
-    // there's a recent fetch to circuit-break — without pending,
+    // there's a recent fetch to circuit-break - without pending,
     // there's no fetch to gate.
     let last_fetch_outcome = if pending_generation.is_some() {
         last_fetch_outcome
@@ -490,7 +497,7 @@ async fn send_checkin(
 
     // Sign last_confirmed_at against (hostname, rollout_id) using the
     // SSH host key. CP verifies against hosts.<host>.pubkey before
-    // applying the attested timestamp to soak recovery — without the
+    // applying the attested timestamp to soak recovery - without the
     // signature the timestamp is silently ignored (clamp falls back
     // to `now`), so a compromised host can't replay an older confirm
     // to short-circuit the soak gate.
@@ -507,12 +514,11 @@ async fn send_checkin(
         evidence_signer.as_ref().as_ref(),
     ) {
         (Some(lc), Some(rid), Some(signer)) => {
-            let payload =
-                nixfleet_proto::evidence_signing::LastConfirmedAtSignedPayload {
-                    hostname: args.machine_id.as_str(),
-                    rollout_id: rid.as_str(),
-                    last_confirmed_at: lc,
-                };
+            let payload = nixfleet_proto::evidence_signing::LastConfirmedAtSignedPayload {
+                hostname: args.machine_id.as_str(),
+                rollout_id: rid.as_str(),
+                last_confirmed_at: lc,
+            };
             nixfleet_agent::evidence_signer::try_sign(signer, &payload)
         }
         _ => None,
@@ -569,4 +575,3 @@ async fn check_boot_recovery(
     )
     .await
 }
-

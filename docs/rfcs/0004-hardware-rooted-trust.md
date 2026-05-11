@@ -11,7 +11,7 @@ ARCHITECTURE.md §5 names the residual risk verbatim:
 
 > *Host is compromised (root on the target machine). Attacker can: read secrets decrypted for that host, forge probe outputs signed with that host's key.*
 
-v0.2 relies on the host's SSH host key (`/etc/ssh/ssh_host_ed25519_key`) for both signing probe outputs and decrypting agenix secrets. That key is on disk. Disk extraction or root post-boot grants the attacker the same signing capability the host has — a forged `ComplianceFailureSignedPayload` is indistinguishable from a real one to the offline auditor (`nixfleet-verify-artifact probe`).
+v0.2 relies on the host's SSH host key (`/etc/ssh/ssh_host_ed25519_key`) for both signing probe outputs and decrypting agenix secrets. That key is on disk. Disk extraction or root post-boot grants the attacker the same signing capability the host has - a forged `ComplianceFailureSignedPayload` is indistinguishable from a real one to the offline auditor (`nixfleet-verify-artifact probe`).
 
 Closing this gap is the v0.3 thesis. The trust property RFC-0004 establishes:
 
@@ -27,11 +27,11 @@ The four trust roots in ARCHITECTURE.md §4 do not change. What changes is the p
 
 `impls/keyslots/tpm/` ships a working TPM2 keyslot abstraction:
 
-- `nixfleet.keyslots.tpm.keys.<name>` — first-boot oneshot creates a primary key, evicts to a persistent handle, exports the public half.
-- `pcrPolicy = [ "0" "2" "4" "7" ]` — bind the auth policy to a chosen PCR set; signing fails on PCR mismatch.
-- `algorithm = "ecdsa-p256" | "ed25519"` — both supported. ecdsa-p256 is the realistic default (commodity TPMs rarely implement ed25519).
+- `nixfleet.keyslots.tpm.keys.<name>` - first-boot oneshot creates a primary key, evicts to a persistent handle, exports the public half.
+- `pcrPolicy = [ "0" "2" "4" "7" ]` - bind the auth policy to a chosen PCR set; signing fails on PCR mismatch.
+- `algorithm = "ecdsa-p256" | "ed25519"` - both supported. ecdsa-p256 is the realistic default (commodity TPMs rarely implement ed25519).
 - Per-key `tpm-sign-<name>` shell wrapper that consumers (CI runner, agent) invoke to sign a file.
-- Idempotent across impermanence wipes — re-extracts pubkey from the persisted handle.
+- Idempotent across impermanence wipes - re-extracts pubkey from the persisted handle.
 
 RFC-0004 does **not** reimplement any of this. It extends the existing surface with a single concept (host-identity binding) and adds the missing wire and verification machinery (boot evidence, PCR-bound secret recipients, expected-PCR derivation).
 
@@ -46,7 +46,7 @@ nixfleet.keyslots.tpm.keys.host-identity = {
   handle      = "0x81010003";
   algorithm   = "ecdsa-p256";
   pcrPolicy   = [ "0" "2" "4" "7" "8" "9" "11" "12" "13" "14" ];
-  enrollAsHostIdentity = true;       # NEW — RFC-0004
+  enrollAsHostIdentity = true;       # NEW - RFC-0004
 };
 ```
 
@@ -54,7 +54,7 @@ When `enrollAsHostIdentity = true`:
 
 1. The keyslot's exported pubkey (`pubkey.raw`) becomes the host's signing identity. `nixfleet.host.signingPubkeyFile` (new contract field on `contracts/host-spec.nix`) resolves to the keyslot's `pubkey.raw` path.
 2. The agent uses the keyslot's `tpm-sign-host-identity` wrapper instead of `evidence_signer.rs`'s file-backed ed25519 path. Probe outputs are TPM-signed.
-3. The keyslot's pubkey is what `mkFleet` references in `hosts.<name>.pubkey` (existing field per RFC-0001 §2.1, currently a bare OpenSSH-format string — extended to allow either an inline string or `{ source = "tpm-keyslot/host-identity"; }`).
+3. The keyslot's pubkey is what `mkFleet` references in `hosts.<name>.pubkey` (existing field per RFC-0001 §2.1, currently a bare OpenSSH-format string - extended to allow either an inline string or `{ source = "tpm-keyslot/host-identity"; }`).
 
 Exactly one keyslot per host may set `enrollAsHostIdentity = true`. mkFleet asserts this at evaluation time.
 
@@ -83,13 +83,13 @@ This is an additive RFC-0001 schema extension (RFC-0001 §4.1 shape, additional 
 }
 ```
 
-The `expectedDigest` is a deterministic function of the closure's bootable inputs (kernel, initrd, cmdline) and the host's declared `firmwareGeneration`. `mkFleet` produces it; CI signs the whole artifact. Hosts without `expectedBootEvidence` are pre-§4.4 hosts that never enrolled into attestation — verification gating is opt-in per host.
+The `expectedDigest` is a deterministic function of the closure's bootable inputs (kernel, initrd, cmdline) and the host's declared `firmwareGeneration`. `mkFleet` produces it; CI signs the whole artifact. Hosts without `expectedBootEvidence` are pre-§4.4 hosts that never enrolled into attestation - verification gating is opt-in per host.
 
 `firmwareGeneration` is a manual integer in `fleet.nix` (`hosts.<name>.firmwareGeneration = 3`). Default `1`. Operator bumps after testing new firmware on a staging host and capturing the new PCR digest. The framework refuses to make firmware drift silent: a host whose measured PCRs disagree with its declared `expectedDigest` is flagged regardless of whether the difference is malicious or a legitimate firmware update.
 
-Manual is the v0.3 pick because it is one line of code and forces a human acknowledgment of every firmware change. Failure mode: an operator who runs a firmware update without bumping `firmwareGeneration` sees every host on that hardware drift into `AttestationDrift` until they bump. Auto-derivation — a capture tool that writes a checked-in `firmware-evidence/<hostname>.json` that `mkFleet` reads — is the natural follow-up to remove the forget-failure mode; it is in §10 open questions and not v0.3 scope.
+Manual is the v0.3 pick because it is one line of code and forces a human acknowledgment of every firmware change. Failure mode: an operator who runs a firmware update without bumping `firmwareGeneration` sees every host on that hardware drift into `AttestationDrift` until they bump. Auto-derivation - a capture tool that writes a checked-in `firmware-evidence/<hostname>.json` that `mkFleet` reads - is the natural follow-up to remove the forget-failure mode; it is in §10 open questions and not v0.3 scope.
 
-Tooling: `nix run .#capture-boot-evidence -- --hostname water-plant-01` runs on a staging host, reads its current PCR quote, and emits a fragment ready to paste into `fleet.nix` (or to commit via a follow-up CLI). No mechanism for "trust whatever the host reports" — the operator always reviews.
+Tooling: `nix run .#capture-boot-evidence -- --hostname water-plant-01` runs on a staging host, reads its current PCR quote, and emits a fragment ready to paste into `fleet.nix` (or to commit via a follow-up CLI). No mechanism for "trust whatever the host reports" - the operator always reviews.
 
 ### 4.3 PCR-bound secret recipients
 
@@ -108,20 +108,20 @@ age.secrets.cluster-token = {
 
 `@boot` resolves at evaluation time to the host's declared `expectedBootEvidence.pcrPolicy`. Custom PCR sets (`pcrPolicy = { pcrs = [0 7]; algorithm = "sha256"; }`) are accepted for secrets that need different boot-state binding than the host-identity key.
 
-Encryption produces an age stanza wrapping the secret to a TPM-policy recipient. Decryption succeeds only when the PCR state at unseal time matches the policy. A tampered kernel produces a PCR mismatch, which produces a TPM authorization failure, which produces a decryption failure — the secret never reaches userspace. The control plane never sees plaintext or the unsealing condition.
+Encryption produces an age stanza wrapping the secret to a TPM-policy recipient. Decryption succeeds only when the PCR state at unseal time matches the policy. A tampered kernel produces a PCR mismatch, which produces a TPM authorization failure, which produces a decryption failure - the secret never reaches userspace. The control plane never sees plaintext or the unsealing condition.
 
-Implementation note: this requires extending the agenix decryption path. Two options on the table — a small wrapper around `age` that invokes the TPM keyslot's wrapper for stanza decryption, or a `clevis`-style integration. Pick at implementation time; the wire/declaration shape above is what consumers depend on.
+Implementation note: this requires extending the agenix decryption path. Two options on the table - a small wrapper around `age` that invokes the TPM keyslot's wrapper for stanza decryption, or a `clevis`-style integration. Pick at implementation time; the wire/declaration shape above is what consumers depend on.
 
 ### 4.4 Boot-state probe class
 
 The agent collects boot measurements via `tpm2 quote` with a control-plane-issued nonce, signs the quote with the TPM-bound host key (§4.1), and includes it in the checkin payload.
 
-This rides RFC-0003 §4.1 `POST /agent/checkin` — boot state can drift between activations (firmware updates without reboot are rare but possible), and the cost of carrying a fresh quote on every checkin is negligible. The schema extension to `CheckinRequest` (additive, `Option<T>` + `serde(default)` per nixfleet-proto convention):
+This rides RFC-0003 §4.1 `POST /agent/checkin` - boot state can drift between activations (firmware updates without reboot are rare but possible), and the cost of carrying a fresh quote on every checkin is negligible. The schema extension to `CheckinRequest` (additive, `Option<T>` + `serde(default)` per nixfleet-proto convention):
 
 ```rust
 pub struct CheckinRequest {
     // ... existing fields ...
-    pub boot_evidence: Option<BootEvidence>,   // NEW — RFC-0004
+    pub boot_evidence: Option<BootEvidence>,   // NEW - RFC-0004
 }
 
 pub struct BootEvidence {
@@ -137,9 +137,9 @@ The CP-side response (`CheckinResponse`) gains a `next_attestation_nonce: [u8; 3
 
 Verification happens twice. Agent-side: a sanity check that the locally-measured digest matches the locally-quoted one (catches local tooling failures, not malice). CP-side: compare `measured_digest` against `expectedBootEvidence.expectedDigest` from the host's `fleet.resolved` entry; verify the host-key signature on the quote+nonce; emit one of three outcomes:
 
-- **`AttestationOK`** — digest matches. Soft-recorded; no action.
-- **`AttestationDrift`** — digest mismatches but signature is valid. The host is honestly reporting an unexpected boot state. New `ReportEvent::AttestationDrift { hostname, expected, measured }` (additive wire variant per the RFC-0003 idiom). Triggers RFC-0005 §4 quarantine if persistent.
-- **`AttestationInvalid`** — signature does not verify. Host is lying or impersonating. Same `ReportEvent` payload but distinct status; triggers immediate quarantine, not threshold-based.
+- **`AttestationOK`** - digest matches. Soft-recorded; no action.
+- **`AttestationDrift`** - digest mismatches but signature is valid. The host is honestly reporting an unexpected boot state. New `ReportEvent::AttestationDrift { hostname, expected, measured }` (additive wire variant per the RFC-0003 idiom). Triggers RFC-0005 §4 quarantine if persistent.
+- **`AttestationInvalid`** - signature does not verify. Host is lying or impersonating. Same `ReportEvent` payload but distinct status; triggers immediate quarantine, not threshold-based.
 
 Hosts with no `expectedBootEvidence` declared in `fleet.resolved` and no `boot_evidence` in their checkin are pre-attestation hosts; the CP records `attestation_status = none` and proceeds normally. Migration is per-host, not all-or-nothing.
 
@@ -151,7 +151,7 @@ Hosts with no `expectedBootEvidence` declared in `fleet.resolved` and no `boot_e
 - The host's `firmwareGeneration` integer.
 - The PCR set declared in `nixfleet.keyslots.tpm.keys.host-identity.pcrPolicy` (single source of truth for which PCRs matter for this host).
 
-This generalizes a property the framework already has: closure hashes are deterministic functions of inputs. Boot-evidence prediction is the same property applied to TPM measurements. Implementation detail — the digest computation may need to call out to a small Rust helper (`nixfleet-pcr-predict`) because pure-Nix PCR prediction for systemd-stub measurements is non-trivial; that helper runs as a derivation builder, not at agent runtime.
+This generalizes a property the framework already has: closure hashes are deterministic functions of inputs. Boot-evidence prediction is the same property applied to TPM measurements. Implementation detail - the digest computation may need to call out to a small Rust helper (`nixfleet-pcr-predict`) because pure-Nix PCR prediction for systemd-stub measurements is non-trivial; that helper runs as a derivation builder, not at agent runtime.
 
 ## 5. Trust analysis
 
@@ -164,7 +164,7 @@ This generalizes a property the framework already has: closure hashes are determ
 
 **Properties not added.**
 
-- Protection against runtime tampering after a successful unsealed boot. Root post-boot operates within the unsealed-key scope until reboot. Mitigation requires confidential computing (AMD SEV / Intel TDX) — a future RFC.
+- Protection against runtime tampering after a successful unsealed boot. Root post-boot operates within the unsealed-key scope until reboot. Mitigation requires confidential computing (AMD SEV / Intel TDX) - a future RFC.
 - Protection against TPM-bus physical attacks. Out of scope; well-funded attackers with sustained physical access can attack the bus. Confidential computing again.
 - Trust in the TPM manufacturer beyond what the EK certificate verification policy specifies. RFC-0005 picks a default policy.
 
@@ -185,7 +185,7 @@ This generalizes a property the framework already has: closure hashes are determ
 | `ReportEvent` | `AttestationDrift`, `AttestationInvalid` | additive variants (RFC-0003 §4.3) |
 | `HostStatusEntry` (CP `/v1/hosts`) | `attestation_status`, `boot_state_age` | additive |
 
-`PROTOCOL_MAJOR_VERSION` does not change. Pre-RFC-0004 agents and CPs interoperate with RFC-0004 components transparently — they simply lack attestation enforcement.
+`PROTOCOL_MAJOR_VERSION` does not change. Pre-RFC-0004 agents and CPs interoperate with RFC-0004 components transparently - they simply lack attestation enforcement.
 
 ## 7. Migration
 
@@ -197,18 +197,18 @@ Per-host opt-in.
 4. CI rebuilds, signs new `fleet.resolved.json`. Agent on next checkin starts including `boot_evidence`.
 5. CP starts logging attestation outcomes; advisory only until the operator promotes to enforcement (via RFC-0005 §4 quarantine policy).
 
-There is no fleet-wide flag day. The framework supports a mixed fleet (some hosts attested, some not) indefinitely — the per-host `expectedBootEvidence` field's presence is the per-host opt-in.
+There is no fleet-wide flag day. The framework supports a mixed fleet (some hosts attested, some not) indefinitely - the per-host `expectedBootEvidence` field's presence is the per-host opt-in.
 
 ## 8. Build phases
 
 Phase numbering continues from `ARCHITECTURE.md` §6 (Phase 10 was the v0.2 teardown test).
 
-- **Phase 11 — `expectedBootEvidence` schema + mkFleet derivation.** Schema lands in RFC-0001's evaluation contract; `mkFleet` produces the field for hosts that have declared `enrollAsHostIdentity`. CI's `nixfleet-release` signs over the new field. Deliverable: `fleet.resolved.json` for an attestation-opted host carries a valid `expectedBootEvidence` block; bit-flipping it fails verification.
-- **Phase 12 — Host-identity keyslot.** `enrollAsHostIdentity` flag + agent's switch from SSH-key signing to TPM-wrapper signing for probe outputs. Deliverable: a host with the flag set produces probe-output signatures that the offline auditor (`nixfleet-verify-artifact probe`) verifies against the TPM-derived pubkey, and an attempt to sign a fake probe with on-disk material is rejected by the same auditor.
-- **Phase 13 — Boot-evidence collection (advisory).** Agent collects + signs PCR quote on every checkin; CP logs `AttestationOK / Drift / Invalid` to `host_reports` (existing SQLite table per ARCHITECTURE.md §6 Phase 10). No gating yet. Deliverable: a tampered kernel produces a visible `AttestationDrift` event in fleet status.
-- **Phase 14 — PCR-bound secret recipients.** agenix-equivalent extension; one supported PCR-binding mechanism implemented end-to-end. Deliverable: a secret encrypted to a host's `@boot` PCR policy fails to decrypt on a tampered boot chain, without any agent-side or CP-side intervention.
+- **Phase 11 - `expectedBootEvidence` schema + mkFleet derivation.** Schema lands in RFC-0001's evaluation contract; `mkFleet` produces the field for hosts that have declared `enrollAsHostIdentity`. CI's `nixfleet-release` signs over the new field. Deliverable: `fleet.resolved.json` for an attestation-opted host carries a valid `expectedBootEvidence` block; bit-flipping it fails verification.
+- **Phase 12 - Host-identity keyslot.** `enrollAsHostIdentity` flag + agent's switch from SSH-key signing to TPM-wrapper signing for probe outputs. Deliverable: a host with the flag set produces probe-output signatures that the offline auditor (`nixfleet-verify-artifact probe`) verifies against the TPM-derived pubkey, and an attempt to sign a fake probe with on-disk material is rejected by the same auditor.
+- **Phase 13 - Boot-evidence collection (advisory).** Agent collects + signs PCR quote on every checkin; CP logs `AttestationOK / Drift / Invalid` to `host_reports` (existing SQLite table per ARCHITECTURE.md §6 Phase 10). No gating yet. Deliverable: a tampered kernel produces a visible `AttestationDrift` event in fleet status.
+- **Phase 14 - PCR-bound secret recipients.** agenix-equivalent extension; one supported PCR-binding mechanism implemented end-to-end. Deliverable: a secret encrypted to a host's `@boot` PCR policy fails to decrypt on a tampered boot chain, without any agent-side or CP-side intervention.
 
-Enforcement (boot-evidence as a wave-promotion gate) is the subject of RFC-0005 §4 — kept separate so the mechanism (this RFC) and the policy (lifecycle RFC) ship independently.
+Enforcement (boot-evidence as a wave-promotion gate) is the subject of RFC-0005 §4 - kept separate so the mechanism (this RFC) and the policy (lifecycle RFC) ship independently.
 
 ## 9. Falsifiable done criteria
 
@@ -229,4 +229,4 @@ Enforcement (boot-evidence as a wave-promotion gate) is the subject of RFC-0005 
 
 ## 11. One-sentence summary
 
-**The host's signing key lives in the TPM, the boot chain is measured into the signature, and a tampered host cannot speak in the fleet's evidence chain — the v0.2 trust model with its residual hardware-trust gap closed.**
+**The host's signing key lives in the TPM, the boot chain is measured into the signature, and a tampered host cannot speak in the fleet's evidence chain - the v0.2 trust model with its residual hardware-trust gap closed.**

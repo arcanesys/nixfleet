@@ -9,9 +9,7 @@ use chrono::{Duration as ChronoDuration, Utc};
 use common::{install_crypto_provider_once, pick_free_port, wait_for_listener_ready};
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_control_plane::server;
-use nixfleet_proto::enroll_wire::{
-    BootstrapEventRequest, BootstrapToken, TokenClaims,
-};
+use nixfleet_proto::enroll_wire::{BootstrapEventRequest, BootstrapToken, TokenClaims};
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,
@@ -35,8 +33,7 @@ fn mint_fleet_ca(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let ca_key = KeyPair::generate().unwrap();
     let ca_cert: Certificate = ca_params.self_signed(&ca_key).unwrap();
 
-    let mut server_params =
-        CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+    let mut server_params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
     server_params
         .distinguished_name
         .push(DnType::CommonName, "test-cp-server");
@@ -184,14 +181,20 @@ async fn bootstrap_report_accepts_trust_error() {
 
     let mut rng = rand::thread_rng();
     let signing_key = SigningKey::generate(&mut rng);
-    let pubkey_b64 = base64::engine::general_purpose::STANDARD
-        .encode(signing_key.verifying_key().to_bytes());
+    let pubkey_b64 =
+        base64::engine::general_purpose::STANDARD.encode(signing_key.verifying_key().to_bytes());
     let _trust_path = write_trust_json(&dir, &pubkey_b64);
 
     let port = pick_free_port().await;
     let listen = format!("127.0.0.1:{port}").parse().unwrap();
     let _handle = spawn_server(
-        listen, server_cert, server_key, ca_cert.clone(), ca_key, audit_log, &dir,
+        listen,
+        server_cert,
+        server_key,
+        ca_cert.clone(),
+        ca_key,
+        audit_log,
+        &dir,
     )
     .await;
 
@@ -207,7 +210,9 @@ async fn bootstrap_report_accepts_trust_error() {
     };
     let client = make_client(&ca_cert).await;
     let resp = client
-        .post(format!("https://localhost:{port}/v1/agent/bootstrap-report"))
+        .post(format!(
+            "https://localhost:{port}/v1/agent/bootstrap-report"
+        ))
         .json(&req)
         .send()
         .await
@@ -224,14 +229,20 @@ async fn bootstrap_report_rejects_disallowed_event_variant() {
 
     let mut rng = rand::thread_rng();
     let signing_key = SigningKey::generate(&mut rng);
-    let pubkey_b64 = base64::engine::general_purpose::STANDARD
-        .encode(signing_key.verifying_key().to_bytes());
+    let pubkey_b64 =
+        base64::engine::general_purpose::STANDARD.encode(signing_key.verifying_key().to_bytes());
     let _trust_path = write_trust_json(&dir, &pubkey_b64);
 
     let port = pick_free_port().await;
     let listen = format!("127.0.0.1:{port}").parse().unwrap();
     let _handle = spawn_server(
-        listen, server_cert, server_key, ca_cert.clone(), ca_key, audit_log, &dir,
+        listen,
+        server_cert,
+        server_key,
+        ca_cert.clone(),
+        ca_key,
+        audit_log,
+        &dir,
     )
     .await;
 
@@ -247,7 +258,9 @@ async fn bootstrap_report_rejects_disallowed_event_variant() {
     };
     let client = make_client(&ca_cert).await;
     let resp = client
-        .post(format!("https://localhost:{port}/v1/agent/bootstrap-report"))
+        .post(format!(
+            "https://localhost:{port}/v1/agent/bootstrap-report"
+        ))
         .json(&req)
         .send()
         .await
@@ -264,18 +277,24 @@ async fn bootstrap_report_rejects_bad_signature() {
 
     let mut rng = rand::thread_rng();
     let real_key = SigningKey::generate(&mut rng);
-    let pubkey_b64 = base64::engine::general_purpose::STANDARD
-        .encode(real_key.verifying_key().to_bytes());
+    let pubkey_b64 =
+        base64::engine::general_purpose::STANDARD.encode(real_key.verifying_key().to_bytes());
     let _trust_path = write_trust_json(&dir, &pubkey_b64);
 
     let port = pick_free_port().await;
     let listen = format!("127.0.0.1:{port}").parse().unwrap();
     let _handle = spawn_server(
-        listen, server_cert, server_key, ca_cert.clone(), ca_key, audit_log, &dir,
+        listen,
+        server_cert,
+        server_key,
+        ca_cert.clone(),
+        ca_key,
+        audit_log,
+        &dir,
     )
     .await;
 
-    // Sign with a DIFFERENT key — server should reject (not in trust.json).
+    // Sign with a DIFFERENT key - server should reject (not in trust.json).
     let attacker_key = SigningKey::generate(&mut rng);
     let token = signed_token(&attacker_key, "test-host");
     let req = BootstrapEventRequest {
@@ -289,7 +308,9 @@ async fn bootstrap_report_rejects_bad_signature() {
     };
     let client = make_client(&ca_cert).await;
     let resp = client
-        .post(format!("https://localhost:{port}/v1/agent/bootstrap-report"))
+        .post(format!(
+            "https://localhost:{port}/v1/agent/bootstrap-report"
+        ))
         .json(&req)
         .send()
         .await

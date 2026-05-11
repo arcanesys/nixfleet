@@ -121,7 +121,7 @@
       cargoExtraArgs = "-p nixfleet-release";
       src = fileSetForCrate {crate = ./crates/nixfleet-release;};
       meta = {
-        description = "Producer for fleet.resolved.json (CONTRACTS §I #1) — orchestrates build/inject/canonicalize/sign/release";
+        description = "Producer for fleet.resolved.json (CONTRACTS §I #1) - orchestrates build/inject/canonicalize/sign/release";
         license = lib.licenses.mit;
         mainProgram = "nixfleet-release";
       };

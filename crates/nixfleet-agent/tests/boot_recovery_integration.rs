@@ -39,7 +39,10 @@ struct NoopReporter {
 }
 impl Reporter for NoopReporter {
     async fn post_report(&self, rollout: Option<&str>, event: ReportEvent) {
-        self._calls.lock().unwrap().push((rollout.map(String::from), event));
+        self._calls
+            .lock()
+            .unwrap()
+            .push((rollout.map(String::from), event));
     }
 }
 
@@ -110,7 +113,7 @@ async fn posted_confirm_410_with_failing_rollback_preserves_dispatch() {
         .mount(&server)
         .await;
 
-    // LOADBEARING: failed rollback must KEEP last_dispatched — clearing on failure splits brain.
+    // LOADBEARING: failed rollback must KEEP last_dispatched - clearing on failure splits brain.
     let reporter = NoopReporter::default();
     let signer: Arc<Option<EvidenceSigner>> = Arc::new(None);
     run_boot_recovery(

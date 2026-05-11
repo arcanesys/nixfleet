@@ -1,6 +1,6 @@
 # Nix source layout
 
-The Nix half of the codebase is split into four layers. The split is structural, not stylistic — each directory plays a distinct role in the API surface and import graph. When adding code, this doc tells you which layer it belongs in.
+The Nix half of the codebase is split into four layers. The split is structural, not stylistic - each directory plays a distinct role in the API surface and import graph. When adding code, this doc tells you which layer it belongs in.
 
 If you're looking for the *runtime* architecture (components, trust flow, build order), read [`../ARCHITECTURE.md`](../ARCHITECTURE.md) instead. This doc is about source organization for contributors.
 
@@ -17,23 +17,23 @@ The split is visible in [`modules/flake-module.nix`](../modules/flake-module.nix
 
 ## When does code go where?
 
-### `lib/` — public API
+### `lib/` - public API
 
 Goes here if it's a **function** consumers call: `mkHost`, `mkFleet`, `mkVmApps`, `mergeFleets`, `withSignature`. Pure Nix functions, no NixOS module evaluation. Exposed at `nixfleet.lib.<name>` via [`lib/default.nix`](../lib/default.nix).
 
 Rule of thumb: if the body is `fleetConfig: { ... }` or `args: { ... }` and never declares `options.*` or `config.*`, it belongs here.
 
-Example — the recently split `mkVmApps` is a function returning a flake-apps attrset; its implementation lives in [`lib/mk-vm-apps.nix`](../lib/mk-vm-apps.nix) plus the [`lib/vm-platform.nix`](../lib/vm-platform.nix) / [`lib/vm-helpers.sh`](../lib/vm-helpers.sh) / [`lib/vm-scripts/`](../lib/vm-scripts/) siblings.
+Example - the recently split `mkVmApps` is a function returning a flake-apps attrset; its implementation lives in [`lib/mk-vm-apps.nix`](../lib/mk-vm-apps.nix) plus the [`lib/vm-platform.nix`](../lib/vm-platform.nix) / [`lib/vm-helpers.sh`](../lib/vm-helpers.sh) / [`lib/vm-scripts/`](../lib/vm-scripts/) siblings.
 
-### `modules/scopes/<scope>/` — auto-included service modules
+### `modules/scopes/<scope>/` - auto-included service modules
 
-Goes here if it's a **NixOS module the framework wants every relevant host to evaluate**, gated by an `enable` flag. The agent, the control plane, the operator user, the cache pinning, the microvm host — all auto-included by `mkHost` so consumers don't have to remember to `imports = [ ... ]` every relevant module on every host.
+Goes here if it's a **NixOS module the framework wants every relevant host to evaluate**, gated by an `enable` flag. The agent, the control plane, the operator user, the cache pinning, the microvm host - all auto-included by `mkHost` so consumers don't have to remember to `imports = [ ... ]` every relevant module on every host.
 
 Each file is a complete NixOS module: declares its `services.<name>.*` options, plus the `config = lib.mkIf cfg.enable { ... }` block that lights up when the consumer flips the flag.
 
 Naming convention: file starts with `_` (e.g. `_agent.nix`, `_control-plane.nix`) to keep the import-tree merge predictable.
 
-### `contracts/` — typed schemas, no implementation
+### `contracts/` - typed schemas, no implementation
 
 Goes here if it's an **option schema other code depends on, but the schema itself has no behavior**. The schema declares what fields exist and what types they take; downstream impls or service modules read those fields and do the actual work.
 
@@ -43,7 +43,7 @@ Rule of thumb: if removing this file's `config = ...` block would change no obse
 
 Putting a contract here (rather than inline in a service module) decouples readers from writers. Multiple service modules can contribute `nixfleet.persistence.directories` without knowing whether the consumer fleet uses impermanence, ZFS rollback, or no impermanence at all. The impl reads those contributions and translates.
 
-### `impls/<family>/<impl>.nix` — opt-in implementations
+### `impls/<family>/<impl>.nix` - opt-in implementations
 
 Goes here if it's a **concrete implementation of a contract schema, where multiple alternatives could exist** and a consumer fleet picks one explicitly.
 
@@ -52,7 +52,7 @@ Today's families:
 | Family | Contract | Impls |
 |---|---|---|
 | `persistence` | [`contracts/persistence.nix`](../contracts/persistence.nix) | [`impermanence`](../impls/persistence/impermanence.nix) |
-| `keyslots` | (none yet — contract is implicit in TPM module) | [`tpm`](../impls/keyslots/tpm/) |
+| `keyslots` | (none yet - contract is implicit in TPM module) | [`tpm`](../impls/keyslots/tpm/) |
 | `gitops` | source-URL builders for `services.nixfleet-control-plane.channelRefsSource` | [`forgejo`](../impls/gitops/forgejo.nix) (also aliased as `gitea`) |
 | `secrets` | identity-path resolution for agenix/sops backends | [`secrets`](../impls/secrets/) (single canonical impl) |
 
@@ -62,7 +62,7 @@ Each impl is exposed as `flake.scopes.<family>.<impl>` (see [`modules/flake-modu
 imports = [ inputs.nixfleet.scopes.persistence.impermanence ];
 ```
 
-Sibling entries are mutually exclusive. Adding a third impl to an existing family is when the family-vs-impl boundary earns its keep — write a new file alongside the existing one, no schema change required.
+Sibling entries are mutually exclusive. Adding a third impl to an existing family is when the family-vs-impl boundary earns its keep - write a new file alongside the existing one, no schema change required.
 
 ## What does **not** go in any of these
 
@@ -73,6 +73,6 @@ Sibling entries are mutually exclusive. Adding a third impl to an existing famil
 
 ## Cross-references
 
-- [`modules/flake-module.nix`](../modules/flake-module.nix) — the wire-up that turns these directories into flake outputs.
-- [`lib/mk-host.nix`](../lib/mk-host.nix) — the function that auto-includes `modules/scopes/*` and `contracts/*` for each host.
-- [`docs/CONTRACTS.md`](CONTRACTS.md) — the cross-stream artifact contracts (different sense of "contract" — wire formats and signed artifacts, not Nix option schemas).
+- [`modules/flake-module.nix`](../modules/flake-module.nix) - the wire-up that turns these directories into flake outputs.
+- [`lib/mk-host.nix`](../lib/mk-host.nix) - the function that auto-includes `modules/scopes/*` and `contracts/*` for each host.
+- [`docs/CONTRACTS.md`](CONTRACTS.md) - the cross-stream artifact contracts (different sense of "contract" - wire formats and signed artifacts, not Nix option schemas).

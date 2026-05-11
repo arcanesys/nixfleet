@@ -11,8 +11,7 @@ const BOOTED_SYSTEM: &str = "/run/booted-system";
 const BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
 
 pub fn boot_id() -> Result<String> {
-    let raw = fs::read_to_string(BOOT_ID_PATH)
-        .with_context(|| format!("read {BOOT_ID_PATH}"))?;
+    let raw = fs::read_to_string(BOOT_ID_PATH).with_context(|| format!("read {BOOT_ID_PATH}"))?;
     Ok(raw.trim().to_string())
 }
 
@@ -28,8 +27,8 @@ pub fn pending_generation() -> Result<Option<PendingGeneration>> {
 }
 
 fn booted_closure_hash() -> Result<String> {
-    let target = fs::read_link(BOOTED_SYSTEM)
-        .with_context(|| format!("readlink {BOOTED_SYSTEM}"))?;
+    let target =
+        fs::read_link(BOOTED_SYSTEM).with_context(|| format!("readlink {BOOTED_SYSTEM}"))?;
     Ok(closure_hash_from_path(&target))
 }
 

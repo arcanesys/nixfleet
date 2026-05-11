@@ -19,10 +19,7 @@ use nixfleet_proto::FleetResolved;
 /// recorded before checking the `after` channel's predecessor gate.
 /// mkFleet validates `channelEdges` is a DAG, so cycle handling here is
 /// defensive only.
-pub fn topological_channel_order(
-    fleet: &FleetResolved,
-    channels: &[String],
-) -> Vec<String> {
+pub fn topological_channel_order(fleet: &FleetResolved, channels: &[String]) -> Vec<String> {
     let channel_set: std::collections::HashSet<&str> =
         channels.iter().map(|s| s.as_str()).collect();
     let mut in_degree: HashMap<String, usize> = HashMap::new();
@@ -32,8 +29,7 @@ pub fn topological_channel_order(
         successors.insert(ch.clone(), Vec::new());
     }
     for edge in &fleet.channel_edges {
-        if !channel_set.contains(edge.gates.as_str())
-            || !channel_set.contains(edge.gated.as_str())
+        if !channel_set.contains(edge.gates.as_str()) || !channel_set.contains(edge.gated.as_str())
         {
             continue;
         }
@@ -123,7 +119,7 @@ pub fn reconcile(fleet: &FleetResolved, observed: &Observed, now: DateTime<Utc>)
                     target_ref: current_ref.clone(),
                     blocked_by: blocker.clone(),
                     reason: format!(
-                        "channel '{blocker}' has an active rollout — channelEdges holds OpenRollout until predecessor converges",
+                        "channel '{blocker}' has an active rollout - channelEdges holds OpenRollout until predecessor converges",
                     ),
                 });
             }
@@ -145,7 +141,9 @@ pub fn reconcile(fleet: &FleetResolved, observed: &Observed, now: DateTime<Utc>)
             });
             continue;
         }
-        actions.extend(rollout_state::advance_rollout(fleet, observed, rollout, now));
+        actions.extend(rollout_state::advance_rollout(
+            fleet, observed, rollout, now,
+        ));
     }
 
     actions
@@ -200,7 +198,9 @@ mod channel_edge_tests {
             reason: None,
         }]);
         let mut observed = Observed::default();
-        observed.channel_refs.insert("app".into(), "ref-app-1".into());
+        observed
+            .channel_refs
+            .insert("app".into(), "ref-app-1".into());
         observed.active_rollouts.push(Rollout {
             id: "db-rollout".into(),
             channel: "db".into(),
@@ -241,7 +241,9 @@ mod channel_edge_tests {
             reason: None,
         }]);
         let mut observed = Observed::default();
-        observed.channel_refs.insert("app".into(), "ref-app-1".into());
+        observed
+            .channel_refs
+            .insert("app".into(), "ref-app-1".into());
         observed.active_rollouts.push(Rollout {
             id: "db-rollout".into(),
             channel: "db".into(),
@@ -260,7 +262,10 @@ mod channel_edge_tests {
         let blocked = actions.iter().any(
             |a| matches!(a, Action::RolloutDeferred { channel, blocked_by, .. } if channel == "app" && blocked_by == "db"),
         );
-        assert!(blocked, "any non-terminal host keeps the predecessor active: {actions:?}");
+        assert!(
+            blocked,
+            "any non-terminal host keeps the predecessor active: {actions:?}"
+        );
     }
 
     #[test]
@@ -277,7 +282,9 @@ mod channel_edge_tests {
             reason: None,
         }]);
         let mut observed = Observed::default();
-        observed.channel_refs.insert("app".into(), "ref-app-1".into());
+        observed
+            .channel_refs
+            .insert("app".into(), "ref-app-1".into());
         observed.active_rollouts.push(Rollout {
             id: "db-rollout".into(),
             channel: "db".into(),
@@ -314,7 +321,9 @@ mod channel_edge_tests {
             reason: None,
         }]);
         let mut observed = Observed::default();
-        observed.channel_refs.insert("app".into(), "ref-app-1".into());
+        observed
+            .channel_refs
+            .insert("app".into(), "ref-app-1".into());
         observed.active_rollouts.push(Rollout {
             id: "db-rollout".into(),
             channel: "db".into(),
@@ -352,7 +361,9 @@ mod channel_edge_tests {
         let mut observed = Observed::default();
         // Both channels have a fresh ref; no active_rollouts (post-wipe).
         observed.channel_refs.insert("db".into(), "ref-db-1".into());
-        observed.channel_refs.insert("app".into(), "ref-app-1".into());
+        observed
+            .channel_refs
+            .insert("app".into(), "ref-app-1".into());
 
         let actions = reconcile(&fleet, &observed, chrono::Utc::now());
 
@@ -366,7 +377,7 @@ mod channel_edge_tests {
         assert_eq!(
             opens,
             vec!["db"],
-            "exactly one OpenRollout — for `db` (the predecessor) — must be emitted; got {actions:?}",
+            "exactly one OpenRollout - for `db` (the predecessor) - must be emitted; got {actions:?}",
         );
         let deferred = actions.iter().any(|a| matches!(a, Action::RolloutDeferred { channel, blocked_by, .. } if channel == "app" && blocked_by == "db"));
         assert!(
@@ -411,7 +422,7 @@ mod channel_edge_tests {
 
     #[test]
     fn channel_edge_with_no_predecessor_history_proceeds() {
-        // db has never had a rollout — RFC §4.3 punt resolves "predecessor
+        // db has never had a rollout - RFC §4.3 punt resolves "predecessor
         // never released" as "proceed" (edges constrain ordering between
         // active rollouts, not a presence requirement).
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
@@ -420,7 +431,9 @@ mod channel_edge_tests {
             reason: None,
         }]);
         let mut observed = Observed::default();
-        observed.channel_refs.insert("app".into(), "ref-app-1".into());
+        observed
+            .channel_refs
+            .insert("app".into(), "ref-app-1".into());
         let actions = reconcile(&fleet, &observed, chrono::Utc::now());
 
         assert!(
@@ -478,8 +491,10 @@ mod channel_edge_tests {
             },
         ]);
         let mut observed = Observed::default();
-        observed.channel_refs.insert("app".into(), "ref-app-1".into());
-        // Active rollout on infra (not db) — different blocker than the
+        observed
+            .channel_refs
+            .insert("app".into(), "ref-app-1".into());
+        // Active rollout on infra (not db) - different blocker than the
         // last-emitted record below.
         observed.active_rollouts.push(Rollout {
             id: "infra-rollout".into(),
@@ -537,7 +552,9 @@ mod channel_edge_tests {
             reason: None,
         }]);
         let mut observed = Observed::default();
-        observed.channel_refs.insert("app".into(), "ref-app-1".into());
+        observed
+            .channel_refs
+            .insert("app".into(), "ref-app-1".into());
         // Even with a stale last_deferral entry, an unblocked channel opens.
         observed.last_deferrals.insert(
             "app".into(),

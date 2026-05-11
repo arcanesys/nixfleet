@@ -1,20 +1,20 @@
-//! Host-edges gate — per-host DAG predecessors must reach terminal-for-ordering.
+//! Host-edges gate - per-host DAG predecessors must reach terminal-for-ordering.
 //!
 //! Migrated from `crate::host_state::edges::predecessor_blocking`.
 //! `Edge { gated: A, gates: B }` semantics: A's dispatch is held until B
 //! reaches Soaked/Converged within the same rollout. (Renamed from the
-//! prior `before`/`after` field names which read backwards — see schema
+//! prior `before`/`after` field names which read backwards - see schema
 //! note on `nixfleet_proto::Edge`.)
 //!
 //! `Soaked` and `Converged` count as terminal-for-ordering (matching
-//! channelEdges semantics — host has cleared its soak, the gating
+//! channelEdges semantics - host has cleared its soak, the gating
 //! purpose is satisfied).
 
 use crate::host_state::HostRolloutState;
 
 use super::{GateBlock, GateInput};
 
-// `is_terminal_for_ordering` is centralised on HostRolloutState — both
+// `is_terminal_for_ordering` is centralised on HostRolloutState - both
 // gates use the same predicate so "what counts as done" can't drift.
 
 pub fn check(input: &GateInput) -> Option<GateBlock> {
@@ -23,7 +23,7 @@ pub fn check(input: &GateInput) -> Option<GateBlock> {
     // is recorded.
     let rollout = input.rollout?;
 
-    // The gated host's channel — used to skip cross-channel edges below.
+    // The gated host's channel - used to skip cross-channel edges below.
     // Cross-channel host ordering is what `channelEdges` is for; allowing
     // host edges across channels would silently brick the gated host
     // because the gate operates within a single rollout's `host_states`,

@@ -13,9 +13,9 @@ pub enum SignatureStatus {
     Unsigned,
     /// Signature present, host has no pubkey (lab pre-enrollment).
     NoPubkey,
-    /// `verify_strict` refused — active tampering.
+    /// `verify_strict` refused - active tampering.
     Mismatch,
-    /// Decoding or pubkey parse failed — active tampering.
+    /// Decoding or pubkey parse failed - active tampering.
     Malformed,
     /// Non-ed25519 pubkey (RSA/ECDSA). Soft skip.
     WrongAlgorithm,
@@ -80,13 +80,12 @@ pub fn verify_event<T: Serialize>(
 /// `Ok(Some)` ed25519, `Ok(None)` non-ed25519, `Err` parse failure.
 fn parse_ssh_ed25519_pubkey(line: &str) -> anyhow::Result<Option<VerifyingKey>> {
     use anyhow::Context;
-    let public = ssh_key::PublicKey::from_openssh(line.trim())
-        .context("parse OpenSSH pubkey")?;
+    let public = ssh_key::PublicKey::from_openssh(line.trim()).context("parse OpenSSH pubkey")?;
     match public.key_data() {
         ssh_key::public::KeyData::Ed25519(ed) => {
             let bytes: [u8; 32] = ed.0;
-            let vk = VerifyingKey::from_bytes(&bytes)
-                .context("ed25519 verifying key from 32 bytes")?;
+            let vk =
+                VerifyingKey::from_bytes(&bytes).context("ed25519 verifying key from 32 bytes")?;
             Ok(Some(vk))
         }
         _ => Ok(None),

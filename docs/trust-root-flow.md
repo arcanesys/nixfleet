@@ -2,12 +2,12 @@
 
 Describes how the Nix layer's declarative `nixfleet.trust.*` declarations travel from `fleet.nix` to the Rust runtime's `verify_artifact` call site at the control-plane runtime. This wiring is what makes CI-signed `fleet.resolved` actually get verified.
 
-Cross-references: ARCHITECTURE.md §1.4 (control plane role), CONTRACTS.md §II (trust roots), RFC-0003 §7 (threat model — compromised CP / closure forgery / stale replay).
+Cross-references: ARCHITECTURE.md §1.4 (control plane role), CONTRACTS.md §II (trust roots), RFC-0003 §7 (threat model - compromised CP / closure forgery / stale replay).
 
 ## 1. Flow at a glance
 
 ```
-fleet.nix  (Nix layer — declarative)
+fleet.nix  (Nix layer - declarative)
   nixfleet.trust.ciReleaseKey.current = { algorithm = "ecdsa-p256"; public = "<base64>"; };
   nixfleet.trust.ciReleaseKey.previous = null;        # 30-day rotation grace
   nixfleet.trust.ciReleaseKey.rejectBefore = null;    # compromise switch
@@ -27,7 +27,7 @@ CP-host NixOS config  (applied via mkHost on the CP host)
        │
        │  systemd launches the binary with the flag
        ▼
-CP binary  (Rust runtime — crates/control-plane)
+CP binary  (Rust runtime - crates/control-plane)
   Cli::parse() → args.trust_file: PathBuf
   main() reads /etc/nixfleet/cp/trust.json, deserializes (serde_json) into
     proto::TrustConfig { ci_release_key: KeySlot, attic_cache_key: KeySlot, org_root_key: KeySlot }
@@ -42,7 +42,7 @@ Three invariants drive the design.
 
 **(a) No Nix-to-runtime bridge except JSON-on-disk.** The CP binary is a separate process from the NixOS module system. It cannot ask the config tree directly at runtime. The only stable carrier between Nix and a running service is a file on disk, written by the module, consumed by the binary. This matches the existing pattern for `--db-path`, `--tls-cert`, etc.
 
-**(b) Zero-knowledge CP (CONTRACTS.md §IV, RFC-0003 §7).** The CP MUST be reconstructible from git + agent check-ins. The trust config is derivable from `fleet.nix` — rebuilding the CP host from an empty state regenerates `/etc/nixfleet/cp/trust.json` on activation. No state is lost, no state needs to persist across teardowns.
+**(b) Zero-knowledge CP (CONTRACTS.md §IV, RFC-0003 §7).** The CP MUST be reconstructible from git + agent check-ins. The trust config is derivable from `fleet.nix` - rebuilding the CP host from an empty state regenerates `/etc/nixfleet/cp/trust.json` on activation. No state is lost, no state needs to persist across teardowns.
 
 **(c) Rotation without redeploy.** `KeySlot.current` + `KeySlot.previous` both present means both keys are active. The CP's `active_keys(now)` returns both until `rejectBefore` is exceeded or `previous` is cleared. This lets lab CI rotate the CI release key by:
 1. Generating a new key (may be a different algorithm).
@@ -50,11 +50,11 @@ Three invariants drive the design.
 3. CI starts signing with the new key.
 4. After 30 days (or when `fleet.nix` clears `previous`), the CP stops accepting old-key-signed artifacts.
 
-No CP restart needed — the trust file regenerates on next activation; the CP rereads on tick. (Implementation choice: re-read every N ticks, or use inotify, or restart on config change. Pick in the implementation PR.)
+No CP restart needed - the trust file regenerates on next activation; the CP rereads on tick. (Implementation choice: re-read every N ticks, or use inotify, or restart on config change. Pick in the implementation PR.)
 
 ## 3. Per-hop specification
 
-### 3.1 Declaration surface — `nixfleet.trust.*`
+### 3.1 Declaration surface - `nixfleet.trust.*`
 
 Already landed (PR #17, reinforced by PR #18 contract amendment). See `modules/contracts/trust.nix`:
 
@@ -89,7 +89,7 @@ in {
 }
 ```
 
-The file is world-readable (contains only public keys — by definition not secret). `atticCacheKey` and `orgRootKey` both emit as `{current, previous, rejectBefore}` slot objects: key material stays in its algorithm's native format (attic-native `"attic:<host>:<base64>"` strings under `atticCacheKey`; typed `{algorithm, public}` submodules under `orgRootKey`), but both slots expose the same rotation-grace + compromise-switch surface that `ciReleaseKey` uses.
+The file is world-readable (contains only public keys - by definition not secret). `atticCacheKey` and `orgRootKey` both emit as `{current, previous, rejectBefore}` slot objects: key material stays in its algorithm's native format (attic-native `"attic:<host>:<base64>"` strings under `atticCacheKey`; typed `{algorithm, public}` submodules under `orgRootKey`), but both slots expose the same rotation-grace + compromise-switch surface that `ciReleaseKey` uses.
 
 ### 3.3 CP binary CLI surface
 
@@ -142,14 +142,14 @@ pub struct KeySlot {
     #[serde(default)]
     pub previous: Option<TrustedPubkey>,
     /// Compromise switch (§7.2): artifacts with `signedAt < rejectBefore`
-    /// are refused regardless of which key signed them — applies to both
+    /// are refused regardless of which key signed them - applies to both
     /// `current` and `previous` slots.
     #[serde(default)]
     pub reject_before: Option<DateTime<Utc>>,
 }
 
 impl KeySlot {
-    /// Returns the active key list for `now` — used as the `&[TrustedPubkey]`
+    /// Returns the active key list for `now` - used as the `&[TrustedPubkey]`
     /// slice passed to `verify_artifact`. `rejectBefore` is not enforced
     /// here; that check happens inside `verify_artifact` against the
     /// artifact's `signedAt` (see §3.5 and §7.2).
@@ -181,7 +181,7 @@ let verified = reconciler::verify_artifact(
 )?;
 ```
 
-Fail closed: any `VerifyError` variant aborts the reconcile tick. CP logs the failure; subsequent ticks retry (artifact may change, rotation may land, freshness may reset). `verify_artifact` gains a new `RejectedBeforeTimestamp { signed_at, reject_before }` variant, distinct from `Stale` — semantic difference is operator-declared incident response vs routine expiry.
+Fail closed: any `VerifyError` variant aborts the reconcile tick. CP logs the failure; subsequent ticks retry (artifact may change, rotation may land, freshness may reset). `verify_artifact` gains a new `RejectedBeforeTimestamp { signed_at, reject_before }` variant, distinct from `Stale` - semantic difference is operator-declared incident response vs routine expiry.
 
 ## 4. `fleet.resolved.json` distribution
 
@@ -195,13 +195,13 @@ Per ARCHITECTURE.md §1.4: CP polls the git forge for channel-ref updates. Two c
 
 **(c) Agents fetch directly from attic + CP serves the artifact as a pass-through.** Agents resolve closure hashes out-of-band. CP only serves the artifact as "here is what I was told to serve". Matches the "caching router" framing in ARCHITECTURE.md.
 
-Recommendation: start with (b) — simplest, no new network surface on CP, matches the "git is the trust root" invariant. Revisit in Phase 3 if operations need push-based updates.
+Recommendation: start with (b) - simplest, no new network surface on CP, matches the "git is the trust root" invariant. Revisit in Phase 3 if operations need push-based updates.
 
 This is a separate design question from the trust-root flow but needs resolution before Phase 2 can end-to-end test. Open as a follow-up issue on nixfleet once the trust-flow implementation PR is posted.
 
 ## 4.5 Bootstrap-report path (pre-cert reporting)
 
-Agents whose enrollment fails (bad token, missing trust roots, CP refusing the CSR) cannot use the mTLS-gated `POST /agent/report` to surface the failure. The flow needs a path that works **before** the trust handshake completes — otherwise enrollment failures are invisible until an operator SSHs into the agent.
+Agents whose enrollment fails (bad token, missing trust roots, CP refusing the CSR) cannot use the mTLS-gated `POST /agent/report` to surface the failure. The flow needs a path that works **before** the trust handshake completes - otherwise enrollment failures are invisible until an operator SSHs into the agent.
 
 `POST /agent/bootstrap-report` is that path. The trust-handshake implications:
 
@@ -222,7 +222,7 @@ Agents also verify closures (against `atticCacheKey`). The same pattern applies:
 - Agent calls into `verify_artifact` (or an attic-specific variant) before activation.
 
 Differences from CP:
-- Agents don't need the full `ciReleaseKey` — only `atticCacheKey` (for closure signatures). The shared trust file carries both; the agent ignores the ci key unless it ever direct-fetches `fleet.resolved` (fallback path — ARCHITECTURE.md §1.4 "agents (fallback direct fetch)").
+- Agents don't need the full `ciReleaseKey` - only `atticCacheKey` (for closure signatures). The shared trust file carries both; the agent ignores the ci key unless it ever direct-fetches `fleet.resolved` (fallback path - ARCHITECTURE.md §1.4 "agents (fallback direct fetch)").
 - Per-host `trust.json` is identical across the fleet (same keys everywhere). Could be factored into a single `trust.json.d/` if symlinks get annoying.
 
 ## 6. Rotation walkthrough (worked example)
@@ -251,7 +251,7 @@ Operator rotates to a new ed25519 key:
    ```
 7. Deploy. K1-signed artifacts are now rejected as unknown-key.
 
-Cross-algorithm rotation is supported end-to-end — the Rust runtime's `verify_artifact` already iterates the slice and matches on each entry's `algorithm` tag (PR #20).
+Cross-algorithm rotation is supported end-to-end - the Rust runtime's `verify_artifact` already iterates the slice and matches on each entry's `algorithm` tag (PR #20).
 
 ## 7. Decisions (locked for the implementation PR)
 
@@ -259,7 +259,7 @@ Cross-algorithm rotation is supported end-to-end — the Rust runtime's `verify_
 
 **Decision: restart-only.** CP has no SIGHUP handler and no file-watcher. Trust rotation requires a service restart, which `nixos-rebuild switch` triggers for free when `/etc/nixfleet/cp/trust.json` content changes.
 
-Rationale. Rotation is rare (30-day grace per CONTRACTS §II #1) and a 5–10s CP bounce under a 30d freshness window is irrelevant. File-watching code is a real failure surface we do not need to build speculatively. Agents' check-ins during the restart retry per RFC-0003 §8 offline grace — zero behavioral impact.
+Rationale. Rotation is rare (30-day grace per CONTRACTS §II #1) and a 5-10s CP bounce under a 30d freshness window is irrelevant. File-watching code is a real failure surface we do not need to build speculatively. Agents' check-ins during the restart retry per RFC-0003 §8 offline grace - zero behavioral impact.
 
 ### 7.2 `rejectBefore` semantics
 
@@ -273,7 +273,7 @@ Implementation lives in `verify_artifact` (not in `KeySlot::active_keys`) so the
 
 **Decision: NixOS atomic swap is sufficient for v0.2.** `environment.etc` routes through `nix-store`-linked files; the swap at activation time is atomic at the VFS layer.
 
-Non-NixOS deployments would need a `rename(2)` dance in the write path. That is deferred — nixfleet does not target non-NixOS operator hosts in v0.2.
+Non-NixOS deployments would need a `rename(2)` dance in the write path. That is deferred - nixfleet does not target non-NixOS operator hosts in v0.2.
 
 ### 7.4 Trust config `schemaVersion`
 
@@ -284,13 +284,13 @@ Rationale. Matches CONTRACTS §V's per-contract versioning pattern. Fail-fast be
 Evolution rule:
 - Adding optional fields stays at `schemaVersion: 1` (serde-default handles absence).
 - Removing fields, changing meaning of existing fields, or changing the required/optional posture of a field → bump to `schemaVersion: 2` with a dual-read migration window (binary accepts both during the window).
-- `rejectBefore` is operator-managed data, not a schema concern — changing its value does not require a version bump.
+- `rejectBefore` is operator-managed data, not a schema concern - changing its value does not require a version bump.
 
 ## 8. Summary
 
 - `fleet.nix` declares pubkeys via the typed `nixfleet.trust.*` option tree (PR #17).
 - CP-host NixOS module materializes the declaration as `/etc/nixfleet/cp/trust.json` at activation.
 - CP binary reads the file via `--trust-file` flag, deserializes into `proto::TrustConfig`, calls `slot.active_keys(now)` to get the `&[TrustedPubkey]` slice that `verify_artifact` wants.
-- Rotation works declaratively — both `current` and `previous` active until `rejectBefore` clears the overlap.
+- Rotation works declaratively - both `current` and `previous` active until `rejectBefore` clears the overlap.
 - Agents get the same pattern via `/etc/nixfleet/agent/trust.json`.
-- `fleet.resolved.json` distribution to the CP is a separate open question — recommendation is local-git-checkout pattern (b).
+- `fleet.resolved.json` distribution to the CP is a separate open question - recommendation is local-git-checkout pattern (b).

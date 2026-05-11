@@ -1,4 +1,4 @@
-# Operator-side shell tools — built once via nix, run on operator
+# Operator-side shell tools - built once via nix, run on operator
 # workstations. Distinct from `apps.nix` (single-flake-host scripts
 # like `validate`) and `rust-packages.nix` (workspace crates).
 {...}: {

@@ -35,7 +35,7 @@
     inherit lib pkgs inputs harnessLib;
     testCerts = sharedCerts;
     resolvedJsonPath = ./fixtures/fleet-resolved.json;
-    # Forward declaration — `agentKeypairs` is bound a few lines below;
+    # Forward declaration - `agentKeypairs` is bound a few lines below;
     # the `let ... in` lets us reference it here without rearranging
     # the whole block.
     inherit agentKeypairs;
@@ -75,7 +75,7 @@
     else
       import ./fixtures/signed {
         inherit lib pkgs nixfleet-canonicalize;
-        # enroll-replay only — the other scenarios use convergedSignedFixture.
+        # enroll-replay only - the other scenarios use convergedSignedFixture.
         agentPubkeys = {inherit (agentPubkeys) agent-99;};
       };
 

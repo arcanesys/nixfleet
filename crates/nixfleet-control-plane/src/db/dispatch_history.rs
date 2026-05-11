@@ -54,11 +54,7 @@ impl DispatchHistory<'_> {
     }
 
     /// Stamp every open row of a converged rollout with `terminal_state = 'converged'`.
-    pub fn mark_rollout_converged(
-        &self,
-        rollout_id: &str,
-        at: DateTime<Utc>,
-    ) -> Result<usize> {
+    pub fn mark_rollout_converged(&self, rollout_id: &str, at: DateTime<Utc>) -> Result<usize> {
         super::read(self.conn, |c| {
             c.execute(
                 "UPDATE dispatch_history
@@ -83,7 +79,7 @@ impl DispatchHistory<'_> {
         })
     }
 
-    /// Wave-major, dispatched_at-ascending — operator reads top-to-bottom
+    /// Wave-major, dispatched_at-ascending - operator reads top-to-bottom
     /// as the rollout progressed. Used by `/v1/rollouts/{id}/trace`.
     pub fn for_rollout(&self, rollout_id: &str) -> Result<Vec<DispatchHistoryRow>> {
         super::read(self.conn, |c| {
@@ -103,11 +99,7 @@ impl DispatchHistory<'_> {
     }
 
     /// Newest-first; ordering is part of the contract.
-    pub fn recent_for_host(
-        &self,
-        hostname: &str,
-        limit: usize,
-    ) -> Result<Vec<DispatchHistoryRow>> {
+    pub fn recent_for_host(&self, hostname: &str, limit: usize) -> Result<Vec<DispatchHistoryRow>> {
         super::read(self.conn, |c| {
             let mut stmt = c.prepare(
                 "SELECT id, hostname, rollout_id, channel, wave,
@@ -192,10 +184,7 @@ mod tests {
                 })
                 .unwrap();
         }
-        let trace = db
-            .dispatch_history()
-            .for_rollout("stable@trace1")
-            .unwrap();
+        let trace = db.dispatch_history().for_rollout("stable@trace1").unwrap();
         let waves: Vec<u32> = trace.iter().map(|r| r.wave).collect();
         assert_eq!(
             waves,
@@ -315,7 +304,12 @@ mod tests {
             .record_dispatch(&dispatch_insert("krach", "stable@live", "system", deadline))
             .unwrap();
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("pixel", "stable@recent", "system", deadline))
+            .record_dispatch(&dispatch_insert(
+                "pixel",
+                "stable@recent",
+                "system",
+                deadline,
+            ))
             .unwrap();
         db.dispatch_history()
             .mark_terminal_for_rollout_host(
@@ -334,12 +328,18 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(
-            db.dispatch_history().recent_for_host("krach", 10).unwrap().len(),
+            db.dispatch_history()
+                .recent_for_host("krach", 10)
+                .unwrap()
+                .len(),
             1,
             "open row must not be pruned",
         );
         assert_eq!(
-            db.dispatch_history().recent_for_host("pixel", 10).unwrap().len(),
+            db.dispatch_history()
+                .recent_for_host("pixel", 10)
+                .unwrap()
+                .len(),
             1,
             "fresh terminal row must not be pruned",
         );

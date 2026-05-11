@@ -20,7 +20,9 @@ pub enum RecoveryAction {
     PostedConfirm {
         confirm_outcome: comms::ConfirmOutcome,
     },
-    PostedConfirmFailed { error: String },
+    PostedConfirmFailed {
+        error: String,
+    },
 }
 
 /// Inputs the gate needs that the bare confirm path doesn't.
@@ -45,10 +47,12 @@ pub async fn run_boot_recovery<R: Reporter>(
             tracing::debug!("boot-recovery: no last_dispatched record (steady-state)");
         }
         RecoveryAction::NoCurrent => {
-            tracing::warn!("boot-recovery: skipped — could not read current closure");
+            tracing::warn!("boot-recovery: skipped - could not read current closure");
         }
         RecoveryAction::StaleClearedMismatch => {
-            tracing::info!("boot-recovery: cleared stale dispatch record (current/dispatched mismatch)");
+            tracing::info!(
+                "boot-recovery: cleared stale dispatch record (current/dispatched mismatch)"
+            );
         }
         RecoveryAction::GateBlockedConfirm => {
             tracing::error!("boot-recovery: enforce-mode gate fired rollback; confirm skipped");
@@ -175,7 +179,7 @@ async fn decide_and_run<R: Reporter>(
                 }
                 comms::ConfirmOutcome::Cancelled => {
                     // LOADBEARING: rollback failure must NOT clear last_dispatched (clearing splits brain).
-                    // GOTCHA: rollback() returns Ok(Failed) for in-band failure — inspect outcome, not just Result.
+                    // GOTCHA: rollback() returns Ok(Failed) for in-band failure - inspect outcome, not just Result.
                     match activation::rollback().await {
                         Ok(outcome) if outcome.success() => {
                             let _ = checkin_state::clear_last_dispatched(state_dir);
@@ -184,13 +188,13 @@ async fn decide_and_run<R: Reporter>(
                             tracing::error!(
                                 phase = ?outcome.phase(),
                                 exit_code = ?outcome.exit_code(),
-                                "boot-recovery: rollback FAILED — leaving last_dispatched in place for next-boot retry",
+                                "boot-recovery: rollback FAILED - leaving last_dispatched in place for next-boot retry",
                             );
                         }
                         Err(err) => {
                             tracing::error!(
                                 error = %err,
-                                "boot-recovery: rollback errored — leaving last_dispatched in place for next-boot retry",
+                                "boot-recovery: rollback errored - leaving last_dispatched in place for next-boot retry",
                             );
                         }
                     }
@@ -241,7 +245,10 @@ mod tests {
     }
     impl Reporter for NoopReporter {
         async fn post_report(&self, rollout: Option<&str>, event: ReportEvent) {
-            self.calls.lock().unwrap().push((rollout.map(String::from), event));
+            self.calls
+                .lock()
+                .unwrap()
+                .push((rollout.map(String::from), event));
         }
     }
 
@@ -315,9 +322,10 @@ mod tests {
         )
         .await;
         assert_eq!(action, RecoveryAction::StaleClearedMismatch);
-        assert!(checkin_state::read_last_dispatched(dir.path())
-            .unwrap()
-            .is_none(),
+        assert!(
+            checkin_state::read_last_dispatched(dir.path())
+                .unwrap()
+                .is_none(),
             "stale record must be cleared on mismatch",
         );
     }

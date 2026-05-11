@@ -21,7 +21,7 @@
   # via the module option (cp-real.nix points it at signedFixture).
   #
   # Also stages the deterministic agent-99 private key so the test's CSR
-  # uses the pubkey that signedFixture declared in hosts.agent-99.pubkey —
+  # uses the pubkey that signedFixture declared in hosts.agent-99.pubkey  -
   # required for the post-#43 CSR-vs-declared-pubkey binding check.
   enrollEnabledModule = {lib, ...}: {
     services.nixfleet-control-plane.trustFile =
@@ -55,7 +55,7 @@ in
       # agent-99's private key is staged from agentKeypairs; its pubkey is
       # baked into the signedFixture (hosts.agent-99.pubkey) so the
       # CP's CSR↔declared-pubkey binding check passes.
-      print("step 1: stage agent-99 private key and build CSR…")
+      print("step 1: stage agent-99 private key and build CSR...")
       host.succeed(
           "install -m 0600 /etc/harness/agent-99-key.pem "
           "/tmp/enroll-test/agent-99-key.pem"
@@ -68,7 +68,7 @@ in
 
       # CP fingerprints the raw 32-byte ed25519 pubkey (SPKI trailer),
       # sha256 + base64. Mirror that exactly.
-      print("step 2: compute pubkey fingerprint (rcgen-compatible)…")
+      print("step 2: compute pubkey fingerprint (rcgen-compatible)...")
       host.succeed(
           "openssl req -in /tmp/enroll-test/agent-99-csr.pem "
           "-noout -pubkey > /tmp/enroll-test/agent-99-pub.pem"
@@ -87,7 +87,7 @@ in
       ).strip()
       print(f"step 2: fingerprint={fp}")
 
-      print("step 3: mint bootstrap token…")
+      print("step 3: mint bootstrap token...")
       mint_rc, _ = host.execute(
           "nixfleet mint-token "
           "--hostname agent-99 "
@@ -111,7 +111,7 @@ in
       assert nonce is not None, f"could not parse nonce from {mint_stderr!r}"
       print(f"step 3: minted token with nonce={nonce}")
 
-      print("step 4: build EnrollRequest, fire two parallel posts…")
+      print("step 4: build EnrollRequest, fire two parallel posts...")
       host.succeed(
           "jq -n "
           "--slurpfile token /tmp/enroll-test/token.json "
@@ -167,7 +167,7 @@ in
 
       # Drop token_replay so the next enroll hits "no such table" (distinct
       # from ConstraintViolation), forcing the Err -> 500 arm.
-      print("edge case: silent-record-failure -> !200 contract…")
+      print("edge case: silent-record-failure -> !200 contract...")
       host.succeed("systemctl stop nixfleet-control-plane.service")
       host.succeed(
           "sqlite3 /var/lib/nixfleet-cp/state.db "
@@ -209,7 +209,7 @@ in
       print(f"edge case: fresh-nonce enroll on broken table returned {fresh_code.strip()} (not 200, contract holds)")
 
       print(
-          "fleet-harness-enroll-replay: race fix holds — concurrent "
+          "fleet-harness-enroll-replay: race fix holds - concurrent "
           "/v1/enroll on same nonce yields exactly one 200 + one 409, "
           "exactly one token_replay row, log line present; broken "
           "token_replay table fails closed (not 200)."

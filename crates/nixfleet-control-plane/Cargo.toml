@@ -1,6 +1,6 @@
 [package]
 name = "nixfleet-control-plane"
-description = "NixFleet control plane — Phase 3: long-running TLS server + reconciler tick loop"
+description = "NixFleet control plane - Phase 3: long-running TLS server + reconciler tick loop"
 license = "AGPL-3.0-only"
 version.workspace = true
 edition.workspace = true
@@ -25,7 +25,7 @@ metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]
 
 # Phase 3 PR-1: re-add the wire stack the prior PR dropped when it trimmed the
 # CP module to the Phase 2 oneshot-runner surface. axum/axum-server/
-# rustls/rustls-pki-types ported from v0.1's working CP — same versions,
+# rustls/rustls-pki-types ported from v0.1's working CP - same versions,
 # same shape (see crates/control-plane/Cargo.toml on tag v0.1.1). The
 # `tick` subcommand keeps Phase 2's oneshot-CLI behaviour for tests +
 # ad-hoc operator runs; `serve` is the new long-running default.
@@ -40,7 +40,7 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tokio = { version = "1", features = ["full"] }
-# Graceful-shutdown plumbing — CancellationToken hands a single
+# Graceful-shutdown plumbing - CancellationToken hands a single
 # cancel-fanout to every spawned background loop (reconcile, polls,
 # timers) so SIGTERM drains in-flight work instead of dropping it.
 tokio-util = "0.7"
@@ -48,7 +48,7 @@ axum = "0.8"
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 rustls = "0.23"
 rustls-pki-types = "1"
-# PR-2 — mTLS + /v1/whoami. axum-server 0.7 doesn't expose peer
+# PR-2 - mTLS + /v1/whoami. axum-server 0.7 doesn't expose peer
 # certificates through any public API (upstream issue #162); we vendor a
 # trimmed `auth_cn` module wrapping RustlsAcceptor to inject the cert
 # chain into request extensions. x509-parser extracts the CN from the
@@ -59,8 +59,8 @@ x509-parser = "0.16"
 tokio-rustls = "0.26"
 tower-service = "0.3"
 http = "1"
-# PR-4 — Forgejo channel-refs poll. reqwest with rustls-tls and
-# native-roots so the CP picks up system trust at runtime — required
+# PR-4 - Forgejo channel-refs poll. reqwest with rustls-tls and
+# native-roots so the CP picks up system trust at runtime - required
 # for Forgejo deployments behind an internal CA (e.g. Caddy's local
 # authority). webpki-roots alone won't trust Caddy-signed certs.
 # `rustls-tls-native-roots` enables `rustls-native-certs`, which
@@ -86,7 +86,7 @@ rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-p
 ed25519-dalek = "2"
 sha2 = "0.10"
 nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }
-# Root-3 — host probe-output signature verification.
+# Root-3 - host probe-output signature verification.
 # The CP parses `hosts.<hostname>.pubkey` from fleet.resolved
 # (OpenSSH ed25519 format) and verifies signatures on
 # ComplianceFailure / RuntimeGateError event details. Auditor chain
@@ -96,7 +96,7 @@ ssh-key = { version = "0.6", features = ["ed25519"] }
 serde_jcs = "0.2"
 # Phase 4 PR-1: SQLite persistence for cross-restart state. v0.1 used
 # the same rusqlite + refinery stack (crates/control-plane on
-# v0.1.1) — same versions, same posture (WAL + FK on at startup).
+# v0.1.1) - same versions, same posture (WAL + FK on at startup).
 # Token-replay + cert-revocation persistence (currently in-memory)
 # follow-up onto this layer; rollout/host state lands in subsequent
 # Phase 4 PRs.
@@ -110,7 +110,7 @@ rand = "0.8"
 # (`auth::issuance::TpmCaSigner`); cleaned on drop so the message
 # isn't left readable on disk after issuance.
 tempfile = "3"
-# Prometheus counters for alerting — `/metrics` endpoint scraped by
+# Prometheus counters for alerting - `/metrics` endpoint scraped by
 # the lab Prometheus job. Counters-only (no state-as-label gauges);
 # see `src/metrics.rs`. 0.18 + metrics-util 0.20 are the only
 # combination where idle_timeout works against a real-time clock,

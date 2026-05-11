@@ -23,7 +23,7 @@ pub(in crate::server) struct WhoamiResponse {
     issued_at: String,
 }
 
-/// `GET /v1/whoami` — verified mTLS CN of the caller.
+/// `GET /v1/whoami` - verified mTLS CN of the caller.
 pub(in crate::server) async fn whoami(
     Extension(cn): Extension<AuthenticatedCn>,
 ) -> Json<WhoamiResponse> {
@@ -42,7 +42,7 @@ pub(in crate::server) struct ChannelStatusResponse {
     freshness_window_minutes: u32,
 }
 
-/// `GET /v1/channels/{name}` — 503 until verified snapshot primed; 404 if channel undeclared.
+/// `GET /v1/channels/{name}` - 503 until verified snapshot primed; 404 if channel undeclared.
 pub(in crate::server) async fn channel_status(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
@@ -60,7 +60,7 @@ pub(in crate::server) async fn channel_status(
     }))
 }
 
-/// `GET /v1/hosts` — joins verified fleet declarations with per-host checkins and report buffers.
+/// `GET /v1/hosts` - joins verified fleet declarations with per-host checkins and report buffers.
 pub(in crate::server) async fn hosts_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HostsResponse>, StatusCode> {
@@ -70,7 +70,7 @@ pub(in crate::server) async fn hosts_status(
     Ok(Json(HostsResponse { hosts }))
 }
 
-/// `GET /v1/agent/closure/{hash}` — narinfo proxy fallback; 501 when no upstream configured.
+/// `GET /v1/agent/closure/{hash}` - narinfo proxy fallback; 501 when no upstream configured.
 pub(in crate::server) async fn closure_proxy(
     State(state): State<Arc<AppState>>,
     Extension(cn): Extension<AuthenticatedCn>,

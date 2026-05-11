@@ -80,7 +80,7 @@
         proto = "virtiofs";
       }
     ];
-    # LOADBEARING: user-mode networking — every guest sees the host via 10.0.2.2; guest-to-guest needs tap/bridge.
+    # LOADBEARING: user-mode networking - every guest sees the host via 10.0.2.2; guest-to-guest needs tap/bridge.
     interfaces = [
       {
         type = "user";

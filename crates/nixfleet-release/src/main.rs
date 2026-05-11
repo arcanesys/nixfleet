@@ -51,10 +51,7 @@ struct Cli {
     git_push: Option<String>,
 
     /// Substitutions: `{sha}`, `{sha:0:8}`, `{ts}`.
-    #[arg(
-        long,
-        default_value = "chore(ci): release {sha:0:8} [skip ci]"
-    )]
+    #[arg(long, default_value = "chore(ci): release {sha:0:8} [skip ci]")]
     commit_template: String,
 
     #[arg(long, env = "NIXFLEET_GIT_USER_NAME")]
@@ -91,10 +88,18 @@ fn parse_hosts_spec(spec: &str) -> Result<HostsSpec, String> {
         return Ok(HostsSpec::Auto);
     }
     if let Some(rest) = spec.strip_prefix("auto:exclude=") {
-        let exc: Vec<String> = rest.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
+        let exc: Vec<String> = rest
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
         return Ok(HostsSpec::AutoExclude(exc));
     }
-    let list: Vec<String> = spec.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
+    let list: Vec<String> = spec
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
     if list.is_empty() {
         return Err("hosts spec is empty".into());
     }

@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   format:
-    # Skipped on schedule — the nightly job's `validate --all` runs
+    # Skipped on schedule - the nightly job's `validate --all` runs
     # `nix fmt --fail-on-change` as its first step.
     if: github.event_name != 'schedule'
     name: Format check
@@ -29,7 +29,7 @@ jobs:
       - run: nix fmt -- --ci
 
   validate:
-    # Small tier — every push to main + manual dispatch.
+    # Small tier - every push to main + manual dispatch.
     # `validate --rust` covers fmt + flake check + eval-tests +
     # cargo nextest + clippy + host builds + per-package builds.
     if: github.event_name != 'schedule'
@@ -43,7 +43,7 @@ jobs:
           NIX_CONFIG: "warn-dirty = false"
 
   nightly:
-    # Full tier — scheduled nightly + manual dispatch. Adds every
+    # Full tier - scheduled nightly + manual dispatch. Adds every
     # fleet-harness-* scenario (smoke, teardown, rollback-policy,
     # auditor-chain, signed-roundtrip, deadline-expiry, secret-hygiene,
     # stale-target, boot-recovery, manifest-tamper-rejection,

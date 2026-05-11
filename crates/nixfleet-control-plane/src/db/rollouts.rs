@@ -28,7 +28,7 @@ impl SupersedeStatus {
         self.terminal_at.is_some()
     }
 
-    /// Single predicate for "this rollout is no longer in flight" — the
+    /// Single predicate for "this rollout is no longer in flight" - the
     /// reconciler and dispatch path treat both as equivalent (don't
     /// advance, don't include in gate observed). Terminal vs superseded
     /// is only useful for diagnostic/audit surfaces.
@@ -66,7 +66,7 @@ impl Rollouts<'_> {
     }
 
     /// `Ok(None)` when the rollout isn't tracked. Lifecycle endpoint
-    /// returns 404 in that case — callers don't fabricate supersession
+    /// returns 404 in that case - callers don't fabricate supersession
     /// state for unknown rids (no historical reconstruction).
     pub fn supersede_status(&self, rollout_id: &str) -> Result<Option<SupersedeStatus>> {
         super::read(self.conn, |c| {
@@ -86,15 +86,16 @@ impl Rollouts<'_> {
                 .optional()
                 .context("query rollouts.supersede_status")?;
             row.map(|(at_raw, by, term_raw)| -> Result<SupersedeStatus> {
-                let parse_ts = |raw: Option<String>, field: &str| -> Result<Option<DateTime<Utc>>> {
-                    match raw {
-                        Some(s) => Ok(Some(
-                            s.parse::<DateTime<Utc>>()
-                                .with_context(|| format!("parse rollouts.{field}: {s}"))?,
-                        )),
-                        None => Ok(None),
-                    }
-                };
+                let parse_ts =
+                    |raw: Option<String>, field: &str| -> Result<Option<DateTime<Utc>>> {
+                        match raw {
+                            Some(s) => Ok(Some(
+                                s.parse::<DateTime<Utc>>()
+                                    .with_context(|| format!("parse rollouts.{field}: {s}"))?,
+                            )),
+                            None => Ok(None),
+                        }
+                    };
                 Ok(SupersedeStatus {
                     superseded_at: parse_ts(at_raw, "superseded_at")?,
                     superseded_by: by,
@@ -162,7 +163,7 @@ impl Rollouts<'_> {
         })
     }
 
-    /// Returns rollout-ids no longer in flight — superseded OR terminal.
+    /// Returns rollout-ids no longer in flight - superseded OR terminal.
     /// Single set so callers don't have to track two filters; the
     /// reconciler and dispatch path treat both states equivalently
     /// (don't advance, exclude from gate observed).
@@ -179,7 +180,7 @@ impl Rollouts<'_> {
         })
     }
 
-    /// Gate-observed source. Filters superseded only — terminal rollouts MUST
+    /// Gate-observed source. Filters superseded only - terminal rollouts MUST
     /// stay visible so channelEdges can detect "predecessor converged" via
     /// host_states inspection (hiding them was the dispatch/reconciler
     /// asymmetry regression). UI consumers want `list_in_flight` instead.
@@ -187,7 +188,7 @@ impl Rollouts<'_> {
         Ok(GateRollouts(self.list_filtered(false)?))
     }
 
-    /// UI source. Filters superseded AND terminal — `Action::ConvergeRollout`
+    /// UI source. Filters superseded AND terminal - `Action::ConvergeRollout`
     /// stamps terminal_at and the rollout drops out (operator's "done" view).
     /// Gates use `list_active` instead.
     pub fn list_in_flight(&self) -> Result<UiRollouts> {
@@ -243,7 +244,7 @@ impl Rollouts<'_> {
 
     /// Prune finished (superseded OR terminal) rollouts past `max_age_hours`
     /// + their hrs rows. Returns `(hrs_pruned, rollouts_pruned)`.
-    /// LOADBEARING: only finished rollouts are candidates — in-flight ones
+    /// LOADBEARING: only finished rollouts are candidates - in-flight ones
     /// are kept regardless of `created_at` age.
     pub fn prune_finished_rollouts(&self, max_age_hours: i64) -> Result<(usize, usize)> {
         let cutoff_str = (Utc::now() - chrono::Duration::hours(max_age_hours)).to_rfc3339();
@@ -359,23 +360,20 @@ mod tests {
     #[test]
     fn record_active_rollout_inserts_first_one_as_active() {
         let db = fresh_db();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
         let status = db.rollouts().supersede_status("r1").unwrap();
         let s = status.expect("rollout present");
-        assert!(!s.is_superseded(), "first rollout on a channel must be active");
+        assert!(
+            !s.is_superseded(),
+            "first rollout on a channel must be active"
+        );
     }
 
     #[test]
     fn record_active_rollout_supersedes_prior_on_same_channel() {
         let db = fresh_db();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
-        db.rollouts()
-            .record_active_rollout("r2", "stable")
-            .unwrap();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
+        db.rollouts().record_active_rollout("r2", "stable").unwrap();
 
         let r1 = db.rollouts().supersede_status("r1").unwrap().unwrap();
         assert!(r1.is_superseded());
@@ -388,9 +386,7 @@ mod tests {
     #[test]
     fn record_active_rollout_does_not_supersede_across_channels() {
         let db = fresh_db();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
         db.rollouts()
             .record_active_rollout("r2", "edge-slow")
             .unwrap();
@@ -413,13 +409,9 @@ mod tests {
     #[test]
     fn record_active_rollout_is_idempotent_for_same_id_same_channel() {
         let db = fresh_db();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
-        // r1 must still be active — re-recording itself never marks it superseded.
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
+        // r1 must still be active - re-recording itself never marks it superseded.
         assert!(!db
             .rollouts()
             .supersede_status("r1")
@@ -437,12 +429,8 @@ mod tests {
     #[test]
     fn superseded_rollout_ids_lists_only_superseded() {
         let db = fresh_db();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
-        db.rollouts()
-            .record_active_rollout("r2", "stable")
-            .unwrap();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
+        db.rollouts().record_active_rollout("r2", "stable").unwrap();
         db.rollouts()
             .record_active_rollout("r3", "edge-slow")
             .unwrap();
@@ -454,16 +442,12 @@ mod tests {
     #[test]
     fn list_active_returns_only_non_superseded_with_channel_and_wave() {
         let db = fresh_db();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
         db.rollouts()
             .record_active_rollout("r2", "edge-slow")
             .unwrap();
         // Supersede r1 with a new stable rollout r3.
-        db.rollouts()
-            .record_active_rollout("r3", "stable")
-            .unwrap();
+        db.rollouts().record_active_rollout("r3", "stable").unwrap();
         // Advance r3 to wave 1 (stable's promotion).
         db.rollouts().set_current_wave("r3", 1).unwrap();
 
@@ -481,9 +465,7 @@ mod tests {
     #[test]
     fn set_current_wave_is_monotonic_no_op_on_backwards() {
         let db = fresh_db();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
         assert_eq!(db.rollouts().current_wave("r1").unwrap(), Some(0));
         let n = db.rollouts().set_current_wave("r1", 1).unwrap();
         assert_eq!(n, 1);
@@ -497,7 +479,7 @@ mod tests {
     /// LOADBEARING regression: rebuild scenario. After a rebuild the table
     /// starts empty; the polling tick must populate it idempotently for
     /// each channel's current rid. Stale rids that NEVER re-enter the table
-    /// stay absent — the lifecycle endpoint returns 404 for them and
+    /// stay absent - the lifecycle endpoint returns 404 for them and
     /// render.sh skips, no fabricated supersession state.
     #[test]
     fn rebuild_recovery_repopulates_via_repeated_record_calls() {
@@ -528,12 +510,8 @@ mod tests {
     #[test]
     fn mark_terminal_keeps_rollout_in_list_active_but_drops_from_list_in_flight() {
         let db = fresh_db();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
-        db.rollouts()
-            .record_active_rollout("r2", "edge")
-            .unwrap();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
+        db.rollouts().record_active_rollout("r2", "edge").unwrap();
 
         // Both visible in both views before any terminal stamp.
         assert_eq!(db.rollouts().list_active().unwrap().len(), 2);
@@ -546,14 +524,21 @@ mod tests {
         let n2 = db.rollouts().mark_terminal("r1", now).unwrap();
         assert_eq!(n2, 0, "re-marking is idempotent");
 
-        // list_active KEEPS r1 — gates need to see converged predecessors
+        // list_active KEEPS r1 - gates need to see converged predecessors
         // so channel_edges can return is_active_for_ordering=false.
         let active = db.rollouts().list_active().unwrap();
-        assert_eq!(active.len(), 2, "list_active must include terminal rollouts so gates can see converged predecessors");
+        assert_eq!(
+            active.len(),
+            2,
+            "list_active must include terminal rollouts so gates can see converged predecessors"
+        );
         let r1_active = active.iter().find(|r| r.rollout_id == "r1").unwrap();
-        assert!(r1_active.terminal_at.is_some(), "terminal_at must populate through to ActiveRollout");
+        assert!(
+            r1_active.terminal_at.is_some(),
+            "terminal_at must populate through to ActiveRollout"
+        );
 
-        // list_in_flight DROPS r1 — UI shows only ongoing work.
+        // list_in_flight DROPS r1 - UI shows only ongoing work.
         let in_flight = db.rollouts().list_in_flight().unwrap().into_inner();
         assert_eq!(in_flight.len(), 1);
         assert_eq!(in_flight[0].rollout_id, "r2");
@@ -566,28 +551,32 @@ mod tests {
     }
 
     /// Superseded rollouts are dropped from BOTH views regardless of
-    /// terminal_at — supersession is the stronger signal (newer
+    /// terminal_at - supersession is the stronger signal (newer
     /// rollout for the same channel exists, gates evaluate against it).
     #[test]
     fn superseded_dropped_from_both_list_active_and_list_in_flight() {
         let db = fresh_db();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
-        db.rollouts()
-            .record_active_rollout("r2", "stable")
-            .unwrap(); // supersedes r1
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
+        db.rollouts().record_active_rollout("r2", "stable").unwrap(); // supersedes r1
 
         for rid in db.rollouts().list_active().unwrap().iter() {
-            assert_ne!(rid.rollout_id, "r1", "superseded must not appear in list_active");
+            assert_ne!(
+                rid.rollout_id, "r1",
+                "superseded must not appear in list_active"
+            );
         }
         for rid in db.rollouts().list_in_flight().unwrap().iter() {
-            assert_ne!(rid.rollout_id, "r1", "superseded must not appear in list_in_flight");
+            assert_ne!(
+                rid.rollout_id, "r1",
+                "superseded must not appear in list_in_flight"
+            );
         }
 
-        // Even after marking r1 terminal, it stays out of both —
+        // Even after marking r1 terminal, it stays out of both  -
         // superseded was already excluding it.
-        db.rollouts().mark_terminal("r1", chrono::Utc::now()).unwrap();
+        db.rollouts()
+            .mark_terminal("r1", chrono::Utc::now())
+            .unwrap();
         for rid in db.rollouts().list_active().unwrap().iter() {
             assert_ne!(rid.rollout_id, "r1");
         }
@@ -597,16 +586,10 @@ mod tests {
     fn finished_rollout_ids_unions_superseded_and_terminal() {
         let db = fresh_db();
         // r1 → r2 same channel: r1 superseded.
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
-        db.rollouts()
-            .record_active_rollout("r2", "stable")
-            .unwrap();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
+        db.rollouts().record_active_rollout("r2", "stable").unwrap();
         // r3 standalone, then marked terminal.
-        db.rollouts()
-            .record_active_rollout("r3", "edge")
-            .unwrap();
+        db.rollouts().record_active_rollout("r3", "edge").unwrap();
         db.rollouts()
             .mark_terminal("r3", chrono::Utc::now())
             .unwrap();
@@ -619,7 +602,7 @@ mod tests {
         assert!(!ids.contains(&"r2".to_string()));
     }
 
-    /// `GateRollouts.into_ui()` filters out terminal rollouts —
+    /// `GateRollouts.into_ui()` filters out terminal rollouts  -
     /// a caller that has the gate-flavored view but needs the UI
     /// view can demote safely. Reverse direction (UI → Gate) does
     /// NOT exist by design: the UI view is a strict subset.
@@ -644,7 +627,7 @@ mod tests {
         assert_eq!(ui.into_inner()[0].rollout_id, "r-active");
     }
 
-    /// **Documentation test** — the type system should enforce that
+    /// **Documentation test** - the type system should enforce that
     /// gate-flavored and UI-flavored rollout lists are not
     /// interchangeable. This is checked by compilation: if someone
     /// writes a function `fn use_gate(r: GateRollouts)` and tries
@@ -654,7 +637,7 @@ mod tests {
     /// the structural requirement is captured by the distinct
     /// types and the absence of `From<UiRollouts> for GateRollouts`.
     /// If a future commit adds such a conversion, this test's
-    /// premise breaks — keep the asymmetric `into_ui` only.
+    /// premise breaks - keep the asymmetric `into_ui` only.
     #[test]
     fn gate_and_ui_rollouts_are_distinct_types() {
         let db = fresh_db();
@@ -669,17 +652,13 @@ mod tests {
 
     /// Supersession overrides terminal: superseded rollouts can't be
     /// "un-marked" by a later terminal stamp, and terminal can be
-    /// stamped on a superseded rollout (idempotent — finished is the
+    /// stamped on a superseded rollout (idempotent - finished is the
     /// union). Either field alone is sufficient to drop from in-flight.
     #[test]
     fn terminal_and_superseded_compose_independently() {
         let db = fresh_db();
-        db.rollouts()
-            .record_active_rollout("r1", "stable")
-            .unwrap();
-        db.rollouts()
-            .record_active_rollout("r2", "stable")
-            .unwrap();
+        db.rollouts().record_active_rollout("r1", "stable").unwrap();
+        db.rollouts().record_active_rollout("r2", "stable").unwrap();
         // r1 is now superseded by r2.
         let s1_before = db.rollouts().supersede_status("r1").unwrap().unwrap();
         assert!(s1_before.is_superseded());
@@ -703,7 +682,7 @@ mod tests {
     /// in-flight rollouts and recent finishes alone.
     ///
     /// This test pins the load-bearing invariant that the prune
-    /// is finished-only — if a future refactor accidentally
+    /// is finished-only - if a future refactor accidentally
     /// drops the `superseded_at IS NOT NULL OR terminal_at IS NOT NULL`
     /// guard, this test fails (in-flight r-active disappears).
     #[test]
@@ -725,9 +704,9 @@ mod tests {
         db.rollouts()
             .record_active_rollout("r-old-superseder", "edge")
             .unwrap(); // supersedes r-old-superseded with now()
-        // Force superseded_at to the old timestamp via direct SQL —
-        // record_active_rollout stamps `now()`, but we need a row
-        // older than 90d to verify the retention boundary.
+                       // Force superseded_at to the old timestamp via direct SQL  -
+                       // record_active_rollout stamps `now()`, but we need a row
+                       // older than 90d to verify the retention boundary.
         {
             let guard = crate::db::lock_conn(db.rollouts().conn).unwrap();
             guard
@@ -750,11 +729,9 @@ mod tests {
         db.rollouts()
             .record_active_rollout("r-old-terminal", "preview-old")
             .unwrap();
-        db.rollouts()
-            .mark_terminal("r-old-terminal", old)
-            .unwrap();
+        db.rollouts().mark_terminal("r-old-terminal", old).unwrap();
 
-        // host_rollout_state rows tied to each — verify they
+        // host_rollout_state rows tied to each - verify they
         // co-prune with their rollouts.
         for rid in [
             "r-active",
@@ -773,11 +750,13 @@ mod tests {
                 .unwrap();
         }
 
-        // Run prune — 90d retention.
-        let (hrs_pruned, rollouts_pruned) =
-            db.rollouts().prune_finished_rollouts(24 * 90).unwrap();
+        // Run prune - 90d retention.
+        let (hrs_pruned, rollouts_pruned) = db.rollouts().prune_finished_rollouts(24 * 90).unwrap();
         assert_eq!(rollouts_pruned, 2, "r-old-superseded + r-old-terminal");
-        assert_eq!(hrs_pruned, 2, "host_rollout_state rows for the two pruned rollouts");
+        assert_eq!(
+            hrs_pruned, 2,
+            "host_rollout_state rows for the two pruned rollouts"
+        );
 
         // r-active and r-recent-terminal must still be present.
         let active = db.rollouts().list_active().unwrap();
@@ -792,7 +771,15 @@ mod tests {
         );
 
         // r-old-superseded + r-old-terminal: gone from rollouts table.
-        assert!(db.rollouts().supersede_status("r-old-superseded").unwrap().is_none());
-        assert!(db.rollouts().supersede_status("r-old-terminal").unwrap().is_none());
+        assert!(db
+            .rollouts()
+            .supersede_status("r-old-superseded")
+            .unwrap()
+            .is_none());
+        assert!(db
+            .rollouts()
+            .supersede_status("r-old-terminal")
+            .unwrap()
+            .is_none());
     }
 }

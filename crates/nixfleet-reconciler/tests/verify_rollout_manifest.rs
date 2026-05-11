@@ -109,7 +109,8 @@ fn compute_rollout_id_is_64_hex_chars() {
     let id = compute_rollout_id(&m).expect("compute_rollout_id");
     assert_eq!(id.len(), 64, "sha256 hex must be 64 chars: {id}");
     assert!(
-        id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        id.chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "id must be hex lowercase only: {id}"
     );
 }
@@ -227,15 +228,8 @@ fn verify_rollout_manifest_rejects_malformed_json() {
 fn verify_rollout_manifest_rejects_when_trust_roots_empty() {
     let (bytes, sig, _trust, signed_at) = sign_artifact(FIXTURE_MANIFEST);
     let now = signed_at + ChronoDuration::minutes(30);
-    let err = verify_rollout_manifest(
-        &bytes,
-        &sig,
-        &[],
-        now,
-        Duration::from_secs(3600),
-        None,
-    )
-    .unwrap_err();
+    let err = verify_rollout_manifest(&bytes, &sig, &[], now, Duration::from_secs(3600), None)
+        .unwrap_err();
     assert!(
         matches!(err, VerifyError::NoTrustRoots),
         "empty trust roots → NoTrustRoots; got {err:?}"
@@ -319,7 +313,7 @@ fn rollout_id_from_bytes_is_cross_version_stable_across_additive_changes() {
 
     // The producer would also have computed the bytes-hash. Verify the
     // hash that the verifier computes from raw bytes matches the canonical
-    // bytes (it's a tautology — that's exactly the property we want).
+    // bytes (it's a tautology - that's exactly the property we want).
     let recomputed = canonical_hash_from_bytes(&producer_bytes).expect("recompute");
     assert_eq!(
         from_bytes, recomputed,

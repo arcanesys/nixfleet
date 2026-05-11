@@ -50,7 +50,7 @@ in
       host.wait_for_unit("microvms.target", timeout=300)
       host.wait_for_unit("microvm@${agentName}.service", timeout=300)
 
-      print("step 1: waiting for initial agent checkin…")
+      print("step 1: waiting for initial agent checkin...")
       pre_inject_cursor = host.succeed("date '+%Y-%m-%d %H:%M:%S'").strip()
       wait_for_journal_match(
           host,
@@ -104,7 +104,7 @@ in
       SQL""").strip()
       assert pre_state == "Failed", f"expected Failed pre-signal, got {pre_state!r}"
 
-      print("step 3: waiting for CP rollback-signal emission…")
+      print("step 3: waiting for CP rollback-signal emission...")
       wait_for_journal_match(
           host,
           since_cursor=pre_signal_cursor,
@@ -115,7 +115,7 @@ in
       )
       print("step 3: CP emitted rollback-signal as expected")
 
-      print("step 4: waiting for agent-side rollback handling…")
+      print("step 4: waiting for agent-side rollback handling...")
       wait_for_journal_match(
           host,
           since_cursor=pre_signal_cursor,
@@ -126,7 +126,7 @@ in
       )
       print("step 4: agent-side rollback fired")
 
-      print("step 5: waiting for Failed -> Reverted transition…")
+      print("step 5: waiting for Failed -> Reverted transition...")
       wait_for_journal_match(
           host,
           since_cursor=pre_signal_cursor,
@@ -137,7 +137,7 @@ in
       )
       print("step 5: Failed -> Reverted transition observed")
 
-      print("step 6: asserting terminal stamps on host_dispatch_state + dispatch_history…")
+      print("step 6: asserting terminal stamps on host_dispatch_state + dispatch_history...")
       stamp_deadline = time.monotonic() + 15
       op_state = ""
       audit_terminal = ""
@@ -174,7 +174,7 @@ in
       )
       print("step 6: terminal stamps observed on both tables")
 
-      print("step 7: waiting for two more polls + asserting no re-emission…")
+      print("step 7: waiting for two more polls + asserting no re-emission...")
       # 2s sleep so journalctl --since (rounded down) excludes the
       # original pre-Reverted emission.
       host.succeed("sleep 2")
@@ -199,7 +199,7 @@ in
 
       print(
           "fleet-harness-rollback-policy: rollback-and-halt round-trip "
-          "holds — Failed → CP RollbackSignal → agent rollback → "
+          "holds - Failed → CP RollbackSignal → agent rollback → "
           "RollbackTriggered → Reverted → emission stops."
       )
     '';

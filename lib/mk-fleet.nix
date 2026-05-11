@@ -1,4 +1,4 @@
-# LOADBEARING: output is canonicalized to JCS before signing — no floats, opaque derivations, or attrsets with significant iteration order.
+# LOADBEARING: output is canonicalized to JCS before signing - no floats, opaque derivations, or attrsets with significant iteration order.
 {lib}: let
   inherit (lib) mkOption types;
 
@@ -40,17 +40,17 @@
     };
   };
 
-  # Issue #88: declarative commit pin. Same shape on host, tag, channel —
+  # Issue #88: declarative commit pin. Same shape on host, tag, channel  -
   # most-specific-wins resolution lives in `resolvePin` below. `expiresAt`
   # is RFC3339 / ISO-8601 string; date arithmetic happens in
-  # `nixfleet-release` (chrono) — pure Nix has no robust date parsing.
+  # `nixfleet-release` (chrono) - pure Nix has no robust date parsing.
   pinType = types.submodule {
     options = {
       commit = mkOption {
         type = types.str;
         description = ''
           Source-control rev the host's closure should be built from.
-          MUST be a full 40-char SHA — `nixfleet-release` passes this
+          MUST be a full 40-char SHA - `nixfleet-release` passes this
           verbatim to `nix build "<source>?rev=<commit>#..."`, and Nix's
           flake-ref parser rejects short SHAs / tag names with
           `hash has wrong length for hash algorithm 'sha1'`. Resolve
@@ -74,7 +74,7 @@
           RFC3339 hard expiry. `nixfleet-release` filters expired pins
           at release time so they stop affecting the build path. Hosts
           with an expired pin fall back to the current release commit.
-          `null` means no expiry — pin holds until the operator removes
+          `null` means no expiry - pin holds until the operator removes
           it from the declaration.
         '';
       };
@@ -156,7 +156,7 @@
           Tag-scoped commit pin (issue #88). Applies to every host that
           carries this tag, unless overridden by a host-level pin. A
           host carrying multiple tags that BOTH have pins is rejected
-          at eval time — operator must disambiguate (typically by
+          at eval time - operator must disambiguate (typically by
           moving one pin to a host-level declaration).
         '';
       };
@@ -244,7 +244,7 @@
                 - `permissive`: failing static evidence emits a
                   `lib.warn` per failing host/control; eval succeeds.
                 - `enforce`: failing static evidence throws at fleet
-                  eval. Default — matches the prior `strict = true`
+                  eval. Default - matches the prior `strict = true`
                   semantics.
               '';
             };
@@ -261,7 +261,7 @@
 
   # Host-level DAG edge. `gated` waits for `gates` to reach Soaked /
   # Converged within the same rollout. Both hosts MUST be on the same
-  # channel — cross-channel ordering is `channelEdges`'s job.
+  # channel - cross-channel ordering is `channelEdges`'s job.
   hostEdgeType = types.submodule {
     options = {
       gated = mkOption {
@@ -283,7 +283,7 @@
   # `Edge` (gated/gates): `gates` is the predecessor that runs first;
   # `gated` is the dependent that holds until `gates` converges.
   #
-  # `before`/`after` are accepted as deprecated aliases — older
+  # `before`/`after` are accepted as deprecated aliases - older
   # fleet.nix files keep working without an atomic rename. The
   # validation block below errors if both legacy + canonical names
   # are set on the same edge so the operator picks one shape.
@@ -292,12 +292,12 @@
       gates = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "Predecessor channel — must converge before `gated` opens.";
+        description = "Predecessor channel - must converge before `gated` opens.";
       };
       gated = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "Dependent channel — held until `gates` converges.";
+        description = "Dependent channel - held until `gates` converges.";
       };
       before = mkOption {
         type = types.nullOr types.str;
@@ -318,7 +318,7 @@
 
   # Normalize a channelEdge record from either field naming to
   # `{gates, gated, reason}`. Errors when both shapes are set on
-  # the same edge — the operator must pick one.
+  # the same edge - the operator must pick one.
   normalizeChannelEdge = e: let
     g =
       if e.gates != null
@@ -471,15 +471,15 @@
       )
       cfg.edges;
 
-    # Detect mixed-shape entries before normalization — operator must
+    # Detect mixed-shape entries before normalization - operator must
     # pick one naming. Cleaner than silently picking gates+after.
     channelEdgeShapeErrors =
       lib.concatMap (
         e:
           lib.optional ((e.gates != null) && (e.before != null))
-          "channelEdges entry sets both `gates` and `before` — pick one (canonical: `gates`)"
+          "channelEdges entry sets both `gates` and `before` - pick one (canonical: `gates`)"
           ++ lib.optional ((e.gated != null) && (e.after != null))
-          "channelEdges entry sets both `gated` and `after` — pick one (canonical: `gated`)"
+          "channelEdges entry sets both `gated` and `after` - pick one (canonical: `gated`)"
           ++ lib.optional ((e.gates == null) && (e.before == null))
           "channelEdges entry must set `gates` (or legacy alias `before`)"
           ++ lib.optional ((e.gated == null) && (e.after == null))
@@ -575,7 +575,7 @@
             staticOrBoth;
           mode = resolvedComplianceMode host.channel;
         in
-          map (p: "host '${hostName}' (channel '${host.channel}', ${mode}): static control '${p}' failed — ${lib.generators.toPretty {} (probes.${p}.staticEvidence.evidence or {})}") failures
+          map (p: "host '${hostName}' (channel '${host.channel}', ${mode}): static control '${p}' failed - ${lib.generators.toPretty {} (probes.${p}.staticEvidence.evidence or {})}") failures
       )
       hostsOnChannels;
 
@@ -601,7 +601,7 @@
           (host.pin == null && builtins.length pinnedTagNames > 1)
           "host '${hostName}' is in multiple tags with pins (${
             lib.concatStringsSep ", " pinnedTagNames
-          }) — disambiguate by lifting one of these pins to a host-level declaration on '${hostName}', or removing the pin from one of the tags"
+          }) - disambiguate by lifting one of these pins to a host-level declaration on '${hostName}', or removing the pin from one of the tags"
       )
       (lib.attrNames cfg.hosts);
 
@@ -671,7 +671,7 @@
               )
               staticOrBoth;
           in
-            map (p: "[compliance:permissive] host '${hostName}' (channel '${host.channel}'): static control '${p}' failed — ${lib.generators.toPretty {} (probes.${p}.staticEvidence.evidence or {})}") failures
+            map (p: "[compliance:permissive] host '${hostName}' (channel '${host.channel}'): static control '${p}' failed - ${lib.generators.toPretty {} (probes.${p}.staticEvidence.evidence or {})}") failures
         )
         hostsOnChannels;
 
@@ -714,7 +714,7 @@
           schemaVersion = 1;
           signedAt = null;
           ciCommit = null;
-          # signatureAlgorithm intentionally absent here — pre-stamp eval
+          # signatureAlgorithm intentionally absent here - pre-stamp eval
           # has no signature, so claiming an algorithm would be a lie.
           # CONTRACTS.md §V Pattern A: absent ≡ "ed25519" within
           # schemaVersion 1. `stamp_meta` populates the real algorithm at
@@ -758,7 +758,7 @@
         # Reconciler resolves dynamically so adding/removing a tagged host
         # doesn't require re-signing fleet.resolved. Pre-feat-channel-edges
         # consumers that read `hosts:[]` will see this field absent and must
-        # be upgraded — the reconciler in this PR handles either shape.
+        # be upgraded - the reconciler in this PR handles either shape.
         disruptionBudgets =
           map (b: {
             selector = b.selector;
@@ -811,7 +811,7 @@
                 Per-host DAG ordering within a rollout. `gated` host's
                 dispatch is held until `gates` host reaches
                 Soaked/Converged within the same rollout. Both hosts
-                must be on the same channel — cross-channel ordering
+                must be on the same channel - cross-channel ordering
                 is `channelEdges`'s job.
               '';
             };
@@ -848,7 +848,7 @@
                 pipeline signs these alongside `fleet.resolved` so the
                 CP can rebuild `cert_revocations` from empty state
                 without a security regression. Empty list is the
-                steady state — it still gets signed so a CP rebuild
+                steady state - it still gets signed so a CP rebuild
                 has a verifiable source.
               '';
             };

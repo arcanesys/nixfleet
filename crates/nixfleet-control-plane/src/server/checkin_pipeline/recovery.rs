@@ -3,7 +3,7 @@
 //! LOADBEARING: only synthesises state when the agent's claim matches the
 //! verified fleet (closure AND rollout id). Closure mismatch / missing
 //! snapshot / missing host declaration → fall through (caller decides 410).
-//! Failures here are non-fatal — agent's local rollback still fires on 410.
+//! Failures here are non-fatal - agent's local rollback still fires on 410.
 
 use std::sync::Arc;
 
@@ -60,13 +60,13 @@ async fn validate_orphan_recovery(
             rollout = %req.rollout,
             agent_closure = %req.generation.closure_hash,
             target_closure = %target_closure,
-            "orphan-confirm recovery: closure_hash mismatch — genuine 410",
+            "orphan-confirm recovery: closure_hash mismatch - genuine 410",
         );
         return None;
     }
 
     // FOOTGUN: closure match alone doesn't prove `req.rollout` is THIS
-    // snapshot's id — content-addressed manifests mean a CI re-sign with the
+    // snapshot's id - content-addressed manifests mean a CI re-sign with the
     // same closure but different host_set/wave_layout produces a new rolloutId.
     let expected_rollout_id = match nixfleet_reconciler::compute_rollout_id_for_channel(
         &fleet,
@@ -77,7 +77,7 @@ async fn validate_orphan_recovery(
         Ok(None) | Err(_) => {
             tracing::info!(
                 hostname = %req.hostname,
-                "orphan-confirm recovery: rolloutId could not be projected — genuine 410",
+                "orphan-confirm recovery: rolloutId could not be projected - genuine 410",
             );
             return None;
         }
@@ -87,7 +87,7 @@ async fn validate_orphan_recovery(
             hostname = %req.hostname,
             agent_rollout = %req.rollout,
             expected_rollout = %expected_rollout_id,
-            "orphan-confirm recovery: rollout id mismatch — agent is on a stale rollout, genuine 410",
+            "orphan-confirm recovery: rollout id mismatch - agent is on a stale rollout, genuine 410",
         );
         return None;
     }
@@ -226,7 +226,7 @@ pub(super) async fn try_recover_pending_from_checkin(
 
 /// True iff `last_confirmed_at` carries a signature that verifies against the
 /// host's declared SSH host pubkey. Drops the attestation on any failure path
-/// — `warn` on configured-but-mismatched (suspicious), `debug` on absent.
+/// - `warn` on configured-but-mismatched (suspicious), `debug` on absent.
 fn verify_attestation_signature(
     req: &CheckinRequest,
     rollout_id: &str,
@@ -293,7 +293,7 @@ fn verify_attestation_signature(
         }
     };
     if let Err(err) = verifying_key.verify(&canonical, &signature) {
-        tracing::warn!(host = %req.hostname, error = %err, "soak recovery: attestation signature mismatch — REPLAY ATTACK SUSPECTED OR STALE ROLLOUT_ID");
+        tracing::warn!(host = %req.hostname, error = %err, "soak recovery: attestation signature mismatch - REPLAY ATTACK SUSPECTED OR STALE ROLLOUT_ID");
         return false;
     }
     true
@@ -342,7 +342,7 @@ pub(super) async fn recover_soak_state_from_attestation(
     // signature to short-circuit the soak gate from `soak_minutes`
     // down to zero. Falls back to "ignore the attestation" on every
     // failure path (no signature, no declared pubkey, parse failure,
-    // verify failure) — same effect as the agent never having sent
+    // verify failure) - same effect as the agent never having sent
     // last_confirmed_at, which is conservative.
     if !verify_attestation_signature(req, &rollout_id, attested, host_decl) {
         return;
@@ -574,7 +574,7 @@ mod tests {
     #[tokio::test]
     async fn orphan_recovery_rejects_closure_mismatch() {
         // Genuine wrong-rollout case. Agent claims to have
-        // activated something the fleet doesn't agree with — must
+        // activated something the fleet doesn't agree with - must
         // fall through to 410.
         let fleet = fleet_with_host("test-host", Some("target-system-r1"));
         let (state, db) = state_with_fleet_and_db(fleet).await;
@@ -594,7 +594,7 @@ mod tests {
     #[tokio::test]
     async fn orphan_recovery_rejects_when_host_not_in_fleet() {
         // Agent claims to be a host the verified fleet doesn't
-        // know about — recovery refuses to invent state for it.
+        // know about - recovery refuses to invent state for it.
         let fleet = fleet_with_host("known-host", Some("target"));
         let (state, _db) = state_with_fleet_and_db(fleet).await;
         let req = confirm_req("rogue-host", "stable@abc", "target");
@@ -604,7 +604,7 @@ mod tests {
 
     #[tokio::test]
     async fn orphan_recovery_rejects_when_no_verified_fleet() {
-        // First-boot CP with no verified snapshot yet — recovery
+        // First-boot CP with no verified snapshot yet - recovery
         // can't validate the agent's claim, so it stays
         // conservative.
         let db = Arc::new(Db::open_in_memory().unwrap());
@@ -638,8 +638,7 @@ mod tests {
         let (state, db) = state_with_fleet_and_db(fleet).await;
         let attested = Utc::now() - chrono::Duration::minutes(3);
         let mut req = checkin_req_with_attestation("test-host", "system-r1", Some(attested));
-        req.attestation_signature =
-            Some(sign_attestation(&sk, "test-host", &rollout_id, attested));
+        req.attestation_signature = Some(sign_attestation(&sk, "test-host", &rollout_id, attested));
 
         recover_soak_state_from_attestation(&state, &req, Utc::now()).await;
 
@@ -656,7 +655,7 @@ mod tests {
         assert_eq!(
             stamped.timestamp(),
             attested.timestamp(),
-            "stamp must clamp to min(now, attested) — attested is in the past so it wins",
+            "stamp must clamp to min(now, attested) - attested is in the past so it wins",
         );
     }
 
@@ -671,8 +670,7 @@ mod tests {
         let now = Utc::now();
         let future = now + chrono::Duration::minutes(60);
         let mut req = checkin_req_with_attestation("test-host", "system-r1", Some(future));
-        req.attestation_signature =
-            Some(sign_attestation(&sk, "test-host", &rollout_id, future));
+        req.attestation_signature = Some(sign_attestation(&sk, "test-host", &rollout_id, future));
 
         recover_soak_state_from_attestation(&state, &req, now).await;
 
@@ -690,7 +688,7 @@ mod tests {
     /// signature minted for that older timestamp must NOT advance the
     /// soak clamp on a fresh attestation. The wave gate carries the
     /// per-rollout grouping; the signature-binding to (hostname,
-    /// rollout_id, last_confirmed_at) is the cryptographic backstop —
+    /// rollout_id, last_confirmed_at) is the cryptographic backstop  -
     /// without it, a leaked agent state file is enough to short-circuit
     /// soak from `soak_minutes` to zero.
     #[tokio::test]
@@ -700,12 +698,11 @@ mod tests {
         // attestation entirely (no row written), preventing the silent
         // "fall back to no-binding" failure mode.
         use super::super::tests::signed_attestation_fixture;
-        let (fleet, _sk, _rollout_id) =
-            signed_attestation_fixture("test-host", "system-r1");
+        let (fleet, _sk, _rollout_id) = signed_attestation_fixture("test-host", "system-r1");
         let (state, db) = state_with_fleet_and_db(fleet).await;
         let attested = Utc::now() - chrono::Duration::minutes(3);
         let req = checkin_req_with_attestation("test-host", "system-r1", Some(attested));
-        // attestation_signature is None — the unsigned path.
+        // attestation_signature is None - the unsigned path.
 
         recover_soak_state_from_attestation(&state, &req, Utc::now()).await;
 
@@ -725,7 +722,7 @@ mod tests {
         let (state, db) = state_with_fleet_and_db(fleet).await;
         let attested = Utc::now() - chrono::Duration::minutes(3);
         let mut req = checkin_req_with_attestation("test-host", "system-r1", Some(attested));
-        // Sign for a different rollout_id — simulates either replay
+        // Sign for a different rollout_id - simulates either replay
         // across rollouts OR tampering. Either way the sig won't verify
         // against the rollout the CP computes from the fleet.
         req.attestation_signature = Some(sign_attestation(
@@ -748,7 +745,7 @@ mod tests {
     #[tokio::test]
     async fn b_cp_recovery_skips_when_host_not_converged() {
         // Host reports a closure that doesn't match the verified
-        // target — it's still rolling out, not in the recovery
+        // target - it's still rolling out, not in the recovery
         // window. Skip.
         let fleet = fleet_with_host("test-host", Some("target-r1"));
         let (state, db) = state_with_fleet_and_db(fleet).await;
@@ -766,7 +763,7 @@ mod tests {
     #[tokio::test]
     async fn b_cp_recovery_skips_when_host_state_already_exists() {
         // host_rollout_state already has a row. Re-attestation must
-        // NOT overwrite — the existing row is authoritative.
+        // NOT overwrite - the existing row is authoritative.
         let fleet = fleet_with_host("test-host", Some("system-r1"));
         let expected_id = expected_rollout_id_for(&fleet, "stable");
         let (state, db) = state_with_fleet_and_db(fleet).await;
@@ -803,7 +800,7 @@ mod tests {
 
     #[tokio::test]
     async fn b_cp_recovery_noop_for_legacy_agents_without_attestation() {
-        // Legacy agent — no last_confirmed_at. CP behaviour is
+        // Legacy agent - no last_confirmed_at. CP behaviour is
         // unchanged: no soak-state writes happen.
         let fleet = fleet_with_host("test-host", Some("system-r1"));
         let (state, db) = state_with_fleet_and_db(fleet).await;

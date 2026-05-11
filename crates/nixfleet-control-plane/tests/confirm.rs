@@ -225,15 +225,9 @@ async fn confirm_returns_503_without_db() {
         mint_ca_and_certs(&dir, "test-host");
 
     let port = pick_free_port().await;
-    let handle = spawn_server_with_db_at_port(
-        &dir,
-        None,
-        server_cert,
-        server_key,
-        Some(ca.clone()),
-        port,
-    )
-    .await;
+    let handle =
+        spawn_server_with_db_at_port(&dir, None, server_cert, server_key, Some(ca.clone()), port)
+            .await;
 
     let client = build_mtls_client(&ca, &client_cert, &client_key);
 

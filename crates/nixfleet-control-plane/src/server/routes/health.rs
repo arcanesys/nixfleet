@@ -1,4 +1,4 @@
-//! `GET /healthz` — outside `/v1/*` so it bypasses the protocol-version middleware.
+//! `GET /healthz` - outside `/v1/*` so it bypasses the protocol-version middleware.
 
 use std::sync::Arc;
 

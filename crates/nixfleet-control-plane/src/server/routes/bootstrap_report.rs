@@ -1,7 +1,7 @@
-//! `POST /v1/agent/bootstrap-report` — anonymous, bootstrap-token-authed
+//! `POST /v1/agent/bootstrap-report` - anonymous, bootstrap-token-authed
 //! event channel for failure modes the agent hits before it has a client
 //! cert (parse_trust_file failure, enroll failure). Validates the same
-//! orgRootKey signature as `/v1/enroll` but does NOT consume the nonce —
+//! orgRootKey signature as `/v1/enroll` but does NOT consume the nonce  -
 //! the agent must still be able to enroll on the next attempt.
 //!
 //! Allowlist on event variants: only `TrustError` and `EnrollmentFailed`
@@ -25,7 +25,7 @@ pub(in crate::server) async fn bootstrap_report(
 ) -> Result<StatusCode, StatusCode> {
     let now = Utc::now();
 
-    // Validity window — same shape as /v1/enroll.
+    // Validity window - same shape as /v1/enroll.
     if now < req.token.claims.issued_at || now >= req.token.claims.expires_at {
         tracing::warn!(
             hostname = %req.token.claims.hostname,
@@ -35,8 +35,8 @@ pub(in crate::server) async fn bootstrap_report(
     }
 
     let trust_path = state.issuance_paths.read().await.trust_path.clone();
-    crate::auth::issuance::verify_bootstrap_token_against_trust(&trust_path, &req.token, now).map_err(
-        |err| match err {
+    crate::auth::issuance::verify_bootstrap_token_against_trust(&trust_path, &req.token, now)
+        .map_err(|err| match err {
             crate::auth::issuance::TrustVerifyError::SignatureMismatch => {
                 tracing::warn!(
                     hostname = %req.token.claims.hostname,
@@ -48,8 +48,7 @@ pub(in crate::server) async fn bootstrap_report(
                 tracing::error!(error = %other, "bootstrap-report: trust verification failed");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-        },
-    )?;
+        })?;
 
     // Decode + allowlist the event variant. Only pre-cert failure modes
     // are accepted via this anonymous path; everything else routes
@@ -141,4 +140,3 @@ pub(in crate::server) async fn bootstrap_report(
 
     Ok(StatusCode::NO_CONTENT)
 }
-

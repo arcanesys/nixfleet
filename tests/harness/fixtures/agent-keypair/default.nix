@@ -5,13 +5,13 @@
 # seedSalt per call site.
 #
 # Outputs (all under $out):
-#   private.pem      — PKCS#8 PEM (consumed by `openssl req` when a test
+#   private.pem      - PKCS#8 PEM (consumed by `openssl req` when a test
 #                      mints a CSR with this keypair)
-#   private.openssh  — OpenSSH PEM private key (consumed by the agent's
+#   private.openssh  - OpenSSH PEM private key (consumed by the agent's
 #                      evidence_signer via /etc/ssh/ssh_host_ed25519_key;
 #                      also accepted by anything else that parses
 #                      OpenSSH-format ed25519 keys)
-#   public.openssh   — single-line OpenSSH-format public key (consumed
+#   public.openssh   - single-line OpenSSH-format public key (consumed
 #                      by signedFixture as hosts.<hostName>.pubkey; the
 #                      CP binds CSR + attestation pubkeys against this
 #                      per #43)

@@ -112,7 +112,7 @@ pub fn spawn(
 
 /// (fleet, fleet_resolved_hash) under one RwLock so readers never see a torn
 /// snapshot. After committing the snapshot, record each channel's current
-/// rollout_id in the rollouts table (LOADBEARING for rebuild recovery —
+/// rollout_id in the rollouts table (LOADBEARING for rebuild recovery  -
 /// this is the path that repopulates rollouts soft state without needing
 /// any host to check in first).
 async fn apply_verified_refs(
@@ -129,7 +129,7 @@ async fn apply_verified_refs(
 
     // Compute current rollout_id per channel against the same snapshot bytes
     // we're about to publish, BEFORE moving fleet into the Arc. Channels
-    // with no host having a closure declaration return Ok(None) — skip.
+    // with no host having a closure declaration return Ok(None) - skip.
     let channel_rollouts: Vec<(String, String)> = if db.is_some() {
         fleet
             .channels
@@ -182,7 +182,7 @@ async fn apply_verified_refs(
     }
 
     // INFO only when the artifact actually changed (new CI release or a
-    // signed_at advance). DEBUG for the no-op cycles — every minute would
+    // signed_at advance). DEBUG for the no-op cycles - every minute would
     // otherwise drown the dashboard's "Channel-refs poll" panel in
     // identical "no change" lines. Operators wanting raw cadence still get
     // it via DEBUG.
@@ -275,7 +275,7 @@ async fn poll_once(
 /// Iteration order is the same topological sort the reconciler uses, with
 /// an in-poll `emitted_opens` set so a `before` channel recorded earlier
 /// in this poll is seen as active by `after`'s predecessor check. This
-/// mirrors the reconcile loop's invariants — the two layers stay
+/// mirrors the reconcile loop's invariants - the two layers stay
 /// architecturally aligned.
 ///
 /// Stale-rollout filter (LOADBEARING for fleet-rev transitions): the
@@ -284,7 +284,7 @@ async fn poll_once(
 /// previous fleet rev. That old rollout's hosts are typically `Converged`
 /// at the moment a new rev is published, so the predecessor check would
 /// see "edge=Converged → not active → not blocked" and let the new
-/// successor through INSTANTLY — channelEdges silently bypassed for the
+/// successor through INSTANTLY - channelEdges silently bypassed for the
 /// first poll of every release. We filter by current rolloutIds (the
 /// derivation from the new fleet snapshot) so only rollouts belonging to
 /// this rev contribute to predecessor state. Old rollouts get marked
@@ -373,14 +373,14 @@ async fn record_rollouts_gated_by_channel_edges(
             &channel,
             // Polling iterates predecessor → successor in topo order
             // and updates `emitted_opens` as it goes. The in-tick set
-            // is the authoritative signal — Reconcile mode is correct.
+            // is the authoritative signal - Reconcile mode is correct.
             nixfleet_reconciler::gates::GateMode::Reconcile,
         ) {
             tracing::info!(
                 channel = %channel,
                 rollout = %rid,
                 blocked_by = %blocker,
-                "channel-refs poll: skip record_active_rollout — channelEdges holds until predecessor converges",
+                "channel-refs poll: skip record_active_rollout - channelEdges holds until predecessor converges",
             );
             held.insert(
                 channel.clone(),
@@ -406,7 +406,7 @@ async fn record_rollouts_gated_by_channel_edges(
 
     // Mirror the polling-layer hold/release decision into last_deferrals so
     // /v1/deferrals shows the held channel. The reconciler's RolloutDeferred
-    // path can't reach this — it short-circuits on `has_active=true` when
+    // path can't reach this - it short-circuits on `has_active=true` when
     // the previous-rev rollout for the held channel is still in the table.
     if !held.is_empty() || !released.is_empty() {
         let mut guard = last_deferrals.write().await;
@@ -495,7 +495,7 @@ mod tests {
         seed_old_rollout(&db, "old-edge-rid", "edge", "lab");
         seed_old_rollout(&db, "old-stable-rid", "stable", "krach");
 
-        // New rev's rolloutIds — what compute_rollout_id_for_channel would
+        // New rev's rolloutIds - what compute_rollout_id_for_channel would
         // return for the just-published fleet.resolved.
         let channel_rollouts = vec![
             ("edge".into(), "new-edge-rid".into()),
@@ -519,7 +519,7 @@ mod tests {
         );
         assert!(
             !active_ids.contains("new-stable-rid"),
-            "stable must be HELD by channelEdges — old converged predecessor must NOT count. active={active_ids:?}",
+            "stable must be HELD by channelEdges - old converged predecessor must NOT count. active={active_ids:?}",
         );
 
         let supersede = db
@@ -535,7 +535,7 @@ mod tests {
         let deferrals = last_deferrals.read().await;
         let stable_record = deferrals
             .get("stable")
-            .expect("/v1/deferrals must show stable held — last_deferrals write missing");
+            .expect("/v1/deferrals must show stable held - last_deferrals write missing");
         assert_eq!(stable_record.blocked_by, "edge");
         assert_eq!(stable_record.target_ref, "new-stable-rid");
     }

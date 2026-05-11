@@ -134,22 +134,18 @@ mod tests {
             label: "test-kick",
         };
         let counter_for_tick = Arc::clone(&counter);
-        let _handle = poller.spawn_with_kick(
-            cancel.clone(),
-            Some(kick_rx),
-            move |_client| {
-                let counter = Arc::clone(&counter_for_tick);
-                async move {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                    Ok(())
-                }
-            },
-        );
+        let _handle = poller.spawn_with_kick(cancel.clone(), Some(kick_rx), move |_client| {
+            let counter = Arc::clone(&counter_for_tick);
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        });
 
         // Fire 3 kicks back-to-back. Watch channel collapses bursts
         // to a single wake, so the count rises by at least 1 per
         // distinguishable kick (typically all 3 if interleaved by
-        // sleeps — but we assert ≥1 to keep the test robust).
+        // sleeps - but we assert ≥1 to keep the test robust).
         for _ in 0..3 {
             kick_tx.send(()).unwrap();
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -204,7 +200,7 @@ mod tests {
     }
 
     /// Belt-and-suspenders: when both kick and cadence are in play,
-    /// dropping the kick sender doesn't crash the poller — it logs
+    /// dropping the kick sender doesn't crash the poller - it logs
     /// a warning and continues on cadence-only. Ensures a panicking
     /// reconciler can't seize the polling loop.
     #[tokio::test(start_paused = false)]
@@ -218,19 +214,15 @@ mod tests {
             label: "test-drop",
         };
         let counter_for_tick = Arc::clone(&counter);
-        let _handle = poller.spawn_with_kick(
-            cancel.clone(),
-            Some(kick_rx),
-            move |_client| {
-                let counter = Arc::clone(&counter_for_tick);
-                async move {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                    Ok(())
-                }
-            },
-        );
+        let _handle = poller.spawn_with_kick(cancel.clone(), Some(kick_rx), move |_client| {
+            let counter = Arc::clone(&counter_for_tick);
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        });
 
-        // Drop the sender — the receiver's `changed()` returns an
+        // Drop the sender - the receiver's `changed()` returns an
         // error on the next loop iteration. The poller should log
         // and switch to cadence-only.
         drop(kick_tx);

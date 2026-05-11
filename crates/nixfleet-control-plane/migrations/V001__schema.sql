@@ -1,28 +1,28 @@
 -- Consolidated nixfleet-control-plane schema.
 --
 -- This file is the single migration any fresh CP applies on first
--- boot. Earlier development applied V1 + V002–V007 incrementally;
+-- boot. Earlier development applied V1 + V002-V007 incrementally;
 -- once production was wiped (single CP, single fleet), the history
 -- collapsed into this clean shape. Adding a new schema change goes
 -- in V002__<name>.sql and gets a per-migration test in db/mod.rs
 -- alongside the V001 baseline test.
 --
 -- Six tables:
---   token_replay         — bootstrap-token nonce replay defence
+--   token_replay         - bootstrap-token nonce replay defence
 --                          (24h TTL pruned by prune_timer)
---   cert_revocations     — agent cert revocation list, replayed on
+--   cert_revocations     - agent cert revocation list, replayed on
 --                          every reconcile tick from the signed
 --                          revocations.json sidecar
---   host_rollout_state   — per-(host, rollout) state-machine entry
+--   host_rollout_state   - per-(host, rollout) state-machine entry
 --                          for the soak / converge / failed pipeline
 --                          (RFC-0002 §3.2)
---   host_reports         — durable per-host event log; backs the
+--   host_reports         - durable per-host event log; backs the
 --                          in-memory ring used by the runtime gate
---   host_dispatch_state  — operational "what is host X doing right
+--   host_dispatch_state  - operational "what is host X doing right
 --                          now" (one row per host; UPSERTed each
 --                          dispatch; terminal states stay parked
 --                          until the next dispatch overwrites them)
---   dispatch_history     — append-only audit log; one row per
+--   dispatch_history     - append-only audit log; one row per
 --                          dispatch event, terminal_state stamped
 --                          on completion, pruned by 90d retention
 

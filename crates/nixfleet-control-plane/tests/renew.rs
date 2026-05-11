@@ -94,8 +94,8 @@ fn write_signed_fleet_inputs(
 
     let mut rng = rand::thread_rng();
     let ci_signing_key = SigningKey::generate(&mut rng);
-    let public_b64 = base64::engine::general_purpose::STANDARD
-        .encode(ci_signing_key.verifying_key());
+    let public_b64 =
+        base64::engine::general_purpose::STANDARD.encode(ci_signing_key.verifying_key());
 
     let signed_at = "2026-04-26T00:00:00Z";
     let json = serde_json::json!({

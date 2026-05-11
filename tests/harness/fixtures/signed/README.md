@@ -25,23 +25,23 @@ output directory:
 ## Determinism
 
 Every output byte is a pure function of this directory's contents.
-Reproducibility is the whole point — any drift between two eval runs
+Reproducibility is the whole point - any drift between two eval runs
 signals non-determinism that will break the round-trip test.
 
 Deterministic inputs:
 
-- **Fleet declaration** — hand-authored inline in `default.nix`
+- **Fleet declaration** - hand-authored inline in `default.nix`
   (`fleetInput` binding).
-- **`meta` stamps** — `signedAt = "2026-05-01T00:00:00Z"`,
+- **`meta` stamps** - `signedAt = "2026-05-01T00:00:00Z"`,
   `ciCommit = "0" × 40`, `signatureAlgorithm = "ed25519"`. Hardcoded.
-- **Keypair** — derived from a 32-byte seed
+- **Keypair** - derived from a 32-byte seed
   (`builtins.hashString "sha256" "nixfleet-harness-test-seed-2026"`)
   wrapped into a PKCS#8 PrivateKeyInfo via RFC 8410 §7 ASN.1. OpenSSL 3
   cannot accept a caller-supplied seed for `genpkey -algorithm ED25519`
   directly (see openssl/openssl#18333); hand-building the 48-byte DER is
   the cleanest path. Changing the seed string forces a new keypair
   everywhere downstream.
-- **Canonicalizer** — pinned `nixfleet-canonicalize` package (serde_jcs
+- **Canonicalizer** - pinned `nixfleet-canonicalize` package (serde_jcs
   0.2 per `docs/CONTRACTS.md` §III).
 
 Verify with two evals:
@@ -51,7 +51,7 @@ nix eval --impure \
   --expr '(builtins.getFlake (toString ./.)).checks.x86_64-linux.phase-2-signed-fixture.drvPath'
 ```
 
-Run the command twice — the two `drvPath` strings MUST match. A
+Run the command twice - the two `drvPath` strings MUST match. A
 mismatch means one of the inputs has leaked impurity (system time,
 randomness, absolute paths) and needs tracing.
 
@@ -60,17 +60,17 @@ randomness, absolute paths) and needs tracing.
 All pending. Updated to links as work lands.
 
 - **`tests/harness/scenarios/signed-roundtrip.nix`** (Phase 2 PR(b),
-  TODO) — serves `canonical.json` + `canonical.json.sig` from the CP
+  TODO) - serves `canonical.json` + `canonical.json.sig` from the CP
   stub, mounts `test-trust.json` into the agent microVM, asserts
   verify succeeds and the agent logs `harness-roundtrip-ok:`.
 - **`crates/nixfleet-verify-artifact`** (Phase 2 PR(a), Stream C,
-  TODO) — thin CLI wrapping `reconciler::verify_artifact`. Receives
+  TODO) - thin CLI wrapping `reconciler::verify_artifact`. Receives
   the four files as `--artifact`, `--signature`, `--trust-file`, and
   a derived `--now` / `--freshness-window-secs`.
 
 ## Out of scope here
 
-Per `docs/phase-2-entry-spec.md` §9 — the first wire-up deliberately
+Per `docs/phase-2-entry-spec.md` §9 - the first wire-up deliberately
 exercises only one algorithm and one non-rotation trust configuration.
 Explicit non-goals for this fixture:
 

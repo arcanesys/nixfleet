@@ -7,9 +7,9 @@
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
+use super::profile::resolve_profile_target;
 use super::types::ActivationBackend;
 use super::types::RollbackOutcome;
-use super::profile::resolve_profile_target;
 use super::verify_poll::{PollOutcome, VerifyPoll};
 
 pub async fn rollback_with<B: ActivationBackend>(backend: &B) -> Result<RollbackOutcome> {
@@ -67,7 +67,9 @@ pub async fn rollback_with<B: ActivationBackend>(backend: &B) -> Result<Rollback
             Ok(RollbackOutcome::FiredAndPolled)
         }
         PollOutcome::Timeout { last_observed } => {
-            let exit_code = backend.read_unit_exit_code("nixfleet-rollback.service").await;
+            let exit_code = backend
+                .read_unit_exit_code("nixfleet-rollback.service")
+                .await;
             tracing::error!(
                 target = %target_basename,
                 last_observed = %last_observed,

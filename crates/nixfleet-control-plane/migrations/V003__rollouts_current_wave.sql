@@ -7,6 +7,6 @@
 --
 -- Persisted here (vs. computed at projection time) so a CP rebuild
 -- starting from empty state still reflects the correct wave once the
--- rollouts table is repopulated by the polling tick — same soft-state
+-- rollouts table is repopulated by the polling tick - same soft-state
 -- model as the supersession columns.
 ALTER TABLE rollouts ADD COLUMN current_wave INTEGER NOT NULL DEFAULT 0;

@@ -23,7 +23,7 @@ pub(crate) async fn handle<R: Reporter>(
         rollout_id,
         kind,
         reason = %reason,
-        "agent: refusing dispatch — rollout manifest gate failed",
+        "agent: refusing dispatch - rollout manifest gate failed",
     );
 
     let hostname = &ctx.args.machine_id;

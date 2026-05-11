@@ -2,7 +2,7 @@
 //!
 //! Each gate gets a positive case (gate fires) and a negative case (gate
 //! passes) verified against `evaluate_for_host`. These prove the
-//! behaviour-of-record at the registry level — if you add a gate, you
+//! behaviour-of-record at the registry level - if you add a gate, you
 //! add a parity test here. CP-side parity (reconciler emits Skip,
 //! dispatch endpoint returns None for the same Observed) is enforced
 //! by integration tests in nixfleet-control-plane.
@@ -75,10 +75,7 @@ fn rollout_with_terminal(
 fn channel_edges_blocks_when_predecessor_active() {
     let fleet = fleet_two_channels();
     let observed = Observed {
-        active_rollouts: vec![rollout(
-            "edge",
-            vec![("lab", HostRolloutState::Activating)],
-        )],
+        active_rollouts: vec![rollout("edge", vec![("lab", HostRolloutState::Activating)])],
         ..Default::default()
     };
     let empty = empty_set();
@@ -103,10 +100,7 @@ fn channel_edges_blocks_when_predecessor_active() {
 fn channel_edges_passes_when_predecessor_converged() {
     let fleet = fleet_two_channels();
     let observed = Observed {
-        active_rollouts: vec![rollout(
-            "edge",
-            vec![("lab", HostRolloutState::Converged)],
-        )],
+        active_rollouts: vec![rollout("edge", vec![("lab", HostRolloutState::Converged)])],
         ..Default::default()
     };
     let empty = empty_set();
@@ -131,16 +125,16 @@ fn channel_edges_passes_when_predecessor_converged() {
 ///   - dispatch endpoint (`GateMode::Dispatch`) → block
 ///
 /// The reconciler emitted `DispatchHost`, the dispatch endpoint
-/// refused — krach stuck in an infinite loop on lab.
+/// refused - krach stuck in an infinite loop on lab.
 ///
 /// The fix keeps terminal rollouts visible in observed (filtered
 /// only from the UI surface). This test pins both modes returning
-/// `None` (release) when the predecessor is terminal — same input,
+/// `None` (release) when the predecessor is terminal - same input,
 /// same verdict, regardless of mode.
 ///
 /// If anyone reverts to filtering terminal rollouts at the gate
 /// observed builder, the conservative arm of this test will start
-/// returning `ChannelEdges` (block) and the test fails — preventing
+/// returning `ChannelEdges` (block) and the test fails - preventing
 /// the regression from shipping.
 #[test]
 fn channel_edges_releases_on_terminal_predecessor_in_both_modes() {
@@ -152,9 +146,7 @@ fn channel_edges_releases_on_terminal_predecessor_in_both_modes() {
     let observed = Observed {
         active_rollouts: vec![rollout_with_terminal(
             "edge",
-            vec![
-                ("lab", HostRolloutState::Converged),
-            ],
+            vec![("lab", HostRolloutState::Converged)],
             Some(now),
         )],
         ..Default::default()
@@ -169,12 +161,16 @@ fn channel_edges_releases_on_terminal_predecessor_in_both_modes() {
             host: "krach",
             now,
             emitted_opens_in_tick: &empty,
-            mode: if conservative { super::GateMode::Dispatch } else { super::GateMode::Reconcile },
+            mode: if conservative {
+                super::GateMode::Dispatch
+            } else {
+                super::GateMode::Reconcile
+            },
         };
         assert_eq!(
             evaluate_for_host(&input),
             None,
-            "channel_edges must release successor when predecessor is terminal — \
+            "channel_edges must release successor when predecessor is terminal - \
              mode_dispatch={conservative}. If this fails, terminal rollouts \
              are again being filtered out of observed.active_rollouts and \
              the dispatch/reconciler asymmetry has been re-introduced."
@@ -203,10 +199,14 @@ fn channel_edges_diverges_only_on_truly_missing_predecessor() {
         host: "krach",
         now,
         emitted_opens_in_tick: &empty,
-        mode: if conservative { super::GateMode::Dispatch } else { super::GateMode::Reconcile },
+        mode: if conservative {
+            super::GateMode::Dispatch
+        } else {
+            super::GateMode::Reconcile
+        },
     };
 
-    // Conservative: blocks (fresh-boot protection — predecessor's
+    // Conservative: blocks (fresh-boot protection - predecessor's
     // existence in fleet means dispatch should hold until polling
     // catches up).
     assert_eq!(
@@ -266,10 +266,7 @@ fn wave_promotion_blocks_wave_one_when_current_is_zero() {
     let r = rollout("stable", vec![]);
     assert_eq!(r.current_wave, 0);
     let observed = Observed {
-        active_rollouts: vec![rollout(
-            "edge",
-            vec![("lab", HostRolloutState::Converged)],
-        )],
+        active_rollouts: vec![rollout("edge", vec![("lab", HostRolloutState::Converged)])],
         ..Default::default()
     };
     let empty = empty_set();
@@ -306,10 +303,7 @@ fn host_edges_blocks_until_gating_host_converges() {
         vec![("aether", HostRolloutState::Activating)], // aether not yet Soaked/Converged
     );
     let observed = Observed {
-        active_rollouts: vec![rollout(
-            "edge",
-            vec![("lab", HostRolloutState::Converged)],
-        )],
+        active_rollouts: vec![rollout("edge", vec![("lab", HostRolloutState::Converged)])],
         ..Default::default()
     };
     let empty = empty_set();
@@ -334,7 +328,7 @@ fn host_edges_blocks_until_gating_host_converges() {
 /// of a freshly-opened channel (rollout exists, no host has dispatched
 /// yet). Earlier the dispatch path built `Observed.active_rollouts`
 /// from `host_dispatch_state.active_rollouts_snapshot()` which is
-/// keyed by dispatch rows — a brand-new rollout with empty host_states
+/// keyed by dispatch rows - a brand-new rollout with empty host_states
 /// was invisible, `input.rollout` collapsed to None, and host_edges
 /// short-circuited. The new builder reads from `rollouts.list_active()`
 /// and merges host_states LEFT-JOIN-style; this test pins the gate's
@@ -350,7 +344,7 @@ fn host_edges_fires_on_freshly_opened_rollout_with_empty_host_states() {
         reason: None,
     }];
     // Rollout is "in flight" (visible to gates) but no host has
-    // dispatched yet — empty host_states. This is the channelEdges-
+    // dispatched yet - empty host_states. This is the channelEdges-
     // just-released window.
     let r = rollout("stable", vec![]);
     let observed = Observed {
@@ -372,7 +366,7 @@ fn host_edges_fires_on_freshly_opened_rollout_with_empty_host_states() {
         Some(GateBlock::HostEdge {
             gating_host: "aether".into(),
         }),
-        "host-edges must enforce ordering even when no host has dispatched yet — \
+        "host-edges must enforce ordering even when no host has dispatched yet - \
          empty host_states defaults peers to Queued (not terminal-for-ordering)",
     );
 }
@@ -462,10 +456,7 @@ fn host_edges_skips_cross_channel_edges() {
     }];
     let r = rollout("stable", vec![]);
     let observed = Observed {
-        active_rollouts: vec![rollout(
-            "edge",
-            vec![("lab", HostRolloutState::Converged)],
-        )],
+        active_rollouts: vec![rollout("edge", vec![("lab", HostRolloutState::Converged)])],
         ..Default::default()
     };
     let empty = empty_set();
@@ -488,12 +479,7 @@ fn host_edges_skips_cross_channel_edges() {
 #[test]
 fn compliance_wave_blocks_when_earlier_wave_has_failures_under_enforce() {
     let mut fleet = fleet_two_channels();
-    fleet
-        .channels
-        .get_mut("stable")
-        .unwrap()
-        .compliance
-        .mode = "enforce".into();
+    fleet.channels.get_mut("stable").unwrap().compliance.mode = "enforce".into();
     fleet.waves.insert(
         "stable".into(),
         vec![
@@ -516,10 +502,7 @@ fn compliance_wave_blocks_when_earlier_wave_has_failures_under_enforce() {
     compliance_failures.insert(r.id.clone(), by_host);
 
     let observed = Observed {
-        active_rollouts: vec![rollout(
-            "edge",
-            vec![("lab", HostRolloutState::Converged)],
-        )],
+        active_rollouts: vec![rollout("edge", vec![("lab", HostRolloutState::Converged)])],
         outstanding_compliance_events_by_rollout: compliance_failures,
         ..Default::default()
     };
@@ -549,12 +532,7 @@ fn compliance_wave_blocks_when_earlier_wave_has_failures_under_enforce() {
 #[test]
 fn compliance_wave_passes_under_permissive_mode() {
     let mut fleet = fleet_two_channels();
-    fleet
-        .channels
-        .get_mut("stable")
-        .unwrap()
-        .compliance
-        .mode = "permissive".into();
+    fleet.channels.get_mut("stable").unwrap().compliance.mode = "permissive".into();
     fleet.waves.insert(
         "stable".into(),
         vec![
@@ -577,10 +555,7 @@ fn compliance_wave_passes_under_permissive_mode() {
     compliance_failures.insert(r.id.clone(), by_host);
 
     let observed = Observed {
-        active_rollouts: vec![rollout(
-            "edge",
-            vec![("lab", HostRolloutState::Converged)],
-        )],
+        active_rollouts: vec![rollout("edge", vec![("lab", HostRolloutState::Converged)])],
         outstanding_compliance_events_by_rollout: compliance_failures,
         ..Default::default()
     };
@@ -604,7 +579,7 @@ fn compliance_wave_passes_under_permissive_mode() {
 /// 3-wave fleet, wave-0 host has outstanding evidence events, host
 /// being evaluated is in wave-2 (NOT immediately adjacent to the
 /// failing wave). Proves the gate's range predicate is transitive
-/// — a failure two waves back still blocks. The 2-wave variant
+/// - a failure two waves back still blocks. The 2-wave variant
 /// above only proves wave-0 → wave-1 (adjacent) blocking.
 ///
 /// `outstanding_compliance_events_by_rollout` is kind-agnostic: this
@@ -628,12 +603,7 @@ fn compliance_wave_blocks_transitively_across_three_waves_under_enforce() {
             pin: None,
         },
     );
-    fleet
-        .channels
-        .get_mut("stable")
-        .unwrap()
-        .compliance
-        .mode = "enforce".into();
+    fleet.channels.get_mut("stable").unwrap().compliance.mode = "enforce".into();
     fleet.waves.insert(
         "stable".into(),
         vec![
@@ -656,16 +626,13 @@ fn compliance_wave_blocks_transitively_across_three_waves_under_enforce() {
     r.current_wave = 2; // wave_promotion gate must pass for pixel (wave 2)
     let mut events = HashMap::new();
     let mut by_host = HashMap::new();
-    // krach in wave-0 has 1 outstanding event — kind doesn't matter
+    // krach in wave-0 has 1 outstanding event - kind doesn't matter
     // at this layer (DB-side filter is the kind-discriminator).
     by_host.insert("krach".to_string(), 1usize);
     events.insert(r.id.clone(), by_host);
 
     let observed = Observed {
-        active_rollouts: vec![rollout(
-            "edge",
-            vec![("lab", HostRolloutState::Converged)],
-        )],
+        active_rollouts: vec![rollout("edge", vec![("lab", HostRolloutState::Converged)])],
         outstanding_compliance_events_by_rollout: events,
         ..Default::default()
     };
@@ -687,9 +654,9 @@ fn compliance_wave_blocks_transitively_across_three_waves_under_enforce() {
             assert_eq!(failing_events_count, 1);
             assert_eq!(host_wave, 2, "host_wave must reflect pixel's wave-2 slot");
         }
-        other => panic!(
-            "expected ComplianceWave block from transitive wave-0 failure, got {other:?}",
-        ),
+        other => {
+            panic!("expected ComplianceWave block from transitive wave-0 failure, got {other:?}",)
+        }
     }
 }
 
@@ -697,10 +664,7 @@ fn compliance_wave_blocks_transitively_across_three_waves_under_enforce() {
 fn empty_input_passes_all_gates() {
     let fleet = fleet_two_channels();
     let observed = Observed {
-        active_rollouts: vec![rollout(
-            "edge",
-            vec![("lab", HostRolloutState::Converged)],
-        )],
+        active_rollouts: vec![rollout("edge", vec![("lab", HostRolloutState::Converged)])],
         ..Default::default()
     };
     let r = rollout("stable", vec![]);

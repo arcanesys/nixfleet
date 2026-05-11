@@ -141,7 +141,7 @@ pub(crate) async fn handle_switch_failed<R: Reporter>(
     if let Err(err) = rb_outcome {
         tracing::error!(
             error = %err,
-            "rollback after failed switch also failed — manual intervention required",
+            "rollback after failed switch also failed - manual intervention required",
         );
     }
 }
@@ -156,7 +156,7 @@ pub(crate) async fn handle_verify_mismatch<R: Reporter>(
         actual = %actual,
         "activation: post-switch verify caught flip to unexpected closure; rolling back",
     );
-    // Issue #55: same as SwitchFailed — record so the next dispatch
+    // Issue #55: same as SwitchFailed - record so the next dispatch
     // suppresses retry of this broken closure_hash.
     if let Err(err) = nixfleet_agent::checkin_state::record_switch_failure(
         &ctx.args.state_dir,
@@ -202,7 +202,7 @@ pub(crate) async fn handle_verify_mismatch<R: Reporter>(
     if let Err(err) = rb_outcome {
         tracing::error!(
             error = %err,
-            "rollback after verify mismatch also failed — manual intervention required",
+            "rollback after verify mismatch also failed - manual intervention required",
         );
     }
 }

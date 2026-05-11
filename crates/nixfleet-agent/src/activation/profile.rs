@@ -14,7 +14,7 @@ pub(super) async fn self_correct_profile(expected_store_path: &str) -> Result<()
     tracing::warn!(
         expected = %expected_store_path,
         profile = profile,
-        "agent: profile mismatch after fire-and-forget — re-running nix-env --set",
+        "agent: profile mismatch after fire-and-forget - re-running nix-env --set",
     );
     let status = Command::new("nix-env")
         .arg("--profile")
@@ -61,10 +61,13 @@ fn profile_matches(expected_store_path: &str, profile_path: &str) -> bool {
 
 pub(super) fn resolve_profile_target() -> Result<String> {
     let profile = std::path::Path::new("/nix/var/nix/profiles/system");
-    let gen_link = std::fs::read_link(profile)
-        .with_context(|| "readlink /nix/var/nix/profiles/system")?;
+    let gen_link =
+        std::fs::read_link(profile).with_context(|| "readlink /nix/var/nix/profiles/system")?;
     let abs_gen_link = if gen_link.is_relative() {
-        profile.parent().unwrap_or(std::path::Path::new("/")).join(&gen_link)
+        profile
+            .parent()
+            .unwrap_or(std::path::Path::new("/"))
+            .join(&gen_link)
     } else {
         gen_link.clone()
     };

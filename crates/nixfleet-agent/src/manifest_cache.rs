@@ -56,11 +56,13 @@ impl ManifestCache {
     fn load_trust_roots(
         &self,
         now: chrono::DateTime<Utc>,
-    ) -> Result<(Vec<nixfleet_proto::TrustedPubkey>, Option<chrono::DateTime<Utc>>)> {
+    ) -> Result<(
+        Vec<nixfleet_proto::TrustedPubkey>,
+        Option<chrono::DateTime<Utc>>,
+    )> {
         let raw = std::fs::read_to_string(&self.trust_path)
             .with_context(|| format!("read trust file {}", self.trust_path.display()))?;
-        let trust: TrustConfig =
-            serde_json::from_str(&raw).context("parse trust file")?;
+        let trust: TrustConfig = serde_json::from_str(&raw).context("parse trust file")?;
         Ok((
             trust.ci_release_key.active_keys_at(now),
             trust.ci_release_key.reject_before,
@@ -75,9 +77,9 @@ impl ManifestCache {
     ) -> Result<RolloutManifest, ManifestError> {
         // 1h window matches channel-refs poll posture.
         let now = Utc::now();
-        let (trusted_keys, reject_before) = self.load_trust_roots(now).map_err(|err| {
-            ManifestError::VerifyFailed(format!("load trust roots: {err:#}"))
-        })?;
+        let (trusted_keys, reject_before) = self
+            .load_trust_roots(now)
+            .map_err(|err| ManifestError::VerifyFailed(format!("load trust roots: {err:#}")))?;
         let window = std::time::Duration::from_secs(3600);
         let manifest = nixfleet_reconciler::verify_rollout_manifest(
             manifest_bytes,
@@ -92,7 +94,7 @@ impl ManifestCache {
         // LOADBEARING: hash the bytes we received, NOT a re-serialised parsed
         // struct. The agent's RolloutManifest proto may lag the producer's
         // when the schema is in mid-cutover (CONTRACTS §V Pattern A says
-        // additive changes are safe — but only if the verify path is
+        // additive changes are safe - but only if the verify path is
         // byte-faithful). Re-serialising drops fields the agent's struct
         // doesn't know about, producing a different canonical hash and
         // bricking auto-upgrade across schema versions.

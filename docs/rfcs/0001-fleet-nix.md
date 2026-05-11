@@ -12,7 +12,7 @@ Every seam in nixfleet today routes around a missing object: "the fleet as decla
 Design goals, in order:
 
 1. **Pure.** `nix eval .#fleet` returns the full value with no IO, no network, no control-plane call.
-2. **Self-contained.** No cross-referencing outside the flake — hosts, tags, policies all resolved at eval time.
+2. **Self-contained.** No cross-referencing outside the flake - hosts, tags, policies all resolved at eval time.
 3. **Typed.** Module system with option types; misuse fails at `nix flake check`.
 4. **Composable.** A `fleet` is a value; multiple flakes can merge fleets (for org-wide super-fleets).
 5. **Minimal.** Schema covers what's needed for #2/#3/#4; resists feature creep.
@@ -24,7 +24,7 @@ Design goals, in order:
 outputs = { self, nixpkgs, nixfleet, ... }: {
   fleet = nixfleet.lib.mkFleet {
     # ------------------------------------------------------------
-    # 2.1 Hosts — the atomic unit.
+    # 2.1 Hosts - the atomic unit.
     # ------------------------------------------------------------
     hosts.m70q-attic = {
       system = "x86_64-linux";
@@ -41,7 +41,7 @@ outputs = { self, nixpkgs, nixfleet, ... }: {
     };
 
     # ------------------------------------------------------------
-    # 2.2 Tags — logical groupings, purely descriptive.
+    # 2.2 Tags - logical groupings, purely descriptive.
     # Tags have no hierarchy; use as many as needed per host.
     # ------------------------------------------------------------
     tags = {
@@ -51,7 +51,7 @@ outputs = { self, nixpkgs, nixfleet, ... }: {
     };
 
     # ------------------------------------------------------------
-    # 2.3 Channels — release trains.
+    # 2.3 Channels - release trains.
     # Pinned to a git ref at reconcile time (see issue #3).
     # ------------------------------------------------------------
     channels.stable = {
@@ -59,7 +59,7 @@ outputs = { self, nixpkgs, nixfleet, ... }: {
       rolloutPolicy          = "canary-conservative";
       signingIntervalMinutes = 60;       # default; listed for clarity
       freshnessWindow        = 1440;     # 24h in minutes; REQUIRED, no default
-                                          #   — invariant: ≥ 2 × signingIntervalMinutes
+                                          #   - invariant: ≥ 2 × signingIntervalMinutes
       compliance = {
         strict     = true;
         frameworks = [ "anssi-bp028" ];
@@ -74,7 +74,7 @@ outputs = { self, nixpkgs, nixfleet, ... }: {
     };
 
     # ------------------------------------------------------------
-    # 2.4 Rollout policies — named, reusable.
+    # 2.4 Rollout policies - named, reusable.
     # ------------------------------------------------------------
     rolloutPolicies.canary-conservative = {
       strategy = "canary";
@@ -96,14 +96,14 @@ outputs = { self, nixpkgs, nixfleet, ... }: {
     };
 
     # ------------------------------------------------------------
-    # 2.5 Edges — ordering constraints across hosts (within a rollout).
+    # 2.5 Edges - ordering constraints across hosts (within a rollout).
     # ------------------------------------------------------------
     edges = [
       { after = "db-primary"; before = "app-*"; reason = "schema migrations"; }
     ];
 
     # ------------------------------------------------------------
-    # 2.6 Channel edges — ordering across channels (across rollouts).
+    # 2.6 Channel edges - ordering across channels (across rollouts).
     # `before` channel must converge before any new rollout opens on
     # `after`. Edge predecessors with no rollout history are open
     # (proceed); halted predecessors block until the operator
@@ -114,11 +114,11 @@ outputs = { self, nixpkgs, nixfleet, ... }: {
     ];
 
     # ------------------------------------------------------------
-    # 2.7 Disruption budgets — max in-flight per selector. Tag-driven
+    # 2.7 Disruption budgets - max in-flight per selector. Tag-driven
     # at the wire level: each budget carries its `selector` (operator
     # intent) and is resolved into a concrete host list at OpenRollout
     # time, snapshotted into the rollout manifest. Mid-rollout retags
-    # affect future rollouts only — a rollout's topology is immutable
+    # affect future rollouts only - a rollout's topology is immutable
     # for its life. Cross-rollout fleet-wide enforcement survives the
     # snapshot model: in-flight summing matches by selector identity
     # across all active rollouts' snapshots.
@@ -133,7 +133,7 @@ outputs = { self, nixpkgs, nixfleet, ... }: {
 
 ## 3. Selector algebra
 
-Used by waves, edges, and budgets. Keep it minimal — resist reinventing Kubernetes label selectors.
+Used by waves, edges, and budgets. Keep it minimal - resist reinventing Kubernetes label selectors.
 
 ```
 selector :=
@@ -146,7 +146,7 @@ selector :=
   | { and      = [ <sel> <sel> ]; } # intersection
 ```
 
-No wildcards in host names (resolve to explicit list). No regex. Evaluates to a concrete set of hosts at flake-eval time — fully static.
+No wildcards in host names (resolve to explicit list). No regex. Evaluates to a concrete set of hosts at flake-eval time - fully static.
 
 ## 4. Evaluation contract
 
@@ -161,7 +161,7 @@ nix eval --json .#fleet.resolved > fleet.json
 `fleet.resolved` is a derived attribute. Two resolution policies coexist:
 
 - **Waves** are pre-resolved to host lists at fleet-eval time (CI). Wave membership is signed into the artifact.
-- **Disruption budgets** carry their `selector` through unchanged — resolution to host lists happens at OpenRollout time and is snapshotted into the per-rollout manifest. The `fleet.resolved` artifact records intent; the rollout manifest records the frozen topology that intent produced for that specific rollout. Mid-rollout retags affect future rollouts only.
+- **Disruption budgets** carry their `selector` through unchanged - resolution to host lists happens at OpenRollout time and is snapshotted into the per-rollout manifest. The `fleet.resolved` artifact records intent; the rollout manifest records the frozen topology that intent produced for that specific rollout. Mid-rollout retags affect future rollouts only.
 
 Shape:
 
@@ -215,7 +215,7 @@ The rollout manifest (`releases/rollouts/<rolloutId>.json`, signed) carries the 
 - Every host's `configuration` is a valid `nixosConfiguration`.
 - Every host's `channel` exists in `channels`.
 - Every channel's `rolloutPolicy` exists in `rolloutPolicies`.
-- Every selector resolves to at least one host (warn, not fail — empty selectors are sometimes intentional).
+- Every selector resolves to at least one host (warn, not fail - empty selectors are sometimes intentional).
 - `compliance.frameworks` reference known frameworks from `nixfleet-compliance`.
 - Edges form a DAG (no cycles).
 - Disruption budgets are satisfiable given fleet size (warn if `maxInFlight = 1` on a 100-host budget will take forever).
@@ -225,12 +225,12 @@ The rollout manifest (`releases/rollouts/<rolloutId>.json`, signed) carries the 
 `fleet.resolved.json` is a trust-boundary artifact (see ARCHITECTURE.md §4). CI produces and signs it with the CI release key; every consumer verifies before use.
 
 - **Signing.** CI writes `fleet.resolved.json` + `fleet.resolved.sig` to the channel's storage. The signature covers the full canonicalized JSON plus a `signedAt` RFC 3339 timestamp (embedded as `meta.signedAt` in the artifact).
-- **Verification — control plane.** On every fetch, verifies the signature against the pinned CI release public key. Signature mismatch or unknown key → refuse to reconcile the channel; emit an alert.
-- **Verification — agents (optional path).** An agent that fetches `fleet.resolved` directly (rather than receiving targets from the control plane) performs the same verification. Enables the trust-minimized bootstrap in RFC-0003 §4.
+- **Verification - control plane.** On every fetch, verifies the signature against the pinned CI release public key. Signature mismatch or unknown key → refuse to reconcile the channel; emit an alert.
+- **Verification - agents (optional path).** An agent that fetches `fleet.resolved` directly (rather than receiving targets from the control plane) performs the same verification. Enables the trust-minimized bootstrap in RFC-0003 §4.
 - **Key pinning.** The CI release public key is committed to the flake (`nixfleet.trust.ciReleaseKey`) and embedded in every built closure. Key rotation is a new commit + a grace window during which both keys verify.
 - **Freshness.** Downstream consumers (RFC-0003 §7) enforce `now − meta.signedAt ≤ channel.freshnessWindow` to defend against stale-closure replay by a compromised control plane. `freshnessWindow` is declared per-channel in minutes (see §2.3); there is no implicit default and the value is part of the signed payload so a compromised control plane cannot widen it.
 
-Canonicalization uses a stable, spec-defined encoding (JCS or deterministic CBOR — final choice tracked as an open question below) so that signatures produced by Nix evaluation are byte-identical to what verifiers reconstruct.
+Canonicalization uses a stable, spec-defined encoding (JCS or deterministic CBOR - final choice tracked as an open question below) so that signatures produced by Nix evaluation are byte-identical to what verifiers reconstruct.
 
 ## 5. Composition
 
@@ -243,14 +243,14 @@ fleet = nixfleet.lib.mergeFleets [
 ];
 ```
 
-Conflicts (same host name, same channel definition with different values) fail eval. Merge is associative but not commutative when policies define overrides — document the precedence (later wins).
+Conflicts (same host name, same channel definition with different values) fail eval. Merge is associative but not commutative when policies define overrides - document the precedence (later wins).
 
 ## 6. What's deliberately out of scope
 
 - **Secrets.** Declared alongside, not inside, the fleet schema. See #6.
 - **Enrollment / host identity.** A host *exists* in the fleet schema regardless of whether it's enrolled. Enrollment is an orthogonal state (see #9).
 - **Runtime state.** `fleet.resolved` is purely declarative. Observed state (which host is online, what gen is running) lives in the control plane only.
-- **Dynamic host sets.** No "autoscaling" — every host is named in the flake. If you need dynamic, generate the flake from a higher-level tool.
+- **Dynamic host sets.** No "autoscaling" - every host is named in the flake. If you need dynamic, generate the flake from a higher-level tool.
 
 ## 7. Open questions
 

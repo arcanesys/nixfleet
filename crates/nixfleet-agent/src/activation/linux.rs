@@ -79,7 +79,7 @@ async fn read_unit_exit_code(unit_name: &str) -> Option<i32> {
 
 /// Critical components whose live-swap nixos-rebuild's switchInhibitors check
 /// refuses. Tuples are `(component_name, store-relative path inside the system
-/// closure)`. Detection is path-canonicalize equality on the symlink target —
+/// closure)`. Detection is path-canonicalize equality on the symlink target  -
 /// if the canonicalised targets differ between current and new, the live swap
 /// is unsafe and we defer to next boot.
 ///
@@ -91,7 +91,7 @@ async fn read_unit_exit_code(unit_name: &str) -> Option<i32> {
 /// a CP-binary-only diff. The actual live-swap-unsafe components are systemd
 /// (PID 1) + kernel + dbus; if those match, the init script delta is inert.
 const SWITCH_INHIBITORS: &[(&str, &str)] = &[
-    // dbus.service is the unit symlink — broker→dbus and dbus→broker swaps
+    // dbus.service is the unit symlink - broker→dbus and dbus→broker swaps
     // both surface as a different canonicalised target inside the new closure.
     ("dbus", "etc/systemd/system/dbus.service"),
     ("systemd", "sw/lib/systemd/systemd"),
@@ -100,7 +100,7 @@ const SWITCH_INHIBITORS: &[(&str, &str)] = &[
 
 /// Returns `Some(component)` when a critical-component swap is detected
 /// between the running system and the new closure. Either side missing the
-/// path is out-of-scope (returns `None` for that component) — we only flag
+/// path is out-of-scope (returns `None` for that component) - we only flag
 /// genuine swaps, not absences.
 fn detect_switch_inhibitors(current_system: &Path, new_store_path: &Path) -> Option<&'static str> {
     for (name, rel_path) in SWITCH_INHIBITORS {
@@ -116,7 +116,7 @@ fn detect_switch_inhibitors(current_system: &Path, new_store_path: &Path) -> Opt
 
 const CURRENT_SYSTEM_PATH: &str = "/run/current-system";
 
-// FOOTGUN: --scope / --pipe --wait inherit caller's cgroup — agent SIGTERM kills the switch. Use --unit.
+// FOOTGUN: --scope / --pipe --wait inherit caller's cgroup - agent SIGTERM kills the switch. Use --unit.
 async fn fire_switch(
     target: &EvaluatedTarget,
     store_path: &str,
@@ -127,10 +127,10 @@ async fn fire_switch(
         tracing::warn!(
             target_closure = %target.closure_hash,
             component = component,
-            "agent: deferring live switch — critical-component swap requires reboot",
+            "agent: deferring live switch - critical-component swap requires reboot",
         );
         // LOADBEARING: `nix-env --set` (in pipeline.rs) creates the system
-        // generation but does NOT write bootloader entries — only
+        // generation but does NOT write bootloader entries - only
         // `switch-to-configuration {boot,switch,test}` does. Without this,
         // the deferred generation has no `/boot/loader/entries/*.conf` and
         // the next reboot lands back on the previous boot default, defeating
@@ -270,7 +270,7 @@ mod tests {
     }
 
     fn share_targets(src_root: &Path, dst_root: &Path, rel_paths: &[&str]) {
-        // Make dst symlinks resolve to the same canonical paths as src — the
+        // Make dst symlinks resolve to the same canonical paths as src - the
         // identical-systems case.
         for rel in rel_paths {
             let src_link = src_root.join(rel);
@@ -300,7 +300,7 @@ mod tests {
         let cur = dir.path().join("current");
         let new = dir.path().join("new");
         let rels: Vec<&str> = SWITCH_INHIBITORS.iter().map(|(_, p)| *p).collect();
-        // Same targets except dbus.service — only dbus should fire.
+        // Same targets except dbus.service - only dbus should fire.
         make_fake_system(&cur, &rels, "cur");
         share_targets(&cur, &new, &rels);
         // Overwrite the dbus link in `new` to point somewhere else.
@@ -320,7 +320,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cur = dir.path().join("current");
         let new = dir.path().join("new");
-        // Only populate cur — new is empty, every canonicalize on new fails.
+        // Only populate cur - new is empty, every canonicalize on new fails.
         let rels: Vec<&str> = SWITCH_INHIBITORS.iter().map(|(_, p)| *p).collect();
         make_fake_system(&cur, &rels, "cur");
         std::fs::create_dir_all(&new).unwrap();
@@ -333,7 +333,7 @@ mod tests {
         // Regression pin: `<closure>/init` is regenerated per-system (bakes
         // in the closure's own store path), so a closure path bump alone
         // changes init even when nothing runtime-meaningful did. The defer
-        // path must NOT fire on init-only deltas — otherwise every nixfleet-
+        // path must NOT fire on init-only deltas - otherwise every nixfleet-
         // driven update on every host gets deferred unnecessarily.
         let dir = tempfile::tempdir().unwrap();
         let cur = dir.path().join("current");
@@ -341,7 +341,7 @@ mod tests {
         let rels: Vec<&str> = SWITCH_INHIBITORS.iter().map(|(_, p)| *p).collect();
         make_fake_system(&cur, &rels, "cur");
         share_targets(&cur, &new, &rels);
-        // Plant a differing `init` in `new` only — kernel/systemd/dbus stay
+        // Plant a differing `init` in `new` only - kernel/systemd/dbus stay
         // equal. With init removed from SWITCH_INHIBITORS this MUST be None.
         let init_target_dir = dir.path().join("targets-new-init");
         std::fs::create_dir_all(&init_target_dir).unwrap();
@@ -355,7 +355,7 @@ mod tests {
     fn detect_returns_kernel_when_kernel_differs_first() {
         // Kernel is the last entry in SWITCH_INHIBITORS (after dbus, systemd).
         // This test seeds matching dbus/systemd and a differing kernel, and
-        // asserts kernel is the variant that fires — catches re-ordering or
+        // asserts kernel is the variant that fires - catches re-ordering or
         // accidental short-circuit regressions if the constant is reshuffled.
         let dir = tempfile::tempdir().unwrap();
         let cur = dir.path().join("current");

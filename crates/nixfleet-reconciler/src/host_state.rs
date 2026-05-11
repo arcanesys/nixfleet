@@ -5,7 +5,6 @@ use crate::Action;
 use chrono::{DateTime, Utc};
 use nixfleet_proto::{FleetResolved, Wave};
 
-
 pub use nixfleet_proto::HostRolloutState;
 
 /// Defaults absent hosts to [`HostRolloutState::Queued`].
@@ -53,7 +52,7 @@ pub(crate) fn handle_wave(
                 }
                 // Fleet-level gates (channelEdges, wave-promotion, host-edges,
                 // disruption-budget). Same evaluator the dispatch endpoint
-                // calls — if this Skip is emitted here, the agent's
+                // calls - if this Skip is emitted here, the agent's
                 // checkin path returns None for the same reason.
                 let empty_emitted_opens = std::collections::HashSet::new();
                 let gate_input = crate::gates::GateInput {
@@ -90,7 +89,7 @@ pub(crate) fn handle_wave(
             HostRolloutState::Healthy => {
                 // Healthy → Soaked once Healthy for `wave.soak_minutes`.
                 // Without a `last_healthy_since` marker the soak gate
-                // stays closed — better to wait than promote on missing data.
+                // stays closed - better to wait than promote on missing data.
                 out.wave_all_soaked = false;
                 let soak_window = chrono::Duration::minutes(wave.soak_minutes as i64);
                 if let Some(since) = rollout.last_healthy_since.get(host) {
@@ -100,7 +99,7 @@ pub(crate) fn handle_wave(
                     // not in the map (no checkin yet, or `host_probes_passing`
                     // wasn't populated by the projector) default to true so
                     // a missing projection doesn't accidentally stall every
-                    // wave — fail-open per the field's contract.
+                    // wave - fail-open per the field's contract.
                     let probes_pass = observed
                         .host_probes_passing
                         .get(host)
@@ -301,7 +300,7 @@ mod tests {
             "probe-failing host must not promote: actions={:?}",
             outcome.actions
         );
-        // Wave is held — NOT all soaked.
+        // Wave is held - NOT all soaked.
         assert!(!outcome.wave_all_soaked);
     }
 
@@ -317,7 +316,10 @@ mod tests {
         };
         let outcome = handle_wave(&fleet, &observed, &rollout, &wave, chrono::Utc::now());
         assert!(
-            outcome.actions.iter().all(|a| !matches!(a, Action::SoakHost { .. })),
+            outcome
+                .actions
+                .iter()
+                .all(|a| !matches!(a, Action::SoakHost { .. })),
             "soak window NOT elapsed must hold even with probes passing",
         );
     }
@@ -325,7 +327,7 @@ mod tests {
     #[test]
     fn soak_promotes_when_probes_absent_from_map_fail_open() {
         // Hosts not in `host_probes_passing` (no checkin yet, or projector
-        // skipped them) default to passing — fail open per the field contract.
+        // skipped them) default to passing - fail open per the field contract.
         let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
         let rollout = rollout_healthy_for("host-a", 10);
         // observed_online() = empty probe map.
@@ -338,7 +340,10 @@ mod tests {
         };
         let outcome = handle_wave(&fleet, &observed, &rollout, &wave, chrono::Utc::now());
         assert!(
-            outcome.actions.iter().any(|a| matches!(a, Action::SoakHost { .. })),
+            outcome
+                .actions
+                .iter()
+                .any(|a| matches!(a, Action::SoakHost { .. })),
             "absent map entry must default to passing, not block",
         );
     }
@@ -363,7 +368,11 @@ mod tests {
             .iter()
             .filter(|a| matches!(a, Action::RollbackHost { .. }))
             .count();
-        assert_eq!(halt_count, 1, "halt expected; actions={:?}", outcome.actions);
+        assert_eq!(
+            halt_count, 1,
+            "halt expected; actions={:?}",
+            outcome.actions
+        );
         assert_eq!(
             rollback_count, 0,
             "no RollbackHost under `halt`; actions={:?}",

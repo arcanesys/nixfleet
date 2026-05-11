@@ -40,7 +40,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
 
     // Memoise per-channel rollout ID so we project the manifest once per
     // channel, not per host. Projection failure is louder than the legitimate
-    // "no host with closure on this channel" Ok(None) case — warn so a broken
+    // "no host with closure on this channel" Ok(None) case - warn so a broken
     // fleet manifest surfaces in logs instead of as silently empty rollout_state.
     let mut current_rollout_for_channel: HashMap<String, Option<String>> = HashMap::new();
     for channel in fleet.channels.keys() {
@@ -86,7 +86,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
             let host_buf = reports.get(hostname);
             // GOTCHA: cur_rollout uses agent-reported `last_rollout_id`, not
             // the fleet's current rollout. After a fresh deploy this can lag
-            // by one tick — pre-existing pattern, applies to all event-buffer
+            // by one tick - pre-existing pattern, applies to all event-buffer
             // counters here. `pending_reboot` is DB-backed below, so it's not
             // affected by this drift; `quarantined_closure` is event-ring
             // based and CAN drift, but the agent re-posts hourly while
@@ -95,7 +95,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
             let mut compliance_failures = 0usize;
             let mut runtime_gate_errors = 0usize;
             let mut verified_count = 0usize;
-            // Most recent ClosureQuarantined for current rollout — None when
+            // Most recent ClosureQuarantined for current rollout - None when
             // no quarantine event present, Some(closure_hash) otherwise.
             // Buf iter is oldest-first, so we overwrite as we find newer.
             let mut quarantined_closure: Option<String> = None;
@@ -143,7 +143,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
             // `ActivationDeferred` arrives; `confirm()` (post-reboot) flips
             // it to Confirmed which clears the signal here naturally.
             //
-            // Falls back to false on absent DB or read failure — same shape
+            // Falls back to false on absent DB or read failure - same shape
             // as `rollout_state` below; metrics rather than crash semantics.
             let pending_reboot = state
                 .db
@@ -171,10 +171,10 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
             //
             // Three classes of "None" with different meanings:
             //   - benign: no DB / no current rollout / row absent (host hasn't
-            //     transitioned for this rollout yet) — silent.
-            //   - DB error: lock poisoned, schema drift, I/O — warn (was
+            //     transitioned for this rollout yet) - silent.
+            //   - DB error: lock poisoned, schema drift, I/O - warn (was
             //     previously swallowed as Ok(None)).
-            //   - parse error: unrecognised state string in DB row — warn
+            //   - parse error: unrecognised state string in DB row - warn
             //     (data-integrity issue, not normal).
             let rollout_state = state.db.as_ref().and_then(|db| {
                 let rid = current_rollout_for_channel
@@ -235,7 +235,7 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                 // Issue #86: count probes in non-Pass state from the
                 // host's latest checkin. Snapshot-driven (not event-ring
                 // like compliance/runtime-gate above), because probe
-                // state IS the latest snapshot — the wire carries the
+                // state IS the latest snapshot - the wire carries the
                 // current value, not a stream of failure events.
                 outstanding_health_failures: checkin
                     .map(|c| {
@@ -257,12 +257,12 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
 }
 
 // ----------------------------------------------------------------------
-// Cross-channel deferral state — moved from deferrals_view.rs.
+// Cross-channel deferral state - moved from deferrals_view.rs.
 //
 // Shares the `observed_view::build_for_gates_from_state` projection
 // with the dispatch endpoint and the disruption-budget metric. Three
 // operator-facing surfaces, one source of truth. Distinct from the
-// CP's in-memory `last_deferrals` debounce snapshot — debounce state
+// CP's in-memory `last_deferrals` debounce snapshot - debounce state
 // and observability state answer different questions and must not
 // converge on the same source.
 // ----------------------------------------------------------------------
@@ -297,7 +297,7 @@ pub async fn compute_channel_deferrals(state: &AppState) -> Vec<ChannelDeferral>
         if !fleet.channels.contains_key(channel) {
             continue;
         }
-        // Channels already running an active rollout aren't "deferred" —
+        // Channels already running an active rollout aren't "deferred"  -
         // they're executing.
         let has_active = observed
             .active_rollouts
@@ -336,7 +336,7 @@ pub async fn compute_channel_deferrals(state: &AppState) -> Vec<ChannelDeferral>
         }
     }
 
-    // Stable order: alphabetical by channel — deterministic across ticks
+    // Stable order: alphabetical by channel - deterministic across ticks
     // for both the JSON response and the Prometheus label set.
     deferrals.sort_by(|a, b| a.channel.cmp(&b.channel));
     deferrals

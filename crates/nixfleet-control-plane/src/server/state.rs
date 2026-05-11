@@ -61,7 +61,7 @@ pub struct ServeArgs {
     /// issuance CA's `dNSName` name constraint (D14).
     pub agent_cn_suffix: String,
     /// Test-only opt-in: when `true`, the server starts already in the
-    /// ready state — `/v1/*` serves immediately instead of 503ing until
+    /// ready state - `/v1/*` serves immediately instead of 503ing until
     /// the first signed artifact is verified (#95). Production paths
     /// MUST leave this `false`; the CLI never sets it. Integration
     /// tests that exercise endpoint logic without driving a real
@@ -138,7 +138,7 @@ pub struct IssuancePaths {
     /// flag). Both `/v1/enroll` (orgRootKey signature verify) and
     /// `/v1/agent/bootstrap-report` (same) read this. The polling
     /// loops have their own copy via `ChannelRefsSource.trust_path`
-    /// — they all point at the same file in production. ONE source
+    /// - they all point at the same file in production. ONE source
     /// of truth for the daemon's trust roots, not derived from
     /// fleet_ca_cert (which broke when operators placed
     /// fleet-ca.pem outside `/etc/nixfleet/cp/`).
@@ -151,7 +151,7 @@ pub struct AppState {
     pub host_reports: RwLock<HashMap<String, VecDeque<ReportRecord>>>,
     pub channel_refs_cache: Arc<RwLock<crate::polling::channel_refs_poll::ChannelRefsCache>>,
     pub issuance_paths: RwLock<IssuancePaths>,
-    /// Built once at server start from `ServeArgs` — `TpmCaSigner` if
+    /// Built once at server start from `ServeArgs` - `TpmCaSigner` if
     /// the TPM flags are set, `FileCaSigner` otherwise, `None` if no
     /// CA flags supplied (enroll/renew return 500). `dyn` lets enroll
     /// + renew handlers stay agnostic to signing backend.
@@ -162,19 +162,19 @@ pub struct AppState {
     /// Most recent successfully-journalled `RolloutDeferred` per channel.
     /// Fed into the reconciler's `Observed.last_deferrals` so a still-blocked
     /// channel doesn't re-emit the same line every reconcile tick. In-memory
-    /// only — losing this on restart just means one duplicate line on the
+    /// only - losing this on restart just means one duplicate line on the
     /// first post-restart tick, which is correct behavior.
     pub last_deferrals: Arc<RwLock<HashMap<String, nixfleet_reconciler::observed::DeferralRecord>>>,
     /// Event-driven kick for the channel-refs poll. The reconciler sends `()`
     /// after state transitions that might release a channelEdges-blocked
     /// successor (`ConvergeRollout` stamping `terminal_at`, `SoakHost`
     /// transitioning a host to Soaked). The polling loop selects on its
-    /// 60 s ticker AND this watch — whichever fires first triggers a
+    /// 60 s ticker AND this watch - whichever fires first triggers a
     /// `poll_once`. Closes the timing window between channelEdges semantically
     /// releasing and the table reflecting the new successor rollout.
     ///
     /// `watch` semantics (latest value, no backlog) collapse a burst of
-    /// kicks into one wake — the poller doesn't need to drain a queue.
+    /// kicks into one wake - the poller doesn't need to drain a queue.
     /// The 60 s ticker stays as a safety net: if the kick is ever missed
     /// (subscriber starvation, reconciler crash mid-stamp), polling
     /// catches up within the cadence.
@@ -259,7 +259,7 @@ impl std::fmt::Debug for AppState {
 mod ready_tests {
     use super::*;
 
-    /// Default fresh AppState — neither artifact nor revocations primed.
+    /// Default fresh AppState - neither artifact nor revocations primed.
     /// `is_ready` must return false so the middleware can hold /v1/* with 503.
     #[test]
     fn fresh_state_is_not_ready() {
@@ -268,7 +268,7 @@ mod ready_tests {
     }
 
     /// `revocations_required = false` (no `--revocations-*-url` flags).
-    /// Only the artifact prime gates readiness — revocations_primed is ignored.
+    /// Only the artifact prime gates readiness - revocations_primed is ignored.
     #[test]
     fn artifact_prime_alone_is_enough_when_revocations_not_required() {
         let state = AppState::default();
@@ -280,7 +280,7 @@ mod ready_tests {
     }
 
     /// `revocations_required = true` (operator configured the polling loop).
-    /// Artifact prime alone must NOT flip ready — full trust footprint required.
+    /// Artifact prime alone must NOT flip ready - full trust footprint required.
     #[test]
     fn artifact_alone_is_not_enough_when_revocations_required() {
         let state = AppState {

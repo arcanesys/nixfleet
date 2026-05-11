@@ -1,5 +1,5 @@
 # Real CP serves /v1/*; the verify-artifact CLI fetches bare
-# /canonical.json{,.sig} from any HTTP source — this stub provides those.
+# /canonical.json{,.sig} from any HTTP source - this stub provides those.
 # FOOTGUN: Python http.server (not socat); socat EXEC pipeline truncated 64-byte signature to 54 bytes.
 {
   pkgs,
@@ -76,7 +76,7 @@
         main()
       '';
   in {
-    description = "Nixfleet harness CP stub (serves signed fixture — canonical.json + .sig, Python mTLS)";
+    description = "Nixfleet harness CP stub (serves signed fixture - canonical.json + .sig, Python mTLS)";
     wantedBy = ["multi-user.target"];
     after = ["network.target"];
     serviceConfig = {

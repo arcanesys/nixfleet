@@ -1,4 +1,4 @@
-//! Shared CLI logic — table rendering, age math, status classification.
+//! Shared CLI logic - table rendering, age math, status classification.
 //! Kept as a library so binaries (`nixfleet status` today, `rollout
 //! trace` + `diff` next) compose against it and unit tests can exercise
 //! formatting without spinning up a real CP.
@@ -244,7 +244,7 @@ pub fn render_status_table_with_color(input: &StatusInputs, color: bool) -> Stri
 /// `\u{2192}` (in-flight), `\u{2026}` (queued), `\u{2717}` (failed/never/
 /// quarantined). The `contains`-based dispatch is therefore unambiguous.
 ///
-/// `\u{2026}` is also used by `display_hash` for hash-column truncation —
+/// `\u{2026}` is also used by `display_hash` for hash-column truncation  -
 /// only call this function on STATUS labels, never on hash columns.
 fn paint_status(st: &crate::color::Stylizer, label: &str) -> String {
     use crate::color::Style;
@@ -328,7 +328,7 @@ fn base_status_label(
 
     // Failed/Reverted is louder than closure-match because the rollout's
     // state machine remembers the failure even after operator-driven
-    // recovery — surface it.
+    // recovery - surface it.
     if let Some(state) = host.rollout_state {
         if state.is_failed() {
             return match state {
@@ -358,12 +358,12 @@ fn base_status_label(
         return "\u{2713} converged".to_string();
     }
 
-    // No checkin yet — host hasn't reached the CP since the rollout opened.
+    // No checkin yet - host hasn't reached the CP since the rollout opened.
     let Some(last) = host.last_checkin_at else {
         return "\u{2717} never".to_string();
     };
 
-    // Stale-checkin trumps in-flight state — a host stuck in `Activating`
+    // Stale-checkin trumps in-flight state - a host stuck in `Activating`
     // for 3 days isn't "activating", it's offline.
     if let Some(window) = freshness_minutes {
         let age = now.signed_duration_since(last);
@@ -375,14 +375,10 @@ fn base_status_label(
 
     // Fresh checkin + non-failed state → use the state machine if present.
     match host.rollout_state {
-        Some(s) if s.is_terminal_for_ordering() => format!(
-            "\u{2713} {}",
-            s.as_db_str().to_lowercase(),
-        ),
-        Some(s) if s.is_in_flight() => format!(
-            "\u{2192} {}",
-            s.as_db_str().to_lowercase(),
-        ),
+        Some(s) if s.is_terminal_for_ordering() => {
+            format!("\u{2713} {}", s.as_db_str().to_lowercase(),)
+        }
+        Some(s) if s.is_in_flight() => format!("\u{2192} {}", s.as_db_str().to_lowercase(),),
         Some(HostRolloutState::Queued) => "\u{2026} queued".to_string(),
         _ => "\u{2192} in progress".to_string(),
     }
@@ -429,10 +425,7 @@ pub fn render_trace_table(trace: &RolloutTrace) -> String {
             ev.host.clone(),
             short_ts(&ev.dispatched_at),
             ev.terminal_state.clone().unwrap_or_else(|| "<open>".into()),
-            ev.terminal_at
-                .as_deref()
-                .map(short_ts)
-                .unwrap_or_default(),
+            ev.terminal_at.as_deref().map(short_ts).unwrap_or_default(),
         ]);
     }
 
@@ -488,8 +481,7 @@ mod tests {
             hostname: hostname.into(),
             channel: channel.into(),
             declared_closure_hash: Some("aaaaaaaaaaaaaaaaaaaa".into()),
-            current_closure_hash: last_checkin_min_ago
-                .map(|_| "bbbbbbbbbbbbbbbbbbbb".to_string()),
+            current_closure_hash: last_checkin_min_ago.map(|_| "bbbbbbbbbbbbbbbbbbbb".to_string()),
             pending_closure_hash: None,
             last_checkin_at: last_checkin_min_ago.map(|m| now - chrono::Duration::minutes(m)),
             last_rollout_id: None,
@@ -538,7 +530,10 @@ mod tests {
             channel_freshness: BTreeMap::new(),
         };
         let out = render_status_table(&inputs);
-        assert!(out.contains("0123456789abc\u{2026}"), "no truncation: {out}");
+        assert!(
+            out.contains("0123456789abc\u{2026}"),
+            "no truncation: {out}"
+        );
     }
 
     #[test]
@@ -554,7 +549,10 @@ mod tests {
             out.contains("\u{2192} in progress"),
             "fell through to in-progress without a window: {out}"
         );
-        assert!(!out.contains("stale"), "shouldn't be stale without window: {out}");
+        assert!(
+            !out.contains("stale"),
+            "shouldn't be stale without window: {out}"
+        );
     }
 
     #[test]
@@ -599,12 +597,15 @@ mod tests {
         };
         let out = render_status_table(&inputs);
         // 1 compliance + 1 runtime-gate + 2 health = 4
-        assert!(out.contains("4 outstanding"), "expected combined count: {out}");
+        assert!(
+            out.contains("4 outstanding"),
+            "expected combined count: {out}"
+        );
     }
 
     #[test]
     fn pin_appends_to_converged_label() {
-        // Pin is operator metadata, not a health signal — it AUGMENTS
+        // Pin is operator metadata, not a health signal - it AUGMENTS
         // the existing label rather than supplanting it. A pinned-and-
         // converged host shows "✓ converged 🔒<short>".
         let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
@@ -620,14 +621,23 @@ mod tests {
             channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
         };
         let out = render_status_table(&inputs);
-        assert!(out.contains("\u{2713} converged"), "must keep converged: {out}");
-        assert!(out.contains("\u{1F512}abc1234"), "must show 7-char pin prefix: {out}");
-        assert!(!out.contains("abc12345"), "8th char must be truncated: {out}");
+        assert!(
+            out.contains("\u{2713} converged"),
+            "must keep converged: {out}"
+        );
+        assert!(
+            out.contains("\u{1F512}abc1234"),
+            "must show 7-char pin prefix: {out}"
+        );
+        assert!(
+            !out.contains("abc12345"),
+            "8th char must be truncated: {out}"
+        );
     }
 
     #[test]
     fn pin_appends_to_failed_label_too() {
-        // Even on failure paths the pin info is visible — operator
+        // Even on failure paths the pin info is visible - operator
         // wants to know "this host was supposed to be on commit X
         // and it's failed".
         use nixfleet_proto::HostRolloutState;
@@ -664,8 +674,14 @@ mod tests {
             out.contains("\u{27F3} pending reboot"),
             "expected pending-reboot label: {out}",
         );
-        assert!(!out.contains("converged"), "should not show converged: {out}");
-        assert!(!out.contains("in progress"), "pending-reboot is louder than in-progress: {out}");
+        assert!(
+            !out.contains("converged"),
+            "should not show converged: {out}"
+        );
+        assert!(
+            !out.contains("in progress"),
+            "pending-reboot is louder than in-progress: {out}"
+        );
     }
 
     #[test]
@@ -680,8 +696,14 @@ mod tests {
             channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
         };
         let out = render_status_table(&inputs);
-        assert!(out.contains("\u{2717} failed"), "expected failed label: {out}");
-        assert!(!out.contains("converged"), "should not show converged: {out}");
+        assert!(
+            out.contains("\u{2717} failed"),
+            "expected failed label: {out}"
+        );
+        assert!(
+            !out.contains("converged"),
+            "should not show converged: {out}"
+        );
     }
 
     #[test]
@@ -696,7 +718,10 @@ mod tests {
             channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
         };
         let out = render_status_table(&inputs);
-        assert!(out.contains("\u{2192} activating"), "expected activating: {out}");
+        assert!(
+            out.contains("\u{2192} activating"),
+            "expected activating: {out}"
+        );
     }
 
     #[test]
@@ -729,10 +754,17 @@ mod tests {
             channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
         };
         let out = render_status_table(&inputs);
-        assert!(out.contains("\u{2026} queued"), "expected queued label: {out}");
+        assert!(
+            out.contains("\u{2026} queued"),
+            "expected queued label: {out}"
+        );
     }
 
-    fn trace_event(host: &str, wave: u32, terminal: Option<&str>) -> nixfleet_proto::RolloutTraceEvent {
+    fn trace_event(
+        host: &str,
+        wave: u32,
+        terminal: Option<&str>,
+    ) -> nixfleet_proto::RolloutTraceEvent {
         nixfleet_proto::RolloutTraceEvent {
             host: host.into(),
             channel: "stable".into(),
@@ -755,7 +787,10 @@ mod tests {
             ],
         };
         let out = render_trace_table(&trace);
-        assert!(out.contains("rollout stable@trace1"), "missing header: {out}");
+        assert!(
+            out.contains("rollout stable@trace1"),
+            "missing header: {out}"
+        );
         assert!(out.contains("WAVE"), "missing column header: {out}");
         assert!(out.contains("converged"), "missing terminal state: {out}");
         assert!(out.contains("<open>"), "missing open marker: {out}");
@@ -786,7 +821,7 @@ mod tests {
     #[test]
     fn run_status_json_branch_compiles() {
         // Compile-time guard: the `run_status` signature stays
-        // (cfg, json, color) — bail-out if a refactor renames params.
+        // (cfg, json, color) - bail-out if a refactor renames params.
         fn _typecheck(cfg: &crate::ResolvedClientConfig) {
             let _fut = crate::run_status(cfg, true, false);
         }
@@ -811,7 +846,7 @@ mod tests {
         assert!(painted.contains("\x1b["), "expected ANSI in painted output");
         assert!(!plain.contains("\x1b["), "plain must not have ANSI escapes");
         // Strip ANSI from painted and confirm bytes match plain (modulo trailing
-        // whitespace, since column padding can collapse differently — accept
+        // whitespace, since column padding can collapse differently - accept
         // line-by-line equality after rstrip).
         let strip_ansi = |s: &str| -> String {
             let mut out = String::new();
@@ -835,7 +870,11 @@ mod tests {
         let stripped: Vec<String> = painted_plain.iter().map(|l| strip_ansi(l)).collect();
         let plain_lines: Vec<&str> = plain.lines().collect();
         for (a, b) in stripped.iter().zip(plain_lines.iter()) {
-            assert_eq!(a.trim_end(), b.trim_end(), "row mismatch:\nstripped: {a}\nplain:    {b}");
+            assert_eq!(
+                a.trim_end(),
+                b.trim_end(),
+                "row mismatch:\nstripped: {a}\nplain:    {b}"
+            );
         }
     }
 

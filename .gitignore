@@ -10,7 +10,7 @@ TODO.md
 .direnv/
 *.local.bak
 
-# Doc pipeline outputs — built fresh by `nix run .#docs`.
+# Doc pipeline outputs - built fresh by `nix run .#docs`.
 # Tracked source: docs/rfcs/*.md (canonical RFC text), pulled into
 # mdbook via {{#include}} preprocessor in docs/mdbook/src/rfcs/.
 /docs/mdbook/book/

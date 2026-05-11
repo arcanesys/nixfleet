@@ -1,5 +1,5 @@
 //! Shared route-handler error helpers. Each returns a `FnOnce(E) -> StatusCode`
-//! that logs and converts — paired with `?` to drop the 4-line map_err blocks.
+//! that logs and converts - paired with `?` to drop the 4-line map_err blocks.
 
 use axum::http::StatusCode;
 use std::fmt::Display;
@@ -20,7 +20,7 @@ pub(crate) fn bad_request<E: Display>(label: &'static str) -> impl FnOnce(E) -> 
     }
 }
 
-/// `.map_err(bad_request_error("label: detail"))` — log level escalated to
+/// `.map_err(bad_request_error("label: detail"))` - log level escalated to
 /// error (handler-side reasons indicate a CP bug, not a malformed request).
 pub(crate) fn bad_request_error<E: Display>(label: &'static str) -> impl FnOnce(E) -> StatusCode {
     move |err| {
@@ -29,7 +29,7 @@ pub(crate) fn bad_request_error<E: Display>(label: &'static str) -> impl FnOnce(
     }
 }
 
-/// `.map_err(internal_warn("label: detail"))` — same as `internal` but at
+/// `.map_err(internal_warn("label: detail"))` - same as `internal` but at
 /// warn level. For DB-side queries where a transient miss isn't a CP bug.
 pub(crate) fn internal_warn<E: Display>(label: &'static str) -> impl FnOnce(E) -> StatusCode {
     move |err| {

@@ -58,10 +58,10 @@ pub struct RenewResponse {
     pub not_after: DateTime<Utc>,
 }
 
-/// `POST /v1/agent/bootstrap-report` — anonymous, bootstrap-token-authed
+/// `POST /v1/agent/bootstrap-report` - anonymous, bootstrap-token-authed
 /// event channel for failure modes the agent hits before it has a
 /// client cert. CP validates the token signature against orgRootKey
-/// (same path as `/v1/enroll`) but does NOT consume the nonce — the
+/// (same path as `/v1/enroll`) but does NOT consume the nonce - the
 /// agent should still be able to enroll on the next attempt with the
 /// same token after the operator fixes whatever broke. Only specific
 /// `ReportEvent` variants (`EnrollmentFailed`, `TrustError`) are

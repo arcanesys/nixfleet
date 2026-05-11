@@ -3,7 +3,7 @@
 **Status.** Draft.
 **Targets.** v0.3.
 **Depends on.** ARCHITECTURE.md (especially §5 control-plane failure case), RFC-0001 (channel schema), RFC-0003 (agent protocol), RFC-0006 (freshness in air-gap).
-**Scope.** First-class deployment mode for environments with no internet egress: energy operators, water utilities, defense-adjacent contractors, healthcare critical systems. The trust model already supports this — every artifact is self-verifying. This RFC makes the workflow explicit, the sovereign-cache transport role explicit, and ships the bundle tooling.
+**Scope.** First-class deployment mode for environments with no internet egress: energy operators, water utilities, defense-adjacent contractors, healthcare critical systems. The trust model already supports this - every artifact is self-verifying. This RFC makes the workflow explicit, the sovereign-cache transport role explicit, and ships the bundle tooling.
 
 ## 1. Motivation
 
@@ -47,9 +47,9 @@ This is the load-bearing decision. The sovereign attic does **not** re-sign clos
 
 Consequence: agents inside the air-gap trust the same `cacheKeys` they would trust online. There is no "sovereign cache key" trust root to manage. A compromised sovereign attic cannot inject malicious closures because it cannot produce signatures under a key the agents trust.
 
-Operationally this means: the sovereign attic's own internal signing key (attic generates one per instance) is unused by the framework — agents never check it. Setting `attic` up in a "no signing required" mode is the recommended deployment.
+Operationally this means: the sovereign attic's own internal signing key (attic generates one per instance) is unused by the framework - agents never check it. Setting `attic` up in a "no signing required" mode is the recommended deployment.
 
-If a customer wants their sovereign cache to also re-sign for defense-in-depth (e.g., to prove "this closure passed the air-gap import check"), that can be layered on top — the agent supports multiple `cacheKeys` simultaneously per the existing v0.2 contract. Out of scope for the framework's recommended deployment.
+If a customer wants their sovereign cache to also re-sign for defense-in-depth (e.g., to prove "this closure passed the air-gap import check"), that can be layered on top - the agent supports multiple `cacheKeys` simultaneously per the existing v0.2 contract. Out of scope for the framework's recommended deployment.
 
 ## 4. Bundle format
 
@@ -107,7 +107,7 @@ Channels in air-gap mode declare an explicit longer freshness window per RFC-000
 channels.airgap-prod = {
   airgap.enabled       = true;
   airgap.maxStaleness  = "30d";     # bundle import freshness
-  freshnessWindow      = 129600;     # 90d in minutes — CI-signing-time freshness
+  freshnessWindow      = 129600;     # 90d in minutes - CI-signing-time freshness
   timeSource = {
     signedTime = { provider = "roughtime"; url = "..."; pubkey = "..."; };
     fallback.ntp = [ "internal-ntp.example" ];
@@ -118,8 +118,8 @@ channels.airgap-prod = {
 
 Two timestamps matter:
 
-- **Bundle signing time** — when CI produced the artifacts. Compared against the channel's `freshnessWindow` per RFC-0006; this is the agent's replay-protection contract.
-- **Bundle import time** — when the sovereign cache received the bundle. Compared against `airgap.maxStaleness`; this is the operator's "are we current?" contract.
+- **Bundle signing time** - when CI produced the artifacts. Compared against the channel's `freshnessWindow` per RFC-0006; this is the agent's replay-protection contract.
+- **Bundle import time** - when the sovereign cache received the bundle. Compared against `airgap.maxStaleness`; this is the operator's "are we current?" contract.
 
 The agent uses signing time, not import time, for freshness verification. Import time is operator metadata recorded in the import receipt (§7) and surfaced in fleet status; it does not gate convergence.
 
@@ -144,7 +144,7 @@ The import receipt is a small signed JSON written by `nixfleet-bundle import` to
 }
 ```
 
-Receipt is signed by the import operator's key (an SSH key registered for this purpose; not part of the framework's trust chain — purely operator-facing accountability). Surfaced in fleet status alongside channel staleness.
+Receipt is signed by the import operator's key (an SSH key registered for this purpose; not part of the framework's trust chain - purely operator-facing accountability). Surfaced in fleet status alongside channel staleness.
 
 ## 8. Operator procedure (compact form)
 
@@ -158,7 +158,7 @@ Receipt is signed by the import operator's key (an SSH key registered for this p
      - verifies channel pointer expectations (previous-pointer matches)
 4. air-gap entry point: nixfleet-bundle import bundle.tar
      - re-verifies (idempotent; survives operator running verify on a different host)
-     - pushes closures into sovereign attic (no re-signing — pass-through)
+     - pushes closures into sovereign attic (no re-signing - pass-through)
      - publishes fleet/revocations/rollout artifacts to a path the CP polls
      - records signed import receipt
 5. CP on next poll picks up the new channel pointer, reconciles normally
@@ -176,7 +176,7 @@ The full chain, online commit to first agent activation, is human-paced (typical
 - *Operator imports a bundle to the wrong channel.* Channel-pointer signatures bind to channel name; mismatched bundle is rejected at verify.
 - *Bundle imported but never reaches agents (network partition inside air-gap).* Agents cache last known target and continue running; the new target activates when the partition heals.
 - *Time-source unavailable inside air-gap.* Per RFC-0006 §4.3: agents refuse to evaluate freshness, hold current generation, emit `TimeSourceUnavailable`. Operator either restores the signed-time service or extends the channel's `freshnessWindow` with rationale.
-- *Import operator's signing key compromised.* Import receipts under that key become untrustworthy; subsequent imports use a new key. The receipts are accountability metadata, not part of the agent-verification chain — no agent action required.
+- *Import operator's signing key compromised.* Import receipts under that key become untrustworthy; subsequent imports use a new key. The receipts are accountability metadata, not part of the agent-verification chain - no agent action required.
 
 ## 10. Trust analysis
 
@@ -200,7 +200,7 @@ The full chain, online commit to first agent activation, is human-paced (typical
 
 ## 11. Build phases
 
-- **Phase 21 — `nixfleet-bundle` crate + bundle format + verify/import + air-gap channel schema.** Single phase, all sub-deliverables tightly coupled:
+- **Phase 21 - `nixfleet-bundle` crate + bundle format + verify/import + air-gap channel schema.** Single phase, all sub-deliverables tightly coupled:
   - 21.1 Crate scaffold; bundle manifest types in `nixfleet-proto`.
   - 21.2 `bundle export` (online side).
   - 21.3 `bundle verify` (offline, no network).
@@ -226,4 +226,4 @@ The full chain, online commit to first agent activation, is human-paced (typical
 
 ## 14. One-sentence summary
 
-**The air-gap is a USB cable's worth of latency between commit and convergence — every artifact still self-verifies against the same trust roots, the sovereign cache forwards bytes without re-signing, and the workflow is documented as a first-class deployment mode rather than a clever derivation.**
+**The air-gap is a USB cable's worth of latency between commit and convergence - every artifact still self-verifies against the same trust roots, the sovereign cache forwards bytes without re-signing, and the workflow is documented as a first-class deployment mode rather than a clever derivation.**

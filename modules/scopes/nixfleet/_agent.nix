@@ -80,7 +80,7 @@ in {
             then lib.removePrefix "/var/lib/" cfg.stateDir
             else "nixfleet-agent";
 
-          # FOOTGUN: no sandboxing; agent runs switch-to-configuration mutating /boot, /etc, bootloader, kernel — equivalent to `sudo nixos-rebuild switch` as a daemon.
+          # FOOTGUN: no sandboxing; agent runs switch-to-configuration mutating /boot, /etc, bootloader, kernel - equivalent to `sudo nixos-rebuild switch` as a daemon.
           NoNewPrivileges = true;
         };
       };

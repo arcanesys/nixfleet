@@ -2,7 +2,7 @@
 //!
 //! LOADBEARING: additions within a major version MUST be backwards-compatible
 //! (older consumers serde-ignore unknown fields). Bump `PROTOCOL_MAJOR_VERSION`
-//! for any breaking change — the CP rejects mismatched majors with 426.
+//! for any breaking change - the CP rejects mismatched majors with 426.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ pub struct CheckinRequest {
     pub last_confirmed_at: Option<DateTime<Utc>>,
 
     /// Base64 ed25519 over JCS(`LastConfirmedAtSignedPayload`) signed with the
-    /// host's SSH key. Without it the attested time is silently ignored —
+    /// host's SSH key. Without it the attested time is silently ignored  -
     /// a compromised host can't replay an older confirmation to short-circuit soak.
     #[serde(default)]
     pub attestation_signature: Option<String>,
@@ -52,7 +52,7 @@ pub struct CheckinRequest {
     /// each with its latest run status. Empty list = host declared no
     /// probes (`services.nixfleet-agent.healthChecks` empty); the soak gate
     /// treats that as "no probe constraint" → no-op. Probe entries with
-    /// `status: Unknown` indicate the probe hasn't run yet — conservative
+    /// `status: Unknown` indicate the probe hasn't run yet - conservative
     /// soak gate treats Unknown as blocking, so probes need to run at
     /// least once before promotion.
     #[serde(default)]
@@ -70,7 +70,7 @@ pub struct CheckinRequest {
 
 /// Probe transport. HTTP probes GET a URL and check the response status
 /// code; TCP probes attempt a connection; Exec probes run a command and
-/// inspect the exit code. The variant is informational on the wire —
+/// inspect the exit code. The variant is informational on the wire  -
 /// the agent's own runner picks the right transport from the per-probe
 /// config; CP/CLI render the kind for operator visibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,7 +84,7 @@ pub enum ProbeKind {
 /// Probe outcome. `Unknown` is the bootstrap state before the first run;
 /// `Pass`/`Fail` are post-run terminal states until the next run replaces
 /// them. The soak gate's "all-passing" check treats Unknown as
-/// non-passing (conservative — operators MUST have at least one
+/// non-passing (conservative - operators MUST have at least one
 /// successful run before promotion).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -165,7 +165,7 @@ pub struct EvaluatedTarget {
     pub wave_index: Option<u32>,
     #[serde(default)]
     pub activate: Option<ActivateBlock>,
-    /// `meta.signedAt` of the producing fleet.resolved — relayed for the
+    /// `meta.signedAt` of the producing fleet.resolved - relayed for the
     /// agent's defense-in-depth freshness check.
     pub signed_at: DateTime<Utc>,
     pub freshness_window_secs: u32,
@@ -182,7 +182,7 @@ pub struct ActivateBlock {
     /// Required for any target the agent will confirm. The agent refuses to
     /// confirm when no `activate` block is present (treats absence as "not a
     /// confirmable target") and otherwise POSTs strictly to this path. CP
-    /// must always set it for confirm-bearing targets — the agent has no
+    /// must always set it for confirm-bearing targets - the agent has no
     /// hardcoded fallback. Wire-carried so endpoint moves are CP-driven.
     pub confirm_endpoint: String,
 }
@@ -285,7 +285,7 @@ pub enum ReportEvent {
     /// Agent gave up retrying a closure after a recent SwitchFailed/VerifyMismatch
     /// (issue #55). Suppression auto-clears when the channel-ref advances to a
     /// different closure_hash. Distinct from `ActivationFailed` (a single failure
-    /// observation) — `ClosureQuarantined` signals "agent has decided not to
+    /// observation) - `ClosureQuarantined` signals "agent has decided not to
     /// re-attempt this closure" so the operator can distinguish a transient
     /// hiccup from a permanently-broken release. Unsigned (observability-only;
     /// see `apply_deferred_pending_reboot_transition` precedent: state-driving
@@ -403,7 +403,7 @@ pub enum ReportEvent {
     },
 
     /// Runtime gate couldn't produce a verdict (collector failed/timeout/stale).
-    /// Distinct from `ComplianceFailure` — CP treats this as a confirm-blocker.
+    /// Distinct from `ComplianceFailure` - CP treats this as a confirm-blocker.
     RuntimeGateError {
         reason: String,
         #[serde(default)]
@@ -424,7 +424,7 @@ pub enum ReportEvent {
 }
 
 impl ReportEvent {
-    /// Wire-side `event` discriminator — matches the serde kebab-case rename.
+    /// Wire-side `event` discriminator - matches the serde kebab-case rename.
     /// Adding a variant requires updating this match (compiler-enforced) and
     /// the corresponding wire string in lockstep.
     pub fn discriminator(&self) -> &'static str {
@@ -458,7 +458,7 @@ mod report_event_discriminator_tests {
     /// LOADBEARING: discriminator() must match the wire-serialized "event" tag
     /// exactly, since the CP indexes events by the string. Round-trip a value
     /// of every variant through serde and compare against the hand-written
-    /// match — if a variant is renamed at the serde layer this test catches it.
+    /// match - if a variant is renamed at the serde layer this test catches it.
     #[test]
     fn discriminator_matches_serde_event_tag() {
         let now = chrono::Utc::now();
@@ -498,15 +498,9 @@ mod report_event_discriminator_tests {
                 reason: "x".into(),
                 signature: None,
             },
-            ReportEvent::EnrollmentFailed {
-                reason: "x".into(),
-            },
-            ReportEvent::RenewalFailed {
-                reason: "x".into(),
-            },
-            ReportEvent::TrustError {
-                reason: "x".into(),
-            },
+            ReportEvent::EnrollmentFailed { reason: "x".into() },
+            ReportEvent::RenewalFailed { reason: "x".into() },
+            ReportEvent::TrustError { reason: "x".into() },
             ReportEvent::ClosureSignatureMismatch {
                 closure_hash: "x".into(),
                 stderr_tail: "y".into(),

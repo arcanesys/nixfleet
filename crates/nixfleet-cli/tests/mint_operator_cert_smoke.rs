@@ -6,9 +6,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use rcgen::{
-    BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose,
-};
+use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
 use tempfile::TempDir;
 
 fn fresh_root(dir: &TempDir) -> (PathBuf, PathBuf) {

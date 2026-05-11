@@ -1,4 +1,4 @@
-//! `revocations.json` — signed agent-cert revocation sidecar. Same
+//! `revocations.json` - signed agent-cert revocation sidecar. Same
 //! trust class as `fleet.resolved.json` (signed by `ciReleaseKey`).
 
 use chrono::{DateTime, Utc};

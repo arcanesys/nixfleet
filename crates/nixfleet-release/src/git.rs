@@ -1,4 +1,4 @@
-//! Git plumbing — shells out to `git`, never embeds a library.
+//! Git plumbing - shells out to `git`, never embeds a library.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -39,7 +39,7 @@ pub(crate) async fn handle_closure_signature_mismatch<R: Reporter>(
     tracing::error!(
         closure_hash = %closure_hash,
         stderr_tail = %stderr_tail,
-        "activation: closure signature mismatch — refused by nix substituter trust",
+        "activation: closure signature mismatch - refused by nix substituter trust",
     );
     let stderr_tail_sha256 =
         nixfleet_agent::evidence_signer::sha256_jcs(&stderr_tail).unwrap_or_default();

@@ -27,7 +27,7 @@ in {
         systemd service; it's only read when the operator invokes
         the subcommand.
 
-        Set on the operator's workstation only — `null` on every
+        Set on the operator's workstation only - `null` on every
         other host.
       '';
     };
@@ -42,7 +42,7 @@ in {
         operator certs. Public material; safe to live in the
         operator's home with mode 0644.
 
-        Set on the operator's workstation only — `null` elsewhere.
+        Set on the operator's workstation only - `null` elsewhere.
       '';
     };
 
@@ -56,7 +56,7 @@ in {
         operator certs. Never read by any systemd service; only the
         operator-invoked subcommand touches this path.
 
-        Set on the operator's workstation only — `null` elsewhere.
+        Set on the operator's workstation only - `null` elsewhere.
       '';
     };
   };

@@ -1,4 +1,4 @@
-# hostSpec — identity carrier for every host.
+# hostSpec - identity carrier for every host.
 {
   config,
   lib,
@@ -83,12 +83,12 @@
       '';
       description = ''
         Per-host host:guest port forwards for `mkVmApps`-driven QEMU runs
-        (issue #87). Keys are guest ports (as strings — Nix attribute
+        (issue #87). Keys are guest ports (as strings - Nix attribute
         names must be strings); values are host ports. SSH-on-22 always
         forwards via the auto-assigned `SSH_PORT` (or `--ssh-port`
-        override) — these are additional ports for guest services the
+        override) - these are additional ports for guest services the
         operator wants to reach from the host (web servers, control-plane
-        TLS, Forgejo, etc.). Empty by default — only consumed when the
+        TLS, Forgejo, etc.). Empty by default - only consumed when the
         host is run as a VM via `nixfleet build-vm` / `start-vm`.
       '';
     };

@@ -36,7 +36,7 @@ pub(crate) fn sign(cmd: &str, canonical: &[u8]) -> Result<Vec<u8>> {
 
     let sig = std::fs::read(output.path()).context("read signature output")?;
     if sig.is_empty() {
-        bail!("sign hook produced 0-byte signature — refusing to publish");
+        bail!("sign hook produced 0-byte signature - refusing to publish");
     }
     Ok(sig)
 }
@@ -46,8 +46,8 @@ pub(crate) fn sign(cmd: &str, canonical: &[u8]) -> Result<Vec<u8>> {
 pub(crate) fn smoke_verify(canonical: &[u8], signature: &[u8]) -> Result<()> {
     let parsed: FleetResolved = serde_json::from_slice(canonical)
         .context("smoke verify: canonical bytes don't parse as FleetResolved")?;
-    let recanonical = canonicalize_resolved(&parsed)
-        .context("smoke verify: re-canonicalize failed")?;
+    let recanonical =
+        canonicalize_resolved(&parsed).context("smoke verify: re-canonicalize failed")?;
     if recanonical.as_bytes() != canonical {
         bail!("smoke verify: canonicalization is not byte-stable round-trip");
     }
@@ -64,9 +64,8 @@ pub(crate) fn write_release(
     canonical: &[u8],
     signature: &[u8],
 ) -> Result<()> {
-    std::fs::create_dir_all(release_dir).with_context(|| {
-        format!("create release dir {}", release_dir.display())
-    })?;
+    std::fs::create_dir_all(release_dir)
+        .with_context(|| format!("create release dir {}", release_dir.display()))?;
     let artifact_path = release_dir.join(artifact_name);
     let signature_path = release_dir.join(format!("{artifact_name}.sig"));
     atomic_write(&artifact_path, canonical)?;

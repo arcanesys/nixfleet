@@ -1,10 +1,10 @@
 # TPM-backed signing keyslots. First-boot oneshot per named keyslot creates
 # a primary, evicts to a persistent handle, exports the pubkey. Idempotent
-# across impermanence wipes — re-extracts from the persisted handle.
+# across impermanence wipes - re-extracts from the persisted handle.
 #
 # Multi-keyslot (cfg.keys.<name>) coexist on one TPM at distinct handles.
 # Legacy singleton (top-level cfg.handle / algorithm) persists for
-# backward compat — synthesised as `cfg.keys.legacy` with pubkey at
+# backward compat - synthesised as `cfg.keys.legacy` with pubkey at
 # the top of `cfg.exportPubkeyDir`, not under a per-name subdirectory.
 {
   config,
@@ -53,7 +53,7 @@
           openssl pkey -pubin -in ${pemPath} -outform DER | tail -c 32 > ${rawPath}
         '';
         tpmSignHashArg = "-g sha256";
-        # ed25519 signature layout differs from ECDSA — caller must adapt.
+        # ed25519 signature layout differs from ECDSA - caller must adapt.
         extractRawSig = ''
           ${pkgs.coreutils}/bin/dd if="$1" bs=1 skip=6 count=64 status=none
         '';

@@ -27,12 +27,12 @@ rcgen = "0.13"
 sha2 = "0.10"
 base64 = "0.22"
 x509-parser = "0.16"
-# Root-3 — host probe-output signatures. The agent
+# Root-3 - host probe-output signatures. The agent
 # signs ComplianceFailure / RuntimeGateError event details with the
 # host's SSH ed25519 key so a third-party auditor (with fleet.nix
 # pubkey) can independently verify the chain. ssh-key parses
 # /etc/ssh/ssh_host_ed25519_key (OpenSSH PEM format); ed25519-dalek
-# does the actual signing. serde_jcs canonicalises the payload —
+# does the actual signing. serde_jcs canonicalises the payload  - 
 # matches the workspace's signing contract (CONTRACTS §III).
 ed25519-dalek = "2"
 ssh-key = { version = "0.6", features = ["ed25519"] }

@@ -11,14 +11,16 @@ use std::time::Duration;
 use anyhow::Result;
 use nixfleet_proto::agent_wire::EvaluatedTarget;
 
-// LOADBEARING: 300s must stay inside CP's DEFAULT_CONFIRM_DEADLINE_SECS=360 — exceeding splits state.
+// LOADBEARING: 300s must stay inside CP's DEFAULT_CONFIRM_DEADLINE_SECS=360 - exceeding splits state.
 pub const POLL_BUDGET: Duration = Duration::from_secs(300);
 pub const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub enum ActivationOutcome {
     FiredAndPolled,
-    RealiseFailed { reason: String },
+    RealiseFailed {
+        reason: String,
+    },
     /// Distinct from RealiseFailed so dashboards can route trust violations.
     SignatureMismatch {
         closure_hash: String,
@@ -29,14 +31,14 @@ pub enum ActivationOutcome {
         exit_code: Option<i32>,
     },
     /// `/run/current-system` flipped to a basename that is neither expected
-    /// nor pre-switch — caller rolls back.
+    /// nor pre-switch - caller rolls back.
     VerifyMismatch {
         expected: String,
         actual: String,
     },
     /// Profile flipped via `nix-env --set` but live switch was skipped because
     /// activating component `component` (dbus, systemd, kernel, init) on a
-    /// running system is unsafe — nixos-rebuild refuses the same. New gen
+    /// running system is unsafe - nixos-rebuild refuses the same. New gen
     /// activates on next boot.
     DeferredPendingReboot {
         component: String,
@@ -70,10 +72,10 @@ impl RollbackOutcome {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub use super::linux::LinuxBackend;
 #[cfg(target_os = "macos")]
 pub use super::darwin::DarwinBackend;
+#[cfg(target_os = "linux")]
+pub use super::linux::LinuxBackend;
 
 #[cfg(target_os = "linux")]
 pub type DefaultBackend = LinuxBackend;

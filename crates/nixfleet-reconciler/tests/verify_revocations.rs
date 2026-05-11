@@ -1,4 +1,4 @@
-//! `verify_revocations` — signature, freshness window, reject_before gate.
+//! `verify_revocations` - signature, freshness window, reject_before gate.
 
 mod common;
 
@@ -93,7 +93,8 @@ fn verify_revocations_rejects_unsigned() {
       "revocations": [],
       "schemaVersion": 1
     }"#;
-    let reserialized = serde_json::to_string(&serde_json::from_str::<serde_json::Value>(json).unwrap()).unwrap();
+    let reserialized =
+        serde_json::to_string(&serde_json::from_str::<serde_json::Value>(json).unwrap()).unwrap();
     let canonical = canonicalize(&reserialized).expect("canonicalize");
     let sig = signing_key.sign(canonical.as_bytes()).to_bytes();
     let err = verify_revocations(
@@ -162,15 +163,8 @@ fn verify_revocations_rejects_malformed_json() {
 fn verify_revocations_rejects_when_trust_roots_empty() {
     let (bytes, sig, _trust, signed_at) = sign_artifact(FIXTURE_REVOCATIONS);
     let now = signed_at + ChronoDuration::minutes(30);
-    let err = verify_revocations(
-        &bytes,
-        &sig,
-        &[],
-        now,
-        Duration::from_secs(3600),
-        None,
-    )
-    .unwrap_err();
+    let err =
+        verify_revocations(&bytes, &sig, &[], now, Duration::from_secs(3600), None).unwrap_err();
     assert!(
         matches!(err, VerifyError::NoTrustRoots),
         "empty trust roots → NoTrustRoots; got {err:?}"

@@ -1,6 +1,6 @@
 [package]
 name = "nixfleet-release"
-description = "Producer for fleet.resolved.json (CONTRACTS §I #1) — orchestrates build → inject closureHash → stamp meta → canonicalize → sign → release"
+description = "Producer for fleet.resolved.json (CONTRACTS §I #1) - orchestrates build → inject closureHash → stamp meta → canonicalize → sign → release"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

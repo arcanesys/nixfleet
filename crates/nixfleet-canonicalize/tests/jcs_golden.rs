@@ -10,7 +10,7 @@ fn jcs_golden_bytes_match() {
     let produced = canonicalize(GOLDEN_INPUT).expect("canonicalize golden input");
     assert_eq!(
         produced, GOLDEN_CANONICAL,
-        "JCS output drifted from golden — signature contract broken"
+        "JCS output drifted from golden - signature contract broken"
     );
 }
 

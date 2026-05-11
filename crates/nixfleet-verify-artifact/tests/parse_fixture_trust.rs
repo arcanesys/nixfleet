@@ -4,7 +4,7 @@ use nixfleet_proto::TrustConfig;
 
 #[test]
 fn trust_json_from_fixture_shape_parses() {
-    // LOADBEARING: byte-identical to the harness HEREDOC — update both together.
+    // LOADBEARING: byte-identical to the harness HEREDOC - update both together.
     let raw = r#"
     {
       "schemaVersion": 1,

@@ -35,16 +35,16 @@ pub struct HostStatusEntry {
     /// Per-host rollout state machine position for the channel's CURRENT
     /// rolloutId (computed from verified_fleet, not the agent-reported
     /// last_rollout_id which may be stale after a fresh deploy). `None`
-    /// when no DB row exists yet for the current rollout — a freshly
+    /// when no DB row exists yet for the current rollout - a freshly
     /// opened rollout shows None until the host transitions.
     #[serde(default)]
     pub rollout_state: Option<HostRolloutState>,
-    /// Agent posted `ActivationDeferred` for the host's current rollout —
+    /// Agent posted `ActivationDeferred` for the host's current rollout  -
     /// profile is set, but a critical-component swap forced a reboot to
     /// finish activation. Cleared once the host converges (post-reboot).
     #[serde(default)]
     pub pending_reboot: bool,
-    /// Agent posted `ClosureQuarantined` for the host's current rollout —
+    /// Agent posted `ClosureQuarantined` for the host's current rollout  -
     /// the closure_hash already failed activation and the agent has
     /// stopped retrying it. Operator surface for "this release is
     /// permanently broken on this host, fix it in CI". Cleared
@@ -60,10 +60,10 @@ pub struct HostStatusEntry {
     #[serde(default)]
     pub pin: Option<crate::Pin>,
     /// Count of health probes (issue #86) currently in non-Pass state on
-    /// this host's latest checkin — `Fail` and `Unknown` both count.
+    /// this host's latest checkin - `Fail` and `Unknown` both count.
     /// `0` when no probes are declared, all probes are passing, or the
     /// host's mode is permissive/disabled (no probe constraint surfaced
-    /// to the soak gate in those modes either — same semantics as
+    /// to the soak gate in those modes either - same semantics as
     /// `host_probes_passing` returning `true`).
     #[serde(default)]
     pub outstanding_health_failures: usize,
@@ -91,7 +91,7 @@ pub struct RolloutTraceEvent {
     pub wave: u32,
     pub target_closure_hash: String,
     pub target_channel_ref: String,
-    /// RFC3339 — kept as string because the DB writes it as text and
+    /// RFC3339 - kept as string because the DB writes it as text and
     /// re-parsing would mask malformed historical rows the operator
     /// needs to see.
     pub dispatched_at: String,

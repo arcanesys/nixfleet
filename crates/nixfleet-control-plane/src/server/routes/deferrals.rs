@@ -1,4 +1,4 @@
-//! `GET /v1/deferrals` — channels currently held by `channelEdges`.
+//! `GET /v1/deferrals` - channels currently held by `channelEdges`.
 //!
 //! Thin wrapper around `crate::state_view::compute_channel_deferrals`
 //! so the route handler and the Prometheus exporter read the same

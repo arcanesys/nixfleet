@@ -81,7 +81,7 @@ pub fn tick(inputs: &TickInputs) -> anyhow::Result<TickOutput> {
         Ok(fleet) => {
             let signed_at = fleet.meta.signed_at.ok_or_else(|| {
                 anyhow::anyhow!(
-                    "verified artifact lacks meta.signedAt despite §4 contract — verify layer bug",
+                    "verified artifact lacks meta.signedAt despite §4 contract - verify layer bug",
                 )
             })?;
             let ci_commit = fleet.meta.ci_commit.clone();

@@ -1,10 +1,10 @@
 //! Shared signing-payload shapes for host probe-output evidence.
-//! Adding a field invalidates existing signatures — bump signing version.
+//! Adding a field invalidates existing signatures - bump signing version.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-/// `evidence_snippet_sha256` hashes the JCS bytes of the snippet — keeps
+/// `evidence_snippet_sha256` hashes the JCS bytes of the snippet - keeps
 /// the signed payload bounded.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,7 +53,7 @@ pub struct RollbackTriggeredSignedPayload<'a> {
 /// the CP clamps `last_healthy_since` against during rebuild recovery.
 ///
 /// Without this signature the CP cannot trust the agent's claimed
-/// confirmation time — a compromised host could replay an older
+/// confirmation time - a compromised host could replay an older
 /// timestamp to short-circuit the soak gate. Verified against
 /// `hosts.<hostname>.pubkey` from fleet.resolved.
 #[derive(Debug, Clone, Serialize)]

@@ -85,7 +85,7 @@ EOF
 
   if command -v tokei >/dev/null 2>&1; then
     echo
-    echo "Per-crate (tokei, file-level counts — does not split inline tests):"
+    echo "Per-crate (tokei, file-level counts - does not split inline tests):"
     tokei --type Rust --sort lines --output table crates 2>/dev/null |
       awk '/^---/ {n++; if (n==2) exit} n==1 || /Rust/'
   elif command -v cloc >/dev/null 2>&1; then

@@ -34,7 +34,7 @@ wait_ssh() {
   # SAME key the operator passed via --identity-key (the one baked into
   # the ISO via nixfleet.isoSshKeys). Without -i + IdentitiesOnly=yes,
   # ssh tries the agent + ~/.ssh/id_*, then falls back to password auth
-  # and hangs at the prompt — fatal for non-interactive runs. Empty
+  # and hangs at the prompt - fatal for non-interactive runs. Empty
   # IDENTITY_KEY keeps the old behavior (default key discovery) for
   # operators who haven't opted into explicit identity passing.
   local identity_args=""
@@ -72,7 +72,7 @@ provision_identity_key() {
   if [ -n "$key_src" ]; then
     local vm_user
     vm_user="$(nix eval ".#nixosConfigurations.${host}.config.hostSpec.userName" --raw 2>/dev/null || echo "root")"
-    # Mirror the secrets impl's default `userKey` path —
+    # Mirror the secrets impl's default `userKey` path  -
     # `${hS.home}/.ssh/id_ed25519`. Both paths are written so
     # impermanent hosts (key bind-mounted from /persist/home/...)
     # and non-impermanent hosts (key in plain /home/...) work.
@@ -121,14 +121,14 @@ compute_vlan_args() {
 # Mirrors `compute_extra_hostfwd_args` (#87): consulted only when the
 # operator did NOT pass `--ram N` (i.e. RAM still equals the script-level
 # default). When the option is null/unset/eval fails, RAM keeps its
-# script-level default — silent fail-open matches `assign_port`'s posture.
+# script-level default - silent fail-open matches `assign_port`'s posture.
 # CLI override > hostSpec.vmRam > script default.
 compute_vm_ram() {
   local host="$1"
   local default_ram="$2"
   # Only consult hostSpec when the operator hasn't overridden via --ram.
   # We can't distinguish "operator passed --ram 1024" from "default
-  # 1024" — both are honored as "use the script default", which is the
+  # 1024" - both are honored as "use the script default", which is the
   # expected fallback behavior anyway.
   if [ -z "${RAM:-}" ] || [ "$RAM" = "$default_ram" ]; then
     local declared
@@ -142,7 +142,7 @@ compute_vm_ram() {
 # Issue #87: extra qemu hostfwd segments from `hostSpec.vmPortForwards`.
 # Emits a leading-comma string that gets concatenated onto the -nic
 # argument's hostfwd= chain. Empty when the host declares no extras or
-# the eval fails — silent fail-open matches `assign_port`'s posture
+# the eval fails - silent fail-open matches `assign_port`'s posture
 # (the SSH forward always lands).
 compute_extra_hostfwd_args() {
   local host="$1"

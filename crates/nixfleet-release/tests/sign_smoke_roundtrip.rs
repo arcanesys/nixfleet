@@ -63,8 +63,7 @@ fn end_to_end_sign_then_verify_artifact_accepts() {
     let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(signing_key.verifying_key());
 
     let resolved = dummy_resolved();
-    let canonical =
-        nixfleet_release::canonicalize_resolved(&resolved).expect("canonicalize");
+    let canonical = nixfleet_release::canonicalize_resolved(&resolved).expect("canonicalize");
     let canonical_bytes = canonical.as_bytes();
     let signature = signing_key.sign(canonical_bytes);
 
@@ -180,7 +179,10 @@ fn render_commit_message_substitutes_known_placeholders() {
         msg.contains("short=abc12345 "),
         "{{sha:0:8}} truncated to 8 chars: {msg}",
     );
-    assert!(msg.contains("2026-04-30T12:00:00"), "{{ts}} expanded: {msg}");
+    assert!(
+        msg.contains("2026-04-30T12:00:00"),
+        "{{ts}} expanded: {msg}"
+    );
 }
 
 #[test]
@@ -192,4 +194,3 @@ fn render_commit_message_short_sha_under_8_chars_passes_through() {
     let msg = nixfleet_release::render_commit_message("at {sha:0:8}", "HEAD", ts);
     assert_eq!(msg, "at HEAD", "short sha passes through untouched: {msg}");
 }
-

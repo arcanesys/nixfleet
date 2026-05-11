@@ -19,7 +19,7 @@ pub struct FleetResolved {
     pub edges: Vec<Edge>,
     /// Cross-channel ordering: a `before` channel must reach Converged
     /// before any new rollout opens on the `after` channel. RFC-0002 §4.3
-    /// — within-channel coordination uses `edges`; channel-level uses this.
+    /// - within-channel coordination uses `edges`; channel-level uses this.
     /// Cycles are rejected at mkFleet eval time.
     #[serde(default)]
     pub channel_edges: Vec<ChannelEdge>,
@@ -57,10 +57,10 @@ pub struct Pin {
     /// tag names work.
     pub commit: String,
     /// Free-form operator note (CVE ref, audit window, debug context).
-    /// Not parsed — surfaced verbatim in `nixfleet status` + dashboards.
+    /// Not parsed - surfaced verbatim in `nixfleet status` + dashboards.
     pub reason: String,
     /// Hard expiry. Pins past their `expiresAt` are filtered at mkFleet
-    /// eval time, so when this field is present here it's informational —
+    /// eval time, so when this field is present here it's informational  -
     /// the artifact already passed the filter at signing time. Operators
     /// reading the JSON can still see when the pin would have expired.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,7 +72,7 @@ pub struct Pin {
 pub struct Channel {
     pub rollout_policy: String,
     pub reconcile_interval_minutes: u32,
-    /// MINUTES (despite missing `_minutes` suffix — kept for wire-compat).
+    /// MINUTES (despite missing `_minutes` suffix - kept for wire-compat).
     /// Convert via [`Channel::freshness_window_duration`].
     pub freshness_window: u32,
     pub signing_interval_minutes: u32,
@@ -148,7 +148,7 @@ pub struct Selector {
 }
 
 impl Selector {
-    /// Match a single host. Mirrors `lib/mk-fleet.nix:resolveSelector` —
+    /// Match a single host. Mirrors `lib/mk-fleet.nix:resolveSelector`  -
     /// any rule that fires (all / hosts / channel / tags-all / tags-any)
     /// matches; sub-selector composition (and / not) is mkFleet-only and
     /// not exposed in the wire format.
@@ -250,13 +250,13 @@ pub struct Wave {
 
 /// Per-host DAG edge: `gated` host can dispatch only once `gates` host
 /// reaches terminal-for-ordering (Soaked / Converged) within the same
-/// rollout. Both hosts must be on the same channel — cross-channel
+/// rollout. Both hosts must be on the same channel - cross-channel
 /// ordering is `ChannelEdge`'s job (the gate operates within a single
 /// rollout's host_states; cross-channel pairs would silently brick the
 /// gated host).
 ///
 /// Schema note: pre-rev these were named `before`/`after`, where
-/// "before" actually meant "the gated host" (held back) — the
+/// "before" actually meant "the gated host" (held back) - the
 /// opposite of natural DAG reading. Renamed to `gated`/`gates` for
 /// clarity. Hard cutover: any pre-rename fleet.resolved bytes will
 /// fail to parse against this schema. Verified safe because lab is
@@ -279,7 +279,7 @@ pub struct Edge {
 /// both channels must exist, no cycles.
 /// Field semantics match the host-level `Edge` (gated/gates):
 ///
-///   `gates` is the predecessor channel — it must converge before any
+///   `gates` is the predecessor channel - it must converge before any
 ///   new rollout opens on `gated`. "gates" reads as "the channel that
 ///   gates dispatch on `gated`." `gated` reads as "the channel whose
 ///   dispatch is gated by `gates`."
@@ -290,10 +290,10 @@ pub struct Edge {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelEdge {
-    /// Predecessor channel. Was `before` — kept as serde alias.
+    /// Predecessor channel. Was `before` - kept as serde alias.
     #[serde(alias = "before")]
     pub gates: String,
-    /// Dependent channel — held until `gates` converges. Was `after`.
+    /// Dependent channel - held until `gates` converges. Was `after`.
     #[serde(alias = "after")]
     pub gated: String,
     #[serde(default)]
@@ -313,7 +313,7 @@ pub struct DisruptionBudget {
 }
 
 // LOADBEARING: signed_at + ci_commit serialize as `null` (no skip) to match
-// the Nix evaluator's shape — JCS byte-identity round-trip depends on it.
+// the Nix evaluator's shape - JCS byte-identity round-trip depends on it.
 // Only `signature_algorithm` is genuinely optional in the wire format.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -365,8 +365,14 @@ mod tests {
         };
         let bytes = serde_json::to_string(&edge).unwrap();
         // Canonical wire emits new field names.
-        assert!(bytes.contains("\"gates\":\"edge\""), "wire must use canonical 'gates' field; got {bytes}");
-        assert!(bytes.contains("\"gated\":\"stable\""), "wire must use canonical 'gated' field; got {bytes}");
+        assert!(
+            bytes.contains("\"gates\":\"edge\""),
+            "wire must use canonical 'gates' field; got {bytes}"
+        );
+        assert!(
+            bytes.contains("\"gated\":\"stable\""),
+            "wire must use canonical 'gated' field; got {bytes}"
+        );
         let back: ChannelEdge = serde_json::from_str(&bytes).unwrap();
         assert_eq!(back, edge);
     }

@@ -54,25 +54,25 @@
     apps.nixfleet = {
       type = "app";
       program = "${workspace.packages.nixfleet-cli}/bin/nixfleet";
-      meta.description = "Operator CLI — `nixfleet status`, planned: rollout trace + diff";
+      meta.description = "Operator CLI - `nixfleet status`, planned: rollout trace + diff";
     };
 
     apps.nixfleet-canonicalize = {
       type = "app";
       program = "${workspace.packages.nixfleet-canonicalize}/bin/nixfleet-canonicalize";
-      meta.description = "JCS canonicalizer — invoked by CI before signing (CONTRACTS.md §III)";
+      meta.description = "JCS canonicalizer - invoked by CI before signing (CONTRACTS.md §III)";
     };
 
     apps.nixfleet-verify-artifact = {
       type = "app";
       program = "${workspace.packages.nixfleet-verify-artifact}/bin/nixfleet-verify-artifact";
-      meta.description = "Harness CLI — verify a signed fleet.resolved against a trust.json";
+      meta.description = "Harness CLI - verify a signed fleet.resolved against a trust.json";
     };
 
     apps.nixfleet-release = {
       type = "app";
       program = "${workspace.packages.nixfleet-release}/bin/nixfleet-release";
-      meta.description = "Producer for fleet.resolved.json — build → inject closureHash → canonicalize → sign → release (CONTRACTS §I #1)";
+      meta.description = "Producer for fleet.resolved.json - build → inject closureHash → canonicalize → sign → release (CONTRACTS §I #1)";
     };
 
     devShells.default = craneLib.devShell {

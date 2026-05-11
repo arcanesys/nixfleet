@@ -4,10 +4,10 @@ use anyhow::{Context, Result};
 use nixfleet_proto::agent_wire::EvaluatedTarget;
 use tokio::process::Command;
 
-use super::types::ActivationBackend;
-use super::types::ActivationOutcome;
 use super::profile::self_correct_profile;
 use super::realise::{realise, RealiseError};
+use super::types::ActivationBackend;
+use super::types::ActivationOutcome;
 use super::verify_poll::{read_current_system_basename, PollOutcome, VerifyPoll};
 
 /// Tests inject a fake backend; production calls the `activate(target)` façade.
@@ -25,10 +25,11 @@ pub async fn activate_with<B: ActivationBackend>(
     if backend.is_switch_in_progress().await {
         tracing::info!(
             target_closure = %target.closure_hash,
-            "agent: skipping activation — another switch-to-configuration is in flight",
+            "agent: skipping activation - another switch-to-configuration is in flight",
         );
         return Ok(ActivationOutcome::RealiseFailed {
-            reason: "switch-to-configuration lock held by another process; will retry on next tick".to_string(),
+            reason: "switch-to-configuration lock held by another process; will retry on next tick"
+                .to_string(),
         });
     }
 
@@ -40,7 +41,7 @@ pub async fn activate_with<B: ActivationBackend>(
             tracing::error!(
                 target_closure = %target.closure_hash,
                 stderr_tail = %stderr_tail,
-                "agent: closure signature mismatch — refused by nix substituter trust",
+                "agent: closure signature mismatch - refused by nix substituter trust",
             );
             return Ok(ActivationOutcome::SignatureMismatch {
                 closure_hash: target.closure_hash.clone(),
@@ -67,13 +68,11 @@ pub async fn activate_with<B: ActivationBackend>(
             "agent: nix-store --realise returned an unexpected path; not switching",
         );
         return Ok(ActivationOutcome::RealiseFailed {
-            reason: format!(
-                "realised path {realised} does not match requested {store_path}",
-            ),
+            reason: format!("realised path {realised} does not match requested {store_path}",),
         });
     }
 
-    // LOADBEARING: set profile BEFORE fire — switch-to-configuration {boot,switch,test}
+    // LOADBEARING: set profile BEFORE fire - switch-to-configuration {boot,switch,test}
     // reads `/nix/var/nix/profiles/system` to derive the generation number it
     // writes into bootloader entries. The bootloader update itself happens
     // inside the backend's fire_switch (live switch on the happy path,
@@ -99,7 +98,7 @@ pub async fn activate_with<B: ActivationBackend>(
         });
     }
 
-    // LOADBEARING: pre-switch basename feeds flip-to-unexpected detection — abort if read fails.
+    // LOADBEARING: pre-switch basename feeds flip-to-unexpected detection - abort if read fails.
     let previous_basename = match read_current_system_basename().await {
         Ok(b) => b,
         Err(err) => {
@@ -118,7 +117,7 @@ pub async fn activate_with<B: ActivationBackend>(
         return Ok(outcome);
     }
 
-    // GOTCHA: SIGTERM mid-poll is OK — detached switch unit lands, boot-recovery confirms retroactively.
+    // GOTCHA: SIGTERM mid-poll is OK - detached switch unit lands, boot-recovery confirms retroactively.
     let expected = &target.closure_hash;
     match VerifyPoll::new(expected)
         .with_previous(&previous_basename)
@@ -126,7 +125,7 @@ pub async fn activate_with<B: ActivationBackend>(
         .await
     {
         PollOutcome::Settled => {
-            // GOTCHA: activation script may re-point profile after our set — self-correct or boot pointer drifts.
+            // GOTCHA: activation script may re-point profile after our set - self-correct or boot pointer drifts.
             if let Err(err) = self_correct_profile(&store_path).await {
                 tracing::warn!(
                     error = %err,
@@ -145,7 +144,7 @@ pub async fn activate_with<B: ActivationBackend>(
                 target_closure = %expected,
                 last_observed = %last_observed,
                 exit_code = ?exit_code,
-                "agent: switch poll timed out — declaring SwitchFailed",
+                "agent: switch poll timed out - declaring SwitchFailed",
             );
             Ok(ActivationOutcome::SwitchFailed {
                 phase: "switch-poll-timeout".to_string(),
@@ -157,7 +156,7 @@ pub async fn activate_with<B: ActivationBackend>(
                 target_closure = %expected,
                 actual = %observed,
                 previous = %previous_basename,
-                "agent: post-switch verify caught flip to unexpected closure — rolling back",
+                "agent: post-switch verify caught flip to unexpected closure - rolling back",
             );
             Ok(ActivationOutcome::VerifyMismatch {
                 expected: expected.clone(),

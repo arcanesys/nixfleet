@@ -29,7 +29,7 @@ pub struct Args {
     csr_pubkey_fingerprint: Option<String>,
 
     /// Path to the signed `releases/fleet.resolved.json`. When set, the
-    /// fingerprint is derived from `hosts.<hostname>.pubkey` —
+    /// fingerprint is derived from `hosts.<hostname>.pubkey`  -
     /// guarantees the token is scoped to whatever the operator
     /// declared in fleet.nix, no manual SHA-256 dance. Closes #9's
     /// "fingerprint binding declared in flake" ergonomics.
@@ -87,9 +87,9 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 fn read_signing_key(path: &PathBuf) -> Result<SigningKey> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("read org root key {}", path.display()))?;
-    // FOOTGUN: detect PEM before whitespace strip — strip would collapse BEGIN/body/END and break lines().
+    let bytes =
+        std::fs::read(path).with_context(|| format!("read org root key {}", path.display()))?;
+    // FOOTGUN: detect PEM before whitespace strip - strip would collapse BEGIN/body/END and break lines().
     if let Ok(orig) = std::str::from_utf8(&bytes) {
         if orig.trim_start().starts_with("-----BEGIN") {
             let body: String = orig
@@ -111,11 +111,15 @@ fn read_signing_key(path: &PathBuf) -> Result<SigningKey> {
         }
     }
 
-    let trimmed: Vec<u8> = bytes.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
+    let trimmed: Vec<u8> = bytes
+        .iter()
+        .copied()
+        .filter(|b| !b.is_ascii_whitespace())
+        .collect();
     if trimmed.len() == 32 {
         let arr: [u8; 32] = trimmed[..32]
             .try_into()
-            .expect("slice of length 32 fits [u8; 32] — len checked above");
+            .expect("slice of length 32 fits [u8; 32] - len checked above");
         return Ok(SigningKey::from_bytes(&arr));
     }
     if let Ok(s) = std::str::from_utf8(&trimmed) {
@@ -124,13 +128,11 @@ fn read_signing_key(path: &PathBuf) -> Result<SigningKey> {
             let raw = hex::decode(s).context("hex decode org root key")?;
             let arr: [u8; 32] = raw[..32]
                 .try_into()
-                .expect("hex decode of 64 chars yields 32 bytes — fits [u8; 32]");
+                .expect("hex decode of 64 chars yields 32 bytes - fits [u8; 32]");
             return Ok(SigningKey::from_bytes(&arr));
         }
     }
-    anyhow::bail!(
-        "couldn't parse org root key — expected 32 raw bytes, hex, or PEM PKCS#8"
-    );
+    anyhow::bail!("couldn't parse org root key - expected 32 raw bytes, hex, or PEM PKCS#8");
 }
 
 #[cfg(test)]
@@ -189,14 +191,11 @@ fn fingerprint_from_fleet(fleet_path: &PathBuf, hostname: &str) -> Result<String
     let fleet: nixfleet_proto::FleetResolved = serde_json::from_str(&raw)
         .with_context(|| format!("parse fleet.resolved.json {}", fleet_path.display()))?;
     let host = fleet.hosts.get(hostname).ok_or_else(|| {
-        anyhow::anyhow!(
-            "host {hostname} not declared in {}",
-            fleet_path.display()
-        )
+        anyhow::anyhow!("host {hostname} not declared in {}", fleet_path.display())
     })?;
     let openssh = host.pubkey.as_deref().ok_or_else(|| {
         anyhow::anyhow!(
-            "host {hostname} has no `pubkey` declared in fleet.nix — set it before minting"
+            "host {hostname} has no `pubkey` declared in fleet.nix - set it before minting"
         )
     })?;
     nixfleet_proto::host_key::fingerprint_openssh_pubkey(openssh)
@@ -264,8 +263,7 @@ mod fleet_resolved_tests {
         tmp.write_all(fleet_json.to_string().as_bytes()).unwrap();
 
         let got = fingerprint_from_fleet(&tmp.path().to_path_buf(), "test-host").unwrap();
-        let expected =
-            nixfleet_proto::host_key::fingerprint_openssh_pubkey(&openssh).unwrap();
+        let expected = nixfleet_proto::host_key::fingerprint_openssh_pubkey(&openssh).unwrap();
         assert_eq!(got, expected);
     }
 

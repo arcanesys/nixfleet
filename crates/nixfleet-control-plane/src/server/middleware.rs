@@ -15,7 +15,7 @@ use crate::auth::auth_cn::PeerCertificates;
 use super::state::AppState;
 
 /// `Retry-After` hint advertised on 503 not-ready responses. Tracks
-/// `channel_refs_poll::POLL_INTERVAL` (60 s) loosely — agents spread
+/// `channel_refs_poll::POLL_INTERVAL` (60 s) loosely - agents spread
 /// their retries across the hint so the next poll cycle has time to
 /// complete before they all reconnect.
 const NOT_READY_RETRY_AFTER_SECS: u32 = 30;
@@ -141,7 +141,7 @@ pub(super) async fn protocol_version_middleware(
         tracing::warn!("rejecting request without X-Nixfleet-Protocol (strict mode)");
         Err(StatusCode::BAD_REQUEST)
     } else {
-        tracing::debug!("request without X-Nixfleet-Protocol — accepting (forward-compat)");
+        tracing::debug!("request without X-Nixfleet-Protocol - accepting (forward-compat)");
         Ok(next.run(req).await)
     }
 }

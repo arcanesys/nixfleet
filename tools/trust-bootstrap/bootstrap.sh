@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# nixfleet-trust-bootstrap — operator tool that mints the offline fleet
+# nixfleet-trust-bootstrap - operator tool that mints the offline fleet
 # root CA and signs the TPM-bound issuance CA cert.
 #
 # Standing workflows: new-fleet stand-up, annual issuance-CA renewal,
@@ -141,10 +141,10 @@ for t in openssl ssh jq; do
 done
 
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$lab_host" true ||
-  die "ssh $lab_host failed — check connectivity / authorized_keys"
+  die "ssh $lab_host failed - check connectivity / authorized_keys"
 
 # shellcheck disable=SC2029
-# $tpm_pubkey_path expansion-on-client is intended — it's an operator-
+# $tpm_pubkey_path expansion-on-client is intended - it's an operator-
 # supplied path interpreted on the operator workstation.
 ssh "$lab_host" test -f "$tpm_pubkey_path" ||
   die "TPM keyslot pubkey not found at $tpm_pubkey_path on $lab_host.
@@ -176,7 +176,7 @@ if [[ -n $root_key ]]; then
   fi
 else
   if [[ -f $root_key_pem ]]; then
-    confirm "$root_key_pem already exists — overwrite?" ||
+    confirm "$root_key_pem already exists - overwrite?" ||
       die "aborted by user"
   fi
   echo "▸ generating fleet root CA (ECDSA P-256, ${root_validity_days}d)"
@@ -202,7 +202,7 @@ cleanup() {
 trap cleanup EXIT
 
 # shellcheck disable=SC2029
-# Same as above — operator-supplied path, intended local expansion.
+# Same as above - operator-supplied path, intended local expansion.
 ssh "$lab_host" cat "$tpm_pubkey_path" >"$tmp_pubkey_raw"
 
 # Verify length: P-256 raw point is 64 bytes (X || Y, no 0x04 prefix per
@@ -263,13 +263,13 @@ jq -n \
 
 # ── 8. operator README ───────────────────────────────────────────────
 cat >"$output_dir/README.txt" <<EOF
-nixfleet-trust-bootstrap output — generated $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+nixfleet-trust-bootstrap output - generated $(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
 CONTENT:
-  fleet-root.cert.pem        — root CA cert (publish via trust.json)
-  fleet-root.key.pem         — root CA private key (KEEP OFFLINE; mode 0600)
-  fleet-issuance-ca.cert.pem — issuance CA cert (ship to lab)
-  trust-snippet.json         — trust.json fragment to merge into fleet config
+  fleet-root.cert.pem        - root CA cert (publish via trust.json)
+  fleet-root.key.pem         - root CA private key (KEEP OFFLINE; mode 0600)
+  fleet-issuance-ca.cert.pem - issuance CA cert (ship to lab)
+  trust-snippet.json         - trust.json fragment to merge into fleet config
 
 NEXT STEPS (operator):
 

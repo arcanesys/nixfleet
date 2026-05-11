@@ -1,5 +1,5 @@
 {
-  "_comment": "Phase 2 demo fixture — a rollout is already in flight. Some hosts are Queued (haven't been dispatched yet); the reconciler should advance them to Dispatched if disruption budgets and edge predecessors permit. Useful for watching the per-host advance logic in the journal.",
+  "_comment": "Phase 2 demo fixture - a rollout is already in flight. Some hosts are Queued (haven't been dispatched yet); the reconciler should advance them to Dispatched if disruption budgets and edge predecessors permit. Useful for watching the per-host advance logic in the journal.",
   "channelRefs": {
     "stable": "abc123def456"
   },

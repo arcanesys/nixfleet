@@ -66,7 +66,7 @@ pub enum VerifyError {
 
     #[error(
         "future-dated artifact: signedAt={signed_at} is more than {slack_secs}s ahead of now={now} \
-         (clock skew tolerance is {slack_secs}s; pre-signing suggests CI key compromise — \
+         (clock skew tolerance is {slack_secs}s; pre-signing suggests CI key compromise - \
          rotate via reject_before)"
     )]
     FutureDated {
@@ -102,7 +102,7 @@ pub enum VerifyError {
 /// Verify any signed sidecar (fleet.resolved / revocations / rollout
 /// manifest). `trusted_keys` tried in declaration order, first match
 /// wins; unsupported algorithms skipped silently for forward-compat.
-/// `reject_before` is strict `<` — equality accepted.
+/// `reject_before` is strict `<` - equality accepted.
 pub fn verify_signed_sidecar<T: SignedSidecar + DeserializeOwned>(
     signed_bytes: &[u8],
     signature: &[u8],
@@ -111,8 +111,7 @@ pub fn verify_signed_sidecar<T: SignedSidecar + DeserializeOwned>(
     freshness_window: Duration,
     reject_before: Option<DateTime<Utc>>,
 ) -> Result<T, VerifyError> {
-    let canonical =
-        verify_signature_against_trust_roots(signed_bytes, signature, trusted_keys)?;
+    let canonical = verify_signature_against_trust_roots(signed_bytes, signature, trusted_keys)?;
     finish_sidecar_verification(&canonical, now, freshness_window, reject_before)
 }
 
@@ -135,7 +134,7 @@ pub fn verify_artifact(
     )
 }
 
-/// LOADBEARING: `verify_strict` (not `verify`) — rejects malleable signatures
+/// LOADBEARING: `verify_strict` (not `verify`) - rejects malleable signatures
 /// for root-of-trust keys.
 fn verify_ed25519(
     canonical_bytes: &[u8],
@@ -264,7 +263,7 @@ pub fn verify_rollout_manifest(
 
 /// SHA-256 hex of JCS-canonical bytes of any serialisable value.
 ///
-/// FOOTGUN: this is the **producer** path — caller has the parsed struct
+/// FOOTGUN: this is the **producer** path - caller has the parsed struct
 /// and wants the canonical-hash of what they would emit. **Verifiers must
 /// not use this**; re-serializing a parsed struct silently drops fields
 /// the consumer's proto doesn't know about, breaking content-addressing
@@ -273,8 +272,7 @@ pub fn verify_rollout_manifest(
 /// paths that have the original received bytes.
 pub fn compute_canonical_hash<T: serde::Serialize>(value: &T) -> Result<String, VerifyError> {
     let raw = serde_json::to_string(value)?;
-    let canonical =
-        nixfleet_canonicalize::canonicalize(&raw).map_err(VerifyError::Canonicalize)?;
+    let canonical = nixfleet_canonicalize::canonicalize(&raw).map_err(VerifyError::Canonicalize)?;
     let digest = Sha256::digest(canonical.as_bytes());
     Ok(hex_lowercase(&digest))
 }
@@ -282,7 +280,7 @@ pub fn compute_canonical_hash<T: serde::Serialize>(value: &T) -> Result<String, 
 /// SHA-256 hex of JCS-canonical bytes, computed from raw input bytes.
 /// `canonicalize` is idempotent on canonical input; running it here is
 /// a defensive normaliser against transport-layer alterations
-/// (whitespace, BOM, etc.). Critically, no parse step — fields the
+/// (whitespace, BOM, etc.). Critically, no parse step - fields the
 /// caller's proto doesn't know about are preserved in the canonical
 /// bytes. This is the verify-side function: same hash as the producer
 /// computed regardless of any additive proto drift between them.
@@ -290,8 +288,7 @@ pub fn canonical_hash_from_bytes(bytes: &[u8]) -> Result<String, VerifyError> {
     let s = std::str::from_utf8(bytes).map_err(|err| {
         VerifyError::Canonicalize(anyhow::anyhow!("input not valid UTF-8: {err}"))
     })?;
-    let canonical =
-        nixfleet_canonicalize::canonicalize(s).map_err(VerifyError::Canonicalize)?;
+    let canonical = nixfleet_canonicalize::canonicalize(s).map_err(VerifyError::Canonicalize)?;
     let digest = Sha256::digest(canonical.as_bytes());
     Ok(hex_lowercase(&digest))
 }
@@ -301,7 +298,7 @@ pub fn compute_rollout_id(manifest: &RolloutManifest) -> Result<String, VerifyEr
     compute_canonical_hash(manifest)
 }
 
-/// Verify-side rolloutId — hashes the received manifest bytes.
+/// Verify-side rolloutId - hashes the received manifest bytes.
 /// Cross-version safe: an older verifier's proto missing fields the
 /// producer added still computes the same hash because parsing is not
 /// in the path.
@@ -395,7 +392,7 @@ fn finish_sidecar_verification<T: SignedSidecar + DeserializeOwned>(
     }
 
     let window = ChronoDuration::from_std(freshness_window)
-        .expect("freshness_window fits in i64 nanoseconds — multi-century windows are a bug");
+        .expect("freshness_window fits in i64 nanoseconds - multi-century windows are a bug");
     let effective_window = window + ChronoDuration::seconds(CLOCK_SKEW_SLACK_SECS);
     let elapsed = now - signed_at;
     if elapsed > effective_window {
