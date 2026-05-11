@@ -1,9 +1,7 @@
 #![allow(clippy::doc_lazy_continuation)]
-//! JCS canonicalization (RFC 8785).
-//!
-//! LOADBEARING: every signer and verifier in the fleet routes through this
-//! module. Do not reimplement in Nix, shell, or ad-hoc Rust - drift here
-//! invalidates signatures fleet-wide.
+//! JCS canonicalization (RFC 8785). LOADBEARING: every signer and verifier
+//! routes through here - do not reimplement, drift invalidates signatures
+//! fleet-wide.
 
 use anyhow::{Context, Result};
 use serde::Serialize;
