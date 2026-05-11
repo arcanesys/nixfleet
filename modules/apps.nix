@@ -198,6 +198,19 @@
         echo -e "''${GREEN}Passed: $PASS''${NC}  ''${RED}Failed: $FAIL''${NC}  ''${YELLOW}Skipped: $SKIP''${NC}"
         if [ "$FAIL" -gt 0 ]; then exit 1; fi
       '';
+
+      "docs" = mkScript "docs" "Build the mdbook documentation at docs/mdbook/book/" ''
+        set -euo pipefail
+        cd "$(git rev-parse --show-toplevel)"
+        ${pkgs.mdbook}/bin/mdbook build docs/mdbook
+        echo "Book built at docs/mdbook/book/index.html"
+      '';
+
+      "docs-serve" = mkScript "docs-serve" "Serve the mdbook documentation locally" ''
+        set -euo pipefail
+        cd "$(git rev-parse --show-toplevel)"
+        ${pkgs.mdbook}/bin/mdbook serve --open docs/mdbook
+      '';
     };
   };
 }
