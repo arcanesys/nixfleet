@@ -1,0 +1,127 @@
+{
+    "channelEdges": [],
+    "channels": {
+        "edge": {
+            "compliance": {
+                "frameworks": [],
+                "mode": "enforce"
+            },
+            "freshnessWindow": 240,
+            "reconcileIntervalMinutes": 30,
+            "rolloutPolicy": "all",
+            "signingIntervalMinutes": 60
+        },
+        "stable": {
+            "compliance": {
+                "frameworks": [],
+                "mode": "enforce"
+            },
+            "freshnessWindow": 180,
+            "reconcileIntervalMinutes": 30,
+            "rolloutPolicy": "all",
+            "signingIntervalMinutes": 60
+        }
+    },
+    "disruptionBudgets": [
+        {
+            "maxInFlight": 1,
+            "maxInFlightPct": null,
+            "selector": {
+                "all": false,
+                "and": [],
+                "channel": null,
+                "hosts": [],
+                "not": null,
+                "tags": [
+                    "paris"
+                ],
+                "tagsAny": []
+            }
+        },
+        {
+            "maxInFlight": 1,
+            "maxInFlightPct": null,
+            "selector": {
+                "all": false,
+                "and": [],
+                "channel": null,
+                "hosts": [],
+                "not": null,
+                "tags": [
+                    "lyon"
+                ],
+                "tagsAny": []
+            }
+        }
+    ],
+    "edges": [],
+    "hosts": {
+        "lyon-1": {
+            "channel": "edge",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "lyon",
+                "eu-fr"
+            ]
+        },
+        "paris-1": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "paris",
+                "eu-fr"
+            ]
+        }
+    },
+    "meta": {
+        "ciCommit": null,
+        "schemaVersion": 1,
+        "signedAt": null
+    },
+    "rolloutPolicies": {
+        "all": {
+            "healthGate": {},
+            "onHealthFailure": "rollback-and-halt",
+            "strategy": "all-at-once",
+            "waves": [
+                {
+                    "selector": {
+                        "all": true,
+                        "and": [],
+                        "channel": null,
+                        "hosts": [],
+                        "not": null,
+                        "tags": [],
+                        "tagsAny": []
+                    },
+                    "soakMinutes": 0
+                }
+            ]
+        }
+    },
+    "schemaVersion": 1,
+    "waves": {
+        "edge": [
+            {
+                "hosts": [
+                    "lyon-1",
+                    "paris-1"
+                ],
+                "soakMinutes": 0
+            }
+        ],
+        "stable": [
+            {
+                "hosts": [
+                    "lyon-1",
+                    "paris-1"
+                ],
+                "soakMinutes": 0
+            }
+        ]
+    }
+}

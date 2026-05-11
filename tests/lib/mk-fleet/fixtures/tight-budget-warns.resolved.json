@@ -1,0 +1,171 @@
+{
+    "channelEdges": [],
+    "channels": {
+        "stable": {
+            "compliance": {
+                "frameworks": [],
+                "mode": "enforce"
+            },
+            "freshnessWindow": 180,
+            "reconcileIntervalMinutes": 30,
+            "rolloutPolicy": "all-at-once",
+            "signingIntervalMinutes": 60
+        }
+    },
+    "disruptionBudgets": [
+        {
+            "maxInFlight": 1,
+            "maxInFlightPct": null,
+            "selector": {
+                "all": false,
+                "and": [],
+                "channel": null,
+                "hosts": [],
+                "not": null,
+                "tags": [
+                    "etcd"
+                ],
+                "tagsAny": []
+            }
+        }
+    ],
+    "edges": [],
+    "hosts": {
+        "host-1": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "etcd"
+            ]
+        },
+        "host-10": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "etcd"
+            ]
+        },
+        "host-2": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "etcd"
+            ]
+        },
+        "host-3": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "etcd"
+            ]
+        },
+        "host-4": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "etcd"
+            ]
+        },
+        "host-5": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "etcd"
+            ]
+        },
+        "host-6": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "etcd"
+            ]
+        },
+        "host-7": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "etcd"
+            ]
+        },
+        "host-8": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "etcd"
+            ]
+        },
+        "host-9": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "etcd"
+            ]
+        }
+    },
+    "meta": {
+        "ciCommit": null,
+        "schemaVersion": 1,
+        "signedAt": null
+    },
+    "rolloutPolicies": {
+        "all-at-once": {
+            "healthGate": {},
+            "onHealthFailure": "rollback-and-halt",
+            "strategy": "all-at-once",
+            "waves": [
+                {
+                    "selector": {
+                        "all": true,
+                        "and": [],
+                        "channel": null,
+                        "hosts": [],
+                        "not": null,
+                        "tags": [],
+                        "tagsAny": []
+                    },
+                    "soakMinutes": 0
+                }
+            ]
+        }
+    },
+    "schemaVersion": 1,
+    "waves": {
+        "stable": [
+            {
+                "hosts": [
+                    "host-1",
+                    "host-10",
+                    "host-2",
+                    "host-3",
+                    "host-4",
+                    "host-5",
+                    "host-6",
+                    "host-7",
+                    "host-8",
+                    "host-9"
+                ],
+                "soakMinutes": 0
+            }
+        ]
+    }
+}

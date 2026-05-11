@@ -1,0 +1,98 @@
+{
+    "channelEdges": [],
+    "channels": {
+        "stable": {
+            "compliance": {
+                "frameworks": [],
+                "mode": "enforce"
+            },
+            "freshnessWindow": 180,
+            "reconcileIntervalMinutes": 30,
+            "rolloutPolicy": "default",
+            "signingIntervalMinutes": 60
+        }
+    },
+    "disruptionBudgets": [],
+    "edges": [],
+    "hosts": {
+        "edge-01": {
+            "channel": "stable",
+            "closureHash": null,
+            "pin": {
+                "commit": "channel-level-9876fed",
+                "expiresAt": null,
+                "reason": "stable lags edge by N commits"
+            },
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": []
+        },
+        "web-01": {
+            "channel": "stable",
+            "closureHash": null,
+            "pin": {
+                "commit": "host-level-abc1234",
+                "expiresAt": null,
+                "reason": "investigating CVE-2026-9999"
+            },
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "infra"
+            ]
+        },
+        "web-02": {
+            "channel": "stable",
+            "closureHash": null,
+            "pin": {
+                "commit": "tag-level-def5678",
+                "expiresAt": null,
+                "reason": "audit-window freeze"
+            },
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "infra"
+            ]
+        }
+    },
+    "meta": {
+        "ciCommit": null,
+        "schemaVersion": 1,
+        "signedAt": null
+    },
+    "rolloutPolicies": {
+        "default": {
+            "healthGate": {},
+            "onHealthFailure": "rollback-and-halt",
+            "strategy": "canary",
+            "waves": [
+                {
+                    "selector": {
+                        "all": true,
+                        "and": [],
+                        "channel": null,
+                        "hosts": [],
+                        "not": null,
+                        "tags": [],
+                        "tagsAny": []
+                    },
+                    "soakMinutes": 0
+                }
+            ]
+        }
+    },
+    "schemaVersion": 1,
+    "waves": {
+        "stable": [
+            {
+                "hosts": [
+                    "edge-01",
+                    "web-01",
+                    "web-02"
+                ],
+                "soakMinutes": 0
+            }
+        ]
+    }
+}

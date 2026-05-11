@@ -1,0 +1,95 @@
+{
+    "channelEdges": [],
+    "channels": {
+        "stable": {
+            "compliance": {
+                "frameworks": [],
+                "mode": "enforce"
+            },
+            "freshnessWindow": 180,
+            "reconcileIntervalMinutes": 30,
+            "rolloutPolicy": "skip-deprecated",
+            "signingIntervalMinutes": 60
+        }
+    },
+    "disruptionBudgets": [],
+    "edges": [],
+    "hosts": {
+        "a": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "web"
+            ]
+        },
+        "b": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "web",
+                "deprecated"
+            ]
+        },
+        "c": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "web"
+            ]
+        }
+    },
+    "meta": {
+        "ciCommit": null,
+        "schemaVersion": 1,
+        "signedAt": null
+    },
+    "rolloutPolicies": {
+        "skip-deprecated": {
+            "healthGate": {},
+            "onHealthFailure": "rollback-and-halt",
+            "strategy": "all-at-once",
+            "waves": [
+                {
+                    "selector": {
+                        "all": false,
+                        "and": [],
+                        "channel": null,
+                        "hosts": [],
+                        "not": {
+                            "all": false,
+                            "and": [],
+                            "channel": null,
+                            "hosts": [],
+                            "not": null,
+                            "tags": [
+                                "deprecated"
+                            ],
+                            "tagsAny": []
+                        },
+                        "tags": [],
+                        "tagsAny": []
+                    },
+                    "soakMinutes": 0
+                }
+            ]
+        }
+    },
+    "schemaVersion": 1,
+    "waves": {
+        "stable": [
+            {
+                "hosts": [
+                    "a",
+                    "c"
+                ],
+                "soakMinutes": 0
+            }
+        ]
+    }
+}

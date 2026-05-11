@@ -1,0 +1,119 @@
+{
+    "channelEdges": [],
+    "channels": {
+        "stable": {
+            "compliance": {
+                "frameworks": [],
+                "mode": "enforce"
+            },
+            "freshnessWindow": 180,
+            "reconcileIntervalMinutes": 30,
+            "rolloutPolicy": "eu-servers-only",
+            "signingIntervalMinutes": 60
+        }
+    },
+    "disruptionBudgets": [],
+    "edges": [],
+    "hosts": {
+        "eu-server": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "eu-fr",
+                "server"
+            ]
+        },
+        "eu-workstation": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "eu-fr",
+                "workstation"
+            ]
+        },
+        "sensor": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "aarch64-linux",
+            "tags": [
+                "eu-fr",
+                "sensor"
+            ]
+        },
+        "us-server": {
+            "channel": "stable",
+            "closureHash": null,
+            "pubkey": null,
+            "system": "x86_64-linux",
+            "tags": [
+                "us-east",
+                "server"
+            ]
+        }
+    },
+    "meta": {
+        "ciCommit": null,
+        "schemaVersion": 1,
+        "signedAt": null
+    },
+    "rolloutPolicies": {
+        "eu-servers-only": {
+            "healthGate": {},
+            "onHealthFailure": "rollback-and-halt",
+            "strategy": "all-at-once",
+            "waves": [
+                {
+                    "selector": {
+                        "all": false,
+                        "and": [
+                            {
+                                "all": false,
+                                "and": [],
+                                "channel": null,
+                                "hosts": [],
+                                "not": null,
+                                "tags": [
+                                    "eu-fr"
+                                ],
+                                "tagsAny": []
+                            },
+                            {
+                                "all": false,
+                                "and": [],
+                                "channel": null,
+                                "hosts": [],
+                                "not": null,
+                                "tags": [
+                                    "server"
+                                ],
+                                "tagsAny": []
+                            }
+                        ],
+                        "channel": null,
+                        "hosts": [],
+                        "not": null,
+                        "tags": [],
+                        "tagsAny": []
+                    },
+                    "soakMinutes": 0
+                }
+            ]
+        }
+    },
+    "schemaVersion": 1,
+    "waves": {
+        "stable": [
+            {
+                "hosts": [
+                    "eu-server"
+                ],
+                "soakMinutes": 0
+            }
+        ]
+    }
+}
