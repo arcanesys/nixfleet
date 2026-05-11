@@ -16,9 +16,6 @@ pub mod state_view;
 pub mod timers;
 pub mod tls;
 
-#[cfg(test)]
-mod lifecycle_parity_tests;
-
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;

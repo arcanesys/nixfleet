@@ -2,8 +2,6 @@
 //! The two modes legitimately diverge only on truly-missing predecessor data
 //! (conservative vs permissive); every other stage must agree.
 
-#![cfg(test)]
-
 use std::collections::HashSet;
 
 use chrono::Utc;
@@ -13,8 +11,8 @@ use nixfleet_reconciler::gates::{evaluate_for_host, GateBlock, GateInput, GateMo
 use nixfleet_reconciler::observed::{Observed, Rollout};
 use nixfleet_reconciler::{HostRolloutState, RolloutState};
 
-use crate::db::{Db, DispatchInsert};
-use crate::state::HealthyMarker;
+use nixfleet_control_plane::db::{Db, DispatchInsert};
+use nixfleet_control_plane::state::HealthyMarker;
 
 // Fixture: edge ─→ stable. lab on edge (server, wave 0), krach on
 // stable (dev, wave 0). Smallest shape exercising channelEdges +
@@ -53,7 +51,7 @@ fn fleet() -> FleetResolved {
 /// arbitrary rids (`R-edge`, `R-stable`) that don't match a
 /// `compute_rollout_id_for_channel` output.
 fn build_observed(db: &Db) -> Observed {
-    let active_rollouts: Vec<Rollout> = crate::observed_view::list_active_rollouts(db)
+    let active_rollouts: Vec<Rollout> = nixfleet_control_plane::observed_view::list_active_rollouts(db)
         .into_iter()
         .map(|s| Rollout {
             id: s.rollout_id,
