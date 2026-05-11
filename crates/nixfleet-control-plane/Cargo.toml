@@ -134,7 +134,7 @@ rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-p
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 # /v1/enroll signature-verification test: mint a real ed25519 keypair
 # operator-side, sign claims, post the token. Mirrors what
-# nixfleet-mint-token does on the operator workstation.
+# nixfleet mint-token does on the operator workstation.
 # `rand` is already in [dependencies] (rand_suffix); not re-listed.
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 hex = "0.4"

@@ -30,9 +30,9 @@ nh os switch .#lab --target-host root@lab --use-remote-sudo
 
 ```sh
 # On an operator workstation (krach or aether — both have nixfleet.operator)
-nixfleet-mint-token \
+nixfleet mint-token \
   --hostname newhost \
-  --expected-pubkey-fingerprint <SHA-256-base64-of-newhost-pubkey> \
+  --csr-pubkey-fingerprint <SHA-256-base64-of-newhost-pubkey> \
   --org-root-key /run/agenix/org-root-key \
   > newhost-token.json
 

@@ -6,11 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [Semantic V
 
 ### Operator mTLS cert mint from offline fleet root (2026-05-11)
 
-Operators had no first-class way to issue themselves a CP-recognised mTLS client cert without hand-driving `openssl x509 -req`, juggling the offline root key path, picking an algorithm that matches the issuance-CA chain, and remembering to chmod the private key. Shipping `nixfleet-mint-operator-cert` as a dedicated bin and wiring the fleet root paths through the operator scope so the daily mint takes one command with zero flags.
+Operators had no first-class way to issue themselves a CP-recognised mTLS client cert without hand-driving `openssl x509 -req`, juggling the offline root key path, picking an algorithm that matches the issuance-CA chain, and remembering to chmod the private key. Shipping `nixfleet mint-operator-cert` as a subcommand of the umbrella binary and wiring the fleet root paths through the operator scope so the daily mint takes one command with zero flags.
 
 #### Added
 
-- **`nixfleet-mint-operator-cert`** bin in `nixfleet-cli`. Mints a `clientAuth`-EKU X.509 cert (ECDSA-P-256, 365d default validity, default `CN=operator-${USER}@${HOSTNAME}`) signed by the offline fleet root. Output defaults to `~/.config/nixfleet/operator.{cert,key}.pem` with mode `0644` / `0600` on Unix. Atomic write (write-to-tmp + `rename`) so a crash mid-write can't leave a partial cert at the canonical path.
+- **`nixfleet mint-operator-cert`** subcommand of the `nixfleet` umbrella binary. Mints a `clientAuth`-EKU X.509 cert (ECDSA-P-256, 365d default validity, default `CN=operator-${USER}@${HOSTNAME}`) signed by the offline fleet root. Output defaults to `~/.config/nixfleet/operator.{cert,key}.pem` with mode `0644` / `0600` on Unix. Atomic write (write-to-tmp + `rename`) so a crash mid-write can't leave a partial cert at the canonical path.
 - **Path resolution chain** for the offline material: `--root-cert` / `--root-key` flag → `NIXFLEET_OPERATOR_FLEET_ROOT_CERT_FILE` / `NIXFLEET_OPERATOR_FLEET_ROOT_KEY_FILE` env → convention default `~/.config/nixfleet/fleet-root.{cert,key}.pem`. Same three-tier shape used elsewhere in the CLI for config (`--cp-url` → `NIXFLEET_CP_URL` → `config.toml`).
 - **`nixfleet.operator.fleetRootCertFile`** and **`nixfleet.operator.fleetRootKeyFile`** options in `modules/scopes/nixfleet/_operator.nix`. `nullOr str`, default `null`. When the operator scope is enabled and these are set, the corresponding `NIXFLEET_OPERATOR_FLEET_ROOT_*_FILE` env vars are exported system-wide so the bin picks the material up automatically — no per-invocation flags on declared operator workstations.
 - **`--force` flag** on the mint bin: refuse to overwrite existing output files unless explicitly authorised. Default behaviour exits non-zero on collision so a stray mint can't clobber an in-use cert.
@@ -20,7 +20,7 @@ Operators had no first-class way to issue themselves a CP-recognised mTLS client
 
 ```bash
 # Operator scope enabled + fleetRoot{Cert,Key}File set → zero-flag mint
-nixfleet-mint-operator-cert
+nixfleet mint-operator-cert
 # minted operator cert
 #   cn:          operator-s33d@krach
 #   valid until: 2027-05-11T13:18:42Z (365 days)
@@ -35,7 +35,21 @@ The bin runs entirely offline — it reads the root cert + key from disk, genera
 
 - The fleet root key stays where it is — operator's home directory, mode `0600`, not under agenix. The root is an offline ceremony key signed by the bin a few times a year per operator; agenix is the wrong fit (encrypts for fleet hosts, but only the operator workstation should ever touch the root).
 - For the CP-side trust setup that accepts these minted certs, see `services.nixfleet-control-plane.tls.clientCa` (existing — no change in this entry). The fleet-side CA bundle must include the offline root for `webpki` to anchor the operator cert chain.
-- Daily-driver operator surface is now: `nixfleet` (status + rollout trace + config init), `nixfleet-mint-token`, `nixfleet-derive-pubkey`, `nixfleet-mint-operator-cert`. `nixfleet-trust-bootstrap` is a ceremony tool, kept out of the operator scope's PATH and invoked via `nix run`.
+- Daily-driver operator surface is now a single `nixfleet` binary with subcommands: `status`, `rollout trace`, `config init`, `derive-pubkey`, `mint-token`, `mint-operator-cert`. `nixfleet-trust-bootstrap` remains a ceremony tool, kept out of the operator scope's PATH and invoked via `nix run`.
+
+### v0.2 structural cleanup bundle (2026-05-11)
+
+Before v0.3 RFCs (TPM-bound identity, trust lifecycle, freshness hardening, air-gapped bundles) layer ~3-6k LOC of new mechanism on top, consolidate the v0.2 operator surface and trim accreted structure in the control plane. No behavior change on default build.
+
+#### Changed (breaking — operator-facing)
+
+- **`nixfleet-mint-token`, `nixfleet-mint-operator-cert`, `nixfleet-derive-pubkey` are now subcommands of `nixfleet`.** The three standalone binaries are gone from `${pkgs.nixfleet-cli}/bin/`; the umbrella `nixfleet` binary acquires three new subcommands with identical flags + behavior. Consumer migration: replace `${pkgs.nixfleet-cli}/bin/nixfleet-mint-X args...` with `${pkgs.nixfleet-cli}/bin/nixfleet mint-X args...`. The auditor-facing binaries (`nixfleet-canonicalize`, `nixfleet-verify-artifact`) and CI producer (`nixfleet-release`) are deliberately preserved standalone — the lean offline closure for third-party verification stays intact.
+
+#### Changed (internal — no behavior change)
+
+- **Prometheus metrics are now a default-on Cargo feature.** `metrics` and `metrics-exporter-prometheus` are optional deps activated by the `metrics` feature on `nixfleet-control-plane` (default `["metrics"]`). Default builds are byte-identical; `cargo build --no-default-features` drops both deps from the dep tree and `/metrics` returns 404. Recording functions (`record_compliance_event`, `record_runtime_gate_error`, `record_gate_block`, `record_build_info`) have no-op stubs under `#[cfg(not(feature = "metrics"))]` so the four call sites scattered across `server/mod.rs`, `routes/reports.rs`, `routes/metrics.rs`, and `checkin_pipeline/dispatch_target.rs` are unchanged.
+- **`lifecycle_parity_tests.rs` moved from `src/` to `tests/`** in `nixfleet-control-plane`. Integration-test code lived at the crate's module root; relocating to the standard Rust convention and rewriting imports from `crate::*` to `nixfleet_control_plane::*` doubles as a public-surface check.
+- **`deferrals_view.rs` merged into `state_view.rs`** in `nixfleet-control-plane`. Two top-level read-models (`/v1/hosts` rows + `/v1/deferrals` rows) shared the same `verified_fleet` snapshot + `observed_view` projection; collapsing into one file removes the duplicate preamble and matches the convention that one file owns one domain.
 
 ### `nixfleet-cp-bootstrap` → `nixfleet-trust-bootstrap` rename (2026-05-09)
 

@@ -105,7 +105,7 @@
       example = "/run/secrets/bootstrap-token-host-01";
       description = ''
         Path to a one-shot bootstrap token (operator-minted by
-        `nixfleet-mint-token`, signed with the org root key). Used
+        `nixfleet mint-token`, signed with the org root key). Used
         by the agent's first-boot enrollment flow only — once the
         cert exists at `tls.clientCert`, the token is never read
         again. Renewal at 50% of cert validity uses the existing

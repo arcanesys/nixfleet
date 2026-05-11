@@ -645,7 +645,7 @@ Bridges, NAT, dnsmasq DHCP. Default bridge `nixfleet-br0`, `10.42.0.1/24`. The m
 
 #### `_operator.nix` — workstation tools
 
-Adds `nixfleet-cli` (`nixfleet`, `nixfleet-mint-token`, `nixfleet-derive-pubkey`) to `environment.systemPackages`. Optional `orgRootKeyFile` exposed via `NIXFLEET_OPERATOR_ORG_ROOT_KEY`. **Crucially**: the org root *private* key is encrypted to the operator user only; the CP never decrypts it (it only verifies token signatures with the public half declared in `config.nixfleet.trust.orgRootKey.current`).
+Adds `nixfleet-cli` (`nixfleet`, with subcommands `mint-token`, `derive-pubkey`, `mint-operator-cert`) to `environment.systemPackages`. Optional `orgRootKeyFile` exposed via `NIXFLEET_OPERATOR_ORG_ROOT_KEY`. **Crucially**: the org root *private* key is encrypted to the operator user only; the CP never decrypts it (it only verifies token signatures with the public half declared in `config.nixfleet.trust.orgRootKey.current`).
 
 #### `_trust-json.nix` — shared trust serialiser
 
@@ -808,7 +808,7 @@ Background tasks: `reconcile_loop` (30s), `channel_refs_poll` (60s — full `ver
 
 #### `nixfleet-cli` — operator workstation tools
 
-Two short, single-purpose binaries. `nixfleet-mint-token` reads the org root private key (32 raw bytes / hex / PEM PKCS#8), generates a nonce, builds `TokenClaims`, JCS-canonicalises, ed25519-signs, outputs the bootstrap-token JSON. `nixfleet-derive-pubkey` reads a private key file and emits the base64 ed25519 pubkey — used once when bootstrapping the org root key.
+An umbrella binary with operator subcommands. `nixfleet mint-token` reads the org root private key (32 raw bytes / hex / PEM PKCS#8), generates a nonce, builds `TokenClaims`, JCS-canonicalises, ed25519-signs, outputs the bootstrap-token JSON. `nixfleet derive-pubkey` reads a private key file and emits the base64 ed25519 pubkey — used once when bootstrapping the org root key. `nixfleet mint-operator-cert` mints a `clientAuth`-EKU X.509 cert signed by the offline fleet root for operator mTLS access.
 
 There is no big "fleet management" CLI in the open kernel — operations happen through git commits and CI, not CLI commands.
 

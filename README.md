@@ -104,16 +104,16 @@ Fleet rollouts are git-driven: commit → CI builds and signs → CP polls `flee
 
 ### Enrolling a new host
 
-Two operator-side helpers in `packages.nixfleet-cli`:
+Two bootstrap subcommands of `nixfleet` (in `packages.nixfleet-cli`):
 
 ```sh
 # Derive the org-root pubkey for trust.json (run once at fleet init).
 nix shell nixfleet#nixfleet-cli -c \
-  nixfleet-derive-pubkey /path/to/org-root.ed25519.key
+  nixfleet derive-pubkey /path/to/org-root.ed25519.key
 
 # Mint a one-shot bootstrap token (run once per new host).
 nix shell nixfleet#nixfleet-cli -c \
-  nixfleet-mint-token \
+  nixfleet mint-token \
     --hostname my-server \
     --csr-pubkey-fingerprint <sha256-base64-of-CSR-spki> \
     --org-root-key /path/to/org-root.ed25519.key \

@@ -85,7 +85,7 @@
         ];
       };
       meta = {
-        description = "NixFleet operator CLI (nixfleet status) + helpers (mint-token, derive-pubkey)";
+        description = "NixFleet operator CLI: nixfleet (status, rollout trace, config init, derive-pubkey, mint-operator-cert, mint-token)";
         license = lib.licenses.mit;
         mainProgram = "nixfleet";
       };

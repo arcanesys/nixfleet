@@ -101,7 +101,7 @@ ssh root@newhost.lan 'cat /etc/ssh/ssh_host_ed25519_key.pub'
 # 4. CI signs new fleet.resolved.json.
 
 # 5. Mint a bootstrap token scoped to the declared pubkey:
-nixfleet-mint-token \
+nixfleet mint-token \
     --hostname newhost \
     --fleet-resolved /var/lib/nixfleet/releases/fleet.resolved.json \
     --org-root-key /run/secrets/org-root-key

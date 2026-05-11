@@ -106,7 +106,7 @@ This is policy on top of v0.2's existing short-cert design and §1 cert-revocati
 
 ## 5. EK-bound bootstrap tokens
 
-Bootstrap tokens already exist (RFC-0003 §4.5, `nixfleet-mint-token` CLI, `BootstrapToken` + `TokenClaims` in `nixfleet-proto`). RFC-0005 extends the token claims with one field:
+Bootstrap tokens already exist (RFC-0003 §4.5, `nixfleet mint-token` subcommand, `BootstrapToken` + `TokenClaims` in `nixfleet-proto`). RFC-0005 extends the token claims with one field:
 
 ```rust
 pub struct TokenClaims {
@@ -122,7 +122,7 @@ pub struct TokenClaims {
 When `expected_ek_fingerprint` is set:
 
 1. Operator records the host's TPM EK pubkey via OOB tooling when the hardware is unboxed (typed into `fleet.nix` next to the host's other declarations).
-2. `nixfleet-mint-token` includes the EK fingerprint in the signed claims.
+2. `nixfleet mint-token` includes the EK fingerprint in the signed claims.
 3. The agent's enrollment flow (`POST /v1/enroll`) presents an EK quote alongside the bootstrap token + CSR.
 4. The CP verifies: token signature against `orgRootKey`, token unused (existing `token_replay`), CSR pubkey matches `pubkey_fingerprint`, EK in the quote matches `expected_ek_fingerprint`. Mismatch on any of these → 403 + `EnrollmentFailed` event.
 
@@ -230,7 +230,7 @@ Most of RFC-0005 is additive documentation. Mechanism additions are per-host or 
 ## 10. Build phases
 
 - **Phase 15 — Operator workflow documentation.** Runbooks for the four key types in `docs/runbooks/`; ceremony scripts in `tools/keys/`; hardware compatibility matrix; transparency-log file format. No new Rust code.
-- **Phase 16 — EK-bound bootstrap tokens.** Token-claims field, `nixfleet-mint-token` CLI flag, EK-quote verification at `/v1/enroll`, single-use enforcement against EK fingerprint.
+- **Phase 16 — EK-bound bootstrap tokens.** Token-claims field, `nixfleet mint-token` subcommand flag, EK-quote verification at `/v1/enroll`, single-use enforcement against EK fingerprint.
 - **Phase 17 — Active host-attestation quarantine.** `attestationQuarantine` channel schema (RFC-0001 additive), CP-side state machine and cert-issuance hook, observable status, `unquarantine-host` flake app, microvm scenario.
 - **Phase 18 — Threshold-signed channels.** Channel schema additions (`releaseSigners`), signing-session protocol, `sign-release` CLI flake app, CP-side multi-signature verification.
 - **Phase 19 — Key rotation runbooks tested.** Each rotation procedure has a microvm scenario that runs in the nightly suite.
