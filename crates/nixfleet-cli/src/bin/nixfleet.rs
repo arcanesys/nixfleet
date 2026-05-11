@@ -24,6 +24,8 @@ enum Commands {
     /// Operator-side config management.
     #[command(subcommand)]
     Config(ConfigCommands),
+    /// Derive base64 ed25519 pubkey from a raw private key file.
+    DerivePubkey(nixfleet_cli::commands::derive_pubkey::Args),
 }
 
 #[derive(Subcommand, Debug)]
@@ -153,6 +155,9 @@ async fn main() -> Result<()> {
             )?;
             eprintln!("wrote {}", written.display());
             Ok(())
+        }
+        Commands::DerivePubkey(args) => {
+            nixfleet_cli::commands::derive_pubkey::run(args)
         }
     }
 }

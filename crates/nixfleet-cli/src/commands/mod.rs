@@ -10,3 +10,5 @@
 //! Folded from former standalone binaries during v0.2 cleanup.
 //! Submodule declarations are added by subsequent commits as each
 //! binary is folded.
+
+pub mod derive_pubkey;

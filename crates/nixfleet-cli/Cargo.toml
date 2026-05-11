@@ -1,6 +1,6 @@
 [package]
 name = "nixfleet-cli"
-description = "NixFleet v0.2 operator CLI: nixfleet (status, rollout trace, config init), nixfleet-mint-token, nixfleet-mint-operator-cert, nixfleet-derive-pubkey"
+description = "NixFleet v0.2 operator CLI: nixfleet (status, rollout trace, config init, derive-pubkey), nixfleet-mint-token, nixfleet-mint-operator-cert"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,13 +20,6 @@ path = "src/bin/nixfleet.rs"
 [[bin]]
 name = "nixfleet-mint-token"
 path = "src/bin/mint_token.rs"
-
-# Operator-side scratch helper: derive base64 ed25519 pubkey
-# from a raw 32-byte private key file. Used once when initialising
-# `nixfleet.trust.orgRootKey.current` in fleet.nix.
-[[bin]]
-name = "nixfleet-derive-pubkey"
-path = "src/bin/derive_pubkey.rs"
 
 # Operator cert mint: takes the offline fleet root cert+key (path resolved
 # from --flag / NIXFLEET_OPERATOR_FLEET_ROOT_*_FILE / convention) and
