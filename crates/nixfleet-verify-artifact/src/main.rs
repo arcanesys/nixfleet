@@ -1,6 +1,5 @@
-//! `nixfleet-verify-artifact` - offline verifier CLI.
-//!
-//! Exit codes: 0 verified, 1 verify error, 2 argument / I/O / parse error.
+//! `nixfleet-verify-artifact` - offline verifier CLI. Exit codes: 0 verified,
+//! 1 verify error, 2 argument / I/O / parse error.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -149,10 +148,8 @@ fn run_rollout_manifest(
     };
 
     // LOADBEARING: hash the bytes the auditor was handed, NOT a re-serialised
-    // parse. An auditor running an older nixfleet build (proto missing
-    // fields the producer added) would otherwise compute a different hash
-    // and reject perfectly-signed manifests. CONTRACTS §V Pattern A's
-    // additive-evolution guarantee depends on this property.
+    // parse. An older verifier with a missing-field proto would otherwise hash
+    // differently and reject valid manifests, breaking additive-evolution.
     let recomputed = match nixfleet_reconciler::rollout_id_from_bytes(&manifest_bytes) {
         Ok(s) => s,
         Err(err) => {
