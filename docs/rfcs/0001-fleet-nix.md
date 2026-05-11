@@ -3,7 +3,7 @@
 **Status.** Accepted.
 **Target.** `arcanesys/nixfleet` issue #1.
 **Scope.** Schema and evaluation contract for the `fleet` flake output. Does not cover reconciliation semantics (that's #3) or activation (that's #2).
-**Implementation.** `lib/mk-fleet.nix` (the schema), `crates/nixfleet-proto/src/fleet_resolved.rs` (the wire types), `crates/nixfleet-release` (the producer), `tests/lib/mk-fleet/` (the eval harness). See `ARCHITECTURE.md` §1.1 / §3.
+**Implementation.** `lib/mk-fleet.nix` (the schema), `crates/nixfleet-proto/src/fleet_resolved.rs` (the wire types), `crates/nixfleet-release` (the producer), `tests/lib/mk-fleet/` (the eval harness). See `../design/architecture.md` §1.1 / §3.
 
 ## 1. Motivation
 
@@ -222,7 +222,7 @@ The rollout manifest (`releases/rollouts/<rolloutId>.json`, signed) carries the 
 
 ### 4.3 Signed artifact contract
 
-`fleet.resolved.json` is a trust-boundary artifact (see ARCHITECTURE.md §4). CI produces and signs it with the CI release key; every consumer verifies before use.
+`fleet.resolved.json` is a trust-boundary artifact (see ../design/architecture.md §4). CI produces and signs it with the CI release key; every consumer verifies before use.
 
 - **Signing.** CI writes `fleet.resolved.json` + `fleet.resolved.sig` to the channel's storage. The signature covers the full canonicalized JSON plus a `signedAt` RFC 3339 timestamp (embedded as `meta.signedAt` in the artifact).
 - **Verification - control plane.** On every fetch, verifies the signature against the pinned CI release public key. Signature mismatch or unknown key → refuse to reconcile the channel; emit an alert.

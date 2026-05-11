@@ -235,7 +235,7 @@ Agents fetch both. Implementations MAY also expose a single endpoint that return
 
 ### Resolved in v0.2
 
-- **Closure signing** (was: should CP sign `target` responses?). Resolved: closures are signed by attic (not the control plane), `fleet.resolved` is signed by CI, both verified by the agent. CP `target` responses are not independently signed - they carry references (closure hash, `fleet.resolved` revision) that the agent verifies against their respective signing roots. See ARCHITECTURE.md §4 and §7 "stale-closure replay" above.
+- **Closure signing** (was: should CP sign `target` responses?). Resolved: closures are signed by attic (not the control plane), `fleet.resolved` is signed by CI, both verified by the agent. CP `target` responses are not independently signed - they carry references (closure hash, `fleet.resolved` revision) that the agent verifies against their respective signing roots. See ../design/architecture.md §4 and §7 "stale-closure replay" above.
 
 ---
 

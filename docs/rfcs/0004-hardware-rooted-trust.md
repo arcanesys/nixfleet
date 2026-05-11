@@ -2,12 +2,12 @@
 
 **Status.** Draft.
 **Targets.** v0.3.
-**Depends on.** RFC-0001, RFC-0003, ARCHITECTURE.md §4 (trust roots) / §5 (failure cases).
+**Depends on.** RFC-0001, RFC-0003, ../design/architecture.md §4 (trust roots) / §5 (failure cases).
 **Scope.** Anchor v0.2's signed-evidence chain in hardware. Move host signing keys into the TPM, bind agenix-style secret decryption to PCR state, add boot measurements as a probe class with the same signature semantics as runtime probes. Out of scope: confidential computing (SEV/TDX), TPM 1.2, ARM SBCs without a TPM (soft-key fallback only).
 
 ## 1. Motivation
 
-ARCHITECTURE.md §5 names the residual risk verbatim:
+../design/architecture.md §5 names the residual risk verbatim:
 
 > *Host is compromised (root on the target machine). Attacker can: read secrets decrypted for that host, forge probe outputs signed with that host's key.*
 
@@ -21,7 +21,7 @@ Closing this gap is the v0.3 thesis. The trust property RFC-0004 establishes:
 
 The TPM does not become a trust authority. It becomes a verifier of conditions for cryptographic operation. Every property v0.2 verifies cryptographically continues to be verified cryptographically; the TPM ensures those operations cannot be performed under conditions other than the intended ones.
 
-The four trust roots in ARCHITECTURE.md §4 do not change. What changes is the per-host signing key: it is now generated inside the TPM, sealed against a declared PCR set, and cannot be exported. The control plane gains no new authority.
+The four trust roots in ../design/architecture.md §4 do not change. What changes is the per-host signing key: it is now generated inside the TPM, sealed against a declared PCR set, and cannot be exported. The control plane gains no new authority.
 
 ## 3. What already exists in v0.2
 
@@ -93,7 +93,7 @@ Tooling: `nix run .#capture-boot-evidence -- --hostname water-plant-01` runs on 
 
 ### 4.3 PCR-bound secret recipients
 
-agenix recipient declarations gain a TPM-unsealing variant. The contract addition lives in `impls/secrets/` (already the home of identity-path resolution per ARCHITECTURE.md §10.4):
+agenix recipient declarations gain a TPM-unsealing variant. The contract addition lives in `impls/secrets/` (already the home of identity-path resolution per ../design/architecture.md §10.4):
 
 ```nix
 age.secrets.cluster-token = {
@@ -168,7 +168,7 @@ This generalizes a property the framework already has: closure hashes are determ
 - Protection against TPM-bus physical attacks. Out of scope; well-funded attackers with sustained physical access can attack the bus. Confidential computing again.
 - Trust in the TPM manufacturer beyond what the EK certificate verification policy specifies. RFC-0005 picks a default policy.
 
-**Failure cases (per ARCHITECTURE.md §5 idiom).**
+**Failure cases (per ../design/architecture.md §5 idiom).**
 
 - *TPM unavailable on a host.* Enrollment refuses unless `enrollAsHostIdentity` is left unset; the resulting deployment continues using the v0.2 SSH-host-key path. Visible in fleet status as `signingBackend: ssh-host-key` (vs `tpm-keyslot/host-identity`).
 - *PCR drift from firmware update.* Operator tests new firmware on a staging host, runs `nix run .#capture-boot-evidence`, bumps `firmwareGeneration`, commits. CI reissues `fleet.resolved.json`. Until then, agents on updated firmware emit `AttestationDrift`; if persistent, RFC-0005 §4 quarantines them.

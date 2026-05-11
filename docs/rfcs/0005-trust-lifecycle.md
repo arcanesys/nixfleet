@@ -2,12 +2,12 @@
 
 **Status.** Draft.
 **Targets.** v0.3.
-**Depends on.** RFC-0001, RFC-0003, RFC-0004, ARCHITECTURE.md §4.
+**Depends on.** RFC-0001, RFC-0003, RFC-0004, ../design/architecture.md §4.
 **Scope.** Specify the lifecycle of every key, credential, and authorization in the v0.2/v0.3 trust model: how each is created, held, used, rotated, and retired. Add (a) EK-bound bootstrap tokens, (b) host-attestation quarantine policy, (c) opt-in threshold-signed channels, (d) tested key-rotation runbooks. Most of this RFC is documentation + small tooling; the only meaningful new mechanism is multi-signer release coordination.
 
 ## 1. Motivation
 
-ARCHITECTURE.md §4 describes the trust model statically - four roots, derivation rules, verification posture. What is documented and tested:
+../design/architecture.md §4 describes the trust model statically - four roots, derivation rules, verification posture. What is documented and tested:
 
 - Pre-announced rotation slots (`current` / `previous` / `successor` / `retireAt`) on the trust contract - `contracts/trust.nix` enforces the paired-options invariant.
 - Bootstrap tokens with hostname + pubkey-fingerprint scoping, single-use via the `token_replay` SQLite table, signed by the org root key - RFC-0003 §4.5.
@@ -157,7 +157,7 @@ For releases targeting this channel, CI refuses to publish until N hardware-key 
 
 ### 6.1 Mechanism
 
-The current `nixfleet-release` pipeline calls a single `--sign-cmd` hook (ARCHITECTURE.md §11.3). Threshold signing extends this with a multi-process signing session:
+The current `nixfleet-release` pipeline calls a single `--sign-cmd` hook (../design/architecture.md §11.3). Threshold signing extends this with a multi-process signing session:
 
 1. CI evaluates the fleet, builds closures, canonicalizes `fleet.resolved.json` (existing pipeline through step 7).
 2. Instead of calling `--sign-cmd` directly, CI writes a **signing session** to disk: `signing-sessions/<session-id>/canonical.json` plus a `metadata.json` describing which signers must sign, the diff against the previous release, and the build provenance.

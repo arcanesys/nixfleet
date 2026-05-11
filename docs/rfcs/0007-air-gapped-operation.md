@@ -2,7 +2,7 @@
 
 **Status.** Draft.
 **Targets.** v0.3.
-**Depends on.** ARCHITECTURE.md (especially §5 control-plane failure case), RFC-0001 (channel schema), RFC-0003 (agent protocol), RFC-0006 (freshness in air-gap).
+**Depends on.** ../design/architecture.md (especially §5 control-plane failure case), RFC-0001 (channel schema), RFC-0003 (agent protocol), RFC-0006 (freshness in air-gap).
 **Scope.** First-class deployment mode for environments with no internet egress: energy operators, water utilities, defense-adjacent contractors, healthcare critical systems. The trust model already supports this - every artifact is self-verifying. This RFC makes the workflow explicit, the sovereign-cache transport role explicit, and ships the bundle tooling.
 
 ## 1. Motivation

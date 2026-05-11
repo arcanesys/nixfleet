@@ -2,12 +2,12 @@
 
 **Status.** Draft.
 **Targets.** v0.3.
-**Depends on.** RFC-0001 (channel schema), RFC-0003 (agent protocol), ARCHITECTURE.md §5.
+**Depends on.** RFC-0001 (channel schema), RFC-0003 (agent protocol), ../design/architecture.md §5.
 **Scope.** Make replay protection explicit, machine-checkable, and recoverable. Adds: explicit freshness fields on the agent-target wire, time-source policy per channel, operator visibility for stalled channels and long windows, `TimeSourceUnavailable` event class.
 
 ## 1. Motivation
 
-ARCHITECTURE.md §5 names the threat:
+../design/architecture.md §5 names the threat:
 
 > *Control plane host is compromised. Attacker can: refuse to serve updates (DoS), serve stale-but-valid targets (replay). Mitigation: agents refuse to accept targets older than a configurable freshness window signed by CI.*
 
