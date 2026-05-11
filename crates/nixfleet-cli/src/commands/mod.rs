@@ -13,3 +13,4 @@
 
 pub mod derive_pubkey;
 pub mod mint_operator_cert;
+pub mod mint_token;

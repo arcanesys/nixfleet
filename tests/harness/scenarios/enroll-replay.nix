@@ -89,7 +89,7 @@ in
 
       print("step 3: mint bootstrap token…")
       mint_rc, _ = host.execute(
-          "nixfleet-mint-token "
+          "nixfleet mint-token "
           "--hostname agent-99 "
           f"--csr-pubkey-fingerprint '{fp}' "
           "--org-root-key /etc/harness/org-root.pem "
@@ -100,7 +100,7 @@ in
       if mint_rc != 0:
           stderr_dump = host.succeed("cat /tmp/enroll-test/mint.stderr || true")
           raise Exception(
-              f"nixfleet-mint-token failed (rc={mint_rc}). stderr:\n{stderr_dump}"
+              f"nixfleet mint-token failed (rc={mint_rc}). stderr:\n{stderr_dump}"
           )
       mint_stderr = host.succeed("cat /tmp/enroll-test/mint.stderr")
       nonce = None
@@ -178,7 +178,7 @@ in
       host.wait_for_open_port(8443)
 
       host.succeed(
-          "nixfleet-mint-token "
+          "nixfleet mint-token "
           "--hostname agent-99 "
           f"--csr-pubkey-fingerprint '{fp}' "
           "--org-root-key /etc/harness/org-root.pem "

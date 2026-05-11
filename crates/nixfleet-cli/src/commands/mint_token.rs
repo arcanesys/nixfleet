@@ -1,21 +1,22 @@
-//! `nixfleet-mint-token` — operator-side bootstrap token minter.
+//! Operator-side bootstrap-token minter. Folded from the former
+//! `nixfleet-mint-token` binary. Subcommand form:
+//! `nixfleet mint-token --hostname <h> --org-root-key <path>
+//!                     [--fleet-resolved <path> | --csr-pubkey-fingerprint <fp>]`.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use base64::Engine;
 use chrono::{Duration as ChronoDuration, Utc};
-use clap::Parser;
+// Alias required: `struct Args` below shares its name with the clap trait.
+use clap::Args as ClapArgs;
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_proto::enroll_wire::{BootstrapToken, TokenClaims};
 use rand::RngCore;
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "nixfleet-mint-token",
-    about = "Mint a bootstrap token for first-boot fleet enrollment."
-)]
-struct Args {
+#[derive(ClapArgs, Debug)]
+#[command(about = "Mint a bootstrap token for first-boot fleet enrollment.")]
+pub struct Args {
     /// Must match the fleet.nix entry + CSR CN at enroll time.
     #[arg(long)]
     hostname: String,
@@ -44,6 +45,45 @@ struct Args {
 
     #[arg(long, default_value_t = 1)]
     version: u32,
+}
+
+pub fn run(args: Args) -> Result<()> {
+    let signing_key = read_signing_key(&args.org_root_key)?;
+
+    let fingerprint = match (&args.csr_pubkey_fingerprint, &args.fleet_resolved) {
+        (Some(fp), None) => fp.clone(),
+        (None, Some(fleet_path)) => fingerprint_from_fleet(fleet_path, &args.hostname)?,
+        (None, None) => anyhow::bail!(
+            "must pass --csr-pubkey-fingerprint OR --fleet-resolved (declarative path)",
+        ),
+        (Some(_), Some(_)) => unreachable!("clap's `conflicts_with` rejects this combo"),
+    };
+
+    let now = Utc::now();
+    let claims = TokenClaims {
+        hostname: args.hostname,
+        expected_pubkey_fingerprint: fingerprint,
+        issued_at: now,
+        expires_at: now + ChronoDuration::hours(args.validity_hours as i64),
+        nonce: random_nonce(),
+    };
+
+    let claims_json = serde_json::to_string(&claims).context("serialize claims")?;
+    let canonical =
+        nixfleet_canonicalize::canonicalize(&claims_json).context("canonicalize claims")?;
+    let signature = signing_key.sign(canonical.as_bytes());
+    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+
+    let token = BootstrapToken {
+        version: args.version,
+        claims,
+        signature: sig_b64,
+    };
+
+    let out = serde_json::to_string_pretty(&token)?;
+    println!("{out}");
+    eprintln!("nonce: {}", token.claims.nonce);
+    Ok(())
 }
 
 fn read_signing_key(path: &PathBuf) -> Result<SigningKey> {
@@ -163,49 +203,10 @@ fn fingerprint_from_fleet(fleet_path: &PathBuf, hostname: &str) -> Result<String
         .map_err(|err| anyhow::anyhow!("derive fingerprint from declared pubkey: {err}"))
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
-    let signing_key = read_signing_key(&args.org_root_key)?;
-
-    let fingerprint = match (&args.csr_pubkey_fingerprint, &args.fleet_resolved) {
-        (Some(fp), None) => fp.clone(),
-        (None, Some(fleet_path)) => fingerprint_from_fleet(fleet_path, &args.hostname)?,
-        (None, None) => anyhow::bail!(
-            "must pass --csr-pubkey-fingerprint OR --fleet-resolved (declarative path)",
-        ),
-        (Some(_), Some(_)) => unreachable!("clap's `conflicts_with` rejects this combo"),
-    };
-
-    let now = Utc::now();
-    let claims = TokenClaims {
-        hostname: args.hostname,
-        expected_pubkey_fingerprint: fingerprint,
-        issued_at: now,
-        expires_at: now + ChronoDuration::hours(args.validity_hours as i64),
-        nonce: random_nonce(),
-    };
-
-    let claims_json = serde_json::to_string(&claims).context("serialize claims")?;
-    let canonical =
-        nixfleet_canonicalize::canonicalize(&claims_json).context("canonicalize claims")?;
-    let signature = signing_key.sign(canonical.as_bytes());
-    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
-
-    let token = BootstrapToken {
-        version: args.version,
-        claims,
-        signature: sig_b64,
-    };
-
-    let out = serde_json::to_string_pretty(&token)?;
-    println!("{out}");
-    eprintln!("nonce: {}", token.claims.nonce);
-    Ok(())
-}
-
 #[cfg(test)]
 mod fleet_resolved_tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn fingerprint_from_fleet_matches_proto_helper() {
@@ -260,7 +261,6 @@ mod fleet_resolved_tests {
             }
         });
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        use std::io::Write;
         tmp.write_all(fleet_json.to_string().as_bytes()).unwrap();
 
         let got = fingerprint_from_fleet(&tmp.path().to_path_buf(), "test-host").unwrap();
@@ -282,7 +282,6 @@ mod fleet_resolved_tests {
             "meta": { "schemaVersion": 1, "signedAt": null, "ciCommit": null, "signatureAlgorithm": null }
         });
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        use std::io::Write;
         tmp.write_all(fleet_json.to_string().as_bytes()).unwrap();
 
         let err = fingerprint_from_fleet(&tmp.path().to_path_buf(), "test-host").unwrap_err();
@@ -325,7 +324,6 @@ mod fleet_resolved_tests {
             "meta": { "schemaVersion": 1, "signedAt": null, "ciCommit": null, "signatureAlgorithm": null }
         });
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        use std::io::Write;
         tmp.write_all(fleet_json.to_string().as_bytes()).unwrap();
 
         let err = fingerprint_from_fleet(&tmp.path().to_path_buf(), "test-host").unwrap_err();

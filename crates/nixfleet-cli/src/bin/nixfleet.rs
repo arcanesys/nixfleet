@@ -28,6 +28,8 @@ enum Commands {
     DerivePubkey(nixfleet_cli::commands::derive_pubkey::Args),
     /// Mint an mTLS client cert from the offline fleet root CA.
     MintOperatorCert(nixfleet_cli::commands::mint_operator_cert::Args),
+    /// Mint a bootstrap token for first-boot fleet enrollment.
+    MintToken(nixfleet_cli::commands::mint_token::Args),
 }
 
 #[derive(Subcommand, Debug)]
@@ -163,6 +165,9 @@ async fn main() -> Result<()> {
         }
         Commands::MintOperatorCert(args) => {
             nixfleet_cli::commands::mint_operator_cert::run(args)
+        }
+        Commands::MintToken(args) => {
+            nixfleet_cli::commands::mint_token::run(args)
         }
     }
 }

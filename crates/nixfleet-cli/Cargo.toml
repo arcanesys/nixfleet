@@ -1,6 +1,6 @@
 [package]
 name = "nixfleet-cli"
-description = "NixFleet v0.2 operator CLI: nixfleet (status, rollout trace, config init, derive-pubkey, mint-operator-cert), nixfleet-mint-token"
+description = "NixFleet v0.2 operator CLI: nixfleet (status, rollout trace, config init, derive-pubkey, mint-operator-cert, mint-token)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,13 +13,6 @@ authors.workspace = true
 [[bin]]
 name = "nixfleet"
 path = "src/bin/nixfleet.rs"
-
-# Operator-side bootstrap-token minter. Run once per fleet host
-# before first deploy; emits a one-shot signed token the agent
-# uses on `/v1/enroll`.
-[[bin]]
-name = "nixfleet-mint-token"
-path = "src/bin/mint_token.rs"
 
 [dependencies]
 nixfleet-proto = { path = "../nixfleet-proto" }
