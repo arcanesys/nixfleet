@@ -52,8 +52,10 @@ pub(crate) fn handle_wave(
                 }
                 // Fleet-level gates (channelEdges, wave-promotion, host-edges,
                 // disruption-budget). Same evaluator the dispatch endpoint
-                // calls - if this Skip is emitted here, the agent's
-                // checkin path returns None for the same reason.
+                // calls; if Skip is emitted here, the agent's checkin path
+                // returns None for the same reason. Reconciler runs after
+                // polling, so missing predecessor state is genuinely "not
+                // declared" and shouldn't pre-block every channel.
                 let empty_emitted_opens = std::collections::HashSet::new();
                 let gate_input = crate::gates::GateInput {
                     fleet,
@@ -62,10 +64,6 @@ pub(crate) fn handle_wave(
                     host,
                     now,
                     emitted_opens_in_tick: &empty_emitted_opens,
-                    // Reconciler runs after polling has populated rollouts
-                    // table; missing predecessor state is a real "predecessor
-                    // not yet declared" situation and shouldn't pre-block
-                    // every channel.
                     mode: crate::gates::GateMode::Reconcile,
                 };
                 if let Some(block) = crate::gates::evaluate_for_host(&gate_input) {
@@ -87,19 +85,15 @@ pub(crate) fn handle_wave(
                 out.wave_all_soaked = false;
             }
             HostRolloutState::Healthy => {
-                // Healthy → Soaked once Healthy for `wave.soak_minutes`.
-                // Without a `last_healthy_since` marker the soak gate
-                // stays closed - better to wait than promote on missing data.
+                // Healthy → Soaked requires both `wave.soak_minutes` elapsed
+                // AND probes passing. Missing `last_healthy_since` keeps the
+                // gate closed (wait rather than promote on missing data).
+                // Probes-passing absent from the map defaults to true so a
+                // missing projection can't stall every wave (fail-open).
                 out.wave_all_soaked = false;
                 let soak_window = chrono::Duration::minutes(wave.soak_minutes as i64);
                 if let Some(since) = rollout.last_healthy_since.get(host) {
                     let soak_elapsed = now.signed_duration_since(*since) >= soak_window;
-                    // Issue #86: load-bearing health gate. Probe failures
-                    // (or Unknown under enforce mode) hold promotion. Hosts
-                    // not in the map (no checkin yet, or `host_probes_passing`
-                    // wasn't populated by the projector) default to true so
-                    // a missing projection doesn't accidentally stall every
-                    // wave - fail-open per the field's contract.
                     let probes_pass = observed
                         .host_probes_passing
                         .get(host)
@@ -115,9 +109,8 @@ pub(crate) fn handle_wave(
             }
             HostRolloutState::Soaked | HostRolloutState::Converged => {}
             HostRolloutState::Failed | HostRolloutState::Reverted => {
-                // `Failed` is reconciler-observed; `Reverted` is
-                // agent-attested. Both halt; only `Failed` triggers
-                // a fresh RollbackHost (Reverted is already rolled back).
+                // Both halt; only `Failed` triggers a fresh RollbackHost
+                // (Reverted is already rolled back).
                 out.wave_all_soaked = false;
                 if let Some(chan) = fleet.channels.get(&rollout.channel) {
                     if let Some(policy) = fleet.rollout_policies.get(&chan.rollout_policy) {
@@ -261,9 +254,8 @@ mod tests {
 
     #[test]
     fn soak_promotes_when_probes_pass_and_window_elapsed() {
-        // Issue #86: probes-passing AND soak-elapsed → SoakHost emitted.
         let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
-        let rollout = rollout_healthy_for("host-a", 10); // 10 min ago
+        let rollout = rollout_healthy_for("host-a", 10);
         let observed = observed_with_probes("host-a", true);
         let wave = Wave {
             hosts: vec!["host-a".into()],
@@ -278,12 +270,12 @@ mod tests {
         assert_eq!(soak_count, 1, "actions: {:?}", outcome.actions);
     }
 
+    /// Regression: a failing probe must block Healthy → Soaked regardless
+    /// of soak elapsed.
     #[test]
     fn soak_holds_when_probes_failing_even_if_window_elapsed() {
-        // Issue #86's load-bearing guarantee: a failing probe blocks the
-        // Healthy → Soaked promotion regardless of soak elapsed.
         let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
-        let rollout = rollout_healthy_for("host-a", 10); // far past soak
+        let rollout = rollout_healthy_for("host-a", 10);
         let observed = observed_with_probes("host-a", false);
         let wave = Wave {
             hosts: vec!["host-a".into()],
@@ -300,15 +292,13 @@ mod tests {
             "probe-failing host must not promote: actions={:?}",
             outcome.actions
         );
-        // Wave is held - NOT all soaked.
         assert!(!outcome.wave_all_soaked);
     }
 
     #[test]
     fn soak_holds_when_window_not_elapsed_even_if_probes_pass() {
-        // Sanity check: wallclock soak still required.
         let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
-        let rollout = rollout_healthy_for("host-a", 1); // 1 min ago, soak=5
+        let rollout = rollout_healthy_for("host-a", 1);
         let observed = observed_with_probes("host-a", true);
         let wave = Wave {
             hosts: vec!["host-a".into()],
@@ -324,13 +314,11 @@ mod tests {
         );
     }
 
+    /// Fail-open: hosts absent from the probes map default to passing.
     #[test]
     fn soak_promotes_when_probes_absent_from_map_fail_open() {
-        // Hosts not in `host_probes_passing` (no checkin yet, or projector
-        // skipped them) default to passing - fail open per the field contract.
         let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
         let rollout = rollout_healthy_for("host-a", 10);
-        // observed_online() = empty probe map.
         let observed = observed_online("host-a");
         let mut observed = observed;
         observed.host_probes_passing.clear();

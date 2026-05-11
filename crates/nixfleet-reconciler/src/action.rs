@@ -24,15 +24,14 @@ pub enum Action {
         reason: String,
     },
     /// Emitted alongside `HaltRollout` for Failed hosts under
-    /// `rollback-and-halt`. Action-plan record only - the CP-side
-    /// checkin pipeline ships the actual `RollbackSignal`.
+    /// `rollback-and-halt`. Action-plan record only - the CP-side checkin
+    /// pipeline ships the actual `RollbackSignal`.
     RollbackHost {
         rollout: String,
         host: String,
         target_ref: String,
     },
-    /// Healthy → Soaked transition once the host has been Healthy for
-    /// at least `wave.soak_minutes`.
+    /// Healthy → Soaked transition (host has been Healthy for `soak_minutes`).
     SoakHost {
         rollout: String,
         host: String,
@@ -46,10 +45,8 @@ pub enum Action {
         host: String,
         reason: String,
     },
-    /// Wave-staging compliance gate held promotion: under `enforce` mode,
-    /// at least one host in an earlier wave has outstanding
-    /// `ComplianceFailure` / `RuntimeGateError` events under THIS
-    /// rollout's id (per-rollout grouping enforces resolution-by-replacement).
+    /// Compliance gate held wave promotion under `enforce`. Per-rollout
+    /// grouping enforces resolution-by-replacement.
     WaveBlocked {
         rollout: String,
         blocked_wave: usize,
@@ -57,28 +54,20 @@ pub enum Action {
         failing_events_count: usize,
     },
     /// Cross-channel ordering held OpenRollout: a `channelEdges` predecessor
-    /// channel has not converged its most-recent rollout. The reconciler
-    /// re-checks every tick; the journal-emission is debounced via
-    /// `Observed.last_deferrals` so this fires once per (channel, target_ref,
-    /// blocked_by) transition rather than every reconcile tick.
+    /// channel hasn't converged. Debounced via `Observed.last_deferrals` so
+    /// this fires once per (channel, target_ref, blocked_by) transition
+    /// rather than every tick.
     RolloutDeferred {
         channel: String,
         target_ref: String,
         blocked_by: String,
         reason: String,
     },
-    /// Declarative key rotation deadline reached: a trust slot's
-    /// `retire_at` is past `now` and a `successor` is declared, so
-    /// the operator's tooling should rotate `current → previous` and
-    /// `successor → current` in the next fleet commit. Emitted from
-    /// `check_trust_rotations`, NOT from the main reconcile loop  -
-    /// the action is informational; trust mutations are out-of-band
-    /// (operator-driven git commits, not CP self-mutation). Once
-    /// the operator updates fleet.nix and CI signs the new release,
-    /// the slot's `successor` field clears and the action stops
-    /// firing on subsequent ticks.
+    /// Trust slot's `retire_at` reached with a `successor` declared.
+    /// Informational only - trust mutations are out-of-band (operator
+    /// commits, not CP self-mutation). Stops firing once the operator
+    /// rotates fleet.nix and the new release lands.
     RotateTrustRoot {
-        /// Which slot rotated - `"ciReleaseKey"` or `"orgRootKey"`.
         which: String,
         retire_at: chrono::DateTime<chrono::Utc>,
     },

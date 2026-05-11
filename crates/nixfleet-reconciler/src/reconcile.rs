@@ -8,17 +8,12 @@ use crate::{Action, Observed};
 use chrono::{DateTime, Utc};
 use nixfleet_proto::FleetResolved;
 
-/// Topological order of `channels` with respect to `fleet.channel_edges`.
-/// Predecessors first; ties broken alphabetically for tick-to-tick
-/// determinism. Edges referencing channels not in the input set are
-/// ignored (they can't gate this tick / poll). Channels in `channels`
-/// not appearing in any edge are ordered alphabetically among themselves.
-///
-/// LOADBEARING: the reconcile loop and the polling layer both iterate
-/// this order so the in-tick `emitted_opens` set sees a `before` channel
-/// recorded before checking the `after` channel's predecessor gate.
-/// mkFleet validates `channelEdges` is a DAG, so cycle handling here is
-/// defensive only.
+/// Topological order over `channel_edges`: predecessors first, ties broken
+/// alphabetically for tick-to-tick determinism. Edges referencing channels
+/// not in the input set are ignored. LOADBEARING: reconcile loop and the
+/// polling layer share this order so `emitted_opens` records a predecessor
+/// before the successor's gate check runs. Cycle handling is defensive only -
+/// mkFleet validates `channelEdges` is a DAG.
 pub fn topological_channel_order(fleet: &FleetResolved, channels: &[String]) -> Vec<String> {
     let channel_set: std::collections::HashSet<&str> =
         channels.iter().map(|s| s.as_str()).collect();
@@ -65,9 +60,8 @@ pub fn topological_channel_order(fleet: &FleetResolved, channels: &[String]) -> 
             frontier.dedup();
         }
     }
-    // Cycle defensive: any channel not yet ordered (cycle, mkFleet bug)
-    // gets appended in alphabetical order so the tick still makes
-    // progress instead of dropping channels silently.
+    // Cycle defensive: stray channels (mkFleet bug) appended alphabetically
+    // so the tick makes progress instead of silently dropping them.
     let mut leftover: Vec<String> = channels
         .iter()
         .filter(|k| !order.contains(k))
@@ -82,9 +76,8 @@ pub fn reconcile(fleet: &FleetResolved, observed: &Observed, now: DateTime<Utc>)
     let mut actions = Vec::new();
     let mut emitted_opens: HashSet<String> = HashSet::new();
 
-    // Open rollouts for channels whose ref changed, in topological order
-    // so a `before` channel's OpenRollout is seen by `after`'s predecessor
-    // check within the same tick.
+    // Open rollouts for changed refs in topological order so a predecessor's
+    // OpenRollout is seen by its successor's gate within the same tick.
     let channel_names: Vec<String> = observed.channel_refs.keys().cloned().collect();
     for channel in topological_channel_order(fleet, &channel_names) {
         let current_ref = match observed.channel_refs.get(&channel) {
@@ -108,7 +101,7 @@ pub fn reconcile(fleet: &FleetResolved, observed: &Observed, now: DateTime<Utc>)
             &channel,
             crate::gates::GateMode::Reconcile,
         ) {
-            // Debounce: only emit when (target_ref, blocked_by) would change.
+            // Debounce: only emit when (target_ref, blocked_by) changes.
             let proposed = DeferralRecord {
                 target_ref: current_ref.clone(),
                 blocked_by: blocker.clone(),
@@ -132,8 +125,8 @@ pub fn reconcile(fleet: &FleetResolved, observed: &Observed, now: DateTime<Utc>)
         emitted_opens.insert(channel);
     }
 
-    // Advance each Executing rollout. Channel-removed rollouts emit a
-    // ChannelUnknown observability event before silent-continue.
+    // Advance each Executing rollout; channel-removed rollouts emit
+    // ChannelUnknown before silent-continue.
     for rollout in &observed.active_rollouts {
         if !fleet.channels.contains_key(&rollout.channel) {
             actions.push(Action::ChannelUnknown {
@@ -187,11 +180,8 @@ mod channel_edge_tests {
 
     #[test]
     fn converged_predecessor_does_not_block_successor() {
-        // The semantic property channelEdges enforces: ordering between
-        // *active* rollouts. Once a predecessor's rollout is fully
-        // converged (every host in host_states is Converged), it stops
-        // counting as a blocker even though the rollout row remains in
-        // the DB until superseded.
+        // channelEdges orders *active* rollouts; a fully Converged predecessor
+        // stops gating even though the row stays in the DB.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
             gates: "db".into(),
             gated: "app".into(),
@@ -232,9 +222,7 @@ mod channel_edge_tests {
 
     #[test]
     fn partially_converged_predecessor_still_blocks_successor() {
-        // Until ALL hosts in the predecessor reach a terminal state
-        // (Soaked or Converged), the predecessor is still active and
-        // blocks its successor.
+        // Any non-terminal host keeps the predecessor active.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
             gates: "db".into(),
             gated: "app".into(),
@@ -270,12 +258,8 @@ mod channel_edge_tests {
 
     #[test]
     fn all_soaked_predecessor_unblocks_successor() {
-        // Bridges the SoakHost-to-ConvergeRollout window: once every
-        // host of the predecessor reaches Soaked, the rollout has
-        // semantically completed wave-staging even though the next
-        // reconcile tick hasn't yet emitted ConvergeRollout. Soaked
-        // counts as terminal-for-ordering so the successor doesn't
-        // get artificially held for one extra tick.
+        // Soaked counts as terminal-for-ordering, bridging the
+        // SoakHost → ConvergeRollout window without holding successors.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
             gates: "db".into(),
             gated: "app".into(),
@@ -310,11 +294,7 @@ mod channel_edge_tests {
 
     #[test]
     fn mixed_soaked_and_converged_predecessor_unblocks_successor() {
-        // A multi-wave rollout in the brief window between the last
-        // wave reaching Soaked and ConvergeRollout firing: earlier-
-        // wave hosts may already be Converged (hands-stamped by a
-        // previous ConvergeRollout-equivalent path) while the last
-        // wave's hosts are at Soaked. Either is terminal-for-ordering.
+        // Either Soaked or Converged counts as terminal-for-ordering.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
             gates: "db".into(),
             gated: "app".into(),
@@ -350,16 +330,13 @@ mod channel_edge_tests {
     #[test]
     fn fresh_tick_with_edge_holds_after_channel_until_before_opens_first() {
         // Regression: pre-fix, both channels opened in the same tick on a
-        // fresh CP because predecessor_channel_blocking only saw
-        // active_rollouts (empty post-DB-wipe). The fix iterates channels
-        // in topological order and tracks emitted_opens within the tick.
+        // fresh CP. Topological iteration + per-tick `emitted_opens` fixed it.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
             gates: "db".into(),
             gated: "app".into(),
             reason: Some("schema-migration".into()),
         }]);
         let mut observed = Observed::default();
-        // Both channels have a fresh ref; no active_rollouts (post-wipe).
         observed.channel_refs.insert("db".into(), "ref-db-1".into());
         observed
             .channel_refs
@@ -397,14 +374,12 @@ mod channel_edge_tests {
         let now = chrono::Utc::now();
         let actions = reconcile(&fleet, &observed, now);
 
-        // Must NOT contain OpenRollout for app.
         assert!(
             !actions
                 .iter()
                 .any(|a| matches!(a, Action::OpenRollout { channel, .. } if channel == "app")),
             "app rollout should be held while db has an active rollout: {actions:?}"
         );
-        // Must contain RolloutDeferred for app.
         let deferred = actions.iter().find_map(|a| match a {
             Action::RolloutDeferred {
                 channel,
@@ -422,9 +397,8 @@ mod channel_edge_tests {
 
     #[test]
     fn channel_edge_with_no_predecessor_history_proceeds() {
-        // db has never had a rollout - RFC §4.3 punt resolves "predecessor
-        // never released" as "proceed" (edges constrain ordering between
-        // active rollouts, not a presence requirement).
+        // Edges constrain ordering between active rollouts, not a presence
+        // requirement - successor opens if predecessor has never had one.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
             gates: "db".into(),
             gated: "app".into(),
@@ -452,7 +426,6 @@ mod channel_edge_tests {
             reason: None,
         }]);
         let mut observed = observed_with_active_rollout_on("db");
-        // Stamp the same deferral as already-emitted.
         observed.last_deferrals.insert(
             "app".into(),
             DeferralRecord {
@@ -494,8 +467,7 @@ mod channel_edge_tests {
         observed
             .channel_refs
             .insert("app".into(), "ref-app-1".into());
-        // Active rollout on infra (not db) - different blocker than the
-        // last-emitted record below.
+        // Active rollout on infra, different blocker from last-emitted (db).
         observed.active_rollouts.push(Rollout {
             id: "infra-rollout".into(),
             channel: "infra".into(),
@@ -507,7 +479,6 @@ mod channel_edge_tests {
             budgets: vec![],
             terminal_at: None,
         });
-        // Need a third channel in fleet for completeness.
         observed.last_deferrals.insert(
             "app".into(),
             DeferralRecord {
@@ -515,7 +486,6 @@ mod channel_edge_tests {
                 blocked_by: "db".into(),
             },
         );
-        // Add infra to channels so the test fleet is consistent.
         let mut fleet = fleet;
         fleet.channels.insert(
             "infra".into(),
@@ -545,7 +515,6 @@ mod channel_edge_tests {
 
     #[test]
     fn channel_edge_clears_when_predecessor_converges() {
-        // No active rollout on db means nothing to wait for.
         let fleet = fleet_with_channel_edges(vec![ChannelEdge {
             gates: "db".into(),
             gated: "app".into(),
@@ -555,7 +524,7 @@ mod channel_edge_tests {
         observed
             .channel_refs
             .insert("app".into(), "ref-app-1".into());
-        // Even with a stale last_deferral entry, an unblocked channel opens.
+        // Stale last_deferral must not hold an unblocked channel.
         observed.last_deferrals.insert(
             "app".into(),
             DeferralRecord {
@@ -567,7 +536,7 @@ mod channel_edge_tests {
             online: true,
             current_generation: None,
         };
-        let _ = HostRolloutState::Queued; // import-touch to keep the use clean
+        let _ = HostRolloutState::Queued;
         let actions = reconcile(&fleet, &observed, chrono::Utc::now());
 
         assert!(

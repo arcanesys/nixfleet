@@ -9,21 +9,19 @@ use serde::Serialize;
 #[serde(rename_all = "kebab-case")]
 pub enum SignatureStatus {
     Verified,
-    /// Agent pre-dates the signature field, or no SSH ed25519 key.
     Unsigned,
-    /// Signature present, host has no pubkey (lab pre-enrollment).
     NoPubkey,
-    /// `verify_strict` refused - active tampering.
+    /// Signature verification refused - active tampering.
     Mismatch,
     /// Decoding or pubkey parse failed - active tampering.
     Malformed,
-    /// Non-ed25519 pubkey (RSA/ECDSA). Soft skip.
+    /// Non-ed25519 pubkey. Soft skip.
     WrongAlgorithm,
 }
 
 impl SignatureStatus {
-    /// Gate counts everything except active-tampering signals (mTLS is
-    /// the primary trust root; this signature is defense-in-depth).
+    /// Counts everything except active-tampering signals; mTLS is the primary
+    /// trust root, this signature is defense-in-depth.
     pub fn counts_for_gate(self) -> bool {
         !matches!(self, SignatureStatus::Mismatch | SignatureStatus::Malformed)
     }

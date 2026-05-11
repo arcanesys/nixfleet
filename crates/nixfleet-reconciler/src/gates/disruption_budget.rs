@@ -1,23 +1,15 @@
-//! Disruption-budget gate - `max_in_flight` enforced at dispatch time.
+//! Disruption-budget gate. `max_in_flight` enforced at dispatch time.
 //!
-//! Migrated from `crate::host_state::budgets::{budget_max, in_flight_count}`.
-//! The reconciler's `handle_wave` checks this; this is the missing
-//! enforcement at the dispatch endpoint that bit us during the
-//! supersession test (krach + aether dispatched within seconds despite
-//! `dev maxInFlight=1` - only avoided because aether's closure was
-//! unchanged and went through `Decision::Converged`).
+//! Cross-rollout enforcement: budgets match by `selector` equality (not list
+//! index) so reordering `fleet.disruptionBudgets` doesn't conflate distinct
+//! budgets, and the in-flight sum spans all active rollouts that carry a
+//! budget with the same selector. "Max one workstation in flight, ever"
+//! semantics hold even with multiple rollouts active simultaneously.
 //!
-//! Cross-rollout enforcement: budgets match by `selector` equality
-//! (not list index) so reordering `fleet.disruptionBudgets` between
-//! rollout opens doesn't conflate distinct budgets, and the in-flight
-//! sum spans all active rollouts that carry a budget with the same
-//! selector. "Max one workstation in flight, ever" semantics hold even
-//! with multiple rollouts active simultaneously.
-//!
-//! Budget snapshots are read from `rollout.budgets` (frozen at
-//! OpenRollout time, signed into the rollout manifest). Mid-rollout
-//! retags do NOT reshape budget membership - the cascading-dispatch
-//! hazard from live resolution is structurally impossible by design.
+//! Snapshots are read from `rollout.budgets` (frozen at OpenRollout, signed
+//! into the rollout manifest); mid-rollout retags do NOT reshape membership -
+//! the cascading-dispatch hazard from live resolution is structurally
+//! impossible by design.
 
 use crate::observed::Observed;
 use nixfleet_proto::{RolloutBudget, Selector};
@@ -45,9 +37,7 @@ pub fn check(input: &GateInput) -> Option<GateBlock> {
         })
 }
 
-/// Sum of in-flight hosts across all active rollouts whose snapshot has
-/// a budget with the matching `selector`. Match by selector equality
-/// (not list index) - see module doc.
+/// Sum of in-flight hosts across active rollouts with a matching `selector`.
 fn in_flight_count(observed: &Observed, selector: &Selector) -> u32 {
     observed
         .active_rollouts

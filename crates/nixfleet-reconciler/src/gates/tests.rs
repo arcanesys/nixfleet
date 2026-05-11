@@ -1,11 +1,6 @@
-//! Parity tests for the gates registry.
-//!
-//! Each gate gets a positive case (gate fires) and a negative case (gate
-//! passes) verified against `evaluate_for_host`. These prove the
-//! behaviour-of-record at the registry level - if you add a gate, you
-//! add a parity test here. CP-side parity (reconciler emits Skip,
-//! dispatch endpoint returns None for the same Observed) is enforced
-//! by integration tests in nixfleet-control-plane.
+//! Parity tests for the gates registry. Every gate gets a positive + negative
+//! case against `evaluate_for_host` - adding a gate requires adding a parity
+//! test here. CP-side parity lives in nixfleet-control-plane integration tests.
 
 use std::collections::{HashMap, HashSet};
 
@@ -116,33 +111,16 @@ fn channel_edges_passes_when_predecessor_converged() {
     assert_eq!(evaluate_for_host(&input), None);
 }
 
-/// **Regression guard for the dispatch/reconciler asymmetry that
-/// surfaced after the first lifecycle attempt.** When a converged
-/// predecessor was filtered out of `observed.active_rollouts`,
-/// channel_edges fell into the `None` arm and answered differently:
-///
-///   - reconciler (`GateMode::Reconcile`) → release
-///   - dispatch endpoint (`GateMode::Dispatch`) → block
-///
-/// The reconciler emitted `DispatchHost`, the dispatch endpoint
-/// refused - krach stuck in an infinite loop on lab.
-///
-/// The fix keeps terminal rollouts visible in observed (filtered
-/// only from the UI surface). This test pins both modes returning
-/// `None` (release) when the predecessor is terminal - same input,
-/// same verdict, regardless of mode.
-///
-/// If anyone reverts to filtering terminal rollouts at the gate
-/// observed builder, the conservative arm of this test will start
-/// returning `ChannelEdges` (block) and the test fails - preventing
-/// the regression from shipping.
+/// Regression guard: dispatch/reconciler asymmetry on terminal predecessors.
+/// Filtering converged predecessors out of `observed.active_rollouts` caused
+/// `Reconcile` to release while `Dispatch` blocked - hosts stuck looping.
+/// Both modes must return `None` (release) when the predecessor is terminal.
+/// If anyone reverts to filtering terminal rollouts out of the observed
+/// builder, the conservative arm here re-fires and catches the regression.
 #[test]
 fn channel_edges_releases_on_terminal_predecessor_in_both_modes() {
     let fleet = fleet_two_channels();
     let now = Utc::now();
-    // Predecessor is in observed, terminal_at stamped, all hosts
-    // soaked-or-converged (terminal-for-ordering). The predecessor
-    // is functionally done; both modes must agree.
     let observed = Observed {
         active_rollouts: vec![rollout_with_terminal(
             "edge",
@@ -178,17 +156,14 @@ fn channel_edges_releases_on_terminal_predecessor_in_both_modes() {
     }
 }
 
-/// **Companion regression guard.** The asymmetry-permitting case:
-/// predecessor genuinely missing from observed (fresh-boot, no
-/// rollouts recorded yet). Conservative blocks, non-conservative
-/// allows. The two test cases together pin the entire decision
-/// table: terminal-in-observed must be symmetric, missing-from-observed
-/// is the only place the modes legitimately diverge.
+/// Companion: predecessor truly missing from observed (fresh-boot) is the
+/// only place the two modes legitimately diverge. Together these two tests
+/// pin the decision table: terminal-in-observed symmetric, missing-from-
+/// observed the only asymmetry.
 #[test]
 fn channel_edges_diverges_only_on_truly_missing_predecessor() {
     let fleet = fleet_two_channels();
     let now = Utc::now();
-    // Empty observed = predecessor truly unknown.
     let observed = Observed::default();
     let empty = empty_set();
 
@@ -206,26 +181,19 @@ fn channel_edges_diverges_only_on_truly_missing_predecessor() {
         },
     };
 
-    // Conservative: blocks (fresh-boot protection - predecessor's
-    // existence in fleet means dispatch should hold until polling
-    // catches up).
+    // Conservative blocks (fresh-boot protection).
     assert_eq!(
         evaluate_for_host(&mk_input(true)),
         Some(GateBlock::ChannelEdges {
             predecessor_channel: "edge".into(),
         }),
     );
-    // Non-conservative: allows (reconciler trusts emitted_opens_in_tick
-    // as the in-tick authority; absence means "not opened this tick").
+    // Reconciler allows (trusts emitted_opens_in_tick as the in-tick authority).
     assert_eq!(evaluate_for_host(&mk_input(false)), None);
 }
 
 #[test]
 fn channel_edges_conservative_blocks_on_missing_predecessor_with_hosts() {
-    // Fresh-boot scenario: predecessor channel has hosts in fleet but
-    // no rollout recorded yet. Dispatch endpoint sets
-    // GateMode::Dispatch to block until polling
-    // populates state.
     let fleet = fleet_two_channels();
     let observed = Observed::default();
     let empty = empty_set();
@@ -249,7 +217,6 @@ fn channel_edges_conservative_blocks_on_missing_predecessor_with_hosts() {
 #[test]
 fn wave_promotion_blocks_wave_one_when_current_is_zero() {
     let mut fleet = fleet_two_channels();
-    // Add a second wave for stable so krach is wave 0, aether is wave 1.
     fleet.waves.insert(
         "stable".into(),
         vec![
@@ -290,8 +257,6 @@ fn wave_promotion_blocks_wave_one_when_current_is_zero() {
 
 #[test]
 fn host_edges_blocks_until_gating_host_converges() {
-    // fleet.edges = [{ gated: krach, gates: aether }]
-    // krach's dispatch is held until aether reaches Soaked/Converged.
     let mut fleet = fleet_two_channels();
     fleet.edges = vec![Edge {
         gated: "krach".into(),
@@ -300,7 +265,7 @@ fn host_edges_blocks_until_gating_host_converges() {
     }];
     let r = rollout(
         "stable",
-        vec![("aether", HostRolloutState::Activating)], // aether not yet Soaked/Converged
+        vec![("aether", HostRolloutState::Activating)],
     );
     let observed = Observed {
         active_rollouts: vec![rollout("edge", vec![("lab", HostRolloutState::Converged)])],
@@ -324,28 +289,19 @@ fn host_edges_blocks_until_gating_host_converges() {
     );
 }
 
-/// Regression: the host-edges gate must fire on the FIRST checkin
-/// of a freshly-opened channel (rollout exists, no host has dispatched
-/// yet). Earlier the dispatch path built `Observed.active_rollouts`
-/// from `host_dispatch_state.active_rollouts_snapshot()` which is
-/// keyed by dispatch rows - a brand-new rollout with empty host_states
-/// was invisible, `input.rollout` collapsed to None, and host_edges
-/// short-circuited. The new builder reads from `rollouts.list_active()`
-/// and merges host_states LEFT-JOIN-style; this test pins the gate's
-/// behaviour when host_states is empty: gating peer defaults to
-/// Queued, which is NOT terminal-for-ordering, so the gate fires.
+/// Regression: host-edges must fire on the FIRST checkin of a freshly-opened
+/// channel. An earlier dispatch path built `Observed.active_rollouts` from
+/// dispatch rows, so a brand-new rollout with empty host_states was invisible
+/// and `input.rollout` collapsed to None. Empty host_states defaults peers to
+/// Queued (not terminal-for-ordering), so the gate must fire even then.
 #[test]
 fn host_edges_fires_on_freshly_opened_rollout_with_empty_host_states() {
-    // fleet.edges = [{ gated: krach, gates: aether }]
     let mut fleet = fleet_two_channels();
     fleet.edges = vec![Edge {
         gated: "krach".into(),
         gates: "aether".into(),
         reason: None,
     }];
-    // Rollout is "in flight" (visible to gates) but no host has
-    // dispatched yet - empty host_states. This is the channelEdges-
-    // just-released window.
     let r = rollout("stable", vec![]);
     let observed = Observed {
         active_rollouts: vec![r.clone()],
@@ -444,10 +400,9 @@ fn disruption_budget_passes_when_under_max() {
 
 #[test]
 fn host_edges_skips_cross_channel_edges() {
-    // Regression: Edge { before: krach (stable), after: lab (edge) }
-    // would look up lab in stable's rollout.host_states (always None),
-    // default to Queued, and block krach forever. The cross-channel
-    // guard treats such edges as no-ops.
+    // Regression: cross-channel edge would look up the peer in a different
+    // rollout's host_states, default to Queued, and block forever. Cross-
+    // channel edges must be no-ops at the host-edges gate.
     let mut fleet = fleet_two_channels();
     fleet.edges = vec![Edge {
         gated: "krach".into(),
@@ -495,7 +450,7 @@ fn compliance_wave_blocks_when_earlier_wave_has_failures_under_enforce() {
     );
 
     let mut r = rollout("stable", vec![]);
-    r.current_wave = 1; // wave_promotion gate must pass for aether (wave 1)
+    r.current_wave = 1;
     let mut compliance_failures = HashMap::new();
     let mut by_host = HashMap::new();
     by_host.insert("krach".to_string(), 2usize);
@@ -548,7 +503,7 @@ fn compliance_wave_passes_under_permissive_mode() {
     );
 
     let mut r = rollout("stable", vec![]);
-    r.current_wave = 1; // wave_promotion gate must pass for aether (wave 1)
+    r.current_wave = 1;
     let mut compliance_failures = HashMap::new();
     let mut by_host = HashMap::new();
     by_host.insert("krach".to_string(), 5usize);
@@ -576,22 +531,13 @@ fn compliance_wave_passes_under_permissive_mode() {
     );
 }
 
-/// 3-wave fleet, wave-0 host has outstanding evidence events, host
-/// being evaluated is in wave-2 (NOT immediately adjacent to the
-/// failing wave). Proves the gate's range predicate is transitive
-/// - a failure two waves back still blocks. The 2-wave variant
-/// above only proves wave-0 → wave-1 (adjacent) blocking.
-///
-/// `outstanding_compliance_events_by_rollout` is kind-agnostic: this
-/// test fires identically whether the underlying event is a
-/// `ComplianceFailure` or a `RuntimeGateError`. Kind-specific
-/// end-to-end coverage lives in the CP integration suite
-/// (`tests/wave_gate.rs`).
+/// 3-wave variant pinning transitivity: a failure in wave 0 must still block
+/// wave 2 (the 2-wave variant only proves adjacent wave-0 → wave-1 blocking).
+/// Kind-agnostic at this layer; kind-specific coverage lives in CP integration
+/// suite.
 #[test]
 fn compliance_wave_blocks_transitively_across_three_waves_under_enforce() {
     let mut fleet = fleet_two_channels();
-    // Add pixel as a third stable-channel host so we can split the
-    // stable wave plan into three single-host waves.
     fleet.hosts.insert(
         "pixel".into(),
         Host {
@@ -623,11 +569,9 @@ fn compliance_wave_blocks_transitively_across_three_waves_under_enforce() {
     );
 
     let mut r = rollout("stable", vec![]);
-    r.current_wave = 2; // wave_promotion gate must pass for pixel (wave 2)
+    r.current_wave = 2;
     let mut events = HashMap::new();
     let mut by_host = HashMap::new();
-    // krach in wave-0 has 1 outstanding event - kind doesn't matter
-    // at this layer (DB-side filter is the kind-discriminator).
     by_host.insert("krach".to_string(), 1usize);
     events.insert(r.id.clone(), by_host);
 

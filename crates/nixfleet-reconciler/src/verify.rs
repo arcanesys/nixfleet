@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 use thiserror::Error;
 
-/// Signed sidecar under `ciReleaseKey`. Drives the shared
+/// Signed sidecar under `ciReleaseKey`. Drives the
 /// canonicalize → verify → freshness-gate pipeline.
 pub trait SignedSidecar {
     fn schema_version(&self) -> u32;
@@ -99,10 +99,9 @@ pub enum VerifyError {
     NoTrustRoots,
 }
 
-/// Verify any signed sidecar (fleet.resolved / revocations / rollout
-/// manifest). `trusted_keys` tried in declaration order, first match
-/// wins; unsupported algorithms skipped silently for forward-compat.
-/// `reject_before` is strict `<` - equality accepted.
+/// Verify any signed sidecar. `trusted_keys` tried in declaration order,
+/// first match wins; unsupported algorithms skipped silently for forward-
+/// compat. `reject_before` is strict `<` (equality accepted).
 pub fn verify_signed_sidecar<T: SignedSidecar + DeserializeOwned>(
     signed_bytes: &[u8],
     signature: &[u8],
@@ -115,7 +114,6 @@ pub fn verify_signed_sidecar<T: SignedSidecar + DeserializeOwned>(
     finish_sidecar_verification(&canonical, now, freshness_window, reject_before)
 }
 
-/// Thin `FleetResolved` wrapper around `verify_signed_sidecar`.
 pub fn verify_artifact(
     signed_bytes: &[u8],
     signature: &[u8],
@@ -134,8 +132,8 @@ pub fn verify_artifact(
     )
 }
 
-/// LOADBEARING: `verify_strict` (not `verify`) - rejects malleable signatures
-/// for root-of-trust keys.
+/// LOADBEARING: uses `verify_strict` (not `verify`) - rejects malleable
+/// signatures for root-of-trust keys.
 fn verify_ed25519(
     canonical_bytes: &[u8],
     signature: &[u8],
@@ -173,7 +171,6 @@ fn verify_ed25519(
 
 /// FOOTGUN: TPM2_Sign emits ~50% high-s ECDSA signatures; we MUST normalise
 /// to low-s before verifying or every other lab signature fails as BadSignature.
-/// Pubkey: 64-byte X||Y base64. Sig: 64-byte R||S.
 fn verify_ecdsa_p256(
     canonical_bytes: &[u8],
     signature: &[u8],
@@ -200,7 +197,7 @@ fn verify_ecdsa_p256(
         });
     }
 
-    // 0x04 || X || Y SEC1 uncompressed.
+    // Wrap X||Y as SEC1 uncompressed: 0x04 || X || Y.
     let mut tagged = [0u8; 65];
     tagged[0] = 0x04;
     tagged[1..].copy_from_slice(&public_bytes);
@@ -261,15 +258,10 @@ pub fn verify_rollout_manifest(
     )
 }
 
-/// SHA-256 hex of JCS-canonical bytes of any serialisable value.
-///
-/// FOOTGUN: this is the **producer** path - caller has the parsed struct
-/// and wants the canonical-hash of what they would emit. **Verifiers must
-/// not use this**; re-serializing a parsed struct silently drops fields
-/// the consumer's proto doesn't know about, breaking content-addressing
-/// across schema versions even when the change is "additive" per
-/// CONTRACTS §V Pattern A. Use [`canonical_hash_from_bytes`] for verify
-/// paths that have the original received bytes.
+/// SHA-256 hex of JCS-canonical bytes of any serialisable value. Producer
+/// path only. FOOTGUN: verifiers MUST use [`canonical_hash_from_bytes`] -
+/// re-serializing a parsed struct drops fields the consumer's proto doesn't
+/// know about, breaking content-addressing across additive schema changes.
 pub fn compute_canonical_hash<T: serde::Serialize>(value: &T) -> Result<String, VerifyError> {
     let raw = serde_json::to_string(value)?;
     let canonical = nixfleet_canonicalize::canonicalize(&raw).map_err(VerifyError::Canonicalize)?;
@@ -277,13 +269,10 @@ pub fn compute_canonical_hash<T: serde::Serialize>(value: &T) -> Result<String, 
     Ok(hex_lowercase(&digest))
 }
 
-/// SHA-256 hex of JCS-canonical bytes, computed from raw input bytes.
-/// `canonicalize` is idempotent on canonical input; running it here is
-/// a defensive normaliser against transport-layer alterations
-/// (whitespace, BOM, etc.). Critically, no parse step - fields the
-/// caller's proto doesn't know about are preserved in the canonical
-/// bytes. This is the verify-side function: same hash as the producer
-/// computed regardless of any additive proto drift between them.
+/// SHA-256 hex of JCS-canonical bytes, from raw input. No parse step, so
+/// fields the caller's proto doesn't know about are preserved in the canonical
+/// bytes - verify side computes the same hash as the producer regardless of
+/// additive proto drift.
 pub fn canonical_hash_from_bytes(bytes: &[u8]) -> Result<String, VerifyError> {
     let s = std::str::from_utf8(bytes).map_err(|err| {
         VerifyError::Canonicalize(anyhow::anyhow!("input not valid UTF-8: {err}"))
@@ -298,10 +287,8 @@ pub fn compute_rollout_id(manifest: &RolloutManifest) -> Result<String, VerifyEr
     compute_canonical_hash(manifest)
 }
 
-/// Verify-side rolloutId - hashes the received manifest bytes.
-/// Cross-version safe: an older verifier's proto missing fields the
-/// producer added still computes the same hash because parsing is not
-/// in the path.
+/// Verify-side rolloutId. Cross-version safe: hashes the received bytes
+/// directly, no parse step.
 pub fn rollout_id_from_bytes(bytes: &[u8]) -> Result<String, VerifyError> {
     canonical_hash_from_bytes(bytes)
 }
@@ -316,7 +303,6 @@ fn hex_lowercase(bytes: &[u8]) -> String {
     out
 }
 
-/// Parse → canonicalize → sig-verify. Returns canonical bytes.
 fn verify_signature_against_trust_roots(
     signed_bytes: &[u8],
     signature: &[u8],
@@ -363,10 +349,9 @@ fn verify_signature_against_trust_roots(
     Err(VerifyError::BadSignature)
 }
 
-/// Schema gate + `reject_before` + bidirectional freshness check
-/// (past + future bound, both with `CLOCK_SKEW_SLACK_SECS` slack).
-/// `reject_before` runs first so alerts can distinguish compromise
-/// from staleness.
+/// Schema gate + `reject_before` + bidirectional freshness check (past +
+/// future, both with `CLOCK_SKEW_SLACK_SECS` slack). `reject_before` runs
+/// first so alerts can distinguish compromise from staleness.
 fn finish_sidecar_verification<T: SignedSidecar + DeserializeOwned>(
     canonical: &str,
     now: DateTime<Utc>,

@@ -1,34 +1,15 @@
-//! Compliance-wave gate - earlier-wave hosts with outstanding compliance
-//! evidence failures hold dispatch of later-wave hosts under `enforce`.
-//!
-//! Event-kind agnostic: aggregates BOTH `ComplianceFailure` (a probe
-//! returned FAIL) and `RuntimeGateError` (collector itself broke /
-//! evidence stale). Both classes mean "this host's evidence chain is
-//! broken" and gate identically - the SQL `IN ('compliance-failure',
-//! 'runtime-gate-error')` predicate at
-//! `db::reports::outstanding_compliance_events_by_rollout` is the single
-//! decision site for what counts.
-//!
-//! Migrated from `nixfleet_control_plane::wave_gate::evaluate_channel_gate`.
-//! The migration uses the AGGREGATED form
-//! (`Observed.outstanding_compliance_events_by_rollout`, populated from
-//! the DB-side query that already excludes `mismatch`/`malformed`
-//! signature statuses) - same data the reconciler's `wave_blocked`
-//! event reads. Both layers go through this gate at the dispatch
-//! decision; the reconciler's `Action::WaveBlocked` is a separate
-//! concern (wave-promotion gate inside rollout_state.rs).
-//!
-//! Mode handling:
+//! Compliance-wave gate. Earlier-wave hosts with outstanding evidence
+//! failures hold later-wave dispatch under `enforce` mode. Mode handling:
 //!   - `disabled`: no-op.
-//!   - `permissive`: counts outstanding events for observability but
-//!     never blocks. Returns `None`.
-//!   - `enforce`: blocks dispatch when any host in an EARLIER wave
-//!     (strictly less than the requesting host's wave) has outstanding
-//!     compliance events recorded against the current rollout.
+//!   - `permissive`: counts outstanding events for observability, never blocks.
+//!   - `enforce`: blocks dispatch when any host in an EARLIER wave (strictly
+//!     less than the requesting host's wave) has outstanding events recorded
+//!     against THIS rollout.
 //!
-//! Per-rollout grouping enforces resolution-by-replacement: events under
-//! a superseded rollout never appear under the current rollout's key, so
-//! a fresh deploy clears the gate without operator intervention.
+//! Aggregates both `ComplianceFailure` and `RuntimeGateError` (single DB-side
+//! filter at `db::reports::outstanding_compliance_events_by_rollout`). Per-
+//! rollout grouping enforces resolution-by-replacement so events under a
+//! superseded rollout never gate the new one.
 
 use nixfleet_proto::compliance::GateMode;
 use nixfleet_proto::Wave;
@@ -37,18 +18,11 @@ use crate::observed::Observed;
 
 use super::{GateBlock, GateInput};
 
-/// Outstanding compliance evidence failures grouped per host, restricted
-/// to the hosts in `wave_range` of `waves`. Returned vec is sorted+deduped.
-/// Counts include both `ComplianceFailure` and `RuntimeGateError` events
-/// (DB filter is the kind-discriminator; this helper sees only sums).
-///
-/// LOADBEARING: same predicate consumed by both the dispatch gate
-/// (waves 0..host_wave, exclusive - only EARLIER waves count) and the
-/// reconciler's wave-promotion `Action::WaveBlocked` emission (waves
-/// 0..=current_wave, inclusive - current wave's failures hold
-/// promotion). Range is the only difference between call sites; one
-/// helper means a fix to filtering / signature handling / per-host
-/// grouping covers both.
+/// Outstanding evidence failures per host, restricted to `wave_range`. Sorted+
+/// deduped. LOADBEARING: shared by the dispatch gate (`0..host_wave`, only
+/// earlier waves) and the reconciler's wave-promotion `WaveBlocked` emission
+/// (`0..=current_wave`, includes current). One helper keeps filtering /
+/// signature handling consistent.
 pub fn outstanding_failures_in_waves(
     observed: &Observed,
     rollout_id: &str,
@@ -95,9 +69,8 @@ pub fn check(input: &GateInput) -> Option<GateBlock> {
             .position(|w| w.hosts.iter().any(|h| h == input.host))
     });
 
-    // Without a wave plan or with the host in wave 0, no earlier wave
-    // can hold this dispatch. (Same-wave hosts do not count: that is the
-    // budget gate's job.)
+    // No wave plan or wave 0 ⇒ no earlier wave can hold this dispatch.
+    // (Same-wave hosts are the budget gate's concern.)
     let host_wave_idx = match host_wave {
         Some(0) | None => return None,
         Some(n) => n,

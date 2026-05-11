@@ -15,34 +15,21 @@ pub struct Observed {
     pub last_rolled_refs: HashMap<String, String>,
     pub host_state: HashMap<String, HostState>,
     pub active_rollouts: Vec<Rollout>,
-    /// `[rollout_id][host] → count` of outstanding compliance evidence
-    /// failures. Aggregates BOTH `ComplianceFailure` events (a probe
-    /// returned FAIL) and `RuntimeGateError` events (the collector
-    /// itself broke / evidence is stale) - both classes mean "this
-    /// host's evidence chain is broken", and both block wave promotion
-    /// identically under enforce mode (DB-side filter at
-    /// `db::reports::outstanding_compliance_events_by_rollout`).
-    /// Per-rollout grouping enforces resolution-by-replacement so
-    /// events under a superseded rollout don't gate the new one.
+    /// `[rollout_id][host] → count` of outstanding evidence failures.
+    /// Aggregates both `ComplianceFailure` and `RuntimeGateError` (single
+    /// DB-side filter at `db::reports::outstanding_compliance_events_by_rollout`).
+    /// Per-rollout grouping enforces resolution-by-replacement so events under
+    /// a superseded rollout don't gate the new one.
     #[serde(default)]
     pub outstanding_compliance_events_by_rollout: HashMap<String, HashMap<String, usize>>,
-    /// Last `RolloutDeferred` the CP successfully journalled per channel.
-    /// The reconciler consults this and only emits a fresh `RolloutDeferred`
-    /// when (target_ref, blocked_by) would change - without this debounce,
-    /// every reconcile tick on a blocked channel would pollute the journal
-    /// with an identical line.
+    /// Last `RolloutDeferred` journalled per channel. The reconciler debounces
+    /// re-emission against this; without it every blocked tick would pollute
+    /// the journal with an identical line.
     #[serde(default)]
     pub last_deferrals: HashMap<String, DeferralRecord>,
-    /// Issue #86: per-host probe-pass state extracted from each host's
-    /// latest checkin. `true` = probes are passing (or the host has no
-    /// declared probes / mode is permissive / disabled - see
-    /// `nixfleet_proto::agent_wire::host_probes_passing`). `false` = at
-    /// least one probe is failing or hasn't run yet under enforce mode;
-    /// the soak gate holds the Healthy → Soaked transition for this
-    /// host. Hosts absent from the map (no checkin yet, or the CP
-    /// projector didn't populate them) default to `true` - the gate
-    /// fails open so a misconfigured projection can't accidentally
-    /// stall every promotion.
+    /// Per-host probe-pass state from the latest checkin. Hosts absent from
+    /// the map default to `true` so a misconfigured projection can't stall
+    /// every promotion (gate fails open).
     #[serde(default)]
     pub host_probes_passing: HashMap<String, bool>,
 }
@@ -84,40 +71,24 @@ pub struct Rollout {
     /// Hosts not in Healthy are absent.
     #[serde(default)]
     pub last_healthy_since: HashMap<String, DateTime<Utc>>,
-    /// Disruption-budget snapshot copied from the rollout's signed
-    /// manifest at projection time. Frozen for the rollout's life so
-    /// mid-rollout retag does not reshape budget enforcement. Cross-
-    /// rollout in-flight summing matches by `selector` equality - the
-    /// fleet-wide property is preserved even though each rollout
-    /// carries its own snapshot.
+    /// Disruption-budget snapshot frozen at projection time, so mid-rollout
+    /// retag does not reshape enforcement. Cross-rollout in-flight summing
+    /// matches by `selector` equality.
     #[serde(default)]
     pub budgets: Vec<nixfleet_proto::RolloutBudget>,
-    /// `Some(t)` after `Action::ConvergeRollout` stamped the rollouts
-    /// table, OR after the orphan sweep retired a rollout whose
-    /// channel has no expected hosts. `None` while the rollout is
-    /// still progressing through waves.
-    ///
-    /// Visible to the reconciler so `advance_rollout` can short-
-    /// circuit terminal rollouts (no actions, no every-tick
-    /// re-emission of `ConvergeRollout`). Visible to gates so
-    /// `channel_edges` can read the host_states (all
-    /// terminal-for-ordering by construction at this point) and
-    /// release the successor - the symmetric "predecessor done"
-    /// answer in both conservative + non-conservative modes.
+    /// `Some(t)` after `ConvergeRollout` (or orphan sweep) marked the rollout
+    /// terminal; `None` while still progressing through waves. Visible to the
+    /// reconciler (short-circuits advance) and to `channel_edges` (lets the
+    /// successor release symmetrically in both gate modes).
     #[serde(default)]
     pub terminal_at: Option<DateTime<Utc>>,
 }
 
 impl Rollout {
-    /// Active-for-ordering: the rollout still has work outstanding from
-    /// the perspective of `channelEdges` / host-edges sequencing. Empty
-    /// `host_states` (newly-recorded, no dispatches yet) counts as
-    /// active - the rollout has work to do, just hasn't started.
-    /// Otherwise: active iff at least one host is non-terminal.
-    ///
-    /// `Failed` / `Reverted` count as active (predecessor in trouble).
-    /// See `HostRolloutState::is_terminal_for_ordering` for the per-host
-    /// terminal predicate.
+    /// Active for `channelEdges` / host-edges sequencing. Empty
+    /// `host_states` counts as active (work declared, not started).
+    /// `Failed` / `Reverted` count as active - predecessor in trouble holds
+    /// the successor. See `HostRolloutState::is_terminal_for_ordering`.
     pub fn is_active_for_ordering(&self) -> bool {
         if self.host_states.is_empty() {
             return true;

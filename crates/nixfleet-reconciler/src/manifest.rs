@@ -5,22 +5,12 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use nixfleet_proto::{FleetResolved, HostWave, Meta, RolloutBudget, RolloutManifest};
 
-/// Set of rolloutIds the CURRENT fleet snapshot expects across all
-/// channels. Used by every code path that needs to filter
-/// `host_dispatch_state` snapshots to "this rev's rollouts only" so a
-/// stale Converged rollout from the previous rev doesn't poison
-/// channelEdges / budget / host-edge gate evaluation.
-///
-/// Centralised here because the same filter is consumed by:
-///   - `polling::channel_refs_poll::record_rollouts_gated_by_channel_edges`
-///   - `server::routes::deferrals` (live dashboard read)
-///   - `server::checkin_pipeline::dispatch_observed` (per-checkin gate eval)
-///
-/// Channels whose `compute_rollout_id_for_channel` errors are silently
-/// dropped; callers handle the empty case as "no current rollout".
-/// Errors are logged at the call site that has tracing infrastructure
-/// - keeping this fn pure means the reconciler crate remains
-/// dependency-light.
+/// RolloutIds the current fleet snapshot expects across all channels. Filters
+/// `host_dispatch_state` snapshots to "this rev's rollouts only" so stale
+/// Converged rollouts from a previous rev don't poison gate evaluation.
+/// Consumed by polling, the deferrals route, and the per-checkin dispatch
+/// pipeline; centralising it keeps the filter consistent. Errored channels
+/// are silently dropped (callers log at their site, this fn stays pure).
 pub fn current_rollout_ids(
     fleet: &FleetResolved,
     fleet_resolved_hash: &str,
@@ -131,10 +121,9 @@ pub fn project_manifest(
 
     let channel_ref = ci_commit.unwrap_or_default().to_string();
 
-    // Snapshot disruption budgets at projection time. Each fleet-level
-    // budget's selector resolves against `fleet.hosts` here and freezes;
-    // mid-rollout retags affect future rollouts, never this one. Hosts
-    // sorted alphabetically for JCS canonical-byte stability.
+    // Snapshot disruption budgets here; selectors resolve once and freeze.
+    // Mid-rollout retags affect future rollouts, never this one. Hosts sorted
+    // for JCS canonical-byte stability.
     let disruption_budgets: Vec<RolloutBudget> = fleet
         .disruption_budgets
         .iter()

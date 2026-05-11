@@ -1,15 +1,7 @@
-//! ChannelEdges gate - predecessor channel must converge before successor opens.
-//!
-//! Migrated from `crate::reconcile::predecessor_channel_blocking`. The
-//! reconciler's `reconcile()` main loop still uses
-//! `check_for_channel` directly (channel-level, not host-level - it
-//! decides whether to emit `OpenRollout` for a channel whose ref
-//! changed). The dispatch endpoint uses `check` via
-//! `gates::evaluate_for_host`.
-//!
-//! Both call sites end up in the same predicate (`channel_blocked`),
-//! so adding a new edge case touches one function and is enforced
-//! everywhere.
+//! ChannelEdges gate: predecessor channel must converge before successor
+//! opens. The reconciler's main loop calls `check_for_channel` directly
+//! (channel-level); the dispatch endpoint reaches `check` via
+//! `gates::evaluate_for_host`. Both bottom out in `channel_blocked`.
 
 use crate::observed::Observed;
 use nixfleet_proto::FleetResolved;
@@ -17,8 +9,6 @@ use std::collections::HashSet;
 
 use super::{GateBlock, GateInput, GateMode};
 
-/// Per-host gate entry. Derives the host's channel from `fleet.hosts`
-/// and dispatches to `check_for_channel`.
 pub fn check(input: &GateInput) -> Option<GateBlock> {
     let host_channel = input
         .fleet
@@ -37,12 +27,9 @@ pub fn check(input: &GateInput) -> Option<GateBlock> {
     })
 }
 
-/// Channel-level entry. Returns the predecessor channel name when
-/// `channel` is held, else `None`.
-///
-/// Public so the reconciler's `reconcile()` main loop and the
-/// dashboard's live `/v1/deferrals` route can consult the same
-/// predicate.
+/// Returns the predecessor channel name when `channel` is held, else `None`.
+/// Public so the reconciler's main loop and the dashboard's live deferrals
+/// route consult the same predicate.
 pub fn check_for_channel(
     fleet: &FleetResolved,
     observed: &Observed,
@@ -60,21 +47,12 @@ pub fn check_for_channel(
         })
 }
 
-/// Single-predecessor check. The shared predicate behind every entry
-/// point - `check`, `check_for_channel`, and the dashboard live read all
-/// route here.
-///
-/// Source-of-truth precedence:
-///   1. If a rollout for `predecessor` exists in `observed.active_rollouts`,
-///      ITS state wins. A converged rollout (every host Soaked or
-///      Converged) means the predecessor is done.
-///   2. Otherwise, if the predecessor was emitted in this reconcile
-///      tick, it counts as active.
-///   3. Otherwise, in `Dispatch` mode (fresh-boot protection at the
-///      dispatch endpoint), block if the fleet declares hosts on the
-///      predecessor channel. `Reconcile` mode lets it through  -
-///      `emitted_opens_in_tick` is the authoritative in-tick signal
-///      there.
+/// Single-predecessor check. Source-of-truth precedence:
+/// 1. Rollout in `observed.active_rollouts` wins; converged ⇒ done.
+/// 2. Else, predecessor emitted this tick ⇒ active.
+/// 3. Else, `Dispatch` blocks if fleet declares hosts on the predecessor
+///    channel (fresh-boot protection); `Reconcile` lets it through
+///    (`emitted_opens_in_tick` is the in-tick authority there).
 fn channel_blocked(
     fleet: &FleetResolved,
     observed: &Observed,
@@ -92,8 +70,7 @@ fn channel_blocked(
             if emitted_opens_in_tick.contains(predecessor) {
                 return true;
             }
-            // Mode is the load-bearing axis here - keep this match
-            // explicit so adding a future mode forces a decision.
+            // Explicit match so adding a future mode forces a decision.
             match mode {
                 GateMode::Dispatch => fleet.hosts.values().any(|h| h.channel == predecessor),
                 GateMode::Reconcile => false,

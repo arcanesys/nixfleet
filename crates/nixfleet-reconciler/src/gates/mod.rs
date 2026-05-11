@@ -1,9 +1,8 @@
-//! Shared dispatch-time gates: reconciler `handle_wave` + CP dispatch checkin
-//! both go through `evaluate_for_host` so split-brain enforcement (a gate fires
-//! on one path but not the other) becomes a registration error, not a regression.
-//!
-//! Adding a gate: `pub fn check(input: &GateInput) -> Option<GateBlock>` in a
-//! new file here, register in `evaluate_for_host`, add a parity test.
+//! Shared dispatch-time gates routed through `evaluate_for_host` from both the
+//! reconciler and the CP dispatch checkin, so split-brain enforcement becomes
+//! a registration error rather than a regression. To add one: implement
+//! `check(input: &GateInput) -> Option<GateBlock>`, register in
+//! `evaluate_for_host`, add a parity test.
 
 use std::collections::HashSet;
 
@@ -21,28 +20,18 @@ pub mod wave_promotion;
 #[cfg(test)]
 mod tests;
 
-/// Reason a host can't be dispatched right now. Each gate maps to one
-/// variant. The variants carry enough detail to render a useful log line
-/// + observability event without re-querying state.
+/// Reason a host can't be dispatched right now. Variants carry enough detail
+/// to render the log line + observability event without re-querying state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GateBlock {
-    /// Channel-level: the host's channel has an unconverged predecessor
-    /// per `fleet.channelEdges`.
     ChannelEdges { predecessor_channel: String },
-    /// Wave-promotion: host's wave hasn't been reached by the rollout.
     WavePromotion { host_wave: u32, current_wave: u32 },
-    /// Per-host DAG: a host this host depends on hasn't reached
-    /// terminal-for-ordering (Soaked / Converged).
     HostEdge { gating_host: String },
-    /// Disruption budget: too many hosts in this host's budget already
-    /// in-flight.
     DisruptionBudget {
         in_flight: u32,
         max: u32,
         selector_summary: String,
     },
-    /// Compliance wave staging: earlier-wave host has outstanding
-    /// compliance failures under `enforce` mode.
     ComplianceWave {
         failing_events_count: usize,
         host_wave: u32,
@@ -93,21 +82,18 @@ impl GateBlock {
     }
 }
 
-/// Reconciler vs dispatch divergence on missing-predecessor: reconciler trusts
-/// `emitted_opens_in_tick` (don't block); dispatch conservatively blocks until
-/// polling records the predecessor (else fresh-boot checkins race the recorder
-/// and bypass channelEdges).
+/// Mode-dependent behaviour on missing-predecessor. `Reconcile` trusts the
+/// in-tick `emitted_opens_in_tick` set and does not block; `Dispatch` blocks
+/// until polling records the predecessor, else fresh-boot checkins race
+/// the recorder and bypass channelEdges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateMode {
-    /// Reconciler tick - non-conservative on missing predecessor.
     Reconcile,
-    /// Per-checkin dispatch endpoint - conservative on missing.
     Dispatch,
 }
 
 impl GateMode {
-    /// Returns true iff this mode treats a missing predecessor as
-    /// a blocker (the conservative branch of channel_edges, etc).
+    /// True iff a missing predecessor blocks (the conservative branch).
     pub fn conservative_on_missing(self) -> bool {
         matches!(self, GateMode::Dispatch)
     }
@@ -127,7 +113,7 @@ pub struct GateInput<'a> {
     pub mode: GateMode,
 }
 
-/// First block wins. Order is cheapest-first so a blocked host short-circuits:
+/// First block wins. Cheapest-first order:
 /// channel_edges → wave_promotion → host_edges → disruption_budget → compliance_wave.
 pub fn evaluate_for_host(input: &GateInput) -> Option<GateBlock> {
     if let Some(b) = channel_edges::check(input) {
