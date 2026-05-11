@@ -18,43 +18,30 @@ pub const LAST_CONFIRM_FILENAME: &str = "last_confirmed_at";
 pub const LAST_DISPATCH_FILENAME: &str = "last_dispatched";
 
 /// Confirm breadcrumb replayed on every checkin so the wave-promotion gate
-/// + outstandingComplianceFailures filter have something to compare against.
-/// Distinct from `last_dispatched` (cleared on confirm) - this one persists.
+/// and outstandingComplianceFailures filter have something to compare against.
+/// Persists across confirms (unlike `last_dispatched`).
 pub const LAST_TARGET_FILENAME: &str = "last_target";
 
-/// CP's circuit breaker (`Decision::HoldAfterFailure`): a host stuck on bad
-/// bytes stops being re-dispatched until a clean fetch shows up.
+/// Drives CP's circuit breaker (`Decision::HoldAfterFailure`): a host stuck
+/// on bad bytes stops being re-dispatched until a clean fetch shows up.
 pub const LAST_FETCH_OUTCOME_FILENAME: &str = "last_fetch_outcome";
 
-/// Written when `fire_switch` returns `DeferredPendingReboot` (issue #56);
-/// suppresses redundant `ActivationDeferred` re-posts on every poll cycle.
-/// The dispatch loop short-circuits when the next target's `closure_hash`
-/// matches the recorded value - same closure, same inhibitor, no point
-/// re-detecting + re-posting. Cleared by `record_confirm_success` (after
-/// the operator reboots and boot-recovery confirms) and naturally bypassed
-/// when a fresher `closure_hash` arrives (match check fails, dispatch
-/// proceeds normally - and a new `last_deferred` lands if the new closure
-/// also trips the inhibitor).
+/// Suppresses redundant `ActivationDeferred` re-posts when the next target's
+/// closure_hash matches the recorded value. Cleared on confirm success;
+/// naturally bypassed when a fresher closure arrives.
 pub const LAST_DEFERRED_FILENAME: &str = "last_deferred";
 
-/// Written when activation produces SwitchFailed or VerifyMismatch (issue #55);
-/// suppresses retry of a closure that already failed within the quarantine
-/// window. Single-record overwrite-on-write: if the next failure has a
-/// different `closure_hash` the record is replaced (count resets to 1) so
-/// suppression only matches the most-recent broken closure. CI publishing a
-/// fix advances the channel-ref to a new closure_hash; on the next dispatch
-/// the suppression check no longer matches and activation proceeds normally.
+/// Suppresses retry of a closure that already failed within the quarantine
+/// window. Single-record overwrite-on-write: a different closure_hash resets
+/// the count, so a CI fix that advances the channel-ref clears suppression.
 pub const LAST_FAILED_CLOSURE_FILENAME: &str = "last_failed_closure";
 
-/// 24h matches the issue's suggested suppression window. Long enough to
-/// absorb operator-paced fix cycles, short enough that a stale record from
-/// a successfully-recovered host doesn't suppress a legitimate retry.
+/// 24h: long enough to absorb operator-paced fixes, short enough that a stale
+/// record from a recovered host doesn't suppress a legitimate retry.
 pub const QUARANTINE_WINDOW_SECS: i64 = 24 * 60 * 60;
 
-/// Re-post throttle: post `ClosureQuarantined` at most once per hour while
-/// the host is suppressing the same closure_hash. First post happens on the
-/// first suppression after a failure; subsequent suppressions within the
-/// hour are silent. Bounds journal volume during steady-state quarantine.
+/// Re-post throttle: `ClosureQuarantined` at most once per hour while
+/// suppressing the same closure_hash. Bounds journal volume during steady-state.
 pub const QUARANTINE_REPOST_THROTTLE_SECS: i64 = 60 * 60;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -71,11 +58,9 @@ pub struct LastFailedClosureRecord {
     pub channel_ref: String,
     pub last_failure_at: DateTime<Utc>,
     pub failure_count: u32,
-    /// Most recent failure summary - fed back into `ClosureQuarantined`'s
-    /// `reason` field on suppression posts.
+    /// Fed back into `ClosureQuarantined`'s `reason` field on suppression posts.
     pub reason: String,
-    /// `None` until the first quarantine event posts; updated on each post.
-    /// Read by the suppression check to throttle to one post per
+    /// Throttle anchor: at most one `ClosureQuarantined` per
     /// `QUARANTINE_REPOST_THROTTLE_SECS` window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_quarantine_post_at: Option<DateTime<Utc>>,
@@ -86,13 +71,12 @@ pub struct LastDispatchRecord {
     pub closure_hash: String,
     pub channel_ref: String,
     pub rollout_id: String,
-    /// Channel's compliance mode at dispatch time; consumed by boot-recovery
-    /// to run the runtime gate on the activated closure before retroactive confirm.
+    /// Channel's compliance mode at dispatch time; boot-recovery runs the
+    /// runtime gate against this before retroactive confirm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compliance_mode: Option<String>,
-    /// Wire-carried confirm endpoint from `target.activate.confirm_endpoint`.
-    /// Required: we only persist `last_dispatched` for confirmable targets,
-    /// so a record without an endpoint is impossible by construction.
+    /// Wire-carried from `target.activate.confirm_endpoint`. Required - we
+    /// only persist `last_dispatched` for confirmable targets.
     pub confirm_endpoint: String,
     pub dispatched_at: DateTime<Utc>,
 }
@@ -118,10 +102,8 @@ fn write_atomic_json<T: serde::Serialize>(
     write_atomic(state_dir, filename, body.as_bytes())
 }
 
-/// `Ok(None)` for both absent and malformed JSON; `Err` only on FS I/O failures.
-/// Malformed JSON gets a `tracing::warn!` so corrupt-state-dir failures aren't
-/// silent at runtime (silent swallow was hiding a missing required field in
-/// a harness preseed for ~2y before a test caught it).
+/// `Ok(None)` for absent OR malformed JSON; `Err` only on FS I/O. Malformed
+/// reads log at `warn` so corrupt-state-dir failures aren't silent.
 fn read_atomic_json<T: for<'de> serde::Deserialize<'de>>(
     state_dir: &Path,
     filename: &str,
@@ -199,19 +181,13 @@ pub fn read_last_deferred(state_dir: &Path) -> Result<Option<LastDeferredRecord>
     read_atomic_json(state_dir, LAST_DEFERRED_FILENAME)
 }
 
-/// Idempotent overwrite - re-posting `ActivationDeferred` for the same
-/// `closure_hash` happens at most once now (the dispatch suppression check
-/// short-circuits before reaching here), so this is the on-first-defer
-/// write path only.
+/// First-defer write path; suppression short-circuits subsequent calls.
 pub fn write_last_deferred(state_dir: &Path, record: &LastDeferredRecord) -> Result<()> {
     write_atomic_json(state_dir, LAST_DEFERRED_FILENAME, record)
 }
 
-/// Cleared on `record_confirm_success` (post-reboot retroactive confirm).
-/// Stale records for non-current `closure_hash` values are inert - the
-/// dispatch suppression check only matches when hashes are equal - so we
-/// don't bother clearing on closure_hash advance; the next defer just
-/// overwrites.
+/// Cleared on confirm success; stale records for non-current closure_hash
+/// values are inert (suppression only matches on equal hashes).
 pub fn clear_last_deferred(state_dir: &Path) -> Result<()> {
     let path = state_dir.join(LAST_DEFERRED_FILENAME);
     match std::fs::remove_file(&path) {
@@ -226,22 +202,17 @@ pub fn read_last_failed_closure(state_dir: &Path) -> Result<Option<LastFailedClo
     read_atomic_json(state_dir, LAST_FAILED_CLOSURE_FILENAME)
 }
 
-/// Writes the record verbatim. Use `record_switch_failure` for the
-/// increment-or-reset semantics; `write_last_failed_closure` is the raw
-/// persistence path the suppression handler uses to update the
-/// `last_quarantine_post_at` timestamp without touching `failure_count`.
+/// Raw write. Use `record_switch_failure` for increment-or-reset semantics;
+/// the suppression handler uses this to update `last_quarantine_post_at`
+/// without touching `failure_count`.
 pub fn write_last_failed_closure(state_dir: &Path, record: &LastFailedClosureRecord) -> Result<()> {
     write_atomic_json(state_dir, LAST_FAILED_CLOSURE_FILENAME, record)
 }
 
-/// Increment `failure_count` if the existing record matches `closure_hash`,
-/// else reset to a fresh record with count=1. Returns the post-write count
-/// so the caller can include it in tracing / event payloads. Single-record
-/// design - the FOOTGUN here is that two distinct closures failing in
-/// quick succession only retain the most-recent count (the previous one is
-/// reset to 1 if it later fails again). This is intentional: the
-/// suppression window is closure-scoped, and tracking history of every
-/// closure that ever failed bloats state-dir indefinitely.
+/// Increment `failure_count` on closure_hash match, else reset to 1. Single-
+/// record design: two distinct closures failing in quick succession only
+/// retain the most-recent count. Intentional - tracking every closure that
+/// ever failed bloats state-dir indefinitely.
 pub fn record_switch_failure(
     state_dir: &Path,
     closure_hash: &str,
@@ -257,10 +228,8 @@ pub fn record_switch_failure(
             last_failure_at: now,
             failure_count: r.failure_count.saturating_add(1),
             reason: reason.to_string(),
-            // Preserve last_quarantine_post_at across same-hash failures so
-            // the throttle window doesn't reset on every new attempt - a
-            // closure that flaps a second time within the hour shouldn't
-            // immediately re-post the operator alert.
+            // Preserve last_quarantine_post_at so a flapping closure doesn't
+            // reset the throttle window every attempt.
             last_quarantine_post_at: r.last_quarantine_post_at,
         },
         _ => LastFailedClosureRecord {
@@ -277,11 +246,9 @@ pub fn record_switch_failure(
     Ok(count)
 }
 
-/// Best-effort delete; idempotent. Currently unused because passive
-/// supersession (overwrite on next failure / non-match in suppression
-/// check) handles the common cases. Exposed for symmetry with the other
-/// `clear_last_*` helpers and so future cleanup paths (e.g. an explicit
-/// "release this host from quarantine" admin action) have a hook.
+/// Best-effort delete. Currently unused; passive supersession handles the
+/// common cases. Exposed for symmetry and as a hook for an explicit
+/// "release this host from quarantine" admin action.
 pub fn clear_last_failed_closure(state_dir: &Path) -> Result<()> {
     let path = state_dir.join(LAST_FAILED_CLOSURE_FILENAME);
     match std::fs::remove_file(&path) {
@@ -313,19 +280,17 @@ pub fn uptime_secs(started_at: Instant) -> u64 {
     started_at.elapsed().as_secs()
 }
 
-/// `<closure_hash>\n<rfc3339>\n` plain-text - `read_last_confirmed` does its
-/// own line parsing + closure/skew checks, so JSON would just add ceremony.
+/// Plain text `<closure_hash>\n<rfc3339>\n`. Manual line parsing lets the
+/// reader do its own closure + skew checks.
 pub fn write_last_confirmed(state_dir: &Path, closure_hash: &str, at: DateTime<Utc>) -> Result<()> {
     let body = format!("{closure_hash}\n{}\n", at.to_rfc3339());
     write_atomic(state_dir, LAST_CONFIRM_FILENAME, body.as_bytes())
 }
 
-/// LOADBEARING: same persistence steps in the same order from BOTH
-/// dispatch and boot-recovery - without `write_last_target` the CP's
-/// outstanding-failure filter sees every recorded event forever. Each step
-/// is best-effort; `clear_last_dispatched` and `clear_last_deferred` run
-/// last so a partial crash leaves the dispatch + defer records around for
-/// retry.
+/// LOADBEARING: same steps in the same order from BOTH dispatch and boot-
+/// recovery. Without `write_last_target` the CP's outstanding-failure filter
+/// sees every event forever. Best-effort; clears run LAST so a partial crash
+/// leaves dispatch + defer records around for retry.
 pub fn record_confirm_success(state_dir: &Path, target: &EvaluatedTarget, at: DateTime<Utc>) {
     if let Err(err) = write_last_confirmed(state_dir, &target.closure_hash, at) {
         tracing::warn!(
@@ -343,11 +308,8 @@ pub fn record_confirm_success(state_dir: &Path, target: &EvaluatedTarget, at: Da
     if let Err(err) = clear_last_dispatched(state_dir) {
         tracing::warn!(error = %err, "clear_last_dispatched failed (non-fatal)");
     }
-    // Issue #56: confirm succeeded → the deferred dispatch landed via reboot,
-    // so the suppression sentinel is stale. Failure here is harmless: a
-    // stale record only triggers suppression when closure_hash matches, and
-    // confirm just changed the live state - next dispatch will be a different
-    // closure.
+    // Confirm-after-reboot means the deferred sentinel is now stale; failure
+    // is harmless (stale records only suppress on matching hashes).
     if let Err(err) = clear_last_deferred(state_dir) {
         tracing::warn!(error = %err, "clear_last_deferred failed (non-fatal)");
     }

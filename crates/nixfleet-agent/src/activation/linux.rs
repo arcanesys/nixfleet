@@ -77,22 +77,15 @@ async fn read_unit_exit_code(unit_name: &str) -> Option<i32> {
     trimmed.parse::<i32>().ok()
 }
 
-/// Critical components whose live-swap nixos-rebuild's switchInhibitors check
-/// refuses. Tuples are `(component_name, store-relative path inside the system
-/// closure)`. Detection is path-canonicalize equality on the symlink target  -
-/// if the canonicalised targets differ between current and new, the live swap
-/// is unsafe and we defer to next boot.
-///
-/// Intentionally NOT included: `init` (i.e. `<closure>/init`). That file is a
-/// regenerated-per-system stub script that bakes in the closure's own store
-/// path before exec'ing systemd, so two distinct system closures ALWAYS yield
-/// distinct `init` paths regardless of whether anything runtime-relevant
-/// changed. Listing it here turns every system update into a defer, even for
-/// a CP-binary-only diff. The actual live-swap-unsafe components are systemd
-/// (PID 1) + kernel + dbus; if those match, the init script delta is inert.
+/// Critical components whose live-swap nixos-rebuild refuses. Detection is
+/// canonicalize-equality on the symlink target between current + new closure.
+/// `init` is NOT listed: it's a regenerated-per-system stub that always
+/// differs across closures regardless of whether anything runtime-relevant
+/// changed; listing it would force a defer on every update. The actually-
+/// unsafe components are systemd (PID 1), kernel, and dbus.
 const SWITCH_INHIBITORS: &[(&str, &str)] = &[
-    // dbus.service is the unit symlink - broker→dbus and dbus→broker swaps
-    // both surface as a different canonicalised target inside the new closure.
+    // dbus.service is the unit symlink - broker↔dbus swaps surface as a
+    // different canonicalised target inside the new closure.
     ("dbus", "etc/systemd/system/dbus.service"),
     ("systemd", "sw/lib/systemd/systemd"),
     ("kernel", "kernel"),
@@ -116,7 +109,8 @@ fn detect_switch_inhibitors(current_system: &Path, new_store_path: &Path) -> Opt
 
 const CURRENT_SYSTEM_PATH: &str = "/run/current-system";
 
-// FOOTGUN: --scope / --pipe --wait inherit caller's cgroup - agent SIGTERM kills the switch. Use --unit.
+// FOOTGUN: --scope / --pipe --wait inherit the caller's cgroup; agent
+// SIGTERM would kill the switch mid-run. Use --unit for cgroup isolation.
 async fn fire_switch(
     target: &EvaluatedTarget,
     store_path: &str,
@@ -129,13 +123,10 @@ async fn fire_switch(
             component = component,
             "agent: deferring live switch - critical-component swap requires reboot",
         );
-        // LOADBEARING: `nix-env --set` (in pipeline.rs) creates the system
-        // generation but does NOT write bootloader entries - only
-        // `switch-to-configuration {boot,switch,test}` does. Without this,
-        // the deferred generation has no `/boot/loader/entries/*.conf` and
-        // the next reboot lands back on the previous boot default, defeating
-        // the entire defer-then-reboot lifecycle. `boot` mode writes loader
-        // entries without activating, which is exactly what defer needs.
+        // LOADBEARING: `nix-env --set` creates the generation but does NOT
+        // write bootloader entries - only switch-to-configuration does.
+        // Without `boot` here, the next reboot lands back on the previous
+        // default and the defer-then-reboot lifecycle breaks.
         let switch_bin = format!("{store_path}/bin/switch-to-configuration");
         let boot_status = Command::new(&switch_bin)
             .arg("boot")
@@ -193,8 +184,8 @@ async fn fire_switch(
     Ok(None)
 }
 
-/// `_target_basename` is unused on linux (profile flip is source of truth);
-/// kept in the signature for cross-platform dispatch uniformity.
+/// `_target_basename` unused on Linux (profile flip is source of truth);
+/// signature kept for cross-platform dispatch uniformity.
 async fn fire_rollback(_target_basename: &str) -> Result<Option<RollbackOutcome>> {
     let _ = Command::new("systemctl")
         .arg("reset-failed")
@@ -328,13 +319,10 @@ mod tests {
         assert_eq!(detect_switch_inhibitors(&cur, &new), None);
     }
 
+    /// Regression: `<closure>/init` is regenerated per-system, so an init-
+    /// only delta must NOT trigger defer (otherwise every update defers).
     #[test]
     fn detect_ignores_init_only_delta() {
-        // Regression pin: `<closure>/init` is regenerated per-system (bakes
-        // in the closure's own store path), so a closure path bump alone
-        // changes init even when nothing runtime-meaningful did. The defer
-        // path must NOT fire on init-only deltas - otherwise every nixfleet-
-        // driven update on every host gets deferred unnecessarily.
         let dir = tempfile::tempdir().unwrap();
         let cur = dir.path().join("current");
         let new = dir.path().join("new");
@@ -351,12 +339,11 @@ mod tests {
         assert_eq!(detect_switch_inhibitors(&cur, &new), None);
     }
 
+    /// Catches re-ordering or short-circuit regressions if SWITCH_INHIBITORS
+    /// is reshuffled: kernel is the trailing entry and must still fire when
+    /// dbus + systemd match.
     #[test]
     fn detect_returns_kernel_when_kernel_differs_first() {
-        // Kernel is the last entry in SWITCH_INHIBITORS (after dbus, systemd).
-        // This test seeds matching dbus/systemd and a differing kernel, and
-        // asserts kernel is the variant that fires - catches re-ordering or
-        // accidental short-circuit regressions if the constant is reshuffled.
         let dir = tempfile::tempdir().unwrap();
         let cur = dir.path().join("current");
         let new = dir.path().join("new");

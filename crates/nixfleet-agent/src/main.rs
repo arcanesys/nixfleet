@@ -64,10 +64,8 @@ pub(crate) struct Args {
     )]
     ssh_host_key_file: PathBuf,
 
-    /// JSON config for `services.nixfleet-agent.healthChecks` (issue #86).
-    /// Absent → no health probe scheduler; checkin omits `healthProbes`.
-    /// The NixOS module materialises this from the operator's
-    /// declarative config to `/etc/nixfleet/agent/health-checks.json`.
+    /// JSON config for declarative health probes. Absent ⇒ no scheduler,
+    /// checkin omits `healthProbes`. Materialised by the NixOS module.
     #[arg(long, env = "NIXFLEET_AGENT_HEALTH_CHECKS_CONFIG")]
     health_checks_config: Option<PathBuf>,
 }
@@ -107,7 +105,6 @@ async fn main() -> anyhow::Result<()> {
         args.client_key.as_deref(),
     )?;
 
-    // Best-effort: next checkin re-converges via dispatch.
     let recovery_reporter = comms::ReqwestReporter::new(
         client.clone(),
         args.control_plane_url.clone(),
@@ -130,10 +127,8 @@ async fn main() -> anyhow::Result<()> {
         "agent starting poll loop"
     );
 
-    // Issue #86: load health-check config + spawn the probe scheduler
-    // before entering the poll loop. Absent config → no scheduler runs;
-    // checkin omits `healthProbes`. Parse failures are fatal - the
-    // operator declared probes and we couldn't honour them.
+    // Health-check config + probe scheduler. Absent config = no scheduler.
+    // Parse failures are fatal - operator declared probes we can't honour.
     let health_cache = match args.health_checks_config.as_deref() {
         Some(path) => match nixfleet_agent::health::load_config(path) {
             Ok(Some(cfg)) => {
@@ -214,11 +209,8 @@ fn load_evidence_signer(
     std::sync::Arc::new(signer)
 }
 
-/// Best-effort POST of a pre-cert failure event over the bootstrap-token
-/// path. The agent is already exiting; this is purely about leaving an
-/// operator-visible breadcrumb on the CP. Skips when the bootstrap token
-/// or CA cert paths aren't configured (no plausible auth route from
-/// here).
+/// Best-effort POST of a pre-cert failure event via bootstrap-token auth.
+/// Agent is already exiting; this only leaves an operator-visible breadcrumb.
 async fn report_pre_cert_failure(args: &Args, event: nixfleet_proto::agent_wire::ReportEvent) {
     let Some(token_file) = args.bootstrap_token_file.as_deref() else {
         return;
@@ -301,7 +293,8 @@ async fn run_poll_loop(
         }
         ticker.tick().await;
 
-        // LOADBEARING: retry boot-recovery every tick - startup POST races CP restart; missed confirm rolls back healthy host.
+        // LOADBEARING: retry boot-recovery every tick - startup POST can race
+        // a CP restart, and a missed confirm rolls back a healthy host.
         if let Err(err) =
             check_boot_recovery(&client_handle, args, &reporter, &evidence_signer).await
         {
@@ -327,7 +320,8 @@ async fn run_poll_loop(
         {
             Ok(resp) => {
                 consecutive_failures = 0;
-                // LOADBEARING: process CP rollback before new dispatch - host must step away from failed gen first.
+                // LOADBEARING: rollback before new dispatch - host must step
+                // away from the failed gen first.
                 if let Some(rb) = &resp.rollback {
                     handle_cp_rollback_signal(rb, &reporter, args, &evidence_signer).await;
                 }
@@ -344,7 +338,8 @@ async fn run_poll_loop(
             }
             Err(err) => {
                 consecutive_failures = consecutive_failures.saturating_add(1);
-                // FOOTGUN: `{:#}` walks anyhow chain - `%err` alone hides TLS/connect cause below POST context.
+                // `{:#}` walks the anyhow chain; `%err` alone hides
+                // TLS/connect cause below POST context.
                 tracing::warn!(
                     error = %format!("{err:#}"),
                     consecutive_failures,
@@ -432,8 +427,6 @@ async fn send_checkin(
     let pending_generation = nixfleet_agent::host_facts::pending_generation()?;
     let uptime_secs = checkin_state::uptime_secs(started_at);
 
-    // read_last_confirmed returns Ok(None) on any mismatch (rollback, malformed,
-    // future-dated) so the checkin always carries a sensible Option<DateTime>.
     let last_confirmed_at = match checkin_state::read_last_confirmed(
         &args.state_dir,
         &current_generation.closure_hash,
@@ -473,16 +466,9 @@ async fn send_checkin(
             None
         }
     };
-    // Suppress + delete the outcome file when no fetch is in flight.
-    // `last_fetch_outcome` is the result of the agent's most recent
-    // FETCH attempt - meaningful while a target is pending, ancient
-    // history once the host has settled. Reporting a stale failure
-    // surfaces as a red badge on the dashboard for hosts that have
-    // long since recovered (saw this on aether after a manual
-    // darwin-rebuild bypassed the dispatch path). CP's circuit
-    // breaker (`Decision::HoldAfterFailure`) is only relevant when
-    // there's a recent fetch to circuit-break - without pending,
-    // there's no fetch to gate.
+    // Drop the outcome when no fetch is pending - meaningful only while a
+    // target is in flight. Reporting a stale failure pins a red badge on
+    // hosts that have recovered (e.g. a manual rebuild bypassed dispatch).
     let last_fetch_outcome = if pending_generation.is_some() {
         last_fetch_outcome
     } else {
@@ -495,19 +481,11 @@ async fn send_checkin(
         None
     };
 
-    // Sign last_confirmed_at against (hostname, rollout_id) using the
-    // SSH host key. CP verifies against hosts.<host>.pubkey before
-    // applying the attested timestamp to soak recovery - without the
-    // signature the timestamp is silently ignored (clamp falls back
-    // to `now`), so a compromised host can't replay an older confirm
-    // to short-circuit the soak gate.
-    //
-    // Sig requires a rollout_id; we use last_evaluated_target.rollout_id
-    // (the rollout the agent thinks it's on). CP recovery computes
-    // rollout_id from the host's channel + fleet hash; both sides match
-    // in steady state. A rollout rotation between agent-side sign and
-    // CP-side verify causes mismatch → CP falls back to unattested
-    // clamp, which is the correct conservative behaviour.
+    // Sign (hostname, rollout_id, last_confirmed_at) with the SSH host key.
+    // CP verifies against hosts.<host>.pubkey before trusting the attested
+    // timestamp for soak recovery; missing signature ⇒ timestamp ignored.
+    // Rotation between sign and verify causes mismatch → CP falls back to
+    // unattested clamp (conservative).
     let attestation_signature = match (
         last_confirmed_at,
         last_evaluated_target.as_ref().map(|t| t.rollout_id.clone()),
@@ -534,8 +512,6 @@ async fn send_checkin(
         uptime_secs: Some(uptime_secs),
         last_confirmed_at,
         attestation_signature,
-        // Issue #86: snapshot of latest probe states. Empty when the
-        // operator declared no health checks.
         health_probes: health_cache.snapshot().await,
         health_check_mode: health_cache.mode(),
     };
@@ -543,8 +519,8 @@ async fn send_checkin(
     comms::checkin(client, &args.control_plane_url, &req).await
 }
 
-/// Closes the timing window where fire-and-forget activation self-kills
-/// the agent mid-poll: matching dispatch record + live closure → retroactive confirm.
+/// Closes the timing window where fire-and-forget activation self-kills the
+/// agent mid-poll: matching dispatch + live closure ⇒ retroactive confirm.
 async fn check_boot_recovery(
     client: &reqwest::Client,
     args: &Args,

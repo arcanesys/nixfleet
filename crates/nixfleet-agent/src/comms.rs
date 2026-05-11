@@ -45,20 +45,10 @@ pub fn build_client(
     builder.build().context("build reqwest client")
 }
 
-/// Read the client key file at `path` and return PEM bytes that
-/// `reqwest::Identity::from_pem` will accept.
-///
-/// FOOTGUN: post nixfleet#43, the agent's client key is the host's
-/// SSH host key (`/etc/ssh/ssh_host_ed25519_key`). That file is OpenSSH
-/// format (`-----BEGIN OPENSSH PRIVATE KEY-----`), which neither
-/// reqwest nor rustls knows how to parse. We detect the OpenSSH header,
-/// extract the 32-byte ed25519 seed (matching the CSR-signing path),
-/// re-emit as PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----`) which rustls
-/// accepts. PEM files (PKCS#8 / SEC1 / PKCS#1) pass through unchanged.
-///
-/// Side benefit: operators that decide to pre-deploy a PEM-format
-/// agent key (legacy fleets pre-#43, or some custom flow) keep
-/// working without code changes.
+/// Return PEM bytes that `reqwest::Identity::from_pem` accepts. FOOTGUN:
+/// the agent's client key is the host SSH key, which is OpenSSH format -
+/// neither reqwest nor rustls parses it. We extract the 32-byte ed25519
+/// seed and re-emit as PKCS#8 PEM. PEM inputs pass through unchanged.
 fn read_client_key_as_pem(path: &Path) -> Result<String> {
     let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     if raw.contains("-----BEGIN OPENSSH PRIVATE KEY-----") {
@@ -109,10 +99,8 @@ pub enum ConfirmOutcome {
     Other,
 }
 
-/// `endpoint` is the wire-carried `target.activate.confirm_endpoint` from
-/// the dispatch reply. Required, not optional - the CP must always set it
-/// for any target the agent will confirm; agents refuse to confirm against
-/// a target with no activate block.
+/// `endpoint` is wire-carried `target.activate.confirm_endpoint` - required,
+/// not optional. Agents refuse to confirm without an activate block.
 pub async fn confirm(
     client: &Client,
     cp_url: &str,
@@ -269,11 +257,8 @@ mod read_client_key_tests {
 
     #[test]
     fn pem_input_passes_through() {
-        // If an operator (legacy fleet) supplies a PEM-format key
-        // directly, it must be returned unchanged so reqwest sees the
-        // exact bytes operator deployed. Helper detects format by
-        // looking for the `BEGIN OPENSSH PRIVATE KEY` header - anything
-        // else is passed through.
+        // Legacy PEM keys must be returned unchanged so reqwest sees the
+        // exact bytes the operator deployed.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("agent.key");
         let pem_input = "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n";
@@ -282,15 +267,13 @@ mod read_client_key_tests {
         assert_eq!(got, pem_input);
     }
 
+    /// Pubkey round-trip: protects against accidental seed swap during
+    /// OpenSSH → PKCS#8 conversion.
     #[test]
     fn openssh_to_pkcs8_pubkey_round_trips() {
-        // Pubkey derived from the converted PKCS#8 must equal the SSH
-        // host pubkey - protects against accidentally swapping seeds
-        // during conversion.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write_test_ssh_host_key(dir.path());
 
-        // What the SSH host key file's pubkey actually is.
         let raw = std::fs::read_to_string(&path).expect("read");
         let priv_key = PrivateKey::from_openssh(&raw).expect("parse");
         let expected_pubkey = match priv_key.key_data() {
@@ -298,8 +281,6 @@ mod read_client_key_tests {
             _ => panic!("not ed25519"),
         };
 
-        // Pubkey our converter would produce (rcgen parses PKCS#8,
-        // exposes public_key_raw).
         let pkcs8_pem = read_client_key_as_pem(&path).expect("convert");
         let key = rcgen::KeyPair::from_pem(&pkcs8_pem).expect("rcgen parse");
         let mut got = [0u8; 32];

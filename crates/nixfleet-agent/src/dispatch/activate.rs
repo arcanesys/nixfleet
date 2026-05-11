@@ -21,9 +21,8 @@ use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_fa
 use super::verify_mismatch::{handle_switch_failed, handle_verify_mismatch};
 use super::DispatchCtx;
 
-/// Map a manifest-cache result onto the wire enum the CP circuit-breaker
-/// understands. `Missing` is HTTP-shaped (404 / 5xx / network) → FetchFailed;
-/// `VerifyFailed` and `Mismatch` are content-shaped → VerifyFailed.
+/// Map manifest-cache result onto the wire enum. `Missing` (HTTP/network) ⇒
+/// FetchFailed; `VerifyFailed`/`Mismatch` (content) ⇒ VerifyFailed.
 fn fetch_outcome_for(result: &Result<RolloutManifest, ManifestError>) -> FetchOutcome {
     match result {
         Ok(_) => FetchOutcome {
@@ -95,7 +94,8 @@ pub(crate) async fn process_dispatch_target(
         return;
     }
 
-    // LOADBEARING: verify manifest + membership BEFORE consuming any target field - refuse-to-act.
+    // LOADBEARING: verify manifest + membership BEFORE consuming any target
+    // field. Refuse-to-act if the manifest doesn't validate.
     let rollout_id = target.rollout_id.as_str();
     let cache =
         nixfleet_agent::manifest_cache::ManifestCache::new(&args.state_dir, &args.trust_file);
@@ -109,7 +109,7 @@ pub(crate) async fn process_dispatch_target(
             wave_index,
         )
         .await;
-    // Persist outcome BEFORE any branch returns - CP's circuit breaker
+    // Persist BEFORE any branch returns - CP's circuit breaker
     // (Decision::HoldAfterFailure) reads this on the next checkin.
     let _ = nixfleet_agent::checkin_state::write_last_fetch_outcome(
         &args.state_dir,
@@ -129,10 +129,8 @@ pub(crate) async fn process_dispatch_target(
         }
     }
 
-    // Boot-recovery is the retroactive-confirm path; for non-confirmable
-    // targets (no activate block) there's no recovery work, so skip the
-    // write entirely. GOTCHA: write failure only loses boot-recovery  -
-    // next-checkin re-dispatches.
+    // Skip the boot-recovery breadcrumb for non-confirmable targets. Write
+    // failure here only loses boot-recovery; next-checkin re-dispatches.
     if let Some(activate) = target.activate.as_ref() {
         let dispatch_record = nixfleet_agent::checkin_state::LastDispatchRecord {
             closure_hash: target.closure_hash.clone(),
@@ -153,17 +151,10 @@ pub(crate) async fn process_dispatch_target(
         }
     }
 
-    // Issue #56: suppress redundant activate-and-defer cycles. If the previous
-    // attempt for THIS exact closure_hash already deferred (profile is set,
-    // awaiting reboot), there's no point re-running realise + nix-env --set +
-    // inhibitor detection on every poll - the outcome won't change until
-    // either reboot or a fresher closure_hash supersedes. Cleared by
-    // `record_confirm_success` (post-reboot retroactive confirm). A different
-    // closure_hash naturally bypasses the match - dispatch proceeds normally.
-    //
-    // Read failure is fail-open (don't suppress): the CP-side
-    // `apply_deferred_pending_reboot_transition` is idempotent, so a re-post
-    // is harmless if the sentinel is unreadable.
+    // Suppress redundant activate-and-defer for the same closure_hash;
+    // outcome won't change until reboot or a fresher closure supersedes.
+    // Cleared by `record_confirm_success`. Read failure is fail-open - the
+    // CP-side transition handler is idempotent.
     let suppress_due_to_prior_defer = matches!(
         nixfleet_agent::checkin_state::read_last_deferred(&args.state_dir),
         Ok(Some(ref rec)) if rec.closure_hash == target.closure_hash,
@@ -177,12 +168,11 @@ pub(crate) async fn process_dispatch_target(
         return;
     }
 
-    // Issue #55: suppress retry of a closure that already failed within the
-    // quarantine window. Distinct from the deferred suppression above:
-    // deferred = "we made progress, awaiting reboot" (silent re-skip);
-    // quarantined = "this closure broke things, operator needs to know"
-    // (loud re-skip with throttled `ClosureQuarantined` event posts). Auto-
-    // clears when the channel-ref advances to a different closure_hash.
+    // Suppress retry of a closure that already failed within the quarantine
+    // window. Differs from the deferred suppression above: deferred is
+    // silent (awaiting reboot); quarantined is loud (throttled
+    // `ClosureQuarantined` posts to alert the operator). Auto-clears on
+    // channel-ref advance.
     if let QuarantineDecision::Suppress(record) =
         evaluate_quarantine(&args.state_dir, target, chrono::Utc::now())
     {

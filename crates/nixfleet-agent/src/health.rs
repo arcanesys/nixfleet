@@ -1,19 +1,8 @@
-//! Per-host health probes (issue #86). Operator declares HTTP/TCP/exec
-//! probes via `services.nixfleet-agent.healthChecks`; the agent module
-//! materialises that to `/etc/nixfleet/agent/health-checks.json` and
-//! passes the path via `--health-checks-config`. This module:
-//!
-//! 1. Loads the config file at startup (`load_config`).
-//! 2. Spawns a per-probe interval ticker that runs the probe and updates
-//!    the in-memory state cache.
-//! 3. Exposes `latest_results` for the checkin assembler to snapshot into
-//!    the wire body.
-//!
-//! Distinct from `compliance.rs` (which fronts the external
-//! `compliance-evidence-collector` daemon for framework controls):
-//! health probes run in-process, are operator-declared, and gate
-//! soak promotion (not confirm). The two coexist on a host without
-//! interaction.
+//! Per-host health probes. Operator declares HTTP/TCP/exec probes; this
+//! module loads the config, runs a per-probe interval ticker, and exposes
+//! `latest_results` for the checkin assembler. Distinct from `compliance.rs`:
+//! health probes run in-process, are operator-declared, and gate soak (not
+//! confirm).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -26,12 +15,11 @@ use nixfleet_proto::compliance::GateMode;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
-/// Smallest legal probe interval - protects the agent from a misconfigured
-/// 0/1-second probe DOSing the local host. Below this we round up.
+/// Floor on probe interval - guards against a misconfigured 0/1-second probe
+/// DOSing the host. Values below are rounded up.
 pub const MIN_INTERVAL_SECS: u64 = 5;
 
-/// Per-failure cap to keep the wire body bounded - operators don't need a
-/// 100-line stderr; the first ~512 bytes are the diagnostic value.
+/// Per-failure cap to keep the wire body bounded.
 pub const FAILURE_REASON_MAX_LEN: usize = 512;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -121,10 +109,8 @@ pub fn load_config(path: &Path) -> Result<Option<HealthChecksConfig>> {
     Ok(Some(cfg))
 }
 
-/// Shared probe-state cache; the scheduler writes, the checkin assembler
-/// reads. Per-probe entry keyed by name. `mode` rides alongside the
-/// results so the checkin assembler can attach it without a second
-/// config-load.
+/// Shared probe-state cache. Scheduler writes, checkin assembler reads.
+/// `mode` rides alongside results so checkin doesn't reload config.
 #[derive(Debug)]
 pub struct ProbeStateCache {
     inner: RwLock<Vec<ProbeResult>>,
@@ -152,17 +138,15 @@ impl ProbeStateCache {
         self.mode
     }
 
-    /// Snapshot of every probe's latest state, sorted by name for stable
-    /// wire output. Cheap to call on every checkin tick.
+    /// Snapshot sorted by name for stable wire output.
     pub async fn snapshot(&self) -> Vec<ProbeResult> {
         let mut out = self.inner.read().await.clone();
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out
     }
 
-    /// Update / insert a probe's result by name. Preserves
-    /// `last_pass_at` across subsequent failures so the operator can see
-    /// when the probe last passed.
+    /// Upsert by name. Preserves `last_pass_at` across failures so the
+    /// operator sees when the probe last passed.
     pub async fn upsert(&self, mut result: ProbeResult) {
         let mut guard = self.inner.write().await;
         match guard.iter().position(|p| p.name == result.name) {
@@ -184,9 +168,8 @@ impl ProbeStateCache {
     }
 }
 
-/// Initial state with one Unknown entry per declared probe so the cache
-/// reports the full set even before any probe has run. Soak gate
-/// reads `Unknown` as non-passing - conservative semantic.
+/// One Unknown entry per declared probe so the cache reports the full set
+/// before any probe runs. Soak gate treats `Unknown` as non-passing.
 pub fn initial_results(cfg: &HealthChecksConfig) -> Vec<ProbeResult> {
     let mut out = Vec::new();
     for p in &cfg.http {
@@ -222,11 +205,8 @@ pub fn initial_results(cfg: &HealthChecksConfig) -> Vec<ProbeResult> {
     out
 }
 
-/// Runs the probe scheduler until the process exits. Spawns one tokio
-/// task per declared probe, each ticking at its own interval. `Disabled`
-/// mode short-circuits - probes don't run, cache stays at Unknown. The
-/// caller (main poll loop) is responsible for periodically reading
-/// `cache.snapshot()` into checkin bodies.
+/// Runs the probe scheduler until process exit, one tokio task per probe.
+/// `Disabled` mode short-circuits.
 pub async fn run_scheduler(cfg: HealthChecksConfig, cache: Arc<ProbeStateCache>) {
     if matches!(cfg.mode, GateMode::Disabled) {
         tracing::info!(
@@ -263,7 +243,7 @@ fn clamped_interval(secs: u64) -> Duration {
 
 fn truncate_reason(s: String) -> String {
     if s.len() > FAILURE_REASON_MAX_LEN {
-        // Take a char-boundary-safe prefix so we don't slice mid-codepoint.
+        // char-boundary-safe prefix - don't slice mid-codepoint.
         let mut end = FAILURE_REASON_MAX_LEN;
         while !s.is_char_boundary(end) && end > 0 {
             end -= 1;
