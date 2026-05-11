@@ -331,3 +331,32 @@ async fn nixfleet_status_renders_two_real_hosts_after_checkins() {
 
     server.abort();
 }
+
+#[test]
+fn nixfleet_derive_pubkey_deterministic_for_fixed_key() {
+    use base64::Engine as _;
+    use ed25519_dalek::SigningKey;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let key_path = dir.path().join("private-key.bin");
+    let seed = [0x42u8; 32];
+    std::fs::write(&key_path, seed).unwrap();
+
+    let expected = base64::engine::general_purpose::STANDARD
+        .encode(SigningKey::from_bytes(&seed).verifying_key().to_bytes());
+
+    let bin = env!("CARGO_BIN_EXE_nixfleet");
+    let output = std::process::Command::new(bin)
+        .args(["derive-pubkey", key_path.to_str().unwrap()])
+        .output()
+        .expect("spawn nixfleet derive-pubkey");
+
+    assert!(
+        output.status.success(),
+        "derive-pubkey failed: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.trim(), expected);
+}

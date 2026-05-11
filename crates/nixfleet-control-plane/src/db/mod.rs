@@ -55,7 +55,9 @@ impl Db {
         })
     }
 
-    #[cfg(test)]
+    /// In-memory SQLite for integration tests; trivial wrapper around
+    /// `Connection::open_in_memory()` exposed as a public API so
+    /// integration tests under `tests/` can construct an isolated `Db`.
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory().context("open sqlite :memory:")?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
