@@ -16,6 +16,13 @@ path = "src/lib.rs"
 name = "nixfleet-control-plane"
 path = "src/main.rs"
 
+[features]
+# Default-on so the lab Prometheus job (and any other operator
+# scraping /metrics) sees no behavior change from the rename.
+# Downstreams can drop both deps with --no-default-features.
+default = ["metrics"]
+metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]
+
 # Phase 3 PR-1: re-add the wire stack the prior PR dropped when it trimmed the
 # CP module to the Phase 2 oneshot-runner surface. axum/axum-server/
 # rustls/rustls-pki-types ported from v0.1's working CP — same versions,
@@ -109,8 +116,8 @@ tempfile = "3"
 # combination where idle_timeout works against a real-time clock,
 # verified by reproducer; we don't currently use idle_timeout but
 # the version pinning prevents accidental downgrade.
-metrics = "0.24"
-metrics-exporter-prometheus = { version = "0.18", default-features = false }
+metrics = { version = "0.24", optional = true }
+metrics-exporter-prometheus = { version = "0.18", default-features = false, optional = true }
 
 [dev-dependencies]
 # Enable the shared FleetBuilder fixture API for tests.

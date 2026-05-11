@@ -350,6 +350,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
 
     // Process-global Prometheus recorder. Installs once; counter macros
     // (record_compliance_event etc) silently no-op until then.
+    #[cfg(feature = "metrics")]
     crate::metrics::install_recorder();
 
     let app = build_router(state.clone());

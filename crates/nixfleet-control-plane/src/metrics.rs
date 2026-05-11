@@ -22,6 +22,9 @@
 //!     deployed CP version across scrapes. Re-emitted every render
 //!     since the values are compile-time constants.
 //!
+//! When the `metrics` feature is disabled, all functions in this module
+//! are no-ops and neither dep is compiled in.
+//!
 //! The exporter recorder is process-global and idempotent — first
 //! `install_recorder()` wins. Tests can spin multiple test servers
 //! without colliding.
@@ -32,15 +35,20 @@
 //! moot. `cp_build_info` is the only gauge and it's re-emitted every
 //! scrape via `record_build_info()`.
 
+#[cfg(feature = "metrics")]
 use std::sync::OnceLock;
 
+#[cfg(feature = "metrics")]
 use metrics::{counter, gauge};
+#[cfg(feature = "metrics")]
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 
+#[cfg(feature = "metrics")]
 static METRICS_HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
 /// Install the process-global Prometheus recorder. Idempotent — safe
 /// to call from each test's server-spawn helper.
+#[cfg(feature = "metrics")]
 pub fn install_recorder() -> &'static PrometheusHandle {
     METRICS_HANDLE.get_or_init(|| {
         PrometheusBuilder::new()
@@ -50,7 +58,8 @@ pub fn install_recorder() -> &'static PrometheusHandle {
 }
 
 /// Increment on `ComplianceFailure` event arrival in `/v1/agent/report`.
-/// Bounded labels: hosts × controls.
+/// Bounded labels: hosts × controls. No-op when `metrics` feature off.
+#[cfg(feature = "metrics")]
 pub fn record_compliance_event(control_id: &str, host: &str) {
     counter!(
         "nixfleet_compliance_failure_events_total",
@@ -60,15 +69,23 @@ pub fn record_compliance_event(control_id: &str, host: &str) {
     .increment(1);
 }
 
+#[cfg(not(feature = "metrics"))]
+pub fn record_compliance_event(_control_id: &str, _host: &str) {}
+
 /// Increment on `RuntimeGateError` event arrival in `/v1/agent/report`.
+#[cfg(feature = "metrics")]
 pub fn record_runtime_gate_error() {
     counter!("nixfleet_runtime_gate_error_events_total").increment(1);
 }
+
+#[cfg(not(feature = "metrics"))]
+pub fn record_runtime_gate_error() {}
 
 /// Increment when `gates::evaluate_for_host` returns `Some(GateBlock)`
 /// at the dispatch endpoint. `gate_kind` is the kebab-case
 /// discriminator (channel-edges / wave-promotion / host-edge /
 /// disruption-budget / compliance-wave).
+#[cfg(feature = "metrics")]
 pub fn record_gate_block(gate_kind: &str) {
     counter!(
         "nixfleet_gate_block_total",
@@ -77,9 +94,13 @@ pub fn record_gate_block(gate_kind: &str) {
     .increment(1);
 }
 
+#[cfg(not(feature = "metrics"))]
+pub fn record_gate_block(_gate_kind: &str) {}
+
 /// `cp_build_info{version, git_commit}=1` — the deployed CP version.
 /// Constants resolve at compile time; re-emit each scrape so it always
 /// renders.
+#[cfg(feature = "metrics")]
 pub fn record_build_info() {
     gauge!(
         "nixfleet_cp_build_info",
@@ -89,7 +110,10 @@ pub fn record_build_info() {
     .set(1.0);
 }
 
-#[cfg(test)]
+#[cfg(not(feature = "metrics"))]
+pub fn record_build_info() {}
+
+#[cfg(all(test, feature = "metrics"))]
 mod tests {
     use super::*;
 
