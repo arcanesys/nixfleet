@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 03:00 UTC nightly. Mirrors .github/workflows/ci.yml so the
+    # `validate --all` tier runs once daily on the self-hosted runner.
+    # Forgejo schedules only fire from the default branch; keep this
+    # workflow on main for the schedule to trigger.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  # Push runs of the same ref cancel each other; nightly runs do not
+  # (each scheduled run is its own ref/sha and gets its own group key).
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    # Skipped on schedule - the nightly job's `validate --all` runs
+    # `nix fmt --fail-on-change` as its first step.
+    if: github.event_name != 'schedule'
+    name: Format check
+    runs-on: native
+    steps:
+      - uses: actions/checkout@v4
+      - run: nix fmt -- --ci
+
+  validate:
+    # Small tier - every push to main + manual dispatch.
+    # `validate --rust` covers fmt + flake check + eval-tests +
+    # cargo nextest + clippy + host builds + per-package builds.
+    if: github.event_name != 'schedule'
+    name: validate --rust (small tier)
+    runs-on: native
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: nix run .#validate -- --rust
+        env:
+          NIX_CONFIG: "warn-dirty = false"
+
+  nightly:
+    # Full tier - scheduled nightly + manual dispatch. Adds every
+    # fleet-harness-* scenario (smoke, teardown, rollback-policy,
+    # auditor-chain, signed-roundtrip, deadline-expiry, secret-hygiene,
+    # stale-target, boot-recovery, manifest-tamper-rejection,
+    # corruption-rejection, module-rollouts-wire) and the fleet-N
+    # scaling variants (fleet-2, fleet-5, fleet-10).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: validate --all (full tier)
+    runs-on: native
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - run: nix run .#validate -- --all
+        env:
+          NIX_CONFIG: "warn-dirty = false"
