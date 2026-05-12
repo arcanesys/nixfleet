@@ -1,0 +1,31 @@
+[book]
+title = "NixFleet"
+description = "Auto-generated reference + curated guides for the NixFleet framework"
+authors = ["nixfleet contributors"]
+language = "en"
+src = "src"
+
+[build]
+# Render into ./book by default. CI publishes from there; the
+# Markdown sources under src/ are the canonical artifact.
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+no-section-label = false
+fold = { enable = true, level = 2 }
+git-repository-url = "https://github.com/arcanesys/nixfleet"
+edit-url-template = "https://github.com/arcanesys/nixfleet/edit/main/docs/mdbook/{path}"
+additional-css = []
+
+[output.html.search]
+enable = true
+limit-results = 30
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3

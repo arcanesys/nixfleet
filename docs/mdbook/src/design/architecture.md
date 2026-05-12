@@ -1,0 +1,1 @@
+{{#include ../../../design/architecture.md}}
