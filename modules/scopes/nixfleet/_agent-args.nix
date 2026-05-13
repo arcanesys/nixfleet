@@ -14,6 +14,10 @@
   "--trust-file"
   (lib.escapeShellArg (toString cfg.trustFile))
 ]
+++ lib.optionals (cfg.renewalThresholdFraction != null) [
+  "--renewal-threshold-fraction"
+  (toString cfg.renewalThresholdFraction)
+]
 ++ lib.optionals (cfg.tls.caCert != null) [
   "--ca-cert"
   (lib.escapeShellArg cfg.tls.caCert)

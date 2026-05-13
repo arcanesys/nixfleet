@@ -35,6 +35,7 @@ in
         enable = true;
         listen = "0.0.0.0:8443";
         openFirewall = true;
+        agentCnSuffix = "fleet.example.com";
 
         artifactPath = "${signedFixture}/canonical.json";
         signaturePath = "${signedFixture}/canonical.json.sig";

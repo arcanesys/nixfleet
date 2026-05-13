@@ -152,7 +152,7 @@ pub(in crate::server) async fn enroll(
     let (cert_pem, not_after) = crate::auth::issuance::issue_cert(
         &req.csr_pem,
         signer.as_ref(),
-        crate::auth::issuance::AGENT_CERT_VALIDITY,
+        state.agent_cert_validity,
         now,
         &state.agent_cn_suffix,
     )
@@ -242,7 +242,7 @@ pub(in crate::server) async fn renew(
     let (cert_pem, not_after) = crate::auth::issuance::issue_cert(
         &req.csr_pem,
         signer.as_ref(),
-        crate::auth::issuance::AGENT_CERT_VALIDITY,
+        state.agent_cert_validity,
         now,
         &state.agent_cn_suffix,
     )

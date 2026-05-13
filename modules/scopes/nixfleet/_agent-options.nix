@@ -40,6 +40,21 @@
       description = "Poll interval in seconds (steady-state).";
     };
 
+    renewalThresholdFraction = lib.mkOption {
+      type = lib.types.nullOr lib.types.float;
+      default = null;
+      example = 0.5;
+      description = ''
+        Fraction of cert validity remaining below which the agent
+        self-renews. When unset the agent uses its default (0.5,
+        renew at half-life). Operators MAY raise this (e.g. 0.8)
+        for short-cycle hardware testing of renewal flows.
+
+        Must be strictly between 0 and 1. The agent refuses to
+        start if validation fails.
+      '';
+    };
+
     trustFile = lib.mkOption {
       type = lib.types.path;
       default = "/etc/nixfleet/agent/trust.json";

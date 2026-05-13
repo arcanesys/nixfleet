@@ -61,6 +61,9 @@ pub struct ServeArgs {
     /// `agent-<machineId>.<suffix>` for issued cert CNs. Must match the
     /// issuance CA's `dNSName` name constraint (D14).
     pub agent_cn_suffix: String,
+    /// Validity baked into agent certs at enroll + renew. Default 30d;
+    /// shortened by operators for hardware testing of renewal flows.
+    pub agent_cert_validity: Duration,
     /// Test-only: skip the readiness gate so endpoint tests don't have to
     /// drive a real channel-refs poll. Production paths MUST leave `false`;
     /// the CLI never sets it.
@@ -93,6 +96,7 @@ impl Default for ServeArgs {
             rollouts_source: None,
             strict: false,
             agent_cn_suffix: crate::auth::issuance::DEFAULT_AGENT_CN_SUFFIX.to_string(),
+            agent_cert_validity: crate::auth::issuance::AGENT_CERT_VALIDITY,
             mark_ready_at_startup: false,
         }
     }
@@ -184,6 +188,10 @@ pub struct AppState {
     /// enroll/renew handlers can canonicalise CNs without going
     /// through `issuance_paths`.
     pub agent_cn_suffix: String,
+    /// Validity duration baked into agent certs at enroll + renew.
+    /// Default `AGENT_CERT_VALIDITY` (30 days); operators can override
+    /// via `--agent-cert-validity-secs` for short-cycle hardware testing.
+    pub agent_cert_validity: Duration,
     /// Set to `true` once the channel-refs poll (or build-time prime)
     /// has populated `verified_fleet` with a freshly-verified snapshot.
     /// Stays `false` indefinitely when neither prime path produces a
@@ -237,6 +245,7 @@ impl Default for AppState {
             rollouts_source: None,
             strict: false,
             agent_cn_suffix: crate::auth::issuance::DEFAULT_AGENT_CN_SUFFIX.to_string(),
+            agent_cert_validity: crate::auth::issuance::AGENT_CERT_VALIDITY,
             artifact_primed: Arc::new(AtomicBool::new(false)),
             revocations_primed: Arc::new(AtomicBool::new(false)),
             revocations_required: false,

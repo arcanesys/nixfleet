@@ -301,6 +301,20 @@ in {
       '';
     };
 
+    agentCertValiditySecs = lib.mkOption {
+      type = lib.types.nullOr lib.types.ints.positive;
+      default = null;
+      example = 600;
+      description = ''
+        Validity for issued agent certs, in seconds. When unset the CP
+        uses its default (30 days). Operators MAY shorten this to
+        exercise renewal + revocation flows on real hardware.
+
+        Floor enforced by the CP: 60 seconds. Values below are refused
+        at startup.
+      '';
+    };
+
     auditLogPath = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/nixfleet-cp/issuance.log";
@@ -534,6 +548,10 @@ in {
               (toString cfg.confirmDeadlineSecs)
               "--agent-cn-suffix"
               (lib.escapeShellArg cfg.agentCnSuffix)
+            ]
+            ++ lib.optionals (cfg.agentCertValiditySecs != null) [
+              "--agent-cert-validity-secs"
+              (toString cfg.agentCertValiditySecs)
             ]
             ++ lib.optionals cfg.strict ["--strict"]
             ++ lib.optionals (cfg.tls.clientCa != null) [

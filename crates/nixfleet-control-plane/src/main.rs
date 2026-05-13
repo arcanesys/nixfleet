@@ -110,6 +110,17 @@ struct ServeFlags {
     #[arg(long, env = "NIXFLEET_CP_AGENT_CN_SUFFIX")]
     agent_cn_suffix: String,
 
+    /// Validity for issued agent certs, in seconds. Default 30 days
+    /// (2 592 000). Operators MAY shorten this to exercise renewal +
+    /// revocation flows on real hardware. Floor: 60s; values below
+    /// are refused at startup.
+    #[arg(
+        long,
+        default_value_t = 2_592_000,
+        env = "NIXFLEET_CP_AGENT_CERT_VALIDITY_SECS"
+    )]
+    agent_cert_validity_secs: u64,
+
     /// JSON-lines per issuance; best-effort writes.
     #[arg(
         long,
@@ -225,6 +236,13 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("--listen {}: {e}", flags.listen))?;
 
+    if flags.agent_cert_validity_secs < 60 {
+        anyhow::bail!(
+            "--agent-cert-validity-secs must be >= 60 (got {})",
+            flags.agent_cert_validity_secs
+        );
+    }
+
     let freshness_window = Duration::from_secs(flags.freshness_window_secs);
 
     let channel_refs = paired_source(
@@ -289,6 +307,7 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
         tpm_ca_pubkey_raw: flags.tpm_ca_pubkey_raw,
         tpm_ca_sign_wrapper: flags.tpm_ca_sign_wrapper,
         agent_cn_suffix: flags.agent_cn_suffix,
+        agent_cert_validity: Duration::from_secs(flags.agent_cert_validity_secs),
         audit_log_path: Some(flags.audit_log),
         artifact_path: flags.artifact,
         signature_path: flags.signature,

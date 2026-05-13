@@ -109,6 +109,7 @@ mod tests {
             compliance_gate_mode: None,
             ssh_host_key_file: PathBuf::from("/dev/null"),
             health_checks_config: None,
+            renewal_threshold_fraction: 0.5,
         }
     }
 

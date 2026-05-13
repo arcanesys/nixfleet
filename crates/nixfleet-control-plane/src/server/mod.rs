@@ -153,6 +153,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         rollouts_source: args.rollouts_source.clone(),
         strict: args.strict,
         agent_cn_suffix: args.agent_cn_suffix.clone(),
+        agent_cert_validity: args.agent_cert_validity,
         revocations_required,
         ..Default::default()
     };

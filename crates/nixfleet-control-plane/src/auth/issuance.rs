@@ -588,11 +588,13 @@ pub fn audit_log(
             previous_cert_serial,
         } => format!("renew/prev:{previous_cert_serial}"),
     };
+    let validity_secs = (not_after - now).num_seconds();
     let record = serde_json::json!({
         "at": now.to_rfc3339(),
         "requester_cn": requester_cn,
         "issued_cn": issued_cn,
         "not_after": not_after.to_rfc3339(),
+        "validity_secs": validity_secs,
         "context": context_str,
     });
     let line = serde_json::to_string(&record)
@@ -786,14 +788,24 @@ mod ca_signer_tests {
             .expect("serialize CSR");
 
         let now = chrono::Utc::now();
-        let (cert_pem, _not_after) = issue_cert(
+        let validity = std::time::Duration::from_secs(3600);
+        let (cert_pem, not_after) = issue_cert(
             &csr.pem().unwrap(),
             &signer,
-            std::time::Duration::from_secs(3600),
+            validity,
             now,
             "fleet.example.com",
         )
         .expect("issue agent cert");
+
+        // Runtime-plumbed validity (no longer a hardcoded const) must
+        // produce not_after == now + validity. Guards short-cycle
+        // overrides used for hardware testing.
+        let diff = (not_after - now).num_seconds();
+        assert!(
+            (3599..=3601).contains(&diff),
+            "not_after - now must equal validity, got {diff}s",
+        );
 
         // Verify the issued PEM parses as an X.509 cert + CN was
         // canonicalised to `agent-<machineId>.<suffix>` (D14).

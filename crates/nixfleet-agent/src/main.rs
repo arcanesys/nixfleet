@@ -68,6 +68,17 @@ pub(crate) struct Args {
     /// checkin omits `healthProbes`. Materialised by the NixOS module.
     #[arg(long, env = "NIXFLEET_AGENT_HEALTH_CHECKS_CONFIG")]
     health_checks_config: Option<PathBuf>,
+
+    /// Fraction of cert validity remaining below which the agent
+    /// self-renews. Default 0.5 (renew at half-life). Operators MAY
+    /// raise (e.g. 0.8) for short-cycle hardware testing. Must be
+    /// strictly between 0 and 1.
+    #[arg(
+        long,
+        default_value_t = 0.5,
+        env = "NIXFLEET_AGENT_RENEWAL_THRESHOLD_FRACTION"
+    )]
+    renewal_threshold_fraction: f64,
 }
 
 #[tokio::main]
@@ -75,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let args = Args::parse();
+    validate_renewal_threshold(args.renewal_threshold_fraction)?;
     let started_at = Instant::now();
 
     let evidence_signer = load_evidence_signer(&args.ssh_host_key_file);
@@ -163,6 +175,17 @@ async fn main() -> anyhow::Result<()> {
     };
 
     run_poll_loop(client, &args, started_at, evidence_signer, health_cache).await
+}
+
+/// Strict (0,1) - boundary values would make the threshold meaningless
+/// (0 = never renew, 1 = renew every poll).
+fn validate_renewal_threshold(fraction: f64) -> anyhow::Result<()> {
+    if !(0.0 < fraction && fraction < 1.0) {
+        anyhow::bail!(
+            "--renewal-threshold-fraction must be strictly between 0 and 1 (got {fraction})",
+        );
+    }
+    Ok(())
 }
 
 fn init_tracing() {
@@ -379,10 +402,14 @@ async fn maybe_renew_cert(
     };
     let (remaining, _) =
         nixfleet_agent::enrollment::cert_remaining_fraction(cert_path, chrono::Utc::now()).ok()?;
-    if remaining >= 0.5 {
+    if remaining >= args.renewal_threshold_fraction {
         return None;
     }
-    tracing::info!(remaining, "cert past 50% - renewing");
+    tracing::info!(
+        remaining,
+        threshold = args.renewal_threshold_fraction,
+        "cert past renewal threshold - renewing",
+    );
     if let Err(err) = nixfleet_agent::enrollment::renew(
         client,
         &args.control_plane_url,
@@ -550,4 +577,25 @@ async fn check_boot_recovery(
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renewal_threshold_accepts_strict_interior() {
+        assert!(validate_renewal_threshold(0.5).is_ok());
+        assert!(validate_renewal_threshold(0.1).is_ok());
+        assert!(validate_renewal_threshold(0.99).is_ok());
+    }
+
+    #[test]
+    fn renewal_threshold_rejects_boundaries_and_outside() {
+        assert!(validate_renewal_threshold(0.0).is_err());
+        assert!(validate_renewal_threshold(1.0).is_err());
+        assert!(validate_renewal_threshold(-0.5).is_err());
+        assert!(validate_renewal_threshold(1.5).is_err());
+        assert!(validate_renewal_threshold(f64::NAN).is_err());
+    }
 }
