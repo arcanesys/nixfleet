@@ -3,6 +3,7 @@
 //! to match the Nix evaluator's shape so JCS bytes round-trip identically.
 
 pub mod agent_wire;
+pub mod bootstrap_nonces;
 pub mod compliance;
 pub mod enroll_wire;
 pub mod evidence_signing;
@@ -17,6 +18,7 @@ pub mod trust;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
+pub use bootstrap_nonces::{BootstrapNonceEntry, BootstrapNonces};
 pub use fleet_resolved::{
     Channel, ChannelEdge, Compliance, ComplianceProbes, DisruptionBudget, Edge, FleetResolved,
     HealthGate, Host, Meta, OnHealthFailure, Pin, PolicyWave, RolloutPolicy, Selector,

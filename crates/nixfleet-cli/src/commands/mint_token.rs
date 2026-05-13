@@ -79,6 +79,28 @@ pub fn run(args: Args) -> Result<()> {
     let out = serde_json::to_string_pretty(&token)?;
     println!("{out}");
     eprintln!("nonce: {}", token.claims.nonce);
+    eprintln!("expiresAt: {}", token.claims.expires_at.to_rfc3339());
+    eprintln!();
+    eprintln!("Add to fleet.nix `bootstrapNonces`, commit, and push:");
+    eprintln!();
+    eprintln!("  {{");
+    eprintln!("    nonce = \"{}\";", token.claims.nonce);
+    eprintln!("    hostname = \"{}\";", token.claims.hostname);
+    eprintln!(
+        "    expiresAt = \"{}\";",
+        token.claims.expires_at.to_rfc3339()
+    );
+    eprintln!(
+        "    mintedAt = \"{}\";",
+        token.claims.issued_at.to_rfc3339()
+    );
+    if let Ok(user) = std::env::var("USER") {
+        eprintln!("    mintedBy = \"{}\";", user);
+    }
+    eprintln!("  }}");
+    eprintln!();
+    eprintln!("Once CI signs the sidecar (~2 min), deploy the token bytes and");
+    eprintln!("restart the agent.");
     Ok(())
 }
 

@@ -156,6 +156,29 @@ Out of scope for this RFC in detail. Summary:
 - `POST /agent/renew` - accepts current cert (mTLS) + CSR, returns refreshed cert.
 - `POST /agent/bootstrap-report` - pre-cert reporting path for failures that prevent normal cert provisioning.
 
+#### Bootstrap-nonce allowlist (durable replay invariant)
+
+The CP refuses any `/v1/enroll` whose token nonce is not present in the
+signed `bootstrap-nonces.json` artifact (declared in `fleet.nix`, signed
+by `ciReleaseKey`, polled on the same cadence as `revocations.json`).
+This closes the replay-after-DB-wipe vector: even if `state.db` is wiped
+(rebuild, incident, disk loss), the durable replay invariant lives in
+the signed fleet repo, not in CP-local state.
+
+The allowlist entry's `expiresAt` is authoritative - it may be tighter
+than the token's own `claims.expires_at`, but never extends past it
+(the token's own claim is checked separately). Operators can
+declaratively narrow a still-unexpired token's validity window by
+reducing this value or removing the entry, without rotating the token
+itself.
+
+`nixfleet-release` prunes entries with `expiresAt < signedAt` at sign
+time so the signed artifact contains only the operational set;
+fleet.nix retains historical entries as a curated audit log.
+
+See `docs/operations/bootstrap-token-lifecycle.md` for the operator
+runbook.
+
 #### Bootstrap report
 
 Agents that fail enrollment cannot use the mTLS-gated `POST /agent/report` to surface the failure (no cert yet). `POST /agent/bootstrap-report` exists for this case alone.

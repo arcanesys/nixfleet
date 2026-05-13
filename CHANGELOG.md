@@ -26,6 +26,17 @@ Compliance is a release gate, not a scanner. Static gates evaluate every host's 
 
 The Rust workspace builds via crane caching. CI signs releases with an HSM-held key; the binary cache signs closures with its own ed25519 key. The control plane fetches the signed revocations sidecar (`revocations.json`) from git on every reconcile tick, replays the verified set, and refuses to mint certs for revoked agents. Prometheus metrics live behind a default-on Cargo feature flag - `cargo build --no-default-features` drops both `metrics` and `metrics-exporter-prometheus` from the dep tree and `/metrics` returns 404.
 
+### Security
+
+- **Bootstrap-nonce allowlist** (closes #96): the CP refuses
+  `/v1/enroll` whose nonce is not in the signed `bootstrap-nonces.json`
+  allowlist (declared in `fleet.nix`, signed by `ciReleaseKey`).
+  Closes the replay-after-DB-wipe vector - replay protection now
+  durably anchored to the signed fleet repo rather than CP-local
+  state.db. New mkFleet attribute `bootstrapNonces`, new CP NixOS
+  option `services.nixfleet-control-plane.bootstrapNoncesSource`,
+  new `nixfleet-release --bootstrap-nonces-attr` flag.
+
 ### v0.3 trajectory
 
 The v0.3 RFC track formalises the next round of trust mechanism. RFC-0004 specifies hardware-rooted trust (TPM-bound issuance CA, EK-quoted attestation). RFC-0005 specifies the trust lifecycle (operator-role hierarchy, rotation runbooks, active host-attestation quarantine, threshold-signed channels). RFC-0006 specifies the freshness-window policy. RFC-0007 specifies air-gapped operation via signed bundles. None of these break the v0.2 wire protocol; all extend it.

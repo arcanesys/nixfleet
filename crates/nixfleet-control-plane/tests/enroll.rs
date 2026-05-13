@@ -240,6 +240,7 @@ async fn spawn_server(
     signature: PathBuf,
     trust: PathBuf,
     obs_dir: &TempDir,
+    initial_nonces: Option<nixfleet_control_plane::db::allowed_nonces::AllowedNoncesView>,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     let observed = obs_dir.path().join("observed.json");
     write(
@@ -264,12 +265,40 @@ async fn spawn_server(
         confirm_deadline_secs: 120,
         db_path: Some(db_path),
         mark_ready_at_startup: true,
+        initial_nonces,
         ..Default::default()
     };
     let port = listen.port();
     let handle = tokio::spawn(server::serve(args));
     wait_for_listener_ready(port, &handle).await;
     handle
+}
+
+/// Build an `AllowedNoncesView` containing a single live entry for
+/// `(nonce, hostname)`. Used by success-path enroll tests to satisfy
+/// the bootstrap-nonce allowlist guard without a running poll loop.
+fn single_entry_nonces_view(
+    nonce: &str,
+    hostname: &str,
+) -> nixfleet_control_plane::db::allowed_nonces::AllowedNoncesView {
+    nixfleet_control_plane::db::allowed_nonces::AllowedNoncesView::from_artifact(
+        nixfleet_proto::BootstrapNonces {
+            schema_version: 1,
+            bootstrap_nonces: vec![nixfleet_proto::BootstrapNonceEntry {
+                nonce: nonce.to_string(),
+                hostname: hostname.to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                minted_at: None,
+                minted_by: None,
+            }],
+            meta: nixfleet_proto::Meta {
+                schema_version: 1,
+                signed_at: Some(chrono::Utc::now()),
+                ci_commit: None,
+                signature_algorithm: Some("ecdsa-p256".into()),
+            },
+        },
+    )
 }
 
 /// End-to-end test setup: mint CA + server cert, mint a "host SSH host
@@ -286,6 +315,7 @@ struct EnrollHarness {
 async fn setup_enroll_harness_with_declared_host(
     declared_host: &str,
     host_pubkey_in_fleet: Option<&str>,
+    initial_nonces: Option<nixfleet_control_plane::db::allowed_nonces::AllowedNoncesView>,
 ) -> (TempDir, EnrollHarness) {
     install_crypto_provider_once();
     let dir = TempDir::new().unwrap();
@@ -316,6 +346,7 @@ async fn setup_enroll_harness_with_declared_host(
         signature,
         trust,
         &dir,
+        initial_nonces,
     )
     .await;
 
@@ -349,8 +380,14 @@ async fn enroll_happy_path_signs_cert() {
     use rand::RngCore;
     rand::rngs::OsRng.fill_bytes(&mut h_seed);
     let openssh = openssh_pubkey_from_seed(&h_seed);
+
+    // Pre-generate the nonce so it can be seeded into the allowlist before spawn.
+    let nonce = random_nonce();
+    let initial_nonces = single_entry_nonces_view(&nonce, "test-host");
+
     let (_dir, harness) =
-        setup_enroll_harness_with_declared_host("test-host", Some(&openssh)).await;
+        setup_enroll_harness_with_declared_host("test-host", Some(&openssh), Some(initial_nonces))
+            .await;
 
     let (csr_pem, _pubkey_der, fingerprint, _) = mint_csr_with_seed("test-host", &h_seed);
     let now = Utc::now();
@@ -359,7 +396,7 @@ async fn enroll_happy_path_signs_cert() {
         expected_pubkey_fingerprint: fingerprint,
         issued_at: now - ChronoDuration::seconds(5),
         expires_at: now + ChronoDuration::hours(1),
-        nonce: random_nonce(),
+        nonce,
     };
     let token = sign_token(&claims, &harness.org_root_signing_key, 1);
 
@@ -386,8 +423,14 @@ async fn enroll_rejects_tampered_signature() {
     let mut h_seed = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut h_seed);
     let openssh = openssh_pubkey_from_seed(&h_seed);
+    // Pre-generate the nonce and seed the allowlist so the request reaches
+    // verify_bootstrap_token_against_trust (signature verification path),
+    // not nonce_not_allowlisted.
+    let nonce = random_nonce();
+    let initial_nonces = single_entry_nonces_view(&nonce, "test-host");
     let (_dir, harness) =
-        setup_enroll_harness_with_declared_host("test-host", Some(&openssh)).await;
+        setup_enroll_harness_with_declared_host("test-host", Some(&openssh), Some(initial_nonces))
+            .await;
 
     let (csr_pem, _pubkey_der, fingerprint, _) = mint_csr_with_seed("test-host", &h_seed);
     let now = Utc::now();
@@ -396,7 +439,7 @@ async fn enroll_rejects_tampered_signature() {
         expected_pubkey_fingerprint: fingerprint,
         issued_at: now - ChronoDuration::seconds(5),
         expires_at: now + ChronoDuration::hours(1),
-        nonce: random_nonce(),
+        nonce,
     };
     let mut token = sign_token(&claims, &harness.org_root_signing_key, 1);
     let mut sig_bytes = base64::engine::general_purpose::STANDARD
@@ -425,8 +468,16 @@ async fn enroll_rejects_replayed_nonce() {
     let mut h_seed = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut h_seed);
     let openssh = openssh_pubkey_from_seed(&h_seed);
+
+    // Pre-generate the nonce so it can be seeded into the allowlist before spawn.
+    // The second (replayed) request hits the DB nonce-replay guard (409), not
+    // the allowlist guard, since the nonce IS in the allowlist.
+    let nonce = random_nonce();
+    let initial_nonces = single_entry_nonces_view(&nonce, "test-host");
+
     let (_dir, harness) =
-        setup_enroll_harness_with_declared_host("test-host", Some(&openssh)).await;
+        setup_enroll_harness_with_declared_host("test-host", Some(&openssh), Some(initial_nonces))
+            .await;
 
     let (csr_pem, _pubkey_der, fingerprint, _) = mint_csr_with_seed("test-host", &h_seed);
     let now = Utc::now();
@@ -435,7 +486,7 @@ async fn enroll_rejects_replayed_nonce() {
         expected_pubkey_fingerprint: fingerprint,
         issued_at: now - ChronoDuration::seconds(5),
         expires_at: now + ChronoDuration::hours(1),
-        nonce: random_nonce(),
+        nonce,
     };
     let token = sign_token(&claims, &harness.org_root_signing_key, 1);
 
@@ -475,8 +526,13 @@ async fn enroll_rejects_csr_pubkey_mismatch_with_declared_host() {
     let mut declared_seed = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut declared_seed);
     let declared_openssh = openssh_pubkey_from_seed(&declared_seed);
+    // Pre-generate the nonce and seed the allowlist so the request reaches the
+    // CSR pubkey binding check (RFC-0003 §2), not nonce_not_allowlisted.
+    let nonce = random_nonce();
+    let initial_nonces = single_entry_nonces_view(&nonce, "test-host");
     let (_dir, harness) =
-        setup_enroll_harness_with_declared_host("test-host", Some(&declared_openssh)).await;
+        setup_enroll_harness_with_declared_host("test-host", Some(&declared_openssh), Some(initial_nonces))
+            .await;
 
     // CSR signed with a DIFFERENT seed than what fleet.nix declares.
     let mut imposter_seed = [0u8; 32];
@@ -493,7 +549,7 @@ async fn enroll_rejects_csr_pubkey_mismatch_with_declared_host() {
         expected_pubkey_fingerprint: fingerprint,
         issued_at: now - ChronoDuration::seconds(5),
         expires_at: now + ChronoDuration::hours(1),
-        nonce: random_nonce(),
+        nonce,
     };
     let token = sign_token(&claims, &harness.org_root_signing_key, 1);
 
@@ -514,6 +570,198 @@ async fn enroll_rejects_csr_pubkey_mismatch_with_declared_host() {
     harness.handle.abort();
 }
 
+/// Build an `AllowedNoncesView` that pairs `nonce` with `allowlist_hostname`,
+/// regardless of what hostname the token will claim. Used to test the
+/// `nonce_hostname_mismatch` rejection path.
+fn nonces_view_with_hostname(
+    nonce: &str,
+    allowlist_hostname: &str,
+) -> nixfleet_control_plane::db::allowed_nonces::AllowedNoncesView {
+    nixfleet_control_plane::db::allowed_nonces::AllowedNoncesView::from_artifact(
+        nixfleet_proto::BootstrapNonces {
+            schema_version: 1,
+            bootstrap_nonces: vec![nixfleet_proto::BootstrapNonceEntry {
+                nonce: nonce.to_string(),
+                hostname: allowlist_hostname.to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                minted_at: None,
+                minted_by: None,
+            }],
+            meta: nixfleet_proto::Meta {
+                schema_version: 1,
+                signed_at: Some(chrono::Utc::now()),
+                ci_commit: None,
+                signature_algorithm: Some("ecdsa-p256".into()),
+            },
+        },
+    )
+}
+
+/// Build an `AllowedNoncesView` with an already-expired entry for
+/// `(nonce, hostname)`. Used to test the `nonce_allowlist_expired` path.
+fn expired_nonces_view(
+    nonce: &str,
+    hostname: &str,
+) -> nixfleet_control_plane::db::allowed_nonces::AllowedNoncesView {
+    nixfleet_control_plane::db::allowed_nonces::AllowedNoncesView::from_artifact(
+        nixfleet_proto::BootstrapNonces {
+            schema_version: 1,
+            bootstrap_nonces: vec![nixfleet_proto::BootstrapNonceEntry {
+                nonce: nonce.to_string(),
+                hostname: hostname.to_string(),
+                // Expired 1 hour ago.
+                expires_at: chrono::Utc::now() - chrono::Duration::hours(1),
+                minted_at: None,
+                minted_by: None,
+            }],
+            meta: nixfleet_proto::Meta {
+                schema_version: 1,
+                signed_at: Some(chrono::Utc::now()),
+                ci_commit: None,
+                signature_algorithm: Some("ecdsa-p256".into()),
+            },
+        },
+    )
+}
+
+/// Nonce absent from the signed allowlist: enrollment must be rejected (401).
+/// This is the primary post-fix invariant for nixfleet#96 - a nonce that was
+/// never minted (or was pruned after use) cannot be consumed.
+#[tokio::test]
+async fn enroll_rejects_when_nonce_not_in_allowlist() {
+    use rand::RngCore;
+    let mut h_seed = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut h_seed);
+    let openssh = openssh_pubkey_from_seed(&h_seed);
+
+    // Spawn with an EMPTY allowlist (None -> default empty view).
+    let (_dir, harness) =
+        setup_enroll_harness_with_declared_host("test-host", Some(&openssh), None).await;
+
+    let (csr_pem, _pubkey_der, fingerprint, _) = mint_csr_with_seed("test-host", &h_seed);
+    let now = Utc::now();
+    let claims = TokenClaims {
+        hostname: "test-host".to_string(),
+        expected_pubkey_fingerprint: fingerprint,
+        issued_at: now - ChronoDuration::seconds(5),
+        expires_at: now + ChronoDuration::hours(1),
+        // Any nonce that was never added to the allowlist.
+        nonce: random_nonce(),
+    };
+    let token = sign_token(&claims, &harness.org_root_signing_key, 1);
+
+    let client = build_enroll_client(&harness.ca_cert);
+    let req = EnrollRequest { token, csr_pem };
+    let resp = client
+        .post(format!("https://localhost:{}/v1/enroll", harness.port))
+        .json(&req)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        401,
+        "nonce absent from allowlist must reject (nonce_not_allowlisted)",
+    );
+
+    harness.handle.abort();
+}
+
+/// Nonce is in the allowlist but paired with a DIFFERENT hostname than the
+/// token claims. Enrollment must be rejected (401).
+/// Guards against minting a token for host-a and trying to enrol host-b.
+#[tokio::test]
+async fn enroll_rejects_when_allowlist_hostname_mismatches_token() {
+    use rand::RngCore;
+    let mut h_seed = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut h_seed);
+    let openssh = openssh_pubkey_from_seed(&h_seed);
+
+    let nonce = random_nonce();
+    // Allowlist entry says nonce belongs to "other-host", not "test-host".
+    let initial_nonces = nonces_view_with_hostname(&nonce, "other-host");
+
+    // Fleet still declares "test-host" so the fleet-lookup check would pass
+    // if the allowlist check were absent. The allowlist mismatch must fire first.
+    let (_dir, harness) =
+        setup_enroll_harness_with_declared_host("test-host", Some(&openssh), Some(initial_nonces))
+            .await;
+
+    let (csr_pem, _pubkey_der, fingerprint, _) = mint_csr_with_seed("test-host", &h_seed);
+    let now = Utc::now();
+    let claims = TokenClaims {
+        hostname: "test-host".to_string(),
+        expected_pubkey_fingerprint: fingerprint,
+        issued_at: now - ChronoDuration::seconds(5),
+        expires_at: now + ChronoDuration::hours(1),
+        nonce,
+    };
+    let token = sign_token(&claims, &harness.org_root_signing_key, 1);
+
+    let client = build_enroll_client(&harness.ca_cert);
+    let req = EnrollRequest { token, csr_pem };
+    let resp = client
+        .post(format!("https://localhost:{}/v1/enroll", harness.port))
+        .json(&req)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        401,
+        "allowlist hostname mismatch must reject (nonce_hostname_mismatch)",
+    );
+
+    harness.handle.abort();
+}
+
+/// Allowlist entry for the nonce exists and hostname matches, but the entry
+/// has already expired. Enrollment must be rejected (401).
+/// This is defense-in-depth: the release tool prunes expired entries at sign
+/// time, but this check closes the clock-skew window.
+#[tokio::test]
+async fn enroll_rejects_when_allowlist_entry_expired() {
+    use rand::RngCore;
+    let mut h_seed = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut h_seed);
+    let openssh = openssh_pubkey_from_seed(&h_seed);
+
+    let nonce = random_nonce();
+    // Entry has the correct hostname but expired 1 hour ago.
+    let initial_nonces = expired_nonces_view(&nonce, "test-host");
+
+    let (_dir, harness) =
+        setup_enroll_harness_with_declared_host("test-host", Some(&openssh), Some(initial_nonces))
+            .await;
+
+    let (csr_pem, _pubkey_der, fingerprint, _) = mint_csr_with_seed("test-host", &h_seed);
+    let now = Utc::now();
+    let claims = TokenClaims {
+        hostname: "test-host".to_string(),
+        expected_pubkey_fingerprint: fingerprint,
+        issued_at: now - ChronoDuration::seconds(5),
+        expires_at: now + ChronoDuration::hours(1),
+        nonce,
+    };
+    let token = sign_token(&claims, &harness.org_root_signing_key, 1);
+
+    let client = build_enroll_client(&harness.ca_cert);
+    let req = EnrollRequest { token, csr_pem };
+    let resp = client
+        .post(format!("https://localhost:{}/v1/enroll", harness.port))
+        .json(&req)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        401,
+        "expired allowlist entry must reject (nonce_allowlist_expired)",
+    );
+
+    harness.handle.abort();
+}
+
 /// Host hasn't been declared in fleet.nix at all. Closes #9: enrollment
 /// is gated on the operator having added the host (with pubkey)
 /// declaratively first - there's no permissive fallback.
@@ -524,8 +772,10 @@ async fn enroll_rejects_when_host_not_declared_in_fleet() {
     rand::rngs::OsRng.fill_bytes(&mut h_seed);
     // Fleet declares a DIFFERENT host; "test-host" is absent.
     let other_openssh = openssh_pubkey_from_seed(&h_seed);
+    // No allowlist needed: nonce_not_allowlisted fires first and returns 401.
     let (_dir, harness) =
-        setup_enroll_harness_with_declared_host("some-other-host", Some(&other_openssh)).await;
+        setup_enroll_harness_with_declared_host("some-other-host", Some(&other_openssh), None)
+            .await;
 
     let (csr_pem, _, fingerprint, _) = mint_csr_with_seed("test-host", &h_seed);
     let now = Utc::now();

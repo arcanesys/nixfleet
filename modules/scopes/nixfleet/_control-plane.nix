@@ -438,6 +438,43 @@ in {
       };
     };
 
+    bootstrapNoncesSource = {
+      artifactUrl = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "https://git.example.com/myorg/myfleet/raw/branch/main/releases/bootstrap-nonces.json";
+        description = ''
+          Fully-formed URL that yields the raw bytes of the canonical
+          signed `bootstrap-nonces.json`. When null, bootstrap-nonces
+          polling is disabled and CP enrolment in strict mode will
+          refuse all `/v1/enroll` requests. Must be set together with
+          `signatureUrl`. Closes the replay-after-DB-wipe vector
+          (nixfleet#96).
+        '';
+      };
+
+      signatureUrl = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "https://git.example.com/myorg/myfleet/raw/branch/main/releases/bootstrap-nonces.json.sig";
+        description = ''
+          Fully-formed URL that yields the raw bytes of the matching
+          signature. Verified against the same `ciReleaseKey` trust
+          roots as `fleet.resolved.json` and `revocations.json`.
+        '';
+      };
+
+      tokenFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/run/secrets/cp-bootstrap-nonces-token";
+        description = ''
+          Path to a file containing the upstream API token. Defaults
+          to falling back on `channelRefsSource.tokenFile` when null.
+        '';
+      };
+    };
+
     # LOADBEARING: URL templates contain literal `{rolloutId}`; CP substitutes per fetch.
     rolloutsSource = {
       artifactUrlTemplate = lib.mkOption {
@@ -605,6 +642,15 @@ in {
               artifact = cfg.revocationsSource.artifactUrl;
               signature = cfg.revocationsSource.signatureUrl;
               tokenFile = cfg.revocationsSource.tokenFile;
+              tokenFallback = cfg.channelRefsSource.tokenFile;
+            }
+            ++ mkPollingSource {
+              artifactFlag = "--bootstrap-nonces-artifact-url";
+              signatureFlag = "--bootstrap-nonces-signature-url";
+              tokenFlag = "--bootstrap-nonces-token-file";
+              artifact = cfg.bootstrapNoncesSource.artifactUrl;
+              signature = cfg.bootstrapNoncesSource.signatureUrl;
+              tokenFile = cfg.bootstrapNoncesSource.tokenFile;
               tokenFallback = cfg.channelRefsSource.tokenFile;
             }
             ++ mkPollingSource {

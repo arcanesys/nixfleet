@@ -33,6 +33,43 @@ pub(in crate::server) async fn enroll(
         return Err(StatusCode::CONFLICT);
     }
 
+    // Bootstrap-nonce allowlist enforcement (nixfleet#96).
+    // Strict: any nonce not in the signed allowlist is rejected. After
+    // a state.db wipe, the in-memory allowlist is re-seeded from the
+    // signed artifact on the next poll, so replays are blocked.
+    {
+        let view = state.allowed_nonces.read().await;
+        let entry = view.lookup(&req.token.claims.nonce).ok_or_else(|| {
+            tracing::warn!(
+                target: "issuance",
+                hostname = %req.token.claims.hostname,
+                nonce = %req.token.claims.nonce,
+                "enroll: nonce not in signed allowlist (nonce_not_allowlisted)",
+            );
+            StatusCode::UNAUTHORIZED
+        })?;
+        if entry.hostname != req.token.claims.hostname {
+            tracing::warn!(
+                target: "issuance",
+                hostname = %req.token.claims.hostname,
+                nonce = %req.token.claims.nonce,
+                expected_hostname = %entry.hostname,
+                "enroll: allowlist entry hostname mismatch (nonce_hostname_mismatch)",
+            );
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        if !crate::db::allowed_nonces::AllowedNoncesView::entry_is_live(entry, now) {
+            tracing::warn!(
+                target: "issuance",
+                hostname = %req.token.claims.hostname,
+                nonce = %req.token.claims.nonce,
+                allowlist_expires_at = %entry.expires_at,
+                "enroll: allowlist entry expired (nonce_allowlist_expired)",
+            );
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    }
+
     if now < req.token.claims.issued_at || now >= req.token.claims.expires_at {
         tracing::warn!(
             hostname = %req.token.claims.hostname,

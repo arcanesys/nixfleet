@@ -82,6 +82,11 @@ pub struct ReleaseConfig {
     /// `revocations.json` alongside `fleet.resolved.json` via the same
     /// `sign_cmd`. `None` skips the revocations artifact.
     pub revocations_attr: Option<String>,
+    /// Flake attr yielding the bootstrap-nonces list. When set, the pipeline
+    /// signs `bootstrap-nonces.json` alongside `fleet.resolved.json` via the
+    /// same `sign_cmd`. `None` skips the artifact entirely (which means CP
+    /// enrolment is unusable in strict mode - only used in dev/test).
+    pub bootstrap_nonces_attr: Option<String>,
     /// Source URL for building pinned hosts at non-current commits. Optional
     /// at the type level but required at runtime iff any non-expired host pin
     /// specifies a commit different from the current release commit
@@ -229,6 +234,53 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
         );
     }
 
+    // LOADBEARING: empty list still emits the file. CP-rebuild recovery
+    // primes the in-memory allowlist from this; a missing file would
+    // re-open the replay-after-wipe window for unprocessed nonces.
+    let mut bootstrap_nonces_paths: Vec<PathBuf> = Vec::new();
+    if let Some(attr) = &config.bootstrap_nonces_attr {
+        let raw_entries = eval_bootstrap_nonces(config, attr)?;
+        let pruned = prune_expired_bootstrap_nonces(raw_entries, signed_at);
+        let bn = nixfleet_proto::BootstrapNonces {
+            schema_version: 1,
+            bootstrap_nonces: pruned,
+            meta: nixfleet_proto::Meta {
+                schema_version: 1,
+                signed_at: Some(signed_at),
+                ci_commit: ci_commit.clone(),
+                signature_algorithm: Some(config.signature_algorithm.clone()),
+            },
+        };
+        let bn_json =
+            serde_json::to_string(&bn).context("serialise bootstrap-nonces.json")?;
+        let bn_canonical = nixfleet_canonicalize::canonicalize(&bn_json)
+            .context("canonicalize bootstrap-nonces.json")?;
+        let bn_path = config.release_dir.join("bootstrap-nonces.json");
+        let bn_sig_path = config.release_dir.join("bootstrap-nonces.json.sig");
+        let bn_sig_bytes = if bn_path.exists()
+            && bn_sig_path.exists()
+            && std::fs::read(&bn_path).ok().as_deref() == Some(bn_canonical.as_bytes())
+        {
+            std::fs::read(&bn_sig_path)
+                .context("read existing bootstrap-nonces signature")?
+        } else {
+            sign(&config.sign_cmd, bn_canonical.as_bytes())?
+        };
+        write_release(
+            &config.release_dir,
+            "bootstrap-nonces.json",
+            bn_canonical.as_bytes(),
+            &bn_sig_bytes,
+        )?;
+        bootstrap_nonces_paths.push(bn_path);
+        bootstrap_nonces_paths.push(bn_sig_path);
+        tracing::info!(
+            target: "nixfleet_release",
+            entries = bn.bootstrap_nonces.len(),
+            "bootstrap-nonces.json signed + written",
+        );
+    }
+
     // One signed manifest per channel; fleetResolvedHash binds each to this
     // snapshot, blocking mix-and-match across rotations.
     let mut manifest_paths: Vec<PathBuf> = Vec::new();
@@ -291,6 +343,7 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
     if config.git_commit {
         let mut release_files = vec![release_path.clone(), signature_path.clone()];
         release_files.extend(revocations_paths.iter().cloned());
+        release_files.extend(bootstrap_nonces_paths.iter().cloned());
         release_files.extend(manifest_paths.iter().cloned());
         let committed =
             git_commit_release(config, &release_files, ci_commit.as_deref(), signed_at)?;
@@ -385,6 +438,19 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
+/// Strip entries with `expires_at < signed_at`. Run at sign time so the
+/// signed artifact only contains the operational set; fleet.nix can keep
+/// historical entries as an audit log.
+pub(crate) fn prune_expired_bootstrap_nonces(
+    entries: Vec<nixfleet_proto::BootstrapNonceEntry>,
+    signed_at: DateTime<Utc>,
+) -> Vec<nixfleet_proto::BootstrapNonceEntry> {
+    entries
+        .into_iter()
+        .filter(|e| e.expires_at >= signed_at)
+        .collect()
+}
+
 fn eval_revocations(config: &ReleaseConfig, attr: &str) -> Result<Vec<RevocationEntry>> {
     let output = Command::new("nix")
         .args(["eval", "--json", "--no-warn-dirty", &format!(".#{attr}")])
@@ -399,6 +465,25 @@ fn eval_revocations(config: &ReleaseConfig, attr: &str) -> Result<Vec<Revocation
     }
     serde_json::from_slice(&output.stdout)
         .with_context(|| format!("parse revocations from `nix eval .#{attr}`"))
+}
+
+fn eval_bootstrap_nonces(
+    config: &ReleaseConfig,
+    attr: &str,
+) -> Result<Vec<nixfleet_proto::BootstrapNonceEntry>> {
+    let output = Command::new("nix")
+        .args(["eval", "--json", "--no-warn-dirty", &format!(".#{attr}")])
+        .current_dir(&config.flake_dir)
+        .output()
+        .with_context(|| format!("invoke `nix eval .#{attr}`"))?;
+    if !output.status.success() {
+        bail!(
+            "nix eval .#{attr}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("parse bootstrap nonces from `nix eval .#{attr}`"))
 }
 
 /// Enumerate attribute names; missing attrset -> empty. "Missing attribute"
@@ -708,6 +793,45 @@ fn load_existing_signed_at_if_unchanged(
         Ok(existing.meta.signed_at)
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod bootstrap_nonces_tests {
+    use super::*;
+    use nixfleet_proto::BootstrapNonceEntry;
+
+    fn entry(nonce: &str, expires_at: &str) -> BootstrapNonceEntry {
+        BootstrapNonceEntry {
+            nonce: nonce.into(),
+            hostname: "agent-01".into(),
+            expires_at: expires_at.parse().unwrap(),
+            minted_at: None,
+            minted_by: None,
+        }
+    }
+
+    #[test]
+    fn prune_drops_entries_with_expires_at_before_signed_at() {
+        let signed_at: DateTime<Utc> = "2026-05-13T10:00:00Z".parse().unwrap();
+        let entries = vec![
+            entry("expired", "2026-05-12T10:00:00Z"),
+            entry("fresh", "2026-05-14T10:00:00Z"),
+            entry("exactly-now", "2026-05-13T10:00:00Z"),
+        ];
+        let kept = prune_expired_bootstrap_nonces(entries, signed_at);
+        let nonces: Vec<&str> = kept.iter().map(|e| e.nonce.as_str()).collect();
+        // expiresAt < signedAt is dropped; expiresAt == signedAt is kept
+        // (still has zero seconds of validity at signing instant; CP will
+        // reject when it sees it at a later wall-clock moment).
+        assert_eq!(nonces, vec!["fresh", "exactly-now"]);
+    }
+
+    #[test]
+    fn prune_empty_list_is_empty() {
+        let signed_at: DateTime<Utc> = "2026-05-13T10:00:00Z".parse().unwrap();
+        let kept = prune_expired_bootstrap_nonces(vec![], signed_at);
+        assert!(kept.is_empty());
     }
 }
 
@@ -1032,6 +1156,7 @@ mod tests {
             smoke_verify: true,
             reuse_unchanged_signature: false,
             revocations_attr: None,
+            bootstrap_nonces_attr: None,
             pin_source_url: None,
         }
     }

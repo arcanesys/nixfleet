@@ -4,7 +4,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use ed25519_dalek::{Signature, VerifyingKey};
-use nixfleet_proto::{FleetResolved, Revocations, RolloutManifest, TrustedPubkey};
+use nixfleet_proto::{BootstrapNonces, FleetResolved, Revocations, RolloutManifest, TrustedPubkey};
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -18,6 +18,15 @@ pub trait SignedSidecar {
 }
 
 impl SignedSidecar for FleetResolved {
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn signed_at(&self) -> Option<DateTime<Utc>> {
+        self.meta.signed_at
+    }
+}
+
+impl SignedSidecar for BootstrapNonces {
     fn schema_version(&self) -> u32 {
         self.schema_version
     }
@@ -228,6 +237,26 @@ pub fn verify_revocations(
     freshness_window: Duration,
     reject_before: Option<DateTime<Utc>>,
 ) -> Result<Revocations, VerifyError> {
+    verify_signed_sidecar(
+        signed_bytes,
+        signature,
+        trusted_keys,
+        now,
+        freshness_window,
+        reject_before,
+    )
+}
+
+/// Verify a signed bootstrap-nonces allowlist. Same trust class +
+/// freshness semantics as revocations.
+pub fn verify_bootstrap_nonces(
+    signed_bytes: &[u8],
+    signature: &[u8],
+    trusted_keys: &[TrustedPubkey],
+    now: DateTime<Utc>,
+    freshness_window: Duration,
+    reject_before: Option<DateTime<Utc>>,
+) -> Result<BootstrapNonces, VerifyError> {
     verify_signed_sidecar(
         signed_bytes,
         signature,

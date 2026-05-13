@@ -85,6 +85,12 @@
         agentPubkeys = {inherit (agentPubkeys) agent-99;};
       };
 
+  # Same seedSalt as the default signedFixture so the privkey extracted
+  # here matches the ciReleaseKey published in test-trust.json. Lets
+  # scenarios sign sidecars (e.g. bootstrap-nonces.json) at runtime
+  # with a key the CP already trusts.
+  signedSeedKey = import ./fixtures/signed/seed-key.nix {inherit pkgs;};
+
   agenixFixture = import ./fixtures/agenix {inherit pkgs;};
 
   # Combined trust.json carries both orgRootKey (enrol) and ciReleaseKey
@@ -309,9 +315,10 @@
     else
       import ./scenarios/enroll-replay.nix (scenarioArgs
         // {
-          inherit signedFixture orgRootKeyFixture;
+          inherit signedFixture orgRootKeyFixture signedSeedKey;
           cpPkg = nixfleet-control-plane;
           cliPkg = nixfleet-cli;
+          canonicalizePkg = nixfleet-canonicalize;
         });
 
   concurrentCheckinScenario =

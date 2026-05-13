@@ -48,6 +48,7 @@ pub struct ServeArgs {
     /// `None` -> file-backed `--artifact` only.
     pub channel_refs: Option<crate::polling::channel_refs_poll::ChannelRefsSource>,
     pub revocations: Option<crate::polling::revocations_poll::RevocationsSource>,
+    pub bootstrap_nonces: Option<crate::polling::bootstrap_nonces_poll::BootstrapNoncesSource>,
     /// `None` -> in-memory state only.
     pub db_path: Option<PathBuf>,
     /// `None` -> `/v1/agent/closure/<hash>` returns 501.
@@ -68,6 +69,10 @@ pub struct ServeArgs {
     /// drive a real channel-refs poll. Production paths MUST leave `false`;
     /// the CLI never sets it.
     pub mark_ready_at_startup: bool,
+    /// Test-only: seed the in-memory bootstrap-nonces allowlist at startup
+    /// without running the poll loop. Production paths MUST leave `None`;
+    /// the CLI never sets it.
+    pub initial_nonces: Option<crate::db::allowed_nonces::AllowedNoncesView>,
 }
 
 impl Default for ServeArgs {
@@ -90,6 +95,7 @@ impl Default for ServeArgs {
             confirm_deadline_secs: DEFAULT_CONFIRM_DEADLINE_SECS,
             channel_refs: None,
             revocations: None,
+            bootstrap_nonces: None,
             db_path: None,
             closure_upstream: None,
             rollouts_dir: None,
@@ -98,6 +104,7 @@ impl Default for ServeArgs {
             agent_cn_suffix: crate::auth::issuance::DEFAULT_AGENT_CN_SUFFIX.to_string(),
             agent_cert_validity: crate::auth::issuance::AGENT_CERT_VALIDITY,
             mark_ready_at_startup: false,
+            initial_nonces: None,
         }
     }
 }
@@ -207,6 +214,18 @@ pub struct AppState {
     /// at startup. Captured into AppState so the readiness check stays
     /// pure (no need to thread `ServeArgs` into middleware).
     pub revocations_required: bool,
+    /// In-memory bootstrap-nonces allowlist. Replaced wholesale by the
+    /// `bootstrap_nonces_poll` task per successful verify. Read by the
+    /// `/v1/enroll` handler under a read-lock.
+    pub allowed_nonces: Arc<RwLock<crate::db::allowed_nonces::AllowedNoncesView>>,
+    /// Set to `true` once the bootstrap-nonces poll has applied a verified
+    /// allowlist at least once. Only consulted when
+    /// `bootstrap_nonces_required` is `true`.
+    pub bootstrap_nonces_primed: Arc<AtomicBool>,
+    /// `true` iff `--bootstrap-nonces-{artifact,signature}-url` were both
+    /// set at startup. Captured into AppState so the readiness check stays
+    /// pure (no need to thread `ServeArgs` into middleware).
+    pub bootstrap_nonces_required: bool,
 }
 
 impl AppState {
@@ -218,6 +237,11 @@ impl AppState {
             return false;
         }
         if self.revocations_required && !self.revocations_primed.load(Ordering::Acquire) {
+            return false;
+        }
+        if self.bootstrap_nonces_required
+            && !self.bootstrap_nonces_primed.load(Ordering::Acquire)
+        {
             return false;
         }
         true
@@ -249,6 +273,11 @@ impl Default for AppState {
             artifact_primed: Arc::new(AtomicBool::new(false)),
             revocations_primed: Arc::new(AtomicBool::new(false)),
             revocations_required: false,
+            allowed_nonces: Arc::new(RwLock::new(
+                crate::db::allowed_nonces::AllowedNoncesView::default(),
+            )),
+            bootstrap_nonces_primed: Arc::new(AtomicBool::new(false)),
+            bootstrap_nonces_required: false,
         }
     }
 }
@@ -324,6 +353,26 @@ mod ready_tests {
         assert!(
             !state.is_ready(),
             "revocations without artifact is not ready"
+        );
+    }
+
+    #[test]
+    fn bootstrap_nonces_required_blocks_ready_until_primed() {
+        let state = AppState {
+            bootstrap_nonces_required: true,
+            ..AppState::default()
+        };
+        state.artifact_primed.store(true, Ordering::Release);
+        assert!(
+            !state.is_ready(),
+            "must not be ready until bootstrap_nonces also primed",
+        );
+        state
+            .bootstrap_nonces_primed
+            .store(true, Ordering::Release);
+        assert!(
+            state.is_ready(),
+            "ready once bootstrap_nonces primed alongside artifact",
         );
     }
 }

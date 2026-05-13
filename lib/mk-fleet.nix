@@ -143,6 +143,46 @@
     };
   };
 
+  bootstrapNonceType = types.submodule {
+    options = {
+      nonce = mkOption {
+        type = types.str;
+        description = ''
+          Hex-encoded nonce from the token's claims. Matches
+          `BootstrapToken.claims.nonce` exactly. CP refuses any
+          `/v1/enroll` whose nonce is not present in the signed
+          allowlist.
+        '';
+      };
+      hostname = mkOption {
+        type = types.str;
+        description = ''
+          Host this nonce is valid for. Must match the token's
+          `claims.hostname`; defends against mis-targeted token swap.
+        '';
+      };
+      expiresAt = mkOption {
+        type = types.str;
+        description = ''
+          RFC3339 timestamp. Authoritative validity window - may be
+          tighter than the token's own `expires_at` claim.
+          `nixfleet-release` prunes entries with `expiresAt < signedAt`
+          before signing the artifact.
+        '';
+      };
+      mintedAt = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Optional audit trail: when the token was minted.";
+      };
+      mintedBy = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Optional audit trail: who minted the token.";
+      };
+    };
+  };
+
   tagType = types.submodule {
     options = {
       description = mkOption {
@@ -852,6 +892,29 @@
                 has a verifiable source.
               '';
             };
+            bootstrapNonces = mkOption {
+              type = types.listOf bootstrapNonceType;
+              default = [];
+              description = ''
+                Operator-declared allowlist of valid bootstrap-token
+                nonces. Closes the replay-after-DB-wipe vector
+                (nixfleet#96): CP refuses /v1/enroll whose nonce is
+                not in this signed list. Empty list = no enrolments
+                accepted.
+
+                Operator workflow:
+                  1. `nixfleet mint-token --hostname X ...` (prints
+                     a Nix snippet)
+                  2. Paste snippet here, commit, push
+                  3. CI signs the sidecar `bootstrap-nonces.json`
+                  4. CP polls + applies (within 60s)
+                  5. Deploy token to host, agent enrolls
+
+                Entries can be left in this list as an audit log;
+                `nixfleet-release` filters out entries with
+                `expiresAt` in the past at sign time.
+              '';
+            };
           };
         }
         input
@@ -862,6 +925,7 @@
     // {
       resolved = resolveFleet evaluated.config;
       revocations = evaluated.config.revocations;
+      bootstrapNonces = evaluated.config.bootstrapNonces;
     };
 
   # LOADBEARING: hosts/tags/channels strict-merge (collision throws); rolloutPolicies later-wins; edges/channelEdges/disruptionBudgets concat; complianceFrameworks union.

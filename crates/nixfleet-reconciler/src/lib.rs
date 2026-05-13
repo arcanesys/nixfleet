@@ -22,6 +22,7 @@ pub use rollout_state::RolloutState;
 pub use trust_rotation::check_trust_rotations;
 pub use verify::{
     canonical_hash_from_bytes, compute_canonical_hash, compute_rollout_id, rollout_id_from_bytes,
-    verify_artifact, verify_revocations, verify_rollout_manifest, verify_signed_sidecar,
+    verify_artifact, verify_bootstrap_nonces, verify_revocations, verify_rollout_manifest,
+    verify_signed_sidecar,
     SignedSidecar, VerifyError,
 };

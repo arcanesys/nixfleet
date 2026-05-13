@@ -72,6 +72,12 @@ struct Cli {
     #[arg(long)]
     revocations_attr: Option<String>,
 
+    /// Flake attr yielding the bootstrap-nonces allowlist. Unset -> no
+    /// artifact. Strongly recommended for production: CP enrolment
+    /// in strict mode requires this artifact.
+    #[arg(long)]
+    bootstrap_nonces_attr: Option<String>,
+
     /// Source URL the pinned-host build path uses as `nix build "<url>?rev=<commit>#..."`.
     /// Required iff any non-expired host pin specifies a commit different from
     /// the current release commit.
@@ -171,6 +177,7 @@ fn main() -> ExitCode {
         smoke_verify: cli.smoke_verify,
         reuse_unchanged_signature: cli.reuse_unchanged_signature,
         revocations_attr: cli.revocations_attr,
+        bootstrap_nonces_attr: cli.bootstrap_nonces_attr,
         pin_source_url: cli.pin_source_url,
     };
 

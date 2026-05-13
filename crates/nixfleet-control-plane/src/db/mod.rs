@@ -5,6 +5,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
+pub mod allowed_nonces;
 pub mod dispatch_history;
 pub mod host_dispatch_state;
 pub mod reports;

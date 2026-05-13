@@ -85,6 +85,18 @@ struct ServeFlags {
     #[arg(long, env = "NIXFLEET_CP_REVOCATIONS_TOKEN_FILE")]
     revocations_token_file: Option<PathBuf>,
 
+    /// When unset, bootstrap-nonces polling is disabled. Strict-mode CP
+    /// will refuse all enrolments without this artifact.
+    #[arg(long, env = "NIXFLEET_CP_BOOTSTRAP_NONCES_ARTIFACT_URL")]
+    bootstrap_nonces_artifact_url: Option<String>,
+
+    #[arg(long, env = "NIXFLEET_CP_BOOTSTRAP_NONCES_SIGNATURE_URL")]
+    bootstrap_nonces_signature_url: Option<String>,
+
+    /// Defaults to the channel-refs token when unset (same trust class).
+    #[arg(long, env = "NIXFLEET_CP_BOOTSTRAP_NONCES_TOKEN_FILE")]
+    bootstrap_nonces_token_file: Option<PathBuf>,
+
     /// Unset causes /v1/enroll and /v1/agent/renew to return 500.
     #[arg(long, env = "NIXFLEET_CP_FLEET_CA_CERT")]
     fleet_ca_cert: Option<PathBuf>,
@@ -297,6 +309,26 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
         },
     )?;
 
+    let bootstrap_nonces = paired_source(
+        "bootstrap-nonces poll",
+        flags.bootstrap_nonces_artifact_url,
+        flags.bootstrap_nonces_signature_url,
+        |artifact_url, signature_url| {
+            Ok(
+                nixfleet_control_plane::polling::bootstrap_nonces_poll::BootstrapNoncesSource {
+                    artifact_url,
+                    signature_url,
+                    token_file: flags
+                        .bootstrap_nonces_token_file
+                        .clone()
+                        .or(flags.channel_refs_token_file.clone()),
+                    trust_path: flags.trust_file.clone(),
+                    freshness_window,
+                },
+            )
+        },
+    )?;
+
     server::serve(server::ServeArgs {
         listen,
         tls_cert: flags.tls_cert,
@@ -317,12 +349,14 @@ async fn run_serve(flags: ServeFlags) -> anyhow::Result<()> {
         confirm_deadline_secs: flags.confirm_deadline_secs,
         channel_refs,
         revocations,
+        bootstrap_nonces,
         rollouts_source,
         db_path: flags.db_path,
         closure_upstream: flags.closure_upstream,
         rollouts_dir: flags.rollouts_dir,
         strict: flags.strict,
         mark_ready_at_startup: false,
+        initial_nonces: None,
     })
     .await
 }

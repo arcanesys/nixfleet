@@ -114,6 +114,9 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         if args.revocations.is_none() {
             missing.push("--revocations-{artifact,signature}-url (revocations polling disabled - previously-revoked certs become valid again after CP rebuild)");
         }
+        if args.bootstrap_nonces.is_none() {
+            missing.push("--bootstrap-nonces-{artifact,signature}-url (bootstrap-nonces polling disabled - replay-after-DB-wipe protection absent, nixfleet#96)");
+        }
         if !missing.is_empty() {
             anyhow::bail!(
                 "--strict refuses to start: the following security flags are unset:\n  - {}\n\
@@ -145,6 +148,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         None
     };
     let revocations_required = args.revocations.is_some();
+    let bootstrap_nonces_required = args.bootstrap_nonces.is_some();
     let app_state = AppState {
         db: db.clone(),
         confirm_deadline_secs: args.confirm_deadline_secs,
@@ -155,6 +159,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         agent_cn_suffix: args.agent_cn_suffix.clone(),
         agent_cert_validity: args.agent_cert_validity,
         revocations_required,
+        bootstrap_nonces_required,
         ..Default::default()
     };
     if args.mark_ready_at_startup {
@@ -165,6 +170,13 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         app_state
             .revocations_primed
             .store(true, std::sync::atomic::Ordering::Release);
+        app_state
+            .bootstrap_nonces_primed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+    if let Some(nonces) = args.initial_nonces {
+        // Test-only escape hatch - see ServeArgs::initial_nonces.
+        *app_state.allowed_nonces.write().await = nonces;
     }
     let state = Arc::new(app_state);
 
@@ -349,6 +361,15 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         ));
     }
 
+    if let Some(bootstrap_nonces_source) = args.bootstrap_nonces.clone() {
+        bg_handles.push(crate::polling::bootstrap_nonces_poll::spawn(
+            cancel.clone(),
+            state.allowed_nonces.clone(),
+            bootstrap_nonces_source,
+            state.bootstrap_nonces_primed.clone(),
+        ));
+    }
+
     // Process-global Prometheus recorder. Installs once; counter macros
     // (record_compliance_event etc) silently no-op until then.
     #[cfg(feature = "metrics")]
@@ -477,6 +498,29 @@ mod strict_mode_tests {
         assert!(
             msg.contains("--revocations"),
             "expected revocations hint in strict bail; got: {msg}",
+        );
+    }
+
+    #[tokio::test]
+    async fn strict_bails_when_bootstrap_nonces_unset() {
+        let mut args = minimal_serve_args(true, Some(PathBuf::from("/dev/null")));
+        // Provide revocations so that only the bootstrap-nonces check fires.
+        args.revocations = Some(crate::polling::revocations_poll::RevocationsSource {
+            artifact_url: "http://localhost/revocations.json".into(),
+            signature_url: "http://localhost/revocations.json.sig".into(),
+            token_file: None,
+            trust_path: PathBuf::from("/dev/null"),
+            freshness_window: std::time::Duration::from_secs(3600),
+        });
+        let err = serve(args).await.unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("--bootstrap-nonces"),
+            "expected bootstrap-nonces hint in strict bail; got: {msg}",
+        );
+        assert!(
+            msg.contains("--strict refuses to start"),
+            "expected strict-prefixed message; got: {msg}",
         );
     }
 
