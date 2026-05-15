@@ -320,19 +320,31 @@ fn base_status_label(
 
     // Failed/Reverted ranks above closure-match: the state machine remembers
     // failures even after operator-driven recovery - keep surfacing them.
+    // Issue #5: when the host has ALSO seen a ClosureQuarantined event, append
+    // the channel-halt hint so the operator sees the actionable next step
+    // ("push a new closure to clear") rather than just the failure label.
     if let Some(state) = host.rollout_state
         && state.is_failed()
     {
-        return match state {
+        let base = match state {
             HostRolloutState::Failed => "\u{2717} failed".to_string(),
             HostRolloutState::Reverted => "\u{2717} reverted".to_string(),
             _ => format!("\u{2717} {}", state.as_db_str().to_lowercase()),
         };
+        return if host.quarantined_closure.is_some() {
+            format!("{base} - channel halted, push fix")
+        } else {
+            base
+        };
     }
 
     // Quarantined ranks above pending-reboot (CI-side fix vs operator reboot).
+    // Issue #5: same channel-halt hint applies here too -- when CP has
+    // recorded a quarantine but the host hasn't transitioned to a failure
+    // state yet (e.g., quarantine inserted on a host still mid-rollback),
+    // the label needs to convey the channel-level action.
     if host.quarantined_closure.is_some() {
-        return "\u{2717} quarantined".to_string();
+        return "\u{2717} quarantined - channel halted, push fix".to_string();
     }
 
     // Pending-reboot ranks above in-flight: critical-component swap forced a
@@ -356,7 +368,16 @@ fn base_status_label(
         return "\u{26A0} probes failing".to_string();
     }
 
-    if host.converged {
+    // Closure-hash match ("converged") is necessary but not sufficient for the
+    // "✓ converged" label. The rollout state machine carries the authoritative
+    // lifecycle position: Healthy = activated + in soak window, Soaked =
+    // post-soak waiting on convergence, Converged = fully done. Only the
+    // last (or `None`: no rollout recorded for this host) earns the green
+    // check; Healthy / Soaked fall through to the rollout-state fallback below
+    // so the table reflects rollout progress rather than just hash-match.
+    if host.converged
+        && matches!(host.rollout_state, Some(HostRolloutState::Converged) | None)
+    {
         return "\u{2713} converged".to_string();
     }
 
@@ -740,7 +761,11 @@ mod tests {
     }
 
     #[test]
-    fn soaked_with_no_failing_probes_renders_converged() {
+    fn soaked_with_no_failing_probes_renders_soaked_not_converged() {
+        // Issue #4: STATUS reflects rollout-state lifecycle, not just
+        // closure-hash match. A host at Soaked is on the right closure with
+        // passing probes but has NOT been swept to Converged yet -- show
+        // "soaked" so the operator sees rollout progress accurately.
         use nixfleet_proto::HostRolloutState;
         let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
         let mut h = fixture_host("a", "stable", true, Some(1), 0);
@@ -752,8 +777,116 @@ mod tests {
         };
         let out = render_status_table(&inputs);
         assert!(
+            out.contains("\u{2713} soaked"),
+            "soaked+passing must render as soaked, not converged: {out}",
+        );
+        assert!(
+            !out.contains("\u{2713} converged"),
+            "must not collapse soaked into converged: {out}",
+        );
+    }
+
+    /// Companion: Healthy + passing probes is the brief window between
+    /// confirm and Soaked. Show "→ healthy" so the operator sees the host
+    /// is still progressing through the rollout, not done.
+    #[test]
+    fn healthy_with_passing_probes_renders_healthy_not_converged() {
+        use nixfleet_proto::HostRolloutState;
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", true, Some(1), 0);
+        h.rollout_state = Some(HostRolloutState::Healthy);
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        assert!(
+            !out.contains("\u{2713} converged"),
+            "must not collapse healthy into converged: {out}",
+        );
+        assert!(
+            out.contains("healthy"),
+            "expected healthy state to surface: {out}",
+        );
+    }
+
+    /// Issue #5: reverted + quarantined surface together so the operator
+    /// sees the channel-halt actionability ("push a new closure") rather
+    /// than just the failure label.
+    #[test]
+    fn reverted_with_quarantine_appends_channel_halt_hint() {
+        use nixfleet_proto::HostRolloutState;
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", false, Some(1), 0);
+        h.rollout_state = Some(HostRolloutState::Reverted);
+        h.quarantined_closure = Some("bad-sha".to_string());
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        assert!(
+            out.contains("reverted") && out.contains("channel halted"),
+            "must surface channel-halt hint alongside reverted: {out}",
+        );
+    }
+
+    /// Reverted without quarantine keeps the original label.
+    #[test]
+    fn reverted_without_quarantine_stays_plain() {
+        use nixfleet_proto::HostRolloutState;
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", false, Some(1), 0);
+        h.rollout_state = Some(HostRolloutState::Reverted);
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        assert!(
+            out.contains("reverted") && !out.contains("channel halted"),
+            "no quarantine -> no halt hint: {out}",
+        );
+    }
+
+    /// Quarantined-only (no rollout-state failure yet) carries the hint too.
+    #[test]
+    fn quarantined_label_includes_channel_halt_hint() {
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", false, Some(1), 0);
+        h.quarantined_closure = Some("bad-sha".to_string());
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        assert!(
+            out.contains("quarantined") && out.contains("channel halted"),
+            "quarantined-only label must include halt hint: {out}",
+        );
+    }
+
+    /// Sanity: Converged state still renders as converged (this is the
+    /// terminal state where the green check is genuinely earned).
+    #[test]
+    fn converged_state_renders_converged() {
+        use nixfleet_proto::HostRolloutState;
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", true, Some(1), 0);
+        h.rollout_state = Some(HostRolloutState::Converged);
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        assert!(
             out.contains("\u{2713} converged"),
-            "soaked+converged with no failures stays converged: {out}",
+            "Converged state must render as converged: {out}",
         );
     }
 
