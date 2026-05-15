@@ -38,6 +38,12 @@ fn host_failed_triggers_halt() {
 }
 
 #[test]
+fn quarantined_closure_skips_dispatch() {
+    let (actual, expected) = common::run("host/quarantined_closure_skips_dispatch");
+    common::assert_matches(&actual, &expected);
+}
+
+#[test]
 fn offline_host_skipped() {
     let (actual, expected) = common::run("host/offline_host_skipped");
     common::assert_matches(&actual, &expected);

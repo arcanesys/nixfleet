@@ -73,6 +73,28 @@ pub(crate) fn handle_wave(
                     });
                     continue;
                 }
+                // Anti-thrash gate: refuse to dispatch a closure that the
+                // sweep quarantined (server::reconcile::sweep_soaked_health_failures).
+                // Cleared in the projection when the channel's declared
+                // closure_hash moves past the bad SHA.
+                if let Some(declared) = fleet
+                    .hosts
+                    .get(host)
+                    .and_then(|h| h.closure_hash.as_deref())
+                    && observed
+                        .quarantined_closures
+                        .get(&rollout.channel)
+                        .is_some_and(|set| set.contains(declared))
+                {
+                    out.actions.push(Action::Skip {
+                        host: host.clone(),
+                        reason: format!(
+                            "channel {} closure {} quarantined (sustained probe failures); push a new closure to clear",
+                            rollout.channel, declared
+                        ),
+                    });
+                    continue;
+                }
                 out.actions.push(Action::DispatchHost {
                     rollout: rollout.id.clone(),
                     host: host.clone(),
@@ -227,6 +249,7 @@ mod tests {
             outstanding_compliance_events_by_rollout: std::collections::HashMap::new(),
             last_deferrals: std::collections::HashMap::new(),
             host_probes_passing: probes,
+            quarantined_closures: std::collections::HashMap::new(),
         }
     }
 

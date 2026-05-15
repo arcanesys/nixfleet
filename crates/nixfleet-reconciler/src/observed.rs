@@ -5,7 +5,7 @@ use crate::host_state::HostRolloutState;
 use crate::rollout_state::RolloutState;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -32,6 +32,15 @@ pub struct Observed {
     /// every promotion (gate fails open).
     #[serde(default)]
     pub host_probes_passing: HashMap<String, bool>,
+    /// Anti-thrash: `channel -> {closure_hash}` for closures the CP has
+    /// quarantined after sustained probe failures (sweep-driven, see
+    /// `server::reconcile::sweep_soaked_health_failures`). The reconciler
+    /// suppresses `DispatchHost` whose `(channel, target_closure_hash)`
+    /// hits this set; re-promoting the same broken SHA does nothing.
+    /// Cleared when the channel's declared closure_hash moves past it
+    /// (auto-clear in the projection).
+    #[serde(default)]
+    pub quarantined_closures: HashMap<String, HashSet<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

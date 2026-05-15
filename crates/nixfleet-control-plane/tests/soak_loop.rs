@@ -95,6 +95,7 @@ fn soak_loop_end_to_end_healthy_to_soaked_to_converged() {
         HashMap::new(),
         HashMap::new(),
         &HashMap::new(),
+        HashMap::new(),
     );
     assert_eq!(observed.active_rollouts.len(), 1);
 
@@ -137,6 +138,7 @@ fn soak_loop_end_to_end_healthy_to_soaked_to_converged() {
         HashMap::new(),
         HashMap::new(),
         &HashMap::new(),
+        HashMap::new(),
     );
     let actions2 = reconcile(&fleet, &observed2, now);
     assert!(
@@ -189,6 +191,7 @@ fn soak_loop_skips_when_window_not_elapsed() {
         HashMap::new(),
         HashMap::new(),
         &HashMap::new(),
+        HashMap::new(),
     );
     let fleet = fleet_with_single_wave_host(host, target_closure, 5);
     let actions = reconcile(&fleet, &observed, now);

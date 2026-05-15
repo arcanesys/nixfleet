@@ -1,6 +1,6 @@
 //! 30s reconcile loop; freshness gate prevents stale build-time bytes clobbering upstream-fresh snapshot.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -133,6 +133,14 @@ pub(super) fn spawn_reconcile_loop(
             // (~5 manifests, ~30s tick); cache later if it shows up in
             // a profile.
             let rollout_budgets = load_rollout_budgets(state.as_ref(), &rollouts).await;
+            // Active anti-thrash quarantines for the reconciler gate.
+            // sweep_stale_quarantines below clears entries whose
+            // (channel, closure_hash) is no longer declared by any host.
+            let quarantined_closures = state
+                .db
+                .as_deref()
+                .and_then(|db| db.quarantined_closures().active_by_channel().ok())
+                .unwrap_or_default();
             let (result, verified_fleet) = if checkins.is_empty() && channel_refs.is_empty() {
                 (tick(&inputs_now), verify_fleet_only(&inputs_now))
             } else {
@@ -145,6 +153,7 @@ pub(super) fn spawn_reconcile_loop(
                     outstanding_compliance_events_by_rollout,
                     last_deferrals,
                     &rollout_budgets,
+                    quarantined_closures,
                 )
             };
 
@@ -211,13 +220,15 @@ pub(super) fn spawn_reconcile_loop(
                     sweep_terminal_orphans(&state, live_fleet.as_ref()).await;
                     // Probe-failure -> rollback bridge: transitions Soaked
                     // hosts with sustained `outstanding_health_failures > 0`
-                    // to `Failed`, so the existing `RollbackAndHalt` path in
-                    // the reconciler decision-procedure can finally fire on
-                    // service-level failures (closes the framework's
-                    // safety-net contract; abstracts33d/nixfleet#99 tracks
-                    // the v0.2.1 hardening - per-channel thresholds and
-                    // quarantinedClosure anti-thrash).
+                    // to `Failed`. Also inserts the bad SHA into the
+                    // quarantine table so dispatch refuses to re-issue it.
                     sweep_soaked_health_failures(&state, now).await;
+                    // Auto-clear quarantine entries whose channel has
+                    // moved past the quarantined SHA. Runs after the health
+                    // sweep so a same-tick recovery sees a clean slate next
+                    // tick (insert-then-clear here would only clear stale
+                    // entries from prior ticks anyway, which is correct).
+                    sweep_stale_quarantines(&state, live_fleet.as_ref()).await;
                     let plan = render_plan(&out);
                     tracing::info!(target: "reconcile", "{}", plan.trim_end());
                 }
@@ -546,9 +557,70 @@ async fn sweep_terminal_orphans(
 
 /// Sustained-failure window before a Soaked host with non-zero
 /// `outstanding_health_failures` transitions to Failed. Fixed in v0.2;
-/// per-channel override + quarantinedClosure anti-thrash live in
-/// abstracts33d/nixfleet#99.
+/// per-channel override tracked in abstracts33d/nixfleet#99.
 const HEALTH_FAILURE_THRESHOLD_SECS: i64 = 60;
+
+/// Auto-clear quarantine entries whose `(channel, closure_hash)` is no
+/// longer declared by any host in the live fleet. Mirrors the agent's
+/// "auto-clears on channel-ref advance" semantic at the CP layer: once
+/// the operator pushes past the bad SHA, dispatch can resume without
+/// requiring `nixfleet quarantine clear`.
+async fn sweep_stale_quarantines(
+    state: &AppState,
+    live_fleet: Option<&crate::server::VerifiedFleetSnapshot>,
+) {
+    let Some(snapshot) = live_fleet else { return };
+    let Some(db) = state.db.as_deref() else {
+        return;
+    };
+
+    let mut declared: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for host in snapshot.fleet.hosts.values() {
+        if let Some(closure) = host.closure_hash.as_deref() {
+            declared
+                .entry(host.channel.as_str())
+                .or_default()
+                .insert(closure);
+        }
+    }
+
+    let active = match db.quarantined_closures().active_by_channel() {
+        Ok(a) => a,
+        Err(err) => {
+            tracing::warn!(target: "quarantine-sweep", error = %err, "active_by_channel failed");
+            return;
+        }
+    };
+
+    for (channel, closures) in active {
+        let still_declared = declared.get(channel.as_str()).cloned().unwrap_or_default();
+        for closure in closures {
+            if still_declared.contains(closure.as_str()) {
+                continue;
+            }
+            match db.quarantined_closures().clear(&channel, &closure) {
+                Ok(n) if n > 0 => {
+                    tracing::info!(
+                        target: "quarantine-sweep",
+                        channel = %channel,
+                        closure_hash = %closure,
+                        "auto-cleared: channel advanced past quarantined SHA",
+                    );
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(
+                        target: "quarantine-sweep",
+                        channel = %channel,
+                        closure_hash = %closure,
+                        error = %err,
+                        "clear failed",
+                    );
+                }
+            }
+        }
+    }
+}
 
 /// Bridges probe failures to the existing `RollbackAndHalt` action path.
 /// Soaked hosts with non-Pass probes for > `HEALTH_FAILURE_THRESHOLD_SECS`
@@ -627,6 +699,26 @@ async fn sweep_soaked_health_failures(state: &AppState, now: chrono::DateTime<ch
                         "Soaked -> Failed: sustained probe failures (RollbackAndHalt path takes over)",
                     );
                     tracker.remove(hostname);
+                    // Anti-thrash: record the bad SHA so dispatch refuses
+                    // to re-issue it. Cleared by sweep_stale_quarantines
+                    // when the channel's declared closure_hash moves past.
+                    if let Err(err) = db.quarantined_closures().insert(
+                        &snap.channel,
+                        &snap.target_closure_hash,
+                        &format!(
+                            "host {} sustained probe failures for {}s",
+                            hostname,
+                            elapsed.num_seconds()
+                        ),
+                    ) {
+                        tracing::warn!(
+                            target: "health-sweep",
+                            channel = %snap.channel,
+                            closure_hash = %snap.target_closure_hash,
+                            error = %err,
+                            "quarantine insert failed (rollback still proceeds; anti-thrash relies on next-tick recovery)",
+                        );
+                    }
                     kick_channel_refs_poll(state, "Soaked -> Failed health sweep");
                 }
                 Err(err) => {
@@ -654,6 +746,7 @@ fn run_tick_with_projection(
     outstanding_compliance_events_by_rollout: HashMap<String, HashMap<String, usize>>,
     last_deferrals: HashMap<String, nixfleet_reconciler::observed::DeferralRecord>,
     rollout_budgets: &HashMap<String, Vec<nixfleet_proto::RolloutBudget>>,
+    quarantined_closures: HashMap<String, HashSet<String>>,
 ) -> (
     anyhow::Result<crate::TickOutput>,
     Option<(FleetResolved, Vec<u8>)>,
@@ -688,6 +781,7 @@ fn run_tick_with_projection(
             outstanding_compliance_events_by_rollout,
             last_deferrals,
             rollout_budgets,
+            quarantined_closures,
         );
         let mut actions = nixfleet_reconciler::reconcile(&fleet, &observed, inputs.now);
         // Append RotateTrustRoot informational signals when a slot's
@@ -765,6 +859,7 @@ fn run_tick_with_projection(
                 outstanding_compliance_events_by_rollout,
                 last_deferrals.clone(),
                 rollout_budgets,
+                quarantined_closures,
             );
             let mut actions = nixfleet_reconciler::reconcile(&fleet, &observed, inputs.now);
             actions.extend(nixfleet_reconciler::check_trust_rotations(

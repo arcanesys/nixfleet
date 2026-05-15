@@ -8,6 +8,7 @@ use std::sync::{Mutex, MutexGuard};
 pub mod allowed_nonces;
 pub mod dispatch_history;
 pub mod host_dispatch_state;
+pub mod quarantined_closures;
 pub mod reports;
 pub mod revocations;
 pub mod rollout_state;
@@ -103,6 +104,10 @@ impl Db {
     /// Hard state.
     pub fn revocations(&self) -> revocations::Revocations<'_> {
         revocations::Revocations { conn: &self.conn }
+    }
+
+    pub fn quarantined_closures(&self) -> quarantined_closures::QuarantinedClosures<'_> {
+        quarantined_closures::QuarantinedClosures { conn: &self.conn }
     }
 
     pub fn rollouts(&self) -> rollouts::Rollouts<'_> {

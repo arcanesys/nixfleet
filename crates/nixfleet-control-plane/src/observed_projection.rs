@@ -1,6 +1,6 @@
 //! Live `Observed` projection from in-memory checkin state; pass `&[]` rollouts when no DB.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use nixfleet_proto::RolloutBudget;
 use nixfleet_reconciler::observed::{DeferralRecord, HostState, Observed, Rollout};
@@ -22,6 +22,7 @@ pub fn project(
     outstanding_compliance_events_by_rollout: HashMap<String, HashMap<String, usize>>,
     last_deferrals: HashMap<String, DeferralRecord>,
     rollout_budgets: &HashMap<String, Vec<RolloutBudget>>,
+    quarantined_closures: HashMap<String, HashSet<String>>,
 ) -> Observed {
     let host_state: HashMap<String, HostState> = host_checkins
         .iter()
@@ -81,6 +82,7 @@ pub fn project(
         outstanding_compliance_events_by_rollout,
         last_deferrals,
         host_probes_passing,
+        quarantined_closures,
     }
 }
 
@@ -127,6 +129,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            HashMap::new(),
         );
 
         assert_eq!(observed.host_state.len(), 2);
@@ -149,6 +152,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            HashMap::new(),
         );
         assert!(observed.host_state.is_empty());
         assert!(observed.channel_refs.is_empty());
@@ -201,6 +205,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            HashMap::new(),
         );
         assert_eq!(
             observed.active_rollouts[0]
@@ -233,6 +238,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            HashMap::new(),
         );
         assert_eq!(
             observed.active_rollouts[0]
@@ -270,6 +276,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            HashMap::new(),
         );
         assert_eq!(observed.active_rollouts.len(), 1);
         let r = &observed.active_rollouts[0];

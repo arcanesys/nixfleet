@@ -204,6 +204,7 @@ mod tests {
             outstanding_compliance_events_by_rollout: HashMap::new(),
             last_deferrals: HashMap::new(),
             host_probes_passing: HashMap::new(),
+            quarantined_closures: HashMap::new(),
         }
     }
 
