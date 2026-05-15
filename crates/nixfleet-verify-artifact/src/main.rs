@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use nixfleet_proto::TrustConfig;
-use nixfleet_reconciler::evidence::{verify_canonical_payload, SignatureStatus};
+use nixfleet_reconciler::evidence::{SignatureStatus, verify_canonical_payload};
 use nixfleet_reconciler::{verify_artifact, verify_rollout_manifest};
 
 #[derive(Parser, Debug)]
@@ -113,7 +113,7 @@ fn run_rollout_manifest(
             return arg_error(format!(
                 "read signature {}: {err}",
                 signature_path.display()
-            ))
+            ));
         }
     };
     let trust_raw = match std::fs::read_to_string(&trust_file) {

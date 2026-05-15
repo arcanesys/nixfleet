@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use nixfleet_proto::agent_wire::{
-    CheckinRequest, CheckinResponse, ConfirmRequest, ReportEvent, ReportRequest, ReportResponse,
-    PROTOCOL_MAJOR_VERSION, PROTOCOL_VERSION_HEADER,
+    CheckinRequest, CheckinResponse, ConfirmRequest, PROTOCOL_MAJOR_VERSION,
+    PROTOCOL_VERSION_HEADER, ReportEvent, ReportRequest, ReportResponse,
 };
 use reqwest::{Certificate, Client, Identity, StatusCode};
 
@@ -228,7 +228,7 @@ mod read_client_key_tests {
 
     fn write_test_ssh_host_key(dir: &std::path::Path) -> std::path::PathBuf {
         let mut seed = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed);
+        rand::rng().fill_bytes(&mut seed);
         let sk = SigningKey::from_bytes(&seed);
         let kp = ssh_key::private::Ed25519Keypair {
             public: ssh_key::public::Ed25519PublicKey(sk.verifying_key().to_bytes()),

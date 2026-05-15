@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use axum::body::Bytes;
 use axum::extract::{Path, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::IntoResponse;
 
 use super::super::route_error::internal_warn;
@@ -100,11 +100,11 @@ async fn load_pair(state: &AppState, rollout_id: &str) -> Result<ManifestPair, S
         return Err(StatusCode::NOT_FOUND);
     }
 
-    if let Some(dir) = state.rollouts_dir.as_ref() {
-        if let Some((manifest_bytes, sig_bytes)) = try_load_from_dir(dir, rollout_id)? {
-            verify_content_address(&manifest_bytes, rollout_id)?;
-            return Ok((manifest_bytes, sig_bytes));
-        }
+    if let Some(dir) = state.rollouts_dir.as_ref()
+        && let Some((manifest_bytes, sig_bytes)) = try_load_from_dir(dir, rollout_id)?
+    {
+        verify_content_address(&manifest_bytes, rollout_id)?;
+        return Ok((manifest_bytes, sig_bytes));
     }
 
     if let Some(source) = state.rollouts_source.as_ref() {

@@ -32,59 +32,52 @@ metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]
 [dependencies]
 nixfleet-proto = { path = "../nixfleet-proto", features = ["rusqlite"] }
 nixfleet-reconciler = { path = "../nixfleet-reconciler" }
-chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["derive", "env"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-anyhow = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tokio = { version = "1", features = ["full"] }
+chrono = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
 # Graceful-shutdown plumbing - CancellationToken hands a single
 # cancel-fanout to every spawned background loop (reconcile, polls,
 # timers) so SIGTERM drains in-flight work instead of dropping it.
-tokio-util = "0.7"
-axum = "0.8"
-axum-server = { version = "0.7", features = ["tls-rustls"] }
-rustls = "0.23"
-rustls-pki-types = "1"
+tokio-util = { workspace = true }
+axum = { workspace = true }
+axum-server = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
 # PR-2 - mTLS + /v1/whoami. axum-server 0.7 doesn't expose peer
 # certificates through any public API (upstream issue #162); we vendor a
 # trimmed `auth_cn` module wrapping RustlsAcceptor to inject the cert
 # chain into request extensions. x509-parser extracts the CN from the
 # leaf cert; tokio-rustls + tower-service + http are the supporting
-# stack the wrapper needs at the type level. Same versions v0.1's CP
-# (tag v0.1.1) shipped against.
-x509-parser = "0.16"
-tokio-rustls = "0.26"
-tower-service = "0.3"
-http = "1"
+# stack the wrapper needs at the type level.
+x509-parser = { workspace = true }
+tokio-rustls = { workspace = true }
+tower-service = { workspace = true }
+http = { workspace = true }
 # PR-4 - Forgejo channel-refs poll. reqwest with rustls-tls and
 # native-roots so the CP picks up system trust at runtime - required
 # for Forgejo deployments behind an internal CA (e.g. Caddy's local
 # authority). webpki-roots alone won't trust Caddy-signed certs.
 # `rustls-tls-native-roots` enables `rustls-native-certs`, which
 # reads `/etc/ssl/certs` on Linux at process startup.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
-base64 = "0.22"
+reqwest = { workspace = true }
+base64 = { workspace = true }
 # Bootstrap enrollment + cert renewal. rcgen builds + signs the
 # agent certs; ed25519-dalek verifies bootstrap-token signatures
 # against the org root key from trust.json; sha2 fingerprints CSR
 # pubkeys for the token's expected_pubkey_fingerprint match.
-# `x509-parser` feature gates `CertificateParams::from_ca_cert_pem` and
-# `CertificateSigningRequestParams::from_pem`, which we need to load
-# the operator-supplied fleet CA cert + the agent CSR from disk.
 #
-# `aws_lc_rs` over the default `ring` so `KeyPair::from_pem` accepts
-# SEC1 (`BEGIN EC PRIVATE KEY`) and PKCS#1 (`BEGIN RSA PRIVATE KEY`)
-# in addition to PKCS#8. Operators routinely supply OpenSSL-generated
-# EC CA keys (SEC1) and the framework should consume them without
-# requiring an offline `openssl pkcs8 -topk8 -nocrypt` step. aws-lc-rs
-# is already in the dep tree (rustls/aws-lc-rs path); switching rcgen
-# to it is a feature toggle, no new transitive deps.
-rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-parser", "aws_lc_rs", "crypto"] }
-ed25519-dalek = "2"
-sha2 = "0.10"
+# Workspace pins rcgen with default-features = false +
+# [pem, x509-parser, aws_lc_rs, crypto]. `aws_lc_rs` over `ring` so
+# `KeyPair::from_pem` accepts SEC1 / PKCS#1 / PKCS#8 - operators can
+# supply OpenSSL-generated EC CA keys without offline conversion.
+rcgen = { workspace = true }
+ed25519-dalek = { workspace = true }
+sha2 = { workspace = true }
 nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }
 # Root-3 - host probe-output signature verification.
 # The CP parses `hosts.<hostname>.pubkey` from fleet.resolved
@@ -92,32 +85,27 @@ nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }
 # ComplianceFailure / RuntimeGateError event details. Auditor chain
 # closure: pubkey from fleet.nix -> JCS canonical event -> 64-byte
 # ed25519 sig.
-ssh-key = { version = "0.6", features = ["ed25519"] }
-serde_jcs = "0.2"
+ssh-key = { workspace = true }
+serde_jcs = { workspace = true }
 # Phase 4 PR-1: SQLite persistence for cross-restart state. v0.1 used
-# the same rusqlite + refinery stack (crates/control-plane on
-# v0.1.1) - same versions, same posture (WAL + FK on at startup).
-# Token-replay + cert-revocation persistence (currently in-memory)
-# follow-up onto this layer; rollout/host state lands in subsequent
-# Phase 4 PRs.
-rusqlite = { version = "0.32", features = ["bundled"] }
-refinery = { version = "0.8", features = ["rusqlite"] }
+# the same rusqlite + refinery stack - same versions, same posture
+# (WAL + FK on at startup).
+rusqlite = { workspace = true }
+refinery = { workspace = true }
 # Non-crypto event-id distinguisher suffixes (handlers.rs::rand_suffix).
-# Already in the workspace lockfile via agent + cli prod deps and this
-# crate's dev-deps.
-rand = "0.8"
+rand = { workspace = true }
 # Holds message bytes for shell-out to the TPM sign wrapper
 # (`auth::issuance::TpmCaSigner`); cleaned on drop so the message
 # isn't left readable on disk after issuance.
-tempfile = "3"
+tempfile = { workspace = true }
 # Prometheus counters for alerting - `/metrics` endpoint scraped by
 # the operator Prometheus job. Counters-only (no state-as-label gauges);
 # see `src/metrics.rs`. 0.18 + metrics-util 0.20 are the only
 # combination where idle_timeout works against a real-time clock,
 # verified by reproducer; we don't currently use idle_timeout but
 # the version pinning prevents accidental downgrade.
-metrics = { version = "0.24", optional = true }
-metrics-exporter-prometheus = { version = "0.18", default-features = false, optional = true }
+metrics = { workspace = true, optional = true }
+metrics-exporter-prometheus = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Enable the shared FleetBuilder fixture API for tests.
@@ -125,17 +113,13 @@ nixfleet-proto = { path = "../nixfleet-proto", features = ["rusqlite", "testing"
 # `tokio::time::pause` + `start_paused` are gated on test-util; the
 # graceful-shutdown unit tests use them to fast-forward past the 30s
 # task-drain deadline without real wall-clock waiting.
-tokio = { version = "1", features = ["full", "test-util"] }
+tokio = { workspace = true, features = ["test-util"] }
 # /healthz integration test: rcgen mints a self-signed server cert,
-# reqwest hits the listener over TLS, asserts 200 + JSON. Same testing
-# stack v0.1's CP used (crates/control-plane/Cargo.toml on v0.1.1).
-# Match the prod-dep feature set (aws_lc_rs, no ring).
-rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-parser", "aws_lc_rs", "crypto"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# reqwest hits the listener over TLS, asserts 200 + JSON.
+rcgen = { workspace = true }
+reqwest = { workspace = true }
 # /v1/enroll signature-verification test: mint a real ed25519 keypair
-# operator-side, sign claims, post the token. Mirrors what
-# nixfleet mint-token does on the operator workstation.
-# `rand` is already in [dependencies] (rand_suffix); not re-listed.
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-hex = "0.4"
-sha2 = "0.10"
+# operator-side, sign claims, post the token.
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
+hex = { workspace = true }
+sha2 = { workspace = true }

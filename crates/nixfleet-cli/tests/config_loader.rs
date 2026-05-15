@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use nixfleet_cli::config::{
-    default_config_path, load_file, resolve, ConfigError, FileConfig, Overrides,
+    ConfigError, FileConfig, Overrides, default_config_path, load_file, resolve,
 };
 use tempfile::TempDir;
 

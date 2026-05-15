@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
+use axum::Json;
 use axum::body::Body;
-use axum::http::{header, Request as HttpRequest, StatusCode};
+use axum::http::{Request as HttpRequest, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use nixfleet_proto::agent_wire::{PROTOCOL_MAJOR_VERSION, PROTOCOL_VERSION_HEADER};
 use serde_json::json;
 

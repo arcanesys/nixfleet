@@ -11,8 +11,8 @@
 //! rollout grouping enforces resolution-by-replacement so events under a
 //! superseded rollout never gate the new one.
 
-use nixfleet_proto::compliance::GateMode;
 use nixfleet_proto::Wave;
+use nixfleet_proto::compliance::GateMode;
 
 use crate::observed::Observed;
 
@@ -38,10 +38,10 @@ pub fn outstanding_failures_in_waves(
     let mut out: Vec<(String, usize)> = Vec::new();
     for w in waves.iter().take(wave_range.end).skip(wave_range.start) {
         for h in &w.hosts {
-            if let Some(&n) = per_host.get(h) {
-                if n > 0 {
-                    out.push((h.clone(), n));
-                }
+            if let Some(&n) = per_host.get(h)
+                && n > 0
+            {
+                out.push((h.clone(), n));
             }
         }
     }

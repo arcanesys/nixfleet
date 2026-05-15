@@ -1,7 +1,7 @@
 //! Profile-flip helpers: self-correction after a concurrent profile-mutator,
 //! and resolution of the rolled-back target's basename.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use tokio::process::Command;
 
 /// `Err` only when self-correction itself failed; caller treats as non-fatal.

@@ -284,7 +284,10 @@ mod tests {
         assert!(f.hosts.contains_key("host-05"));
         assert!(f.channels.contains_key("edge"));
         assert!(f.rollout_policies.contains_key("p"));
-        assert_eq!(f.hosts["host-05"].closure_hash.as_deref(), Some("host-05-closure"));
+        assert_eq!(
+            f.hosts["host-05"].closure_hash.as_deref(),
+            Some("host-05-closure")
+        );
         assert_eq!(f.hosts["host-05"].system, "x86_64-linux");
     }
 

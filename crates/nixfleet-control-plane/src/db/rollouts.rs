@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::sync::Mutex;
 
 pub struct Rollouts<'a> {
@@ -378,18 +378,20 @@ mod tests {
             .unwrap();
 
         // Both should be active in their own channel.
-        assert!(!db
-            .rollouts()
-            .supersede_status("r1")
-            .unwrap()
-            .unwrap()
-            .is_superseded());
-        assert!(!db
-            .rollouts()
-            .supersede_status("r2")
-            .unwrap()
-            .unwrap()
-            .is_superseded());
+        assert!(
+            !db.rollouts()
+                .supersede_status("r1")
+                .unwrap()
+                .unwrap()
+                .is_superseded()
+        );
+        assert!(
+            !db.rollouts()
+                .supersede_status("r2")
+                .unwrap()
+                .unwrap()
+                .is_superseded()
+        );
     }
 
     #[test]
@@ -398,12 +400,13 @@ mod tests {
         db.rollouts().record_active_rollout("r1", "stable").unwrap();
         db.rollouts().record_active_rollout("r1", "stable").unwrap();
         // r1 must still be active - re-recording itself never marks it superseded.
-        assert!(!db
-            .rollouts()
-            .supersede_status("r1")
-            .unwrap()
-            .unwrap()
-            .is_superseded());
+        assert!(
+            !db.rollouts()
+                .supersede_status("r1")
+                .unwrap()
+                .unwrap()
+                .is_superseded()
+        );
     }
 
     #[test]
@@ -690,9 +693,9 @@ mod tests {
         db.rollouts()
             .record_active_rollout("r-old-superseder", "edge")
             .unwrap(); // supersedes r-old-superseded with now()
-                       // Force superseded_at to the old timestamp via direct SQL  -
-                       // record_active_rollout stamps `now()`, but we need a row
-                       // older than 90d to verify the retention boundary.
+        // Force superseded_at to the old timestamp via direct SQL  -
+        // record_active_rollout stamps `now()`, but we need a row
+        // older than 90d to verify the retention boundary.
         {
             let guard = crate::db::lock_conn(db.rollouts().conn).unwrap();
             guard
@@ -757,15 +760,17 @@ mod tests {
         );
 
         // r-old-superseded + r-old-terminal: gone from rollouts table.
-        assert!(db
-            .rollouts()
-            .supersede_status("r-old-superseded")
-            .unwrap()
-            .is_none());
-        assert!(db
-            .rollouts()
-            .supersede_status("r-old-terminal")
-            .unwrap()
-            .is_none());
+        assert!(
+            db.rollouts()
+                .supersede_status("r-old-superseded")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db.rollouts()
+                .supersede_status("r-old-terminal")
+                .unwrap()
+                .is_none()
+        );
     }
 }

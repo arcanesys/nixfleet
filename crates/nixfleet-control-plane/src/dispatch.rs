@@ -3,8 +3,8 @@
 use chrono::{DateTime, Utc};
 
 use nixfleet_proto::{
-    agent_wire::{ActivateBlock, CheckinRequest, EvaluatedTarget, FetchResult},
     FleetResolved,
+    agent_wire::{ActivateBlock, CheckinRequest, EvaluatedTarget, FetchResult},
 };
 
 const CONFIRM_ENDPOINT: &str = "/v1/agent/confirm";
@@ -93,18 +93,18 @@ pub fn decide_target(
     // `None` on the outcome's rollout_id = pre-fix agent that doesn't
     // populate the field; conservatively hold to preserve v0.2 baseline
     // behavior for upgrade compatibility.
-    if let Some(outcome) = &request.last_fetch_outcome {
-        if matches!(
+    if let Some(outcome) = &request.last_fetch_outcome
+        && matches!(
             outcome.result,
             FetchResult::VerifyFailed | FetchResult::FetchFailed
-        ) {
-            let prior_was_same = outcome
-                .rollout_id
-                .as_deref()
-                .is_none_or(|rid| rid == rollout_id.as_str());
-            if prior_was_same {
-                return Decision::HoldAfterFailure;
-            }
+        )
+    {
+        let prior_was_same = outcome
+            .rollout_id
+            .as_deref()
+            .is_none_or(|rid| rid == rollout_id.as_str());
+        if prior_was_same {
+            return Decision::HoldAfterFailure;
         }
     }
 
@@ -175,9 +175,9 @@ pub fn decide_target(
 mod tests {
     use super::*;
     use nixfleet_proto::{
+        Host,
         agent_wire::{FetchOutcome, GenerationRef},
         fleet_resolved::Meta,
-        Host,
     };
 
     const TEST_FLEET_HASH: &str =
@@ -461,9 +461,11 @@ mod tests {
         };
         assert_eq!(target.closure_hash, "declared-system");
         assert_eq!(rollout_id.len(), 64);
-        assert!(rollout_id
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            rollout_id
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
         assert_eq!(target.channel_ref, rollout_id);
         assert_eq!(target.evaluated_at, now());
         assert_eq!(target.rollout_id, rollout_id);

@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -417,8 +417,8 @@ async fn record_rollouts_gated_by_channel_edges(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_helpers::fresh_db;
     use crate::db::DispatchInsert;
+    use crate::db::test_helpers::fresh_db;
     use crate::server::VerifiedFleetSnapshot;
     use crate::state::{HealthyMarker, HostRolloutState};
     use chrono::Utc;

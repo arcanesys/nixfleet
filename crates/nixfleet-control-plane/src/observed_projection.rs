@@ -8,7 +8,7 @@ use nixfleet_reconciler::observed::{DeferralRecord, HostState, Observed, Rollout
 use nixfleet_reconciler::{HostRolloutState, RolloutState};
 
 use crate::db::RolloutDbSnapshot;
-use crate::observed_view::{snapshot_to_rollout, ParseUnknown};
+use crate::observed_view::{ParseUnknown, snapshot_to_rollout};
 use crate::server::HostCheckinRecord;
 
 /// `rollout_budgets`: per-rollout budget snapshot from the signed
@@ -203,7 +203,10 @@ mod tests {
             &HashMap::new(),
         );
         assert_eq!(
-            observed.active_rollouts[0].host_states.get("host-02").copied(),
+            observed.active_rollouts[0]
+                .host_states
+                .get("host-02")
+                .copied(),
             Some(HostRolloutState::Failed),
         );
     }
@@ -232,7 +235,10 @@ mod tests {
             &HashMap::new(),
         );
         assert_eq!(
-            observed.active_rollouts[0].host_states.get("host-02").copied(),
+            observed.active_rollouts[0]
+                .host_states
+                .get("host-02")
+                .copied(),
             Some(HostRolloutState::Reverted),
         );
     }

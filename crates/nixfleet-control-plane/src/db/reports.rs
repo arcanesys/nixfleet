@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -209,7 +209,10 @@ mod tests {
             report_json: r#"{"hostname":"host-05","agentVersion":"0.2.0"}"#,
         };
         db.reports().record_host_report(&row).unwrap();
-        let mut got = db.reports().host_reports_recent_per_host("host-05", 8).unwrap();
+        let mut got = db
+            .reports()
+            .host_reports_recent_per_host("host-05", 8)
+            .unwrap();
         assert_eq!(got.len(), 1);
         let r = got.pop().unwrap();
         assert_eq!(r.event_id, "evt-rt-1");

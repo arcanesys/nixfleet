@@ -378,7 +378,7 @@ async fn sleep_with_backoff(consecutive_failures: u32, poll_interval: u64) {
     let base = poll_interval.saturating_mul(multiplier);
     let jitter_pct: f64 = {
         use rand::Rng;
-        rand::thread_rng().gen_range(-0.2_f64..=0.2_f64)
+        rand::rng().random_range(-0.2_f64..=0.2_f64)
     };
     let jittered = (base as f64 * (1.0 + jitter_pct)) as u64;
     tracing::debug!(

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use clap::{Parser, Subcommand};
-use nixfleet_control_plane::{render_plan, server, tick, TickInputs, VerifyOutcome};
+use nixfleet_control_plane::{TickInputs, VerifyOutcome, render_plan, server, tick};
 
 #[derive(Parser, Debug)]
 #[command(

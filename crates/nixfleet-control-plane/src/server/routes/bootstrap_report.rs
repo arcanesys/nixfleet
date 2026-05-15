@@ -10,14 +10,14 @@
 
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use chrono::Utc;
 use nixfleet_proto::agent_wire::{ReportEvent, ReportRequest};
 use nixfleet_proto::enroll_wire::BootstrapEventRequest;
 
-use super::super::state::{AppState, ReportRecord, REPORT_RING_CAP};
+use super::super::state::{AppState, REPORT_RING_CAP, ReportRecord};
 
 pub(in crate::server) async fn bootstrap_report(
     State(state): State<Arc<AppState>>,
@@ -106,27 +106,25 @@ pub(in crate::server) async fn bootstrap_report(
         signature_status: None,
     };
 
-    if let Some(db) = state.db.as_ref() {
-        if let Ok(report_json) = serde_json::to_string(&report_request) {
-            if let Err(err) = db
-                .reports()
-                .record_host_report(&crate::db::HostReportInsert {
-                    hostname: &req.token.claims.hostname,
-                    event_id: &event_id,
-                    received_at,
-                    event_kind: event_str,
-                    rollout: None,
-                    signature_status: None,
-                    report_json: &report_json,
-                })
-            {
-                tracing::warn!(
-                    target: "bootstrap-report",
-                    error = %err,
-                    "bootstrap-report SQLite write failed; in-memory ring buffer still updated",
-                );
-            }
-        }
+    if let Some(db) = state.db.as_ref()
+        && let Ok(report_json) = serde_json::to_string(&report_request)
+        && let Err(err) = db
+            .reports()
+            .record_host_report(&crate::db::HostReportInsert {
+                hostname: &req.token.claims.hostname,
+                event_id: &event_id,
+                received_at,
+                event_kind: event_str,
+                rollout: None,
+                signature_status: None,
+                report_json: &report_json,
+            })
+    {
+        tracing::warn!(
+            target: "bootstrap-report",
+            error = %err,
+            "bootstrap-report SQLite write failed; in-memory ring buffer still updated",
+        );
     }
 
     let mut reports = state.host_reports.write().await;

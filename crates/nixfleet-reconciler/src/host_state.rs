@@ -1,7 +1,7 @@
 //! Per-host state machine. Emits actions and tracks wave soaked-ness.
 
-use crate::observed::{Observed, Rollout};
 use crate::Action;
+use crate::observed::{Observed, Rollout};
 use chrono::{DateTime, Utc};
 use nixfleet_proto::{FleetResolved, Wave};
 
@@ -112,27 +112,27 @@ pub(crate) fn handle_wave(
                 // Both halt; only `Failed` triggers a fresh RollbackHost
                 // (Reverted is already rolled back).
                 out.wave_all_soaked = false;
-                if let Some(chan) = fleet.channels.get(&rollout.channel) {
-                    if let Some(policy) = fleet.rollout_policies.get(&chan.rollout_policy) {
-                        out.actions.push(Action::HaltRollout {
+                if let Some(chan) = fleet.channels.get(&rollout.channel)
+                    && let Some(policy) = fleet.rollout_policies.get(&chan.rollout_policy)
+                {
+                    out.actions.push(Action::HaltRollout {
+                        rollout: rollout.id.clone(),
+                        reason: format!(
+                            "host {host} {} (policy: {})",
+                            state.as_db_str().to_lowercase(),
+                            policy.on_health_failure
+                        ),
+                    });
+                    if matches!(
+                        policy.on_health_failure,
+                        nixfleet_proto::OnHealthFailure::RollbackAndHalt
+                    ) && matches!(state, HostRolloutState::Failed)
+                    {
+                        out.actions.push(Action::RollbackHost {
                             rollout: rollout.id.clone(),
-                            reason: format!(
-                                "host {host} {} (policy: {})",
-                                state.as_db_str().to_lowercase(),
-                                policy.on_health_failure
-                            ),
+                            host: host.clone(),
+                            target_ref: rollout.target_ref.clone(),
                         });
-                        if matches!(
-                            policy.on_health_failure,
-                            nixfleet_proto::OnHealthFailure::RollbackAndHalt
-                        ) && matches!(state, HostRolloutState::Failed)
-                        {
-                            out.actions.push(Action::RollbackHost {
-                                rollout: rollout.id.clone(),
-                                host: host.clone(),
-                                target_ref: rollout.target_ref.clone(),
-                            });
-                        }
                     }
                 }
             }
@@ -167,8 +167,8 @@ mod tests {
     }
 
     fn fleet_with_policy(on_health_failure: nixfleet_proto::OnHealthFailure) -> FleetResolved {
-        use nixfleet_proto::testing::FleetBuilder;
         use nixfleet_proto::Selector;
+        use nixfleet_proto::testing::FleetBuilder;
 
         FleetBuilder::new()
             .host("host-a", "stable")

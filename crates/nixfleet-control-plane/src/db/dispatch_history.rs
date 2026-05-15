@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::sync::Mutex;
 
 use crate::state::TerminalState;
@@ -209,7 +209,10 @@ mod tests {
                 .record_dispatch(&dispatch_insert("host-02", rollout, "system", deadline))
                 .unwrap();
         }
-        let history = db.dispatch_history().recent_for_host("host-02", 10).unwrap();
+        let history = db
+            .dispatch_history()
+            .recent_for_host("host-02", 10)
+            .unwrap();
         assert_eq!(history.len(), 3);
         assert_eq!(history[0].rollout_id, "stable@r3");
         assert_eq!(history[2].rollout_id, "stable@r1");
@@ -279,7 +282,10 @@ mod tests {
             .dispatch_history()
             .mark_rollout_converged("stable@r1", Utc::now())
             .unwrap();
-        assert_eq!(n, 1, "only host-02's open row flips; host-01 already terminal");
+        assert_eq!(
+            n, 1,
+            "only host-02's open row flips; host-01 already terminal"
+        );
         let host_01 = db.dispatch_history().recent_for_host("host-01", 1).unwrap();
         assert_eq!(host_01[0].terminal_state.as_deref(), Some("rolled-back"));
     }
@@ -289,7 +295,12 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-02", "stable@old", "system", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-02",
+                "stable@old",
+                "system",
+                deadline,
+            ))
             .unwrap();
         let old_terminal_at = Utc::now() - chrono::Duration::days(200);
         db.dispatch_history()
@@ -301,7 +312,12 @@ mod tests {
             )
             .unwrap();
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-01", "stable@live", "system", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-01",
+                "stable@live",
+                "system",
+                deadline,
+            ))
             .unwrap();
         db.host_dispatch_state()
             .record_dispatch(&dispatch_insert(
@@ -322,11 +338,12 @@ mod tests {
 
         let pruned = db.dispatch_history().prune_history(24 * 90).unwrap();
         assert_eq!(pruned, 1);
-        assert!(db
-            .dispatch_history()
-            .recent_for_host("host-02", 10)
-            .unwrap()
-            .is_empty());
+        assert!(
+            db.dispatch_history()
+                .recent_for_host("host-02", 10)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             db.dispatch_history()
                 .recent_for_host("host-01", 10)

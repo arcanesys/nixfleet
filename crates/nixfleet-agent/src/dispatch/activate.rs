@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use nixfleet_proto::agent_wire::{EvaluatedTarget, FetchOutcome, FetchResult, ReportEvent};
 use nixfleet_proto::RolloutManifest;
+use nixfleet_proto::agent_wire::{EvaluatedTarget, FetchOutcome, FetchResult, ReportEvent};
 
 use nixfleet_agent::comms::Reporter;
 use nixfleet_agent::evidence_signer::EvidenceSigner;
@@ -11,15 +11,15 @@ use nixfleet_agent::manifest_cache::ManifestError;
 
 use crate::Args;
 
+use super::DispatchCtx;
 use super::confirm::handle_fired_and_polled;
 use super::deferred::handle_deferred_pending_reboot;
 use super::manifest_error;
 use super::quarantined::{
-    evaluate as evaluate_quarantine, post_quarantine_event, QuarantineDecision,
+    QuarantineDecision, evaluate as evaluate_quarantine, post_quarantine_event,
 };
 use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
 use super::verify_mismatch::{handle_switch_failed, handle_verify_mismatch};
-use super::DispatchCtx;
 
 /// Map manifest-cache result onto the wire enum. `Missing` (HTTP/network) ⇒
 /// FetchFailed; `VerifyFailed`/`Mismatch` (content) ⇒ VerifyFailed. The
@@ -63,7 +63,7 @@ pub(crate) async fn process_dispatch_target(
         args,
         evidence_signer,
     };
-    use nixfleet_agent::freshness::{check as freshness_check, FreshnessCheck};
+    use nixfleet_agent::freshness::{FreshnessCheck, check as freshness_check};
     if let FreshnessCheck::Stale {
         signed_at,
         freshness_window_secs,

@@ -23,7 +23,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -503,12 +503,24 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-02", "stable@abc", "system-r1", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-02",
+                "stable@abc",
+                "system-r1",
+                deadline,
+            ))
             .unwrap();
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.rollout_id, "stable@abc");
         assert_eq!(row.state, "pending");
-        let history = db.dispatch_history().recent_for_host("host-02", 10).unwrap();
+        let history = db
+            .dispatch_history()
+            .recent_for_host("host-02", 10)
+            .unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].rollout_id, "stable@abc");
         assert!(history[0].terminal_state.is_none());
@@ -524,10 +536,17 @@ mod tests {
         db.host_dispatch_state()
             .record_dispatch(&dispatch_insert("host-02", "stable@r2", "new", deadline))
             .unwrap();
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.rollout_id, "stable@r2");
         assert_eq!(row.target_closure_hash, "new");
-        let history = db.dispatch_history().recent_for_host("host-02", 10).unwrap();
+        let history = db
+            .dispatch_history()
+            .recent_for_host("host-02", 10)
+            .unwrap();
         assert_eq!(history.len(), 2, "history grows on each dispatch");
     }
 
@@ -536,14 +555,23 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-02", "stable@r1", "system-r1", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-02",
+                "stable@r1",
+                "system-r1",
+                deadline,
+            ))
             .unwrap();
         let n = db
             .host_dispatch_state()
             .confirm("host-02", "stable@r1")
             .unwrap();
         assert_eq!(n, 1);
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.state, "confirmed");
         assert!(row.confirmed_at.is_some());
     }
@@ -568,7 +596,11 @@ mod tests {
             n, 0,
             "confirm must not flip a pending row whose deadline has passed",
         );
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(
             row.state, "pending",
             "row stays pending until rollback_timer or 410-handler transitions it",
@@ -580,14 +612,23 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-02", "stable@r1", "system-r1", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-02",
+                "stable@r1",
+                "system-r1",
+                deadline,
+            ))
             .unwrap();
         let n = db
             .host_dispatch_state()
             .confirm("host-02", "stable@r2")
             .unwrap();
         assert_eq!(n, 0);
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.state, "pending");
     }
 
@@ -645,7 +686,11 @@ mod tests {
             .record_terminal("host-02", "stable@old", TerminalState::RolledBack)
             .unwrap();
         assert_eq!(n, 0);
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.state, "pending", "newer dispatch must not be flipped");
     }
 
@@ -661,7 +706,11 @@ mod tests {
             .record_terminal("host-02", "stable@r1", TerminalState::RolledBack)
             .unwrap();
         assert_eq!(n, 1);
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.state, "rolled-back");
     }
 
@@ -682,7 +731,11 @@ mod tests {
                 now,
             )
             .unwrap();
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.state, "confirmed");
         assert!(row.confirmed_at.is_some());
         let snap = db.host_dispatch_state().active_rollouts_snapshot().unwrap();
@@ -780,14 +833,23 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-02", "stable@r1", "system-r1", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-02",
+                "stable@r1",
+                "system-r1",
+                deadline,
+            ))
             .unwrap();
         let n = db
             .host_dispatch_state()
             .mark_deferred("host-02", "stable@r1")
             .unwrap();
         assert_eq!(n, 1);
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.state, "deferred-pending-reboot");
         // Idempotent: a second mark_deferred is a no-op (the row is no longer Pending).
         let n = db
@@ -802,7 +864,12 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-02", "stable@r1", "system-r1", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-02",
+                "stable@r1",
+                "system-r1",
+                deadline,
+            ))
             .unwrap();
         db.host_dispatch_state()
             .confirm("host-02", "stable@r1")
@@ -813,7 +880,11 @@ mod tests {
             .mark_deferred("host-02", "stable@r1")
             .unwrap();
         assert_eq!(n, 0);
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.state, "confirmed");
     }
 
@@ -841,7 +912,11 @@ mod tests {
             .confirm("host-02", "stable@r1")
             .unwrap();
         assert_eq!(n, 1, "deferred confirm must succeed despite stale deadline");
-        let row = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let row = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.state, "confirmed");
         assert!(row.confirmed_at.is_some());
     }
@@ -888,7 +963,12 @@ mod tests {
         let db = fresh_db();
         let deadline = Utc::now() + chrono::Duration::seconds(120);
         db.host_dispatch_state()
-            .record_dispatch(&dispatch_insert("host-02", "stable@r1", "system-r1", deadline))
+            .record_dispatch(&dispatch_insert(
+                "host-02",
+                "stable@r1",
+                "system-r1",
+                deadline,
+            ))
             .unwrap();
         db.host_dispatch_state()
             .mark_deferred("host-02", "stable@r1")
@@ -908,10 +988,11 @@ mod tests {
         db.host_dispatch_state()
             .record_dispatch(&dispatch_insert("host-02", "stable@r1", "system", future))
             .unwrap();
-        assert!(db
-            .host_dispatch_state()
-            .pending_dispatch_exists("host-02")
-            .unwrap());
+        assert!(
+            db.host_dispatch_state()
+                .pending_dispatch_exists("host-02")
+                .unwrap()
+        );
         db.host_dispatch_state()
             .confirm("host-02", "stable@r1")
             .unwrap();
@@ -960,7 +1041,11 @@ mod tests {
             .unwrap();
 
         // host_dispatch_state operational row landed.
-        let op = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let op = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(op.state, "confirmed");
         assert_eq!(op.rollout_id, "stable@r1");
 
@@ -1046,7 +1131,11 @@ mod tests {
             )
             .unwrap();
 
-        let op = db.host_dispatch_state().host_state("host-02").unwrap().unwrap();
+        let op = db
+            .host_dispatch_state()
+            .host_state("host-02")
+            .unwrap()
+            .unwrap();
         assert_eq!(op.state, "confirmed");
         assert_eq!(op.rollout_id, "stable@r1");
 
@@ -1066,7 +1155,10 @@ mod tests {
         // endpoint shows converged-at-dispatch hosts as `open` forever
         // because mark_rollout_converged only runs on ConvergeRollout,
         // which never fires when the entire wave is already terminal.
-        let history = db.dispatch_history().recent_for_host("host-02", 10).unwrap();
+        let history = db
+            .dispatch_history()
+            .recent_for_host("host-02", 10)
+            .unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(
             history[0].terminal_state.as_deref(),
@@ -1099,7 +1191,10 @@ mod tests {
                 now,
             )
             .unwrap();
-        let history = db.dispatch_history().recent_for_host("agent-02", 10).unwrap();
+        let history = db
+            .dispatch_history()
+            .recent_for_host("agent-02", 10)
+            .unwrap();
         assert_eq!(history.len(), 1);
         assert!(history[0].terminal_state.is_none());
         assert!(history[0].terminal_at.is_none());

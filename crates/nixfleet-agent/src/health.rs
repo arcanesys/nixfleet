@@ -488,15 +488,18 @@ mod tests {
         };
         let init = initial_results(&cfg);
         assert_eq!(init.len(), 2);
-        assert!(init
-            .iter()
-            .all(|r| matches!(r.status, ProbeStatus::Unknown)));
-        assert!(init
-            .iter()
-            .any(|r| r.name == "h1" && matches!(r.kind, ProbeKind::Http)));
-        assert!(init
-            .iter()
-            .any(|r| r.name == "t1" && matches!(r.kind, ProbeKind::Tcp)));
+        assert!(
+            init.iter()
+                .all(|r| matches!(r.status, ProbeStatus::Unknown))
+        );
+        assert!(
+            init.iter()
+                .any(|r| r.name == "h1" && matches!(r.kind, ProbeKind::Http))
+        );
+        assert!(
+            init.iter()
+                .any(|r| r.name == "t1" && matches!(r.kind, ProbeKind::Tcp))
+        );
     }
 
     #[tokio::test]

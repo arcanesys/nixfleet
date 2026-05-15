@@ -5,10 +5,10 @@ use nixfleet_proto::agent_wire::EvaluatedTarget;
 use tokio::process::Command;
 
 use super::profile::self_correct_profile;
-use super::realise::{realise, RealiseError};
+use super::realise::{RealiseError, realise};
 use super::types::ActivationBackend;
 use super::types::ActivationOutcome;
-use super::verify_poll::{read_current_system_basename, PollOutcome, VerifyPoll};
+use super::verify_poll::{PollOutcome, VerifyPoll, read_current_system_basename};
 
 /// Tests inject a fake backend; production calls the `activate(target)` façade.
 pub async fn activate_with<B: ActivationBackend>(

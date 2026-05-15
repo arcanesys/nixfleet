@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::sync::Mutex;
 
 pub struct Revocations<'a> {
@@ -67,9 +67,8 @@ impl Revocations<'_> {
                 return Ok(n);
             }
             let placeholders = vec!["?"; keep.len()].join(",");
-            let sql = format!(
-                "DELETE FROM cert_revocations WHERE hostname NOT IN ({placeholders})"
-            );
+            let sql =
+                format!("DELETE FROM cert_revocations WHERE hostname NOT IN ({placeholders})");
             let n = c
                 .execute(&sql, rusqlite::params_from_iter(keep.iter()))
                 .context("retain_only cert_revocations")?;
@@ -86,11 +85,12 @@ mod tests {
     #[test]
     fn cert_revocation_upserts() {
         let db = fresh_db();
-        assert!(db
-            .revocations()
-            .cert_revoked_before("test-host")
-            .unwrap()
-            .is_none());
+        assert!(
+            db.revocations()
+                .cert_revoked_before("test-host")
+                .unwrap()
+                .is_none()
+        );
         let t1 = Utc::now();
         db.revocations()
             .revoke_cert("test-host", t1, Some("compromised"), Some("operator"))
@@ -126,28 +126,32 @@ mod tests {
 
         // Reconcile to a list with only beta - alpha + gamma should be gone.
         db.revocations().retain_only(&["beta"]).unwrap();
-        assert!(db
-            .revocations()
-            .cert_revoked_before("alpha")
-            .unwrap()
-            .is_none());
-        assert!(db
-            .revocations()
-            .cert_revoked_before("beta")
-            .unwrap()
-            .is_some());
-        assert!(db
-            .revocations()
-            .cert_revoked_before("gamma")
-            .unwrap()
-            .is_none());
+        assert!(
+            db.revocations()
+                .cert_revoked_before("alpha")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db.revocations()
+                .cert_revoked_before("beta")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            db.revocations()
+                .cert_revoked_before("gamma")
+                .unwrap()
+                .is_none()
+        );
 
         // Empty `keep` clears everything (operator wiped fleet.nix list).
         db.revocations().retain_only(&[]).unwrap();
-        assert!(db
-            .revocations()
-            .cert_revoked_before("beta")
-            .unwrap()
-            .is_none());
+        assert!(
+            db.revocations()
+                .cert_revoked_before("beta")
+                .unwrap()
+                .is_none()
+        );
     }
 }

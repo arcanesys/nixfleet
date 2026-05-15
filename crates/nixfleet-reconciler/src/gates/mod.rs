@@ -24,9 +24,16 @@ mod tests;
 /// to render the log line + observability event without re-querying state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GateBlock {
-    ChannelEdges { predecessor_channel: String },
-    WavePromotion { host_wave: u32, current_wave: u32 },
-    HostEdge { gating_host: String },
+    ChannelEdges {
+        predecessor_channel: String,
+    },
+    WavePromotion {
+        host_wave: u32,
+        current_wave: u32,
+    },
+    HostEdge {
+        gating_host: String,
+    },
     DisruptionBudget {
         in_flight: u32,
         max: u32,

@@ -4,7 +4,7 @@
 
 use nixfleet_proto::agent_wire::ReportEvent;
 
-use nixfleet_agent::checkin_state::{write_last_deferred, LastDeferredRecord};
+use nixfleet_agent::checkin_state::{LastDeferredRecord, write_last_deferred};
 use nixfleet_agent::comms::Reporter;
 
 use super::DispatchCtx;

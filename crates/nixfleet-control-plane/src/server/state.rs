@@ -3,13 +3,13 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use nixfleet_proto::agent_wire::{CheckinRequest, ReportRequest};
 use nixfleet_proto::FleetResolved;
+use nixfleet_proto::agent_wire::{CheckinRequest, ReportRequest};
 use tokio::sync::RwLock;
 
 pub(super) const REPORT_RING_CAP: usize = 32;
@@ -239,9 +239,7 @@ impl AppState {
         if self.revocations_required && !self.revocations_primed.load(Ordering::Acquire) {
             return false;
         }
-        if self.bootstrap_nonces_required
-            && !self.bootstrap_nonces_primed.load(Ordering::Acquire)
-        {
+        if self.bootstrap_nonces_required && !self.bootstrap_nonces_primed.load(Ordering::Acquire) {
             return false;
         }
         true
@@ -367,9 +365,7 @@ mod ready_tests {
             !state.is_ready(),
             "must not be ready until bootstrap_nonces also primed",
         );
-        state
-            .bootstrap_nonces_primed
-            .store(true, Ordering::Release);
+        state.bootstrap_nonces_primed.store(true, Ordering::Release);
         assert!(
             state.is_ready(),
             "ready once bootstrap_nonces primed alongside artifact",

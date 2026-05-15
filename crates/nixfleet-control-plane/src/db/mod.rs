@@ -39,11 +39,11 @@ impl std::fmt::Debug for Db {
 impl Db {
     /// Creates parent dirs; enables WAL + FK before migrations.
     pub fn open(path: &Path) -> Result<Self> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("create dir {}", parent.display()))?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create dir {}", parent.display()))?;
         }
         let conn =
             Connection::open(path).with_context(|| format!("open sqlite {}", path.display()))?;

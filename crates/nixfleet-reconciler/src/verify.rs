@@ -1,7 +1,7 @@
 //! Sidecar fetch + verify + freshness-gate.
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use ed25519_dalek::{Signature, VerifyingKey};
 use nixfleet_proto::{BootstrapNonces, FleetResolved, Revocations, RolloutManifest, TrustedPubkey};
@@ -185,9 +185,9 @@ fn verify_ecdsa_p256(
     signature: &[u8],
     public_b64: &str,
 ) -> Result<(), VerifyError> {
+    use p256::EncodedPoint;
     use p256::ecdsa::signature::Verifier;
     use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256VerifyingKey};
-    use p256::EncodedPoint;
 
     let public_bytes =
         BASE64_STANDARD
@@ -396,13 +396,13 @@ fn finish_sidecar_verification<T: SignedSidecar + DeserializeOwned>(
 
     let signed_at = payload.signed_at().ok_or(VerifyError::NotSigned)?;
 
-    if let Some(rb) = reject_before {
-        if signed_at < rb {
-            return Err(VerifyError::RejectedBeforeTimestamp {
-                signed_at,
-                reject_before: rb,
-            });
-        }
+    if let Some(rb) = reject_before
+        && signed_at < rb
+    {
+        return Err(VerifyError::RejectedBeforeTimestamp {
+            signed_at,
+            reject_before: rb,
+        });
     }
 
     let window = ChronoDuration::from_std(freshness_window)

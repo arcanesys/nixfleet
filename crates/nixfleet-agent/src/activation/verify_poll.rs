@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 use super::types::{POLL_BUDGET, POLL_INTERVAL};
 
@@ -75,10 +75,10 @@ impl<'a> VerifyPoll<'a> {
                     if basename == self.expected_basename {
                         return PollOutcome::Settled;
                     }
-                    if let Some(prev) = self.previous_basename {
-                        if basename != prev {
-                            return PollOutcome::FlippedToUnexpected { observed: basename };
-                        }
+                    if let Some(prev) = self.previous_basename
+                        && basename != prev
+                    {
+                        return PollOutcome::FlippedToUnexpected { observed: basename };
                     }
                     last_observed = Some(basename);
                 }

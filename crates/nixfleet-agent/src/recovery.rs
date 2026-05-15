@@ -300,9 +300,11 @@ mod tests {
         )
         .await;
         assert_eq!(action, RecoveryAction::NoCurrent);
-        assert!(checkin_state::read_last_dispatched(dir.path())
-            .unwrap()
-            .is_some());
+        assert!(
+            checkin_state::read_last_dispatched(dir.path())
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]

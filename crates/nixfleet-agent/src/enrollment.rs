@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use nixfleet_proto::agent_wire::{ReportEvent, PROTOCOL_MAJOR_VERSION, PROTOCOL_VERSION_HEADER};
+use nixfleet_proto::agent_wire::{PROTOCOL_MAJOR_VERSION, PROTOCOL_VERSION_HEADER, ReportEvent};
 use nixfleet_proto::enroll_wire::{
     BootstrapEventRequest, BootstrapToken, EnrollRequest, EnrollResponse, RenewRequest,
     RenewResponse,
@@ -240,7 +240,7 @@ mod ssh_host_key_csr_tests {
 
     fn write_test_ssh_host_key(dir: &Path) -> std::path::PathBuf {
         let mut seed = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed);
+        rand::rng().fill_bytes(&mut seed);
         let sk = SigningKey::from_bytes(&seed);
         let kp = ssh_key::private::Ed25519Keypair {
             public: ssh_key::public::Ed25519PublicKey(sk.verifying_key().to_bytes()),

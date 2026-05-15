@@ -11,13 +11,13 @@ use common::{
     build_mtls_client, install_crypto_provider_once, mint_ca_and_certs, pick_free_port,
     wait_for_listener_ready, write_bytes, write_pem,
 };
+use ed25519_dalek::ed25519::signature::rand_core::OsRng;
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_control_plane::server;
+use nixfleet_proto::RolloutTrace;
 use nixfleet_proto::agent_wire::{
     CheckinRequest, CheckinResponse, ConfirmRequest, FetchOutcome, FetchResult, GenerationRef,
 };
-use nixfleet_proto::RolloutTrace;
-use rand::rngs::OsRng;
 use tempfile::TempDir;
 
 const HOST: &str = "trace-host";

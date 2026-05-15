@@ -25,8 +25,8 @@ pub use rollback_mod::rollback_with;
 pub use types::DarwinBackend;
 #[cfg(target_os = "linux")]
 pub use types::LinuxBackend;
-pub use types::{ActivationBackend, DefaultBackend, DEFAULT_BACKEND};
-pub use types::{ActivationOutcome, RollbackOutcome, POLL_BUDGET, POLL_INTERVAL};
+pub use types::{ActivationBackend, DEFAULT_BACKEND, DefaultBackend};
+pub use types::{ActivationOutcome, POLL_BUDGET, POLL_INTERVAL, RollbackOutcome};
 
 /// Single attempt per call; retry is the main poll loop's job (in-call retry
 /// would trip the CP confirm deadline since each attempt eats `POLL_BUDGET`).
@@ -110,13 +110,13 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
 
+    use super::DEFAULT_BACKEND;
     use super::realise::looks_like_signature_error;
     use super::types::ActivationBackend;
     use super::types::{ActivationOutcome, RollbackOutcome};
     use super::verify_poll::{PollOutcome, VerifyPoll};
-    use super::DEFAULT_BACKEND;
 
     use nixfleet_proto::agent_wire::EvaluatedTarget;
 

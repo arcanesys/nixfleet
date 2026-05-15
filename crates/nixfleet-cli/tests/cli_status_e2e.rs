@@ -7,13 +7,13 @@ use std::sync::Once;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
+use ed25519_dalek::ed25519::signature::rand_core::OsRng;
 use ed25519_dalek::{Signer, SigningKey};
-use nixfleet_cli::{run_status, ResolvedClientConfig};
+use nixfleet_cli::{ResolvedClientConfig, run_status};
 use nixfleet_control_plane::server;
 use nixfleet_proto::agent_wire::{
     CheckinRequest, CheckinResponse, FetchOutcome, FetchResult, GenerationRef,
 };
-use rand::rngs::OsRng;
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,

@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use nixfleet_proto::TrustConfig;
-use nixfleet_reconciler::{reconcile, verify_artifact, Action, Observed, VerifyError};
+use nixfleet_reconciler::{Action, Observed, VerifyError, reconcile, verify_artifact};
 use serde_json::json;
 
 #[derive(Debug, Clone)]
@@ -140,11 +140,11 @@ pub fn render_plan(out: &TickOutput) -> String {
     if let VerifyOutcome::Ok(ok) = &out.verify {
         let mut offline_hosts: Vec<&str> = Vec::new();
         for action in &ok.actions {
-            if let Action::Skip { host, reason } = action {
-                if reason == "offline" {
-                    offline_hosts.push(host.as_str());
-                    continue;
-                }
+            if let Action::Skip { host, reason } = action
+                && reason == "offline"
+            {
+                offline_hosts.push(host.as_str());
+                continue;
             }
             s.push_str(&serde_json::to_string(action).expect("Action serialises"));
             s.push('\n');

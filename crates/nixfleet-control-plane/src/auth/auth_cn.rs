@@ -48,12 +48,11 @@ impl PeerCertificates {
         let leaf = self.leaf()?;
         let (_, cert) = X509Certificate::from_der(leaf.as_ref()).ok()?;
         // Bind locally so the x509-parser temporary drops first.
-        let cn = cert
-            .subject()
+
+        cert.subject()
             .iter_common_name()
             .next()
-            .and_then(|attr| attr.as_str().ok().map(String::from));
-        cn
+            .and_then(|attr| attr.as_str().ok().map(String::from))
     }
 
     /// LOADBEARING: revocations are "notBefore < X is bad" - re-enrolling
@@ -180,4 +179,3 @@ pub async fn cn_matches_path_machine_id(
 
     Ok(next.run(request).await)
 }
-

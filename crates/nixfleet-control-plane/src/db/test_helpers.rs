@@ -2,9 +2,9 @@
 
 use chrono::{DateTime, Utc};
 
+use super::Db;
 use super::host_dispatch_state::DispatchInsert;
 use super::reports::HostReportInsert;
-use super::Db;
 use crate::state::{HealthyMarker, HostRolloutState};
 
 pub(crate) fn fresh_db() -> Db {

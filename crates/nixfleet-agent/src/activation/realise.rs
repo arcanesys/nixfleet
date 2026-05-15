@@ -2,7 +2,7 @@
 //! string match because nix has no distinct exit code for trust-failure;
 //! per-phrasing tests guard against silent downgrade to RealiseFailed.
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use tokio::process::Command;
 
 pub enum RealiseError {

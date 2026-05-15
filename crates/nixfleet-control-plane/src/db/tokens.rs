@@ -1,7 +1,7 @@
 //! Bootstrap-token nonces (soft state); loss bounded by one TTL.
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::sync::Mutex;
 
 pub struct Tokens<'a> {

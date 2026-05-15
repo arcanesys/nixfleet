@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use base64::Engine;
 use chrono::{Duration as ChronoDuration, Utc};
 use common::{install_crypto_provider_once, pick_free_port, wait_for_listener_ready};
+use ed25519_dalek::ed25519::signature::rand_core::{OsRng, RngCore};
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_control_plane::server;
 use nixfleet_proto::enroll_wire::{BootstrapEventRequest, BootstrapToken, TokenClaims};
@@ -87,9 +88,8 @@ fn sign_token(claims: &TokenClaims, signing_key: &SigningKey, version: u32) -> B
 }
 
 fn random_nonce() -> String {
-    use rand::RngCore;
     let mut buf = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut buf);
+    OsRng.fill_bytes(&mut buf);
     hex::encode(buf)
 }
 
@@ -179,7 +179,7 @@ async fn bootstrap_report_accepts_trust_error() {
     let (ca_cert, ca_key, server_cert, server_key) = mint_fleet_ca(&dir);
     let audit_log = dir.path().join("issuance.log");
 
-    let mut rng = rand::thread_rng();
+    let mut rng = OsRng;
     let signing_key = SigningKey::generate(&mut rng);
     let pubkey_b64 =
         base64::engine::general_purpose::STANDARD.encode(signing_key.verifying_key().to_bytes());
@@ -227,7 +227,7 @@ async fn bootstrap_report_rejects_disallowed_event_variant() {
     let (ca_cert, ca_key, server_cert, server_key) = mint_fleet_ca(&dir);
     let audit_log = dir.path().join("issuance.log");
 
-    let mut rng = rand::thread_rng();
+    let mut rng = OsRng;
     let signing_key = SigningKey::generate(&mut rng);
     let pubkey_b64 =
         base64::engine::general_purpose::STANDARD.encode(signing_key.verifying_key().to_bytes());
@@ -275,7 +275,7 @@ async fn bootstrap_report_rejects_bad_signature() {
     let (ca_cert, ca_key, server_cert, server_key) = mint_fleet_ca(&dir);
     let audit_log = dir.path().join("issuance.log");
 
-    let mut rng = rand::thread_rng();
+    let mut rng = OsRng;
     let real_key = SigningKey::generate(&mut rng);
     let pubkey_b64 =
         base64::engine::general_purpose::STANDARD.encode(real_key.verifying_key().to_bytes());

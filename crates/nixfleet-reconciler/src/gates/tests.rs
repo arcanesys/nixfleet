@@ -12,7 +12,7 @@ use crate::host_state::HostRolloutState;
 use crate::observed::{Observed, Rollout};
 use crate::rollout_state::RolloutState;
 
-use super::{evaluate_for_host, GateBlock, GateInput};
+use super::{GateBlock, GateInput, evaluate_for_host};
 
 fn empty_set() -> HashSet<String> {
     HashSet::new()
@@ -70,7 +70,10 @@ fn rollout_with_terminal(
 fn channel_edges_blocks_when_predecessor_active() {
     let fleet = fleet_two_channels();
     let observed = Observed {
-        active_rollouts: vec![rollout("edge", vec![("host-05", HostRolloutState::Activating)])],
+        active_rollouts: vec![rollout(
+            "edge",
+            vec![("host-05", HostRolloutState::Activating)],
+        )],
         ..Default::default()
     };
     let empty = empty_set();
@@ -95,7 +98,10 @@ fn channel_edges_blocks_when_predecessor_active() {
 fn channel_edges_passes_when_predecessor_converged() {
     let fleet = fleet_two_channels();
     let observed = Observed {
-        active_rollouts: vec![rollout("edge", vec![("host-05", HostRolloutState::Converged)])],
+        active_rollouts: vec![rollout(
+            "edge",
+            vec![("host-05", HostRolloutState::Converged)],
+        )],
         ..Default::default()
     };
     let empty = empty_set();
@@ -233,7 +239,10 @@ fn wave_promotion_blocks_wave_one_when_current_is_zero() {
     let r = rollout("stable", vec![]);
     assert_eq!(r.current_wave, 0);
     let observed = Observed {
-        active_rollouts: vec![rollout("edge", vec![("host-05", HostRolloutState::Converged)])],
+        active_rollouts: vec![rollout(
+            "edge",
+            vec![("host-05", HostRolloutState::Converged)],
+        )],
         ..Default::default()
     };
     let empty = empty_set();
@@ -263,12 +272,12 @@ fn host_edges_blocks_until_gating_host_converges() {
         gates: "host-03".into(),
         reason: None,
     }];
-    let r = rollout(
-        "stable",
-        vec![("host-03", HostRolloutState::Activating)],
-    );
+    let r = rollout("stable", vec![("host-03", HostRolloutState::Activating)]);
     let observed = Observed {
-        active_rollouts: vec![rollout("edge", vec![("host-05", HostRolloutState::Converged)])],
+        active_rollouts: vec![rollout(
+            "edge",
+            vec![("host-05", HostRolloutState::Converged)],
+        )],
         ..Default::default()
     };
     let empty = empty_set();
@@ -411,7 +420,10 @@ fn host_edges_skips_cross_channel_edges() {
     }];
     let r = rollout("stable", vec![]);
     let observed = Observed {
-        active_rollouts: vec![rollout("edge", vec![("host-05", HostRolloutState::Converged)])],
+        active_rollouts: vec![rollout(
+            "edge",
+            vec![("host-05", HostRolloutState::Converged)],
+        )],
         ..Default::default()
     };
     let empty = empty_set();
@@ -457,7 +469,10 @@ fn compliance_wave_blocks_when_earlier_wave_has_failures_under_enforce() {
     compliance_failures.insert(r.id.clone(), by_host);
 
     let observed = Observed {
-        active_rollouts: vec![rollout("edge", vec![("host-05", HostRolloutState::Converged)])],
+        active_rollouts: vec![rollout(
+            "edge",
+            vec![("host-05", HostRolloutState::Converged)],
+        )],
         outstanding_compliance_events_by_rollout: compliance_failures,
         ..Default::default()
     };
@@ -510,7 +525,10 @@ fn compliance_wave_passes_under_permissive_mode() {
     compliance_failures.insert(r.id.clone(), by_host);
 
     let observed = Observed {
-        active_rollouts: vec![rollout("edge", vec![("host-05", HostRolloutState::Converged)])],
+        active_rollouts: vec![rollout(
+            "edge",
+            vec![("host-05", HostRolloutState::Converged)],
+        )],
         outstanding_compliance_events_by_rollout: compliance_failures,
         ..Default::default()
     };
@@ -576,7 +594,10 @@ fn compliance_wave_blocks_transitively_across_three_waves_under_enforce() {
     events.insert(r.id.clone(), by_host);
 
     let observed = Observed {
-        active_rollouts: vec![rollout("edge", vec![("host-05", HostRolloutState::Converged)])],
+        active_rollouts: vec![rollout(
+            "edge",
+            vec![("host-05", HostRolloutState::Converged)],
+        )],
         outstanding_compliance_events_by_rollout: events,
         ..Default::default()
     };
@@ -608,7 +629,10 @@ fn compliance_wave_blocks_transitively_across_three_waves_under_enforce() {
 fn empty_input_passes_all_gates() {
     let fleet = fleet_two_channels();
     let observed = Observed {
-        active_rollouts: vec![rollout("edge", vec![("host-05", HostRolloutState::Converged)])],
+        active_rollouts: vec![rollout(
+            "edge",
+            vec![("host-05", HostRolloutState::Converged)],
+        )],
         ..Default::default()
     };
     let r = rollout("stable", vec![]);

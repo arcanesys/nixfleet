@@ -12,8 +12,8 @@ use chrono::{DateTime, Utc};
 use nixfleet_proto::agent_wire::{EvaluatedTarget, ReportEvent};
 
 use nixfleet_agent::checkin_state::{
-    read_last_failed_closure, write_last_failed_closure, LastFailedClosureRecord,
-    QUARANTINE_REPOST_THROTTLE_SECS, QUARANTINE_WINDOW_SECS,
+    LastFailedClosureRecord, QUARANTINE_REPOST_THROTTLE_SECS, QUARANTINE_WINDOW_SECS,
+    read_last_failed_closure, write_last_failed_closure,
 };
 use nixfleet_agent::comms::Reporter;
 

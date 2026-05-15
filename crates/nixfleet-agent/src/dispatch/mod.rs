@@ -20,7 +20,7 @@ use nixfleet_proto::agent_wire::EvaluatedTarget;
 use serde::Serialize;
 
 use nixfleet_agent::comms::Reporter;
-use nixfleet_agent::evidence_signer::{try_sign, EvidenceSigner};
+use nixfleet_agent::evidence_signer::{EvidenceSigner, try_sign};
 
 use crate::Args;
 
@@ -52,12 +52,12 @@ mod tests {
     use nixfleet_agent::evidence_signer::EvidenceSigner;
     use nixfleet_proto::agent_wire::{EvaluatedTarget, ReportEvent};
 
+    use super::DispatchCtx;
     use super::deferred::handle_deferred_pending_reboot;
     use super::quarantined::{
-        evaluate as evaluate_quarantine, post_quarantine_event, QuarantineDecision,
+        QuarantineDecision, evaluate as evaluate_quarantine, post_quarantine_event,
     };
     use super::realise_failed::{handle_closure_signature_mismatch, handle_realise_failed};
-    use super::DispatchCtx;
     use crate::Args;
 
     #[derive(Default)]

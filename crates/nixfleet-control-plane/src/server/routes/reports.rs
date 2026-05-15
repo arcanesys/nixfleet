@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
-use axum::Json;
 use chrono::Utc;
 use nixfleet_proto::agent_wire::{ReportRequest, ReportResponse};
 
 use super::super::middleware::AuthenticatedCn;
-use super::super::state::{AppState, ReportRecord, REPORT_RING_CAP};
+use super::super::state::{AppState, REPORT_RING_CAP, ReportRecord};
 
 /// `POST /v1/agent/report` - persists to SQLite and mirrors into a per-host ring buffer.
 pub(in crate::server) async fn report(
@@ -630,7 +630,10 @@ mod tests {
             .unwrap()
             .expect("operational row present");
         assert_eq!(op.state, "rolled-back");
-        let history = db.dispatch_history().recent_for_host("host-02", 10).unwrap();
+        let history = db
+            .dispatch_history()
+            .recent_for_host("host-02", 10)
+            .unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].terminal_state.as_deref(), Some("rolled-back"));
         assert!(history[0].terminal_at.is_some());

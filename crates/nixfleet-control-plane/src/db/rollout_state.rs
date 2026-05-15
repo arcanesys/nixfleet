@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -418,11 +418,12 @@ mod tests {
         db.rollout_state()
             .clear_healthy_marker("test-host", "stable@r1")
             .unwrap();
-        assert!(db
-            .rollout_state()
-            .healthy_rollouts_for_host("test-host")
-            .unwrap()
-            .is_empty());
+        assert!(
+            db.rollout_state()
+                .healthy_rollouts_for_host("test-host")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

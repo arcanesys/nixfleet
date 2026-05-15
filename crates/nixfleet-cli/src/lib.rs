@@ -15,7 +15,7 @@ pub mod commands;
 pub mod config;
 pub mod operator_cert;
 pub use config::{ConfigError, FileConfig, Overrides};
-pub use operator_cert::{mint_operator_cert, MintOperatorCertArgs, MintOutcome};
+pub use operator_cert::{MintOperatorCertArgs, MintOutcome, mint_operator_cert};
 
 /// Write `~/.config/nixfleet/config.toml` (or `--path`). Returns the absolute
 /// path so the bin can report it.
@@ -320,14 +320,14 @@ fn base_status_label(
 
     // Failed/Reverted ranks above closure-match: the state machine remembers
     // failures even after operator-driven recovery - keep surfacing them.
-    if let Some(state) = host.rollout_state {
-        if state.is_failed() {
-            return match state {
-                HostRolloutState::Failed => "\u{2717} failed".to_string(),
-                HostRolloutState::Reverted => "\u{2717} reverted".to_string(),
-                _ => format!("\u{2717} {}", state.as_db_str().to_lowercase()),
-            };
-        }
+    if let Some(state) = host.rollout_state
+        && state.is_failed()
+    {
+        return match state {
+            HostRolloutState::Failed => "\u{2717} failed".to_string(),
+            HostRolloutState::Reverted => "\u{2717} reverted".to_string(),
+            _ => format!("\u{2717} {}", state.as_db_str().to_lowercase()),
+        };
     }
 
     // Quarantined ranks above pending-reboot (CI-side fix vs operator reboot).

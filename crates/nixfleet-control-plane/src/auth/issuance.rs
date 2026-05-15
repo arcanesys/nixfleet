@@ -31,10 +31,10 @@ pub fn canonical_agent_cn(machine_id: &str, suffix: &str) -> String {
 /// Idempotent: passes through bare CNs unchanged, strips canonical wrapper.
 pub fn extract_machine_id(cn: &str, suffix: &str) -> String {
     let trailer = format!(".{suffix}");
-    if let Some(rest) = cn.strip_prefix("agent-") {
-        if let Some(machine_id) = rest.strip_suffix(&trailer) {
-            return machine_id.to_string();
-        }
+    if let Some(rest) = cn.strip_prefix("agent-")
+        && let Some(machine_id) = rest.strip_suffix(&trailer)
+    {
+        return machine_id.to_string();
     }
     cn.to_string()
 }
@@ -203,13 +203,14 @@ pub fn extract_private_key_pem_block(pem_text: &str) -> Result<String> {
             .strip_prefix("-----END ")
             .and_then(|s| s.strip_suffix("-----"))
         {
-            if let Some(start) = current_label.take() {
-                if start == rest && ACCEPTED.iter().any(|&l| l == start) {
-                    return Ok(format!(
-                        "-----BEGIN {start}-----\n{body}-----END {start}-----\n",
-                        body = current_body,
-                    ));
-                }
+            if let Some(start) = current_label.take()
+                && start == rest
+                && ACCEPTED.iter().any(|&l| l == start)
+            {
+                return Ok(format!(
+                    "-----BEGIN {start}-----\n{body}-----END {start}-----\n",
+                    body = current_body,
+                ));
             }
             current_body.clear();
         } else if current_label.is_some() {
@@ -637,7 +638,10 @@ mod cn_helpers_tests {
         // Pre-C.3 cert: CN=<machineId>, no FQDN. Must pass through
         // unchanged so the renew handler's fleet.hosts lookup still
         // works during the migration window.
-        assert_eq!(extract_machine_id("host-01", "fleet.example.com"), "host-01");
+        assert_eq!(
+            extract_machine_id("host-01", "fleet.example.com"),
+            "host-01"
+        );
     }
 
     #[test]

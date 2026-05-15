@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use nixfleet_cli::{run_status, run_trace, ResolvedClientConfig};
+use nixfleet_cli::{ResolvedClientConfig, run_status, run_trace};
 
 #[derive(Parser, Debug)]
 #[command(name = "nixfleet", about = "NixFleet operator CLI", version)]

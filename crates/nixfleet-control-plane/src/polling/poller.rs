@@ -102,8 +102,8 @@ impl SignedArtifactPoller {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
     use tokio::sync::watch;
     use tokio_util::sync::CancellationToken;

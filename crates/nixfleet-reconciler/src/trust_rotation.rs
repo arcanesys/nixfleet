@@ -20,13 +20,13 @@ pub fn check_trust_rotations(trust: &TrustConfig, now: DateTime<Utc>) -> Vec<Act
             retire_at,
         });
     }
-    if let Some(org_root) = trust.org_root_key.as_ref() {
-        if let Some(retire_at) = is_rotation_due(org_root, now) {
-            out.push(Action::RotateTrustRoot {
-                which: "orgRootKey".to_string(),
-                retire_at,
-            });
-        }
+    if let Some(org_root) = trust.org_root_key.as_ref()
+        && let Some(retire_at) = is_rotation_due(org_root, now)
+    {
+        out.push(Action::RotateTrustRoot {
+            which: "orgRootKey".to_string(),
+            retire_at,
+        });
     }
     out
 }

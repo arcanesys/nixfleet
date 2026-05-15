@@ -2,18 +2,18 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use base64::Engine as _;
 use common::build_fleet_resolved_json;
+use ed25519_dalek::ed25519::signature::rand_core::OsRng;
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_control_plane::polling::channel_refs_poll::{
-    spawn, ChannelRefsCache, ChannelRefsSource,
+    ChannelRefsCache, ChannelRefsSource, spawn,
 };
 use nixfleet_proto::FleetResolved;
-use rand::rngs::OsRng;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;

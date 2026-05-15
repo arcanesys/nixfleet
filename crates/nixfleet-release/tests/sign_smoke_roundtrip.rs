@@ -6,11 +6,11 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use chrono::Utc;
+use ed25519_dalek::ed25519::signature::rand_core::OsRng;
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_proto::{
     Channel, Compliance, FleetResolved, Host, KeySlot, Meta, TrustConfig, TrustedPubkey,
 };
-use rand::rngs::OsRng;
 
 fn dummy_resolved() -> FleetResolved {
     let mut hosts = std::collections::HashMap::new();

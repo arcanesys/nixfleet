@@ -2,18 +2,18 @@
 
 use std::sync::Arc;
 
+use axum::Json;
 use axum::body::Body;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::Json;
 use chrono::Utc;
 use nixfleet_proto::HostsResponse;
 use serde::Serialize;
 
 use super::super::middleware::AuthenticatedCn;
 use super::super::state::AppState;
-use crate::state_view::{fleet_state_view, StateViewError};
+use crate::state_view::{StateViewError, fleet_state_view};
 
 #[derive(Debug, Serialize)]
 pub(in crate::server) struct WhoamiResponse {

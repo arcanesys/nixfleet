@@ -6,7 +6,7 @@ use chrono::{Duration as ChronoDuration, Utc};
 use common::signing::{fresh_signing_key, sign_artifact, trust_root_for};
 use ed25519_dalek::Signer;
 use nixfleet_canonicalize::canonicalize;
-use nixfleet_reconciler::{verify_revocations, VerifyError};
+use nixfleet_reconciler::{VerifyError, verify_revocations};
 use std::time::Duration;
 
 const FIXTURE_REVOCATIONS: &str = r#"{

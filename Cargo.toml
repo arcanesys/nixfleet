@@ -1,11 +1,53 @@
 [workspace]
 members = ["crates/*"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 version = "0.2.0"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/arcanesys/nixfleet"
 homepage = "https://github.com/arcanesys/nixfleet"
 authors = ["nixfleet contributors"]
 license = "MIT OR AGPL-3.0-only"
+
+[workspace.dependencies]
+anyhow = "1"
+axum = "0.8"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "5"
+ed25519-dalek = "2"
+hex = "0.4"
+http = "1"
+is-terminal = "0.4"
+libc = "0.2"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
+p256 = { version = "0.13", features = ["ecdsa"] }
+rand = "0.9"
+rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-parser", "aws_lc_rs", "crypto"] }
+refinery = { version = "0.8", features = ["rusqlite"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+rustls = "0.23"
+rustls-pki-types = "1"
+serde = { version = "1", features = ["derive"] }
+serde_jcs = "0.2"
+serde_json = "1"
+serde_with = { version = "3", default-features = false, features = ["macros"] }
+sha2 = "0.10"
+ssh-key = { version = "0.6", features = ["ed25519"] }
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = "0.26"
+tokio-util = "0.7"
+toml = "0.8"
+tower-service = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+whoami = "1"
+wiremock = "0.6"
+x509-parser = "0.16"

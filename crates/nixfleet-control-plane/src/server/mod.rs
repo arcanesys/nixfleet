@@ -15,16 +15,16 @@ pub use state::{
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::Request as HttpRequest;
 use axum::middleware::Next;
 use axum::routing::{get, post};
-use axum::Router;
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
-use crate::auth::auth_cn::MtlsAcceptor;
 use crate::TickInputs;
+use crate::auth::auth_cn::MtlsAcceptor;
 
 /// 30s = systemd `TimeoutStopSec=` default; stay under to avoid SIGKILL.
 const TASK_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(30);
@@ -436,10 +436,10 @@ async fn drain_background_tasks(handles: Vec<tokio::task::JoinHandle<()>>) -> an
     let total = handles.len();
     let drain_fut = async move {
         for handle in handles {
-            if let Err(err) = handle.await {
-                if !err.is_cancelled() {
-                    tracing::warn!(error = %err, "background task panicked during shutdown");
-                }
+            if let Err(err) = handle.await
+                && !err.is_cancelled()
+            {
+                tracing::warn!(error = %err, "background task panicked during shutdown");
             }
         }
     };

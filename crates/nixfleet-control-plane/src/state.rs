@@ -1,7 +1,7 @@
 //! Typed enums for CP persistence rows. ToSql/FromSql route through
 //! `as_db_str`/`from_db_str` so SQL boundaries stay strongly typed.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 /// Per-host activation lifecycle persisted in `host_dispatch_state.state`.

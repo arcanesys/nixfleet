@@ -153,10 +153,10 @@ impl Selector {
         if !self.hosts.is_empty() && self.hosts.iter().any(|h| h == host_name) {
             return true;
         }
-        if let Some(ch) = &self.channel {
-            if &host.channel == ch {
-                return true;
-            }
+        if let Some(ch) = &self.channel
+            && &host.channel == ch
+        {
+            return true;
         }
         if !self.tags.is_empty() && self.tags.iter().all(|t| host.tags.contains(t)) {
             return true;

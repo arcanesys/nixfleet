@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
-use axum::Json;
 use nixfleet_proto::enroll_wire::{EnrollRequest, EnrollResponse, RenewRequest, RenewResponse};
 use rcgen::PublicKeyData;
 

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use nixfleet_proto::{FleetResolved, RevocationEntry, Revocations};
 use nixfleet_reconciler::project_manifest;
@@ -251,8 +251,7 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
                 signature_algorithm: Some(config.signature_algorithm.clone()),
             },
         };
-        let bn_json =
-            serde_json::to_string(&bn).context("serialise bootstrap-nonces.json")?;
+        let bn_json = serde_json::to_string(&bn).context("serialise bootstrap-nonces.json")?;
         let bn_canonical = nixfleet_canonicalize::canonicalize(&bn_json)
             .context("canonicalize bootstrap-nonces.json")?;
         let bn_path = config.release_dir.join("bootstrap-nonces.json");
@@ -261,8 +260,7 @@ pub fn run(config: &ReleaseConfig) -> Result<RunOutcome> {
             && bn_sig_path.exists()
             && std::fs::read(&bn_path).ok().as_deref() == Some(bn_canonical.as_bytes())
         {
-            std::fs::read(&bn_sig_path)
-                .context("read existing bootstrap-nonces signature")?
+            std::fs::read(&bn_sig_path).context("read existing bootstrap-nonces signature")?
         } else {
             sign(&config.sign_cmd, bn_canonical.as_bytes())?
         };
@@ -640,18 +638,17 @@ fn interpret_build_output(attr: &str, output: std::process::Output) -> Result<St
 /// current-commit build path. Pins with no `expires_at` always remain.
 pub fn filter_expired_pins(resolved: &mut FleetResolved, now: DateTime<Utc>) {
     for (host_name, host) in resolved.hosts.iter_mut() {
-        if let Some(pin) = host.pin.as_ref() {
-            if let Some(expires) = pin.expires_at {
-                if expires <= now {
-                    tracing::info!(
-                        host = %host_name,
-                        expired_at = %expires,
-                        commit = %pin.commit,
-                        "pin expired - falling back to current-commit build",
-                    );
-                    host.pin = None;
-                }
-            }
+        if let Some(pin) = host.pin.as_ref()
+            && let Some(expires) = pin.expires_at
+            && expires <= now
+        {
+            tracing::info!(
+                host = %host_name,
+                expired_at = %expires,
+                commit = %pin.commit,
+                "pin expired - falling back to current-commit build",
+            );
+            host.pin = None;
         }
     }
 }
@@ -1109,9 +1106,10 @@ mod tests {
     fn sha256_hex_is_64_char_lowercase() {
         let h = sha256_hex(b"hello world");
         assert_eq!(h.len(), 64);
-        assert!(h
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            h.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
         assert_eq!(
             h,
             "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"

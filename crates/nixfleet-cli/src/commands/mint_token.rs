@@ -109,25 +109,25 @@ fn read_signing_key(path: &PathBuf) -> Result<SigningKey> {
         std::fs::read(path).with_context(|| format!("read org root key {}", path.display()))?;
     // FOOTGUN: detect PEM before whitespace strip - strip would collapse
     // BEGIN/body/END lines.
-    if let Ok(orig) = std::str::from_utf8(&bytes) {
-        if orig.trim_start().starts_with("-----BEGIN") {
-            let body: String = orig
-                .lines()
-                .filter(|l| !l.starts_with("-----"))
-                .collect::<Vec<_>>()
-                .join("");
-            let der = base64::engine::general_purpose::STANDARD
-                .decode(&body)
-                .context("base64 decode PEM body")?;
-            // PKCS#8 ed25519 OCTET STRING tail: 0x04 0x20 + 32 bytes.
-            if der.len() < 34 {
-                anyhow::bail!("PEM too short for PKCS#8 ed25519");
-            }
-            let arr: [u8; 32] = der[der.len() - 32..]
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("PKCS#8 tail wrong size"))?;
-            return Ok(SigningKey::from_bytes(&arr));
+    if let Ok(orig) = std::str::from_utf8(&bytes)
+        && orig.trim_start().starts_with("-----BEGIN")
+    {
+        let body: String = orig
+            .lines()
+            .filter(|l| !l.starts_with("-----"))
+            .collect::<Vec<_>>()
+            .join("");
+        let der = base64::engine::general_purpose::STANDARD
+            .decode(&body)
+            .context("base64 decode PEM body")?;
+        // PKCS#8 ed25519 OCTET STRING tail: 0x04 0x20 + 32 bytes.
+        if der.len() < 34 {
+            anyhow::bail!("PEM too short for PKCS#8 ed25519");
         }
+        let arr: [u8; 32] = der[der.len() - 32..]
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("PKCS#8 tail wrong size"))?;
+        return Ok(SigningKey::from_bytes(&arr));
     }
 
     let trimmed: Vec<u8> = bytes
@@ -136,18 +136,14 @@ fn read_signing_key(path: &PathBuf) -> Result<SigningKey> {
         .filter(|b| !b.is_ascii_whitespace())
         .collect();
     if trimmed.len() == 32 {
-        let arr: [u8; 32] = trimmed[..32]
-            .try_into()
-            .expect("len 32 checked above");
+        let arr: [u8; 32] = trimmed[..32].try_into().expect("len 32 checked above");
         return Ok(SigningKey::from_bytes(&arr));
     }
     if let Ok(s) = std::str::from_utf8(&trimmed) {
         let s = s.trim_start_matches("0x").trim();
         if s.len() == 64 {
             let raw = hex::decode(s).context("hex decode org root key")?;
-            let arr: [u8; 32] = raw[..32]
-                .try_into()
-                .expect("hex-64 decodes to 32 bytes");
+            let arr: [u8; 32] = raw[..32].try_into().expect("hex-64 decodes to 32 bytes");
             return Ok(SigningKey::from_bytes(&arr));
         }
     }
@@ -199,7 +195,7 @@ mod tests {
 
 fn random_nonce() -> String {
     let mut buf = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut buf);
+    rand::rng().fill_bytes(&mut buf);
     hex::encode(buf)
 }
 

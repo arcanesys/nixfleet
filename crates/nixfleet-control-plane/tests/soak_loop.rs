@@ -7,10 +7,10 @@ use chrono::Utc;
 use nixfleet_control_plane::db::{Db, DispatchInsert};
 use nixfleet_control_plane::observed_projection;
 use nixfleet_control_plane::state::{HealthyMarker, HostRolloutState};
+use nixfleet_proto::FleetResolved;
 use nixfleet_proto::fleet_resolved::Meta;
 use nixfleet_proto::testing::FleetBuilder;
-use nixfleet_proto::FleetResolved;
-use nixfleet_reconciler::{reconcile, Action};
+use nixfleet_reconciler::{Action, reconcile};
 use tempfile::TempDir;
 
 fn fleet_with_single_wave_host(hostname: &str, closure: &str, soak_minutes: u32) -> FleetResolved {

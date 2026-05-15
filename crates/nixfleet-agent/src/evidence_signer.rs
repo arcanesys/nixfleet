@@ -102,7 +102,7 @@ mod tests {
         use ed25519_dalek::SigningKey;
         use rand::RngCore;
         let mut seed = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed);
+        rand::rng().fill_bytes(&mut seed);
         let sk = SigningKey::from_bytes(&seed);
         let kp = ssh_key::private::Ed25519Keypair {
             public: ssh_key::public::Ed25519PublicKey(sk.verifying_key().to_bytes()),

@@ -1,8 +1,8 @@
 //! Revocations poll: fetch+verify signed revocations.json, replay into `cert_revocations`.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;

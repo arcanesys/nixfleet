@@ -2,16 +2,15 @@
 
 mod common;
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use common::signing::{fresh_signing_key, sign_artifact, trust_root_for, FIXTURE_SIGNED};
+use common::signing::{FIXTURE_SIGNED, fresh_signing_key, sign_artifact, trust_root_for};
 use ed25519_dalek::Signer;
+use ed25519_dalek::ed25519::signature::rand_core::{OsRng, RngCore};
 use nixfleet_canonicalize::canonicalize;
 use nixfleet_proto::TrustedPubkey;
-use nixfleet_reconciler::{verify_artifact, VerifyError};
-use rand::rngs::OsRng;
-use rand::TryRngCore;
+use nixfleet_reconciler::{VerifyError, verify_artifact};
 use std::time::Duration;
 
 #[test]

@@ -2,20 +2,21 @@
 
 #![allow(dead_code)]
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use chrono::{DateTime, Utc};
+use ed25519_dalek::ed25519::signature::rand_core::{OsRng, RngCore};
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_canonicalize::canonicalize;
 use nixfleet_proto::TrustedPubkey;
-use rand::rngs::OsRng;
-use rand::TryRngCore;
 
 pub const FIXTURE_SIGNED: &str =
     include_str!("../../../nixfleet-proto/tests/fixtures/signed-artifact.json");
 
-/// `SigningKey::generate` wants rand_core 0.6, but we're on rand 0.9  -
-/// feed OsRng bytes to `SigningKey::from_bytes` instead.
+/// Uses ed25519-dalek's pinned rand_core 0.6 OsRng so the same type also
+/// satisfies `SigningKey::generate`'s `CryptoRngCore` bound. Workspace
+/// `rand` (0.9) is intentionally not used here - those traits don't
+/// interop with ed25519-dalek 2.
 pub fn fresh_signing_key() -> SigningKey {
     let mut seed = [0u8; 32];
     OsRng.try_fill_bytes(&mut seed).expect("OS CSPRNG");

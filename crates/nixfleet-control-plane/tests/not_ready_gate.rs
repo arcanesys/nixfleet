@@ -8,7 +8,7 @@ use common::{
     write_phase2_input_stubs,
 };
 use nixfleet_control_plane::server;
-use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rcgen::{CertifiedKey, generate_simple_self_signed};
 use reqwest::Certificate;
 use tempfile::TempDir;
 

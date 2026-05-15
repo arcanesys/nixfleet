@@ -101,10 +101,10 @@ impl KeySlot {
     /// it's identical to [`Self::active_keys`].
     pub fn active_keys_at(&self, now: DateTime<Utc>) -> Vec<TrustedPubkey> {
         let mut keys = self.active_keys();
-        if let (Some(k), Some(retire_at)) = (&self.successor, self.retire_at) {
-            if now < retire_at {
-                keys.push(k.clone());
-            }
+        if let (Some(k), Some(retire_at)) = (&self.successor, self.retire_at)
+            && now < retire_at
+        {
+            keys.push(k.clone());
         }
         keys
     }

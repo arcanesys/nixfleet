@@ -8,7 +8,7 @@ use nixfleet_proto::FleetResolved;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::{render_plan, tick, TickInputs};
+use crate::{TickInputs, render_plan, tick};
 
 use super::state::{AppState, HostCheckinRecord, RECONCILE_INTERVAL};
 
@@ -160,24 +160,24 @@ pub(super) fn spawn_reconcile_loop(
                         _ => true,
                     },
                 };
-                if should_overwrite {
-                    if let Ok(h) = nixfleet_reconciler::canonical_hash_from_bytes(&artifact_bytes) {
-                        *guard = Some(crate::server::VerifiedFleetSnapshot {
-                            fleet: Arc::new(fleet),
-                            fleet_resolved_hash: h,
-                        });
-                        // #95: late prime (build-time prime failed but a later tick
-                        // re-read the artifact successfully). Flip ready so /v1/*
-                        // opens up without waiting for the channel-refs poll.
-                        let was_primed = state
-                            .artifact_primed
-                            .swap(true, std::sync::atomic::Ordering::AcqRel);
-                        if !was_primed {
-                            tracing::info!(
-                                target: "reconcile",
-                                "control plane ready: artifact verified by reconcile tick",
-                            );
-                        }
+                if should_overwrite
+                    && let Ok(h) = nixfleet_reconciler::canonical_hash_from_bytes(&artifact_bytes)
+                {
+                    *guard = Some(crate::server::VerifiedFleetSnapshot {
+                        fleet: Arc::new(fleet),
+                        fleet_resolved_hash: h,
+                    });
+                    // #95: late prime (build-time prime failed but a later tick
+                    // re-read the artifact successfully). Flip ready so /v1/*
+                    // opens up without waiting for the channel-refs poll.
+                    let was_primed = state
+                        .artifact_primed
+                        .swap(true, std::sync::atomic::Ordering::AcqRel);
+                    if !was_primed {
+                        tracing::info!(
+                            target: "reconcile",
+                            "control plane ready: artifact verified by reconcile tick",
+                        );
                     }
                 }
             }
@@ -191,15 +191,13 @@ pub(super) fn spawn_reconcile_loop(
                     // reflect the same freshness - otherwise `ci_commit` and
                     // `signed_at` lag behind reality until the CP itself is
                     // restarted onto a closure containing the new artifact.
-                    if let crate::VerifyOutcome::Ok(ok) = &mut out.verify {
-                        if let Some(snapshot) = state.verified_fleet.read().await.as_ref() {
-                            if let Some(snap_signed_at) = snapshot.fleet.meta.signed_at {
-                                if snap_signed_at >= ok.signed_at {
-                                    ok.signed_at = snap_signed_at;
-                                    ok.ci_commit = snapshot.fleet.meta.ci_commit.clone();
-                                }
-                            }
-                        }
+                    if let crate::VerifyOutcome::Ok(ok) = &mut out.verify
+                        && let Some(snapshot) = state.verified_fleet.read().await.as_ref()
+                        && let Some(snap_signed_at) = snapshot.fleet.meta.signed_at
+                        && snap_signed_at >= ok.signed_at
+                    {
+                        ok.signed_at = snap_signed_at;
+                        ok.ci_commit = snapshot.fleet.meta.ci_commit.clone();
                     }
                     apply_actions(&state, &out).await;
                     // Per-tick orphan sweep: rollouts that exist in the
@@ -247,8 +245,8 @@ fn kick_channel_refs_poll(state: &AppState, reason: &'static str) {
 
 /// At-least-once action handler; SoakHost + ConvergeRollout mutate DB, others are journal-only.
 async fn apply_actions(state: &AppState, out: &crate::TickOutput) {
-    use nixfleet_reconciler::observed::DeferralRecord;
     use nixfleet_reconciler::Action;
+    use nixfleet_reconciler::observed::DeferralRecord;
 
     let actions = match &out.verify {
         crate::VerifyOutcome::Ok(ok) => &ok.actions,

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use chrono::Utc;
 use common::{install_crypto_provider_once, pick_free_port, wait_for_listener_ready};
+use ed25519_dalek::ed25519::signature::rand_core::{OsRng, RngCore};
 use nixfleet_control_plane::{db::Db, server};
 use nixfleet_proto::enroll_wire::{RenewRequest, RenewResponse};
 use rcgen::{
@@ -92,7 +93,7 @@ fn write_signed_fleet_inputs(
     use base64::Engine;
     use ed25519_dalek::{Signer, SigningKey};
 
-    let mut rng = rand::thread_rng();
+    let mut rng = OsRng;
     let ci_signing_key = SigningKey::generate(&mut rng);
     let public_b64 =
         base64::engine::general_purpose::STANDARD.encode(ci_signing_key.verifying_key());
@@ -197,10 +198,9 @@ async fn wait_for_fleet_primed(port: u16, ca_pem: &[u8]) {
             .get(format!("https://localhost:{port}/healthz"))
             .send()
             .await
+            && r.status().is_success()
         {
-            if r.status().is_success() {
-                return;
-            }
+            return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
@@ -289,9 +289,8 @@ fn mint_csr_from_seed(hostname: &str, seed: &[u8; 32]) -> String {
 }
 
 fn mint_csr(hostname: &str) -> (String, [u8; 32]) {
-    use rand::RngCore;
     let mut seed = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut seed);
+    OsRng.fill_bytes(&mut seed);
     (mint_csr_from_seed(hostname, &seed), seed)
 }
 
@@ -564,14 +563,13 @@ async fn renew_rejects_csr_pubkey_mismatch_with_declared_host() {
     let dir = TempDir::new().unwrap();
     let pki = mint_pki(&dir, "test-host");
 
-    use rand::RngCore;
     let mut declared_seed = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut declared_seed);
+    OsRng.fill_bytes(&mut declared_seed);
     let declared_openssh = openssh_pubkey_from_seed(&declared_seed);
 
     // CSR signed with a DIFFERENT seed than what fleet.nix declares.
     let mut imposter_seed = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut imposter_seed);
+    OsRng.fill_bytes(&mut imposter_seed);
     assert_ne!(declared_seed, imposter_seed);
     let csr_pem = mint_csr_from_seed("test-host", &imposter_seed);
 

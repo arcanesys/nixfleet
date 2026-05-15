@@ -14,18 +14,18 @@
 
 mod common;
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use base64::Engine as _;
 use common::build_fleet_resolved_json;
+use ed25519_dalek::ed25519::signature::rand_core::OsRng;
 use ed25519_dalek::{Signer, SigningKey};
 use nixfleet_control_plane::db::Db;
 use nixfleet_control_plane::polling::channel_refs_poll::{
-    spawn, ChannelRefsCache, ChannelRefsSource,
+    ChannelRefsCache, ChannelRefsSource, spawn,
 };
-use rand::rngs::OsRng;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -164,18 +164,16 @@ async fn wait_for_recorded_rid(
 ) -> Option<String> {
     while std::time::Instant::now() < deadline {
         let snap = verified_fleet.read().await.clone();
-        if let Some(snap) = snap {
-            if let Ok(Some(rid)) = nixfleet_reconciler::compute_rollout_id_for_channel(
+        if let Some(snap) = snap
+            && let Ok(Some(rid)) = nixfleet_reconciler::compute_rollout_id_for_channel(
                 &snap.fleet,
                 &snap.fleet_resolved_hash,
                 channel,
-            ) {
-                if let Ok(Some(status)) = db.rollouts().supersede_status(&rid) {
-                    if !status.is_superseded() {
-                        return Some(rid);
-                    }
-                }
-            }
+            )
+            && let Ok(Some(status)) = db.rollouts().supersede_status(&rid)
+            && !status.is_superseded()
+        {
+            return Some(rid);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

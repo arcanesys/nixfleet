@@ -131,7 +131,7 @@ in
           host,
           since_cursor=pre_signal_cursor,
           unit="nixfleet-control-plane.service",
-          pattern="RollbackTriggered: host_rollout_state Failed . Reverted",
+          pattern="RollbackTriggered: host_rollout_state Failed -> Reverted",
           timeout=60,
           label="Failed -> Reverted transition",
       )

@@ -4,8 +4,8 @@ use nixfleet_proto::agent_wire::ReportEvent;
 
 use nixfleet_agent::comms::Reporter;
 
-use super::compliance::{process_gate_outcome, run_runtime_gate};
 use super::DispatchCtx;
+use super::compliance::{process_gate_outcome, run_runtime_gate};
 use nixfleet_agent::evidence_signer::try_sign;
 
 pub(super) async fn handle_fired_and_polled<R: Reporter>(

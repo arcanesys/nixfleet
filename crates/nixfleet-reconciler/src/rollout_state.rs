@@ -1,9 +1,9 @@
 //! Rollout-level state machine.
 
+use crate::Action;
 use crate::host_state::{self, WaveOutcome};
 use crate::observed::{Observed, Rollout};
-use crate::Action;
-use anyhow::{anyhow, Error, Result};
+use anyhow::{Error, Result, anyhow};
 use chrono::{DateTime, Utc};
 use nixfleet_proto::FleetResolved;
 use std::str::FromStr;

@@ -17,30 +17,30 @@ path = "src/bin/nixfleet.rs"
 [dependencies]
 nixfleet-proto = { path = "../nixfleet-proto" }
 nixfleet-canonicalize = { path = "../nixfleet-canonicalize" }
-clap = { version = "4", features = ["derive", "env"] }
-serde_json = "1"
-anyhow = "1"
-chrono = { version = "0.4", features = ["serde"] }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-base64 = "0.22"
-rand = "0.8"
-hex = "0.4"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-dirs = "5"
-is-terminal = "0.4"
-rcgen = { version = "0.13", default-features = false, features = ["pem", "x509-parser", "aws_lc_rs", "crypto"] }
-whoami = "1"
+clap = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
+base64 = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+dirs = { workspace = true }
+is-terminal = { workspace = true }
+rcgen = { workspace = true }
+whoami = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
-x509-parser = "0.16"
+tempfile = { workspace = true }
+x509-parser = { workspace = true }
 # E2E integration test (`tests/cli_status_e2e.rs`): boot a real CP, drive
-# 2 mTLS checkins, then exercise `run_status` as an operator CN. Versions
-# match the CP crate's own deps so the workspace stays single-version
-# (no `[workspace.dependencies]` table - pin per-crate).
+# 2 mTLS checkins, then exercise `run_status` as an operator CN. Workspace
+# deps centralise versions; features in workspace are the union the CP
+# itself uses, so re-using here keeps the dep graph single-version.
 nixfleet-control-plane = { path = "../nixfleet-control-plane" }
-rustls = "0.23"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rustls = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -1,8 +1,8 @@
 //! TLS server config builder; mTLS layered via `WebPkiClientVerifier` when `client_ca_path` is set.
 
 use anyhow::{Context, Result};
-use rustls::server::WebPkiClientVerifier;
 use rustls::ServerConfig;
+use rustls::server::WebPkiClientVerifier;
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::path::Path;

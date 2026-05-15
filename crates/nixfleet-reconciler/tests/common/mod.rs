@@ -6,7 +6,7 @@ pub mod signing;
 
 use chrono::{DateTime, Utc};
 use nixfleet_proto::FleetResolved;
-use nixfleet_reconciler::{reconcile, Action, Observed};
+use nixfleet_reconciler::{Action, Observed, reconcile};
 
 pub fn fixture_now() -> DateTime<Utc> {
     "2026-04-24T10:00:00Z".parse().unwrap()
@@ -28,7 +28,8 @@ pub fn run(fixture_path: &str) -> (Vec<Action>, Vec<Action>) {
 
 pub fn assert_matches(actual: &[Action], expected: &[Action]) {
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "reconcile produced {} actions, expected {}:\n  actual  = {actual:#?}\n  expected= {expected:#?}",
         actual.len(),
         expected.len()

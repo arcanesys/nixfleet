@@ -3,11 +3,11 @@
 
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 // Alias avoids clashing with `struct Args` below.
 use clap::Args as ClapArgs;
 
-use crate::{mint_operator_cert, MintOperatorCertArgs};
+use crate::{MintOperatorCertArgs, mint_operator_cert};
 
 #[derive(ClapArgs, Debug)]
 #[command(

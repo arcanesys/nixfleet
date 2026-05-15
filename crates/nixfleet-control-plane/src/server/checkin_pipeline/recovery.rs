@@ -619,11 +619,12 @@ mod tests {
             !try_recover_orphan_confirm(&state, &req).await,
             "mismatched closure must not recover",
         );
-        assert!(db
-            .host_dispatch_state()
-            .active_rollouts_snapshot()
-            .unwrap()
-            .is_empty());
+        assert!(
+            db.host_dispatch_state()
+                .active_rollouts_snapshot()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -788,11 +789,12 @@ mod tests {
         let req = checkin_req_with_attestation("test-host", "different-closure", Some(attested));
 
         recover_soak_state_from_attestation(&state, &req, Utc::now()).await;
-        assert!(db
-            .host_dispatch_state()
-            .active_rollouts_snapshot()
-            .unwrap()
-            .is_empty());
+        assert!(
+            db.host_dispatch_state()
+                .active_rollouts_snapshot()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -842,10 +844,11 @@ mod tests {
         let req = checkin_req_with_attestation("test-host", "system-r1", None);
 
         recover_soak_state_from_attestation(&state, &req, Utc::now()).await;
-        assert!(db
-            .host_dispatch_state()
-            .active_rollouts_snapshot()
-            .unwrap()
-            .is_empty());
+        assert!(
+            db.host_dispatch_state()
+                .active_rollouts_snapshot()
+                .unwrap()
+                .is_empty()
+        );
     }
 }

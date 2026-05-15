@@ -360,7 +360,7 @@ async fn post_compliance_failures<R: crate::comms::Reporter>(
     reporter: &R,
     evidence_signer: &std::sync::Arc<Option<crate::evidence_signer::EvidenceSigner>>,
 ) {
-    use crate::evidence_signer::{sha256_jcs, try_sign, ComplianceFailureSignedPayload};
+    use crate::evidence_signer::{ComplianceFailureSignedPayload, sha256_jcs, try_sign};
     use nixfleet_proto::agent_wire::ReportEvent;
     tracing::warn!(
         count = failures.len(),
@@ -411,7 +411,7 @@ async fn post_runtime_gate_error<R: crate::comms::Reporter>(
     evidence_signer: &std::sync::Arc<Option<crate::evidence_signer::EvidenceSigner>>,
     activation_completed_at: DateTime<Utc>,
 ) -> bool {
-    use crate::evidence_signer::{try_sign, RuntimeGateErrorSignedPayload};
+    use crate::evidence_signer::{RuntimeGateErrorSignedPayload, try_sign};
     use nixfleet_proto::agent_wire::ReportEvent;
     let enforcing = resolved_mode == GateMode::Enforce;
     if enforcing {
@@ -473,7 +473,7 @@ async fn trigger_rollback_with_reason<R: crate::comms::Reporter>(
     evidence_signer: &std::sync::Arc<Option<crate::evidence_signer::EvidenceSigner>>,
     base_reason: &str,
 ) {
-    use crate::evidence_signer::{try_sign, RollbackTriggeredSignedPayload};
+    use crate::evidence_signer::{RollbackTriggeredSignedPayload, try_sign};
     use nixfleet_proto::agent_wire::ReportEvent;
     let rollback_result = crate::activation::rollback().await;
     let rollback_reason = match &rollback_result {

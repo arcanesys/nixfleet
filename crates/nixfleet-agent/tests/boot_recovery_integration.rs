@@ -2,11 +2,11 @@
 
 use chrono::Utc;
 use nixfleet_agent::checkin_state::{
-    self, read_last_confirmed, read_last_dispatched, write_last_dispatched, LastDispatchRecord,
+    self, LastDispatchRecord, read_last_confirmed, read_last_dispatched, write_last_dispatched,
 };
 use nixfleet_agent::comms::Reporter;
 use nixfleet_agent::evidence_signer::EvidenceSigner;
-use nixfleet_agent::recovery::{run_boot_recovery, GateInputs};
+use nixfleet_agent::recovery::{GateInputs, run_boot_recovery};
 use nixfleet_proto::agent_wire::ReportEvent;
 use serde_json::json;
 use std::sync::{Arc, Mutex};

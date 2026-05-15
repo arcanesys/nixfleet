@@ -1,7 +1,7 @@
 //! Pure projection: fleet.resolved + channel context -> RolloutManifest.
 //! Producer (nixfleet-release) and CP (re-derivation) share this fn.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use nixfleet_proto::{FleetResolved, HostWave, Meta, RolloutBudget, RolloutManifest};
 

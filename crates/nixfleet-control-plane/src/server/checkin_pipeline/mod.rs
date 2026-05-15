@@ -6,11 +6,11 @@ mod rollback_signal;
 
 use std::sync::Arc;
 
+use axum::Json;
 use axum::body::Body;
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::Json;
 use chrono::Utc;
 use nixfleet_proto::agent_wire::{CheckinRequest, CheckinResponse, ConfirmRequest};
 
@@ -268,7 +268,7 @@ pub(super) mod tests {
         use rand::RngCore;
 
         let mut seed = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed);
+        rand::rng().fill_bytes(&mut seed);
         let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
         let pubkey_raw = sk.verifying_key().to_bytes();
 

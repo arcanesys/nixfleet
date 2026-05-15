@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use chrono::Utc;
 use nixfleet_proto::testing::FleetBuilder;
 use nixfleet_proto::{FleetResolved, Meta};
-use nixfleet_reconciler::gates::{evaluate_for_host, GateBlock, GateInput, GateMode};
+use nixfleet_reconciler::gates::{GateBlock, GateInput, GateMode, evaluate_for_host};
 use nixfleet_reconciler::observed::{Observed, Rollout};
 use nixfleet_reconciler::{HostRolloutState, RolloutState};
 
