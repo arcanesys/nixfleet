@@ -271,6 +271,40 @@ impl HostDispatchState<'_> {
         })
     }
 
+    /// Issue #3: invalidate every pending/deferred dispatch row whose
+    /// `(channel, target_closure_hash)` matches a freshly-inserted quarantine.
+    /// Called from `sweep_soaked_health_failures` after the quarantine row
+    /// lands so the dispatch queue can't keep advertising a SHA the anti-thrash
+    /// gate just decided to reject. The agent's eventual confirm for the bad
+    /// SHA then hits the existing 410 path (no matching pending row) and
+    /// performs its local rollback voluntarily.
+    ///
+    /// Returns rows updated. Idempotent: rows already in a terminal state
+    /// (confirmed/rolled-back/cancelled) are untouched.
+    pub fn cancel_pending_for_quarantine(
+        &self,
+        channel: &str,
+        closure_hash: &str,
+    ) -> Result<usize> {
+        super::read(self.conn, |c| {
+            c.execute(
+                "UPDATE host_dispatch_state
+                 SET state = ?3
+                 WHERE channel = ?1
+                   AND target_closure_hash = ?2
+                   AND state IN (?4, ?5)",
+                params![
+                    channel,
+                    closure_hash,
+                    PendingConfirmState::Cancelled,
+                    PendingConfirmState::Pending,
+                    PendingConfirmState::DeferredPendingReboot,
+                ],
+            )
+            .context("cancel_pending_for_quarantine")
+        })
+    }
+
     /// Race-resistant: WHERE rollout_id guard makes a stale id a no-op when overwritten.
     pub fn record_terminal(
         &self,
@@ -497,6 +531,91 @@ mod tests {
     use super::super::test_helpers::{dispatch_insert, fresh_db, mark_healthy};
     use crate::state::{HostRolloutState, TerminalState};
     use chrono::Utc;
+
+    /// Regression for issue #3: when sweep_soaked_health_failures inserts a
+    /// quarantine, the matching pending host_dispatch_state row must be
+    /// cancelled so the agent's eventual confirm hits the 410 path instead of
+    /// transitioning to Healthy on a known-bad SHA.
+    #[test]
+    fn cancel_pending_for_quarantine_flips_pending_to_cancelled() {
+        let db = fresh_db();
+        let deadline = Utc::now() + chrono::Duration::seconds(120);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert(
+                "web-02",
+                "edge@r1",
+                "bad-sha",
+                deadline,
+            ))
+            .unwrap();
+        let n = db
+            .host_dispatch_state()
+            .cancel_pending_for_quarantine("stable", "bad-sha")
+            .unwrap();
+        assert_eq!(n, 1, "row keyed (stable, bad-sha) must cancel");
+        let row = db
+            .host_dispatch_state()
+            .host_state("web-02")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.state, "cancelled");
+    }
+
+    /// Different SHA on the same channel must NOT be cancelled.
+    #[test]
+    fn cancel_pending_for_quarantine_leaves_other_targets_alone() {
+        let db = fresh_db();
+        let deadline = Utc::now() + chrono::Duration::seconds(120);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert(
+                "web-02",
+                "stable@r1",
+                "good-sha",
+                deadline,
+            ))
+            .unwrap();
+        let n = db
+            .host_dispatch_state()
+            .cancel_pending_for_quarantine("stable", "bad-sha")
+            .unwrap();
+        assert_eq!(n, 0);
+        let row = db
+            .host_dispatch_state()
+            .host_state("web-02")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.state, "pending");
+    }
+
+    /// Confirmed rows are not pending; quarantine must not retroactively
+    /// cancel them.
+    #[test]
+    fn cancel_pending_for_quarantine_leaves_confirmed_rows_alone() {
+        let db = fresh_db();
+        let deadline = Utc::now() + chrono::Duration::seconds(120);
+        db.host_dispatch_state()
+            .record_dispatch(&dispatch_insert(
+                "web-02",
+                "stable@r1",
+                "bad-sha",
+                deadline,
+            ))
+            .unwrap();
+        db.host_dispatch_state()
+            .confirm("web-02", "stable@r1")
+            .unwrap();
+        let n = db
+            .host_dispatch_state()
+            .cancel_pending_for_quarantine("stable", "bad-sha")
+            .unwrap();
+        assert_eq!(n, 0);
+        let row = db
+            .host_dispatch_state()
+            .host_state("web-02")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.state, "confirmed");
+    }
 
     #[test]
     fn record_dispatch_writes_operational_and_history() {

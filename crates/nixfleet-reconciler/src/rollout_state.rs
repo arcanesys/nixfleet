@@ -248,6 +248,7 @@ mod tests {
             outstanding_compliance_events_by_rollout: by_rollout,
             last_deferrals: HashMap::new(),
             host_probes_passing: HashMap::new(),
+            host_probes_observed: HashMap::new(),
             quarantined_closures: HashMap::new(),
         }
     }
@@ -454,6 +455,7 @@ mod tests {
             outstanding_compliance_events_by_rollout: HashMap::new(),
             last_deferrals: HashMap::new(),
             host_probes_passing: HashMap::new(),
+            host_probes_observed: HashMap::new(),
             quarantined_closures: HashMap::new(),
         }
     }

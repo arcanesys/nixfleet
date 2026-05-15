@@ -55,6 +55,20 @@ pub fn project(
         })
         .collect();
 
+    // Issue #101: distinguish "probes are passing" from "probes have actually
+    // run yet". A host that just confirmed Healthy reports `Unknown` for every
+    // probe until its first probe cycle completes (~15s); soaking immediately
+    // would claim the host as healthy on a known-bad closure for that window.
+    let host_probes_observed: HashMap<String, bool> = host_checkins
+        .iter()
+        .map(|(host, record)| {
+            (
+                host.clone(),
+                nixfleet_proto::agent_wire::host_probes_observed(&record.checkin),
+            )
+        })
+        .collect();
+
     let active_rollouts: Vec<Rollout> = rollouts
         .iter()
         .map(|snap| {
@@ -82,6 +96,7 @@ pub fn project(
         outstanding_compliance_events_by_rollout,
         last_deferrals,
         host_probes_passing,
+        host_probes_observed,
         quarantined_closures,
     }
 }

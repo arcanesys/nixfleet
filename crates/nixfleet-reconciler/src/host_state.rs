@@ -73,28 +73,6 @@ pub(crate) fn handle_wave(
                     });
                     continue;
                 }
-                // Anti-thrash gate: refuse to dispatch a closure that the
-                // sweep quarantined (server::reconcile::sweep_soaked_health_failures).
-                // Cleared in the projection when the channel's declared
-                // closure_hash moves past the bad SHA.
-                if let Some(declared) = fleet
-                    .hosts
-                    .get(host)
-                    .and_then(|h| h.closure_hash.as_deref())
-                    && observed
-                        .quarantined_closures
-                        .get(&rollout.channel)
-                        .is_some_and(|set| set.contains(declared))
-                {
-                    out.actions.push(Action::Skip {
-                        host: host.clone(),
-                        reason: format!(
-                            "channel {} closure {} quarantined (sustained probe failures); push a new closure to clear",
-                            rollout.channel, declared
-                        ),
-                    });
-                    continue;
-                }
                 out.actions.push(Action::DispatchHost {
                     rollout: rollout.id.clone(),
                     host: host.clone(),
@@ -107,11 +85,17 @@ pub(crate) fn handle_wave(
                 out.wave_all_soaked = false;
             }
             HostRolloutState::Healthy => {
-                // Healthy -> Soaked requires both `wave.soak_minutes` elapsed
-                // AND probes passing. Missing `last_healthy_since` keeps the
-                // gate closed (wait rather than promote on missing data).
-                // Probes-passing absent from the map defaults to true so a
-                // missing projection can't stall every wave (fail-open).
+                // Healthy -> Soaked requires `wave.soak_minutes` elapsed AND
+                // probes passing AND probes observed. Missing
+                // `last_healthy_since` keeps the gate closed. Probe maps
+                // absent default to `true` (fail-open: missing projection
+                // can't stall every wave).
+                //
+                // `probes_observed` (issue #101) prevents the soak from firing
+                // on the first reconcile tick after Healthy (`soakMinutes=0`)
+                // before any probe cycle has had a chance to clear the
+                // bootstrap `Unknown` state. Without it the host briefly
+                // claims `Soaked` on a known-bad closure.
                 out.wave_all_soaked = false;
                 let soak_window = chrono::Duration::minutes(wave.soak_minutes as i64);
                 if let Some(since) = rollout.last_healthy_since.get(host) {
@@ -121,7 +105,12 @@ pub(crate) fn handle_wave(
                         .get(host)
                         .copied()
                         .unwrap_or(true);
-                    if soak_elapsed && probes_pass {
+                    let probes_observed = observed
+                        .host_probes_observed
+                        .get(host)
+                        .copied()
+                        .unwrap_or(true);
+                    if soak_elapsed && probes_pass && probes_observed {
                         out.actions.push(Action::SoakHost {
                             rollout: rollout.id.clone(),
                             host: host.clone(),
@@ -241,6 +230,8 @@ mod tests {
         );
         let mut probes = std::collections::HashMap::new();
         probes.insert(host.to_string(), probes_passing);
+        let mut probes_observed = std::collections::HashMap::new();
+        probes_observed.insert(host.to_string(), true);
         Observed {
             channel_refs: std::collections::HashMap::new(),
             last_rolled_refs: std::collections::HashMap::new(),
@@ -249,6 +240,7 @@ mod tests {
             outstanding_compliance_events_by_rollout: std::collections::HashMap::new(),
             last_deferrals: std::collections::HashMap::new(),
             host_probes_passing: probes,
+            host_probes_observed: probes_observed,
             quarantined_closures: std::collections::HashMap::new(),
         }
     }
@@ -356,6 +348,56 @@ mod tests {
                 .iter()
                 .any(|a| matches!(a, Action::SoakHost { .. })),
             "absent map entry must default to passing, not block",
+        );
+    }
+
+    /// Issue #101: with `soakMinutes = 0`, the soak gate previously fired on
+    /// the first reconcile tick after Healthy, before any probe had cleared
+    /// the bootstrap `Unknown` state. The new `host_probes_observed` map gates
+    /// the transition: false (declared-but-unobserved) holds, true allows.
+    #[test]
+    fn soak_holds_when_probes_declared_but_not_yet_observed() {
+        let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
+        let rollout = rollout_healthy_for("host-a", 10);
+        let mut observed = observed_with_probes("host-a", true);
+        observed
+            .host_probes_observed
+            .insert("host-a".into(), false);
+        let wave = Wave {
+            hosts: vec!["host-a".into()],
+            soak_minutes: 0,
+        };
+        let outcome = handle_wave(&fleet, &observed, &rollout, &wave, chrono::Utc::now());
+        assert!(
+            outcome
+                .actions
+                .iter()
+                .all(|a| !matches!(a, Action::SoakHost { .. })),
+            "soak must hold until probes have observed at least once; got {:?}",
+            outcome.actions,
+        );
+    }
+
+    /// Fail-open: hosts absent from `host_probes_observed` default to true
+    /// (mirrors `host_probes_passing` semantics). Without this, a misconfigured
+    /// projection would stall every wave.
+    #[test]
+    fn soak_promotes_when_probes_observed_absent_from_map_fail_open() {
+        let fleet = fleet_with_policy(nixfleet_proto::OnHealthFailure::Halt);
+        let rollout = rollout_healthy_for("host-a", 10);
+        let mut observed = observed_with_probes("host-a", true);
+        observed.host_probes_observed.clear();
+        let wave = Wave {
+            hosts: vec!["host-a".into()],
+            soak_minutes: 5,
+        };
+        let outcome = handle_wave(&fleet, &observed, &rollout, &wave, chrono::Utc::now());
+        assert!(
+            outcome
+                .actions
+                .iter()
+                .any(|a| matches!(a, Action::SoakHost { .. })),
+            "absent probes_observed entry must default to allow, not stall",
         );
     }
 

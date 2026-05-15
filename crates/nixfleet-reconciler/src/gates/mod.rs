@@ -15,6 +15,7 @@ pub mod channel_edges;
 pub mod compliance_wave;
 pub mod disruption_budget;
 pub mod host_edges;
+pub mod quarantine;
 pub mod wave_promotion;
 
 #[cfg(test)]
@@ -42,6 +43,10 @@ pub enum GateBlock {
     ComplianceWave {
         failing_events_count: usize,
         host_wave: u32,
+    },
+    Quarantined {
+        channel: String,
+        closure_hash: String,
     },
 }
 
@@ -74,6 +79,12 @@ impl GateBlock {
             } => format!(
                 "compliance-wave: {failing_events_count} outstanding failure(s) on hosts in wave < {host_wave}"
             ),
+            GateBlock::Quarantined {
+                channel,
+                closure_hash,
+            } => format!(
+                "channel {channel} closure {closure_hash} quarantined (sustained probe failures); push a new closure to clear"
+            ),
         }
     }
 
@@ -85,6 +96,7 @@ impl GateBlock {
             GateBlock::HostEdge { .. } => "host-edge",
             GateBlock::DisruptionBudget { .. } => "disruption-budget",
             GateBlock::ComplianceWave { .. } => "compliance-wave",
+            GateBlock::Quarantined { .. } => "quarantine",
         }
     }
 }
@@ -121,8 +133,14 @@ pub struct GateInput<'a> {
 }
 
 /// First block wins. Cheapest-first order:
-/// channel_edges -> wave_promotion -> host_edges -> disruption_budget -> compliance_wave.
+/// quarantine -> channel_edges -> wave_promotion -> host_edges -> disruption_budget -> compliance_wave.
+/// Quarantine is FIRST: a hash that just rolled back must stop instantly even if
+/// channelEdges / waves / budgets would otherwise hold the host -- otherwise the
+/// agent re-fetches and re-activates the bad closure on every reconcile cycle.
 pub fn evaluate_for_host(input: &GateInput) -> Option<GateBlock> {
+    if let Some(b) = quarantine::check(input) {
+        return Some(b);
+    }
     if let Some(b) = channel_edges::check(input) {
         return Some(b);
     }

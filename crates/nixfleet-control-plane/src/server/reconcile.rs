@@ -623,11 +623,18 @@ async fn sweep_stale_quarantines(
 }
 
 /// Bridges probe failures to the existing `RollbackAndHalt` action path.
-/// Soaked hosts with non-Pass probes for > `HEALTH_FAILURE_THRESHOLD_SECS`
+/// Soaked OR Healthy hosts with non-Pass probes for > `HEALTH_FAILURE_THRESHOLD_SECS`
 /// transition to Failed; the reconciler decision-procedure (host_state.rs)
 /// then emits HaltRollout + RollbackHost as it already does for activation
-/// failures. Per-host timers are in-memory: CP restart re-seeds them from
-/// the next checkin, growing the window by at most one restart cycle.
+/// failures.
+///
+/// Healthy is included because Permissive mode now blocks `Healthy -> Soaked`
+/// on explicit `Fail` probes (state-machine honesty: a host with failing
+/// probes must not claim Soaked). Without this extension, a Permissive host
+/// would stay at Healthy with failing probes indefinitely.
+///
+/// Per-host timers are in-memory: CP restart re-seeds them from the next
+/// checkin, growing the window by at most one restart cycle.
 async fn sweep_soaked_health_failures(state: &AppState, now: chrono::DateTime<chrono::Utc>) {
     let Some(db) = state.db.as_deref() else {
         return;
@@ -647,11 +654,16 @@ async fn sweep_soaked_health_failures(state: &AppState, now: chrono::DateTime<ch
     for snap in &snapshots {
         for (hostname, host_state) in &snap.host_states {
             // Tracker is per-host, not per-(host, rollout); transitions out of
-            // Soaked (or onto a new rollout) reset the window on the way back.
-            if host_state.as_str() != "Soaked" {
-                tracker.remove(hostname);
-                continue;
-            }
+            // Healthy/Soaked (or onto a new rollout) reset the window on the
+            // way back.
+            let from_state = match host_state.as_str() {
+                "Soaked" => crate::state::HostRolloutState::Soaked,
+                "Healthy" => crate::state::HostRolloutState::Healthy,
+                _ => {
+                    tracker.remove(hostname);
+                    continue;
+                }
+            };
 
             // Mirrors `state_view::outstanding_health_failures`.
             let outstanding = checkins
@@ -683,10 +695,10 @@ async fn sweep_soaked_health_failures(state: &AppState, now: chrono::DateTime<ch
                 &snap.rollout_id,
                 crate::state::HostRolloutState::Failed,
                 crate::state::HealthyMarker::Untouched,
-                Some(crate::state::HostRolloutState::Soaked),
+                Some(from_state),
             ) {
                 Ok(0) => {
-                    // Race: host left Soaked between snapshot and transition.
+                    // Race: host left Healthy/Soaked between snapshot and transition.
                     tracker.remove(hostname);
                 }
                 Ok(_) => {
@@ -694,9 +706,10 @@ async fn sweep_soaked_health_failures(state: &AppState, now: chrono::DateTime<ch
                         target: "health-sweep",
                         hostname = %hostname,
                         rollout = %snap.rollout_id,
+                        from_state = ?from_state,
                         elapsed_secs = elapsed.num_seconds(),
                         outstanding_health_failures = outstanding,
-                        "Soaked -> Failed: sustained probe failures (RollbackAndHalt path takes over)",
+                        "{from_state:?} -> Failed: sustained probe failures (RollbackAndHalt path takes over)",
                     );
                     tracker.remove(hostname);
                     // Anti-thrash: record the bad SHA so dispatch refuses
@@ -719,15 +732,42 @@ async fn sweep_soaked_health_failures(state: &AppState, now: chrono::DateTime<ch
                             "quarantine insert failed (rollback still proceeds; anti-thrash relies on next-tick recovery)",
                         );
                     }
-                    kick_channel_refs_poll(state, "Soaked -> Failed health sweep");
+                    // Issue #3: invalidate any in-flight dispatch for the SAME
+                    // (channel, closure_hash). Without this, an agent that
+                    // already fetched the bad target finishes its activation
+                    // and confirms successfully (rollout-state briefly claims
+                    // Healthy on a known-quarantined SHA). Cancelling forces
+                    // the agent's confirm onto the existing 410 path.
+                    match db
+                        .host_dispatch_state()
+                        .cancel_pending_for_quarantine(&snap.channel, &snap.target_closure_hash)
+                    {
+                        Ok(0) => {}
+                        Ok(n) => tracing::info!(
+                            target: "health-sweep",
+                            channel = %snap.channel,
+                            closure_hash = %snap.target_closure_hash,
+                            cancelled = n,
+                            "cancelled in-flight dispatches for quarantined SHA",
+                        ),
+                        Err(err) => tracing::warn!(
+                            target: "health-sweep",
+                            channel = %snap.channel,
+                            closure_hash = %snap.target_closure_hash,
+                            error = %err,
+                            "cancel_pending_for_quarantine failed (in-flight dispatches will 410 on confirm via the orphan path)",
+                        ),
+                    }
+                    kick_channel_refs_poll(state, "Healthy/Soaked -> Failed health sweep");
                 }
                 Err(err) => {
                     tracing::warn!(
                         target: "health-sweep",
                         hostname = %hostname,
                         rollout = %snap.rollout_id,
+                        from_state = ?from_state,
                         error = %err,
-                        "Soaked -> Failed transition failed",
+                        "transition to Failed failed",
                     );
                 }
             }

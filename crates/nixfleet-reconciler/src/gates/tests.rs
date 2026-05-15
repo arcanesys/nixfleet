@@ -648,3 +648,81 @@ fn empty_input_passes_all_gates() {
     };
     assert_eq!(evaluate_for_host(&input), None);
 }
+
+/// Quarantine gate must fire on declared (channel, closure_hash) and runs
+/// before every other gate so a rolled-back SHA can't be re-served via the
+/// dispatch endpoint just because (e.g.) the wave-promotion gate hadn't
+/// rejected first. Regression for the v0.2 demo's loop: reconciler emitted
+/// Skip, but `evaluate_for_host` missed it and `decide_target` issued the
+/// bad SHA anyway.
+#[test]
+fn quarantine_blocks_dispatch_for_declared_closure() {
+    let fleet = FleetBuilder::new()
+        .host("web-02", "edge")
+        .host_closure("web-02", "bad-sha")
+        .build();
+    let mut observed = Observed::default();
+    observed.quarantined_closures.insert(
+        "edge".into(),
+        HashSet::from(["bad-sha".to_string()]),
+    );
+    let r = rollout("edge", vec![]);
+    let empty = empty_set();
+    let input = GateInput {
+        fleet: &fleet,
+        observed: &observed,
+        rollout: Some(&r),
+        host: "web-02",
+        now: Utc::now(),
+        emitted_opens_in_tick: &empty,
+        mode: super::GateMode::Dispatch,
+    };
+    let block = evaluate_for_host(&input).expect("quarantine must block");
+    assert!(matches!(block, GateBlock::Quarantined { .. }), "got {block:?}");
+}
+
+#[test]
+fn quarantine_passes_when_channel_has_no_quarantined_closures() {
+    let fleet = FleetBuilder::new()
+        .host("web-02", "edge")
+        .host_closure("web-02", "good-sha")
+        .build();
+    let observed = Observed::default();
+    let r = rollout("edge", vec![]);
+    let empty = empty_set();
+    let input = GateInput {
+        fleet: &fleet,
+        observed: &observed,
+        rollout: Some(&r),
+        host: "web-02",
+        now: Utc::now(),
+        emitted_opens_in_tick: &empty,
+        mode: super::GateMode::Dispatch,
+    };
+    assert_eq!(evaluate_for_host(&input), None);
+}
+
+#[test]
+fn quarantine_passes_when_different_closure_is_quarantined() {
+    let fleet = FleetBuilder::new()
+        .host("web-02", "edge")
+        .host_closure("web-02", "good-sha")
+        .build();
+    let mut observed = Observed::default();
+    observed.quarantined_closures.insert(
+        "edge".into(),
+        HashSet::from(["old-bad-sha".to_string()]),
+    );
+    let r = rollout("edge", vec![]);
+    let empty = empty_set();
+    let input = GateInput {
+        fleet: &fleet,
+        observed: &observed,
+        rollout: Some(&r),
+        host: "web-02",
+        now: Utc::now(),
+        emitted_opens_in_tick: &empty,
+        mode: super::GateMode::Dispatch,
+    };
+    assert_eq!(evaluate_for_host(&input), None);
+}

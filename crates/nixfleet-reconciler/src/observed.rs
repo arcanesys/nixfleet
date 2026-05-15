@@ -32,6 +32,13 @@ pub struct Observed {
     /// every promotion (gate fails open).
     #[serde(default)]
     pub host_probes_passing: HashMap<String, bool>,
+    /// Per-host "have probes actually run at least once" from the latest
+    /// checkin. `true` means the soak gate may consult `host_probes_passing`;
+    /// `false` means the host declared probes but the bootstrap `Unknown` state
+    /// hasn't cleared yet -- hold SoakHost. Hosts absent default to `true`
+    /// (gate fails open, matching `host_probes_passing` semantics).
+    #[serde(default)]
+    pub host_probes_observed: HashMap<String, bool>,
     /// Anti-thrash: `channel -> {closure_hash}` for closures the CP has
     /// quarantined after sustained probe failures (sweep-driven, see
     /// `server::reconcile::sweep_soaked_health_failures`). The reconciler

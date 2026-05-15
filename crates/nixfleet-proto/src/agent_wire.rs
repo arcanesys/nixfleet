@@ -52,10 +52,17 @@ pub struct CheckinRequest {
     #[serde(default)]
     pub health_probes: Vec<ProbeResult>,
 
-    /// Per-host gate mode for the probes above. `Enforce` blocks the
-    /// `Healthy -> Soaked` transition on failures; `Permissive`/`None` are
-    /// visibility-only; `Disabled` means probe execution is suppressed and
-    /// `health_probes` will be empty.
+    /// Per-host gate mode for the probes above.
+    ///
+    /// - `Enforce`: blocks `Healthy -> Soaked` on any non-`Pass` probe
+    ///   (including `Unknown` -- bootstrap must clear before soak).
+    /// - `Permissive`: blocks `Healthy -> Soaked` only on explicit `Fail`
+    ///   probes (`Unknown` is allowed -- it's handled by the separate
+    ///   probe-observation gate). This keeps the state machine honest --
+    ///   a host with failing probes never claims `Soaked`.
+    /// - `None`: legacy/agent doesn't declare a mode -- treated as
+    ///   visibility-only (no gating).
+    /// - `Disabled`: probe execution suppressed; `health_probes` empty.
     #[serde(default)]
     pub health_check_mode: Option<crate::compliance::GateMode>,
 }
@@ -81,8 +88,17 @@ pub enum ProbeStatus {
     Fail,
 }
 
-/// Soak-gate decision. Returns true unless mode is `Enforce` with at least one
-/// non-`Pass` probe (including `Unknown`).
+/// Soak-gate decision.
+///
+/// - `Enforce`: returns true only if every probe is `Pass` (any non-`Pass`,
+///   including `Unknown`, blocks).
+/// - `Permissive`: returns true unless at least one probe is explicitly
+///   `Fail`. `Unknown` is allowed at this layer -- the separate
+///   `host_probes_observed` gate ensures the bootstrap state has cleared
+///   before soak fires. The point is: a host with FAILING probes must
+///   never be allowed to claim `Soaked`, regardless of mode -- that's
+///   the state machine lying about a known-bad closure.
+/// - `None` / `Disabled`: visibility-only, no gating.
 pub fn host_probes_passing(checkin: &CheckinRequest) -> bool {
     use crate::compliance::GateMode;
     match checkin.health_check_mode {
@@ -90,6 +106,39 @@ pub fn host_probes_passing(checkin: &CheckinRequest) -> bool {
             .health_probes
             .iter()
             .all(|p| matches!(p.status, ProbeStatus::Pass)),
+        Some(GateMode::Permissive) => !checkin
+            .health_probes
+            .iter()
+            .any(|p| matches!(p.status, ProbeStatus::Fail)),
+        _ => true,
+    }
+}
+
+/// True iff the host has actually observed probe results yet (i.e., it's safe
+/// for the soak gate to consult `host_probes_passing`). Returns false ONLY when
+/// the host has declared probes (mode `Enforce` or `Permissive`, health_probes
+/// non-empty) but every probe is still `Unknown` (bootstrap state, no run has
+/// completed). Modes `Disabled` / `None`, and empty `health_probes`, return
+/// true: the host is not declaring probes the gate would gate on.
+///
+/// Without this gate, `host_probes_passing` returns true in `Permissive` /
+/// `None` modes regardless of whether probes have RUN -- the soak transition
+/// can fire on the first reconcile tick after Healthy (when `soakMinutes = 0`)
+/// before any probe has had a chance to observe the new closure. The host
+/// briefly claims `Soaked` on a known-bad closure; B's sustained-failure sweep
+/// catches it ~60s later, so end-to-end rollback still works, but the state
+/// machine should not lie about probe observation in the meantime.
+pub fn host_probes_observed(checkin: &CheckinRequest) -> bool {
+    use crate::compliance::GateMode;
+    match checkin.health_check_mode {
+        Some(GateMode::Enforce) | Some(GateMode::Permissive) => {
+            // No probes declared -> nothing to wait for.
+            checkin.health_probes.is_empty()
+                || checkin
+                    .health_probes
+                    .iter()
+                    .any(|p| !matches!(p.status, ProbeStatus::Unknown))
+        }
         _ => true,
     }
 }
@@ -545,4 +594,128 @@ mod report_event_discriminator_tests {
 #[serde(rename_all = "camelCase")]
 pub struct ReportResponse {
     pub event_id: String,
+}
+
+#[cfg(test)]
+mod probe_gate_tests {
+    use super::*;
+    use crate::compliance::GateMode;
+
+    fn checkin_with(mode: Option<GateMode>, probes: Vec<ProbeResult>) -> CheckinRequest {
+        CheckinRequest {
+            hostname: "h".into(),
+            agent_version: "0".into(),
+            current_generation: GenerationRef {
+                closure_hash: "c".into(),
+                channel_ref: None,
+                boot_id: "b".into(),
+            },
+            pending_generation: None,
+            last_evaluated_target: None,
+            last_fetch_outcome: None,
+            uptime_secs: None,
+            last_confirmed_at: None,
+            attestation_signature: None,
+            health_probes: probes,
+            health_check_mode: mode,
+        }
+    }
+
+    fn probe(name: &str, status: ProbeStatus) -> ProbeResult {
+        ProbeResult {
+            name: name.into(),
+            kind: ProbeKind::Exec,
+            status,
+            last_run_at: None,
+            last_pass_at: None,
+            failure_reason: None,
+        }
+    }
+
+    #[test]
+    fn observed_false_when_all_probes_unknown_under_permissive() {
+        let c = checkin_with(
+            Some(GateMode::Permissive),
+            vec![probe("p1", ProbeStatus::Unknown)],
+        );
+        assert!(!host_probes_observed(&c));
+    }
+
+    #[test]
+    fn observed_true_when_any_probe_has_run_under_permissive() {
+        let c = checkin_with(
+            Some(GateMode::Permissive),
+            vec![
+                probe("p1", ProbeStatus::Unknown),
+                probe("p2", ProbeStatus::Pass),
+            ],
+        );
+        assert!(host_probes_observed(&c));
+    }
+
+    #[test]
+    fn observed_true_under_disabled_mode_regardless_of_probes() {
+        let c = checkin_with(
+            Some(GateMode::Disabled),
+            vec![probe("p1", ProbeStatus::Unknown)],
+        );
+        assert!(host_probes_observed(&c));
+    }
+
+    #[test]
+    fn observed_true_under_none_mode() {
+        let c = checkin_with(None, vec![probe("p1", ProbeStatus::Unknown)]);
+        assert!(host_probes_observed(&c));
+    }
+
+    #[test]
+    fn observed_true_when_no_probes_declared_under_permissive() {
+        let c = checkin_with(Some(GateMode::Permissive), vec![]);
+        assert!(host_probes_observed(&c));
+    }
+
+    /// Permissive blocks soak on explicit `Fail` (state-machine honesty):
+    /// a host with failing probes must never claim Soaked. `Unknown` is
+    /// allowed (handled by the separate `host_probes_observed` gate).
+    #[test]
+    fn permissive_blocks_passing_on_fail() {
+        let c = checkin_with(
+            Some(GateMode::Permissive),
+            vec![probe("p1", ProbeStatus::Fail)],
+        );
+        assert!(!host_probes_passing(&c));
+    }
+
+    #[test]
+    fn permissive_allows_passing_on_unknown_only() {
+        let c = checkin_with(
+            Some(GateMode::Permissive),
+            vec![probe("p1", ProbeStatus::Unknown)],
+        );
+        assert!(host_probes_passing(&c));
+    }
+
+    #[test]
+    fn permissive_allows_passing_when_all_pass() {
+        let c = checkin_with(
+            Some(GateMode::Permissive),
+            vec![
+                probe("p1", ProbeStatus::Pass),
+                probe("p2", ProbeStatus::Pass),
+            ],
+        );
+        assert!(host_probes_passing(&c));
+    }
+
+    #[test]
+    fn permissive_blocks_when_any_fail_among_pass() {
+        let c = checkin_with(
+            Some(GateMode::Permissive),
+            vec![
+                probe("p1", ProbeStatus::Pass),
+                probe("p2", ProbeStatus::Fail),
+            ],
+        );
+        assert!(!host_probes_passing(&c));
+    }
 }
