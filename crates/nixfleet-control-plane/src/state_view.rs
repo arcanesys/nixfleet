@@ -84,8 +84,15 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
             // signals (quarantined_closure) can drift, but agent re-posts
             // hourly so worst case is one tick.
             let cur_rollout = last_rollout_id.as_deref();
-            let mut compliance_failures = 0usize;
-            let mut runtime_gate_errors = 0usize;
+            // Issue #6: dedupe by (kind, identifier) so repeated checkins for
+            // the same failing control don't inflate the displayed count. The
+            // agent re-posts every still-failing control each evidence cycle;
+            // a naive +1 per event walked 6 -> 7 -> 12 -> 18 across one demo
+            // loop. Snapshot the current outstanding SET instead.
+            let mut compliance_controls: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            let mut runtime_gate_reasons: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             let mut verified_count = 0usize;
             // Most-recent ClosureQuarantined for current rollout. Buf iter
             // is oldest-first; overwrite as we find newer.
@@ -109,16 +116,17 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                     if !outstanding {
                         continue;
                     }
-                    if is_compliance {
-                        compliance_failures += 1;
-                    }
-                    if is_runtime_gate {
-                        runtime_gate_errors += 1;
-                    }
-                    if let ReportEvent::ClosureQuarantined { closure_hash, .. } =
-                        &record.report.event
-                    {
-                        quarantined_closure = Some(closure_hash.clone());
+                    match &record.report.event {
+                        ReportEvent::ComplianceFailure { control_id, .. } => {
+                            compliance_controls.insert(control_id.clone());
+                        }
+                        ReportEvent::RuntimeGateError { reason, .. } => {
+                            runtime_gate_reasons.insert(reason.clone());
+                        }
+                        ReportEvent::ClosureQuarantined { closure_hash, .. } => {
+                            quarantined_closure = Some(closure_hash.clone());
+                        }
+                        _ => {}
                     }
                     if matches!(record.signature_status, Some(SignatureStatus::Verified))
                         && !is_quarantined
@@ -127,6 +135,8 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
                     }
                 }
             }
+            let compliance_failures = compliance_controls.len();
+            let runtime_gate_errors = runtime_gate_reasons.len();
             // pending_reboot is DB-backed: the durable `host_dispatch_state`
             // row is the single source of truth. Survives CP restart, doesn't
             // depend on the in-memory ring's eviction policy. The agent-side

@@ -158,14 +158,29 @@ impl Reports<'_> {
         })
     }
 
-    /// Per-(rollout, host) counts; per-rollout grouping enforces resolution-by-replacement.
-    /// `mismatch` and `malformed` excluded: they could be forged FAIL events from a stolen cert.
+    /// Per-(rollout, host) distinct-control counts; per-rollout grouping
+    /// enforces resolution-by-replacement. `mismatch` and `malformed` excluded:
+    /// they could be forged FAIL events from a stolen cert.
+    ///
+    /// Issue #6: counts DISTINCT control_id (compliance-failure) /
+    /// reason (runtime-gate-error). Each agent checkin posts a fresh event
+    /// row for every still-failing control, so a naive `COUNT(*)` inflates
+    /// linearly with checkin frequency -- the operator saw 6 -> 7 -> 12 -> 18
+    /// for the same host across one demo loop. Distinct-identifier counts
+    /// snapshot the current outstanding set instead of totalising events.
+    /// Prefixed with 'c:' / 'r:' so identical strings under different event
+    /// kinds don't collide.
     pub fn outstanding_compliance_events_by_rollout(
         &self,
     ) -> Result<HashMap<String, HashMap<String, usize>>> {
         super::read(self.conn, |c| {
             let mut stmt = c.prepare(
-                "SELECT rollout, hostname, COUNT(*) FROM host_reports
+                "SELECT rollout, hostname, COUNT(DISTINCT
+                    CASE event_kind
+                        WHEN 'compliance-failure' THEN 'c:' || COALESCE(json_extract(report_json, '$.controlId'), '')
+                        WHEN 'runtime-gate-error' THEN 'r:' || COALESCE(json_extract(report_json, '$.reason'), '')
+                    END
+                 ) FROM host_reports
                  WHERE rollout IS NOT NULL
                    AND event_kind IN ('compliance-failure', 'runtime-gate-error')
                    AND COALESCE(signature_status, '') NOT IN ('mismatch', 'malformed')
@@ -224,15 +239,29 @@ mod tests {
     #[test]
     fn outstanding_events_by_rollout_filters_tampered() {
         let db = fresh_db();
-        for (eid, sig) in [
+        // Distinct controlIds per event so the dedup-by-control logic
+        // (issue #6) doesn't collapse the count -- this test is about
+        // signature-status filtering, not deduplication.
+        let report_jsons = [
+            r#"{"hostname":"host-05","agentVersion":"test","event":"compliance-failure","controlId":"c1"}"#,
+            r#"{"hostname":"host-05","agentVersion":"test","event":"compliance-failure","controlId":"c2"}"#,
+            r#"{"hostname":"host-05","agentVersion":"test","event":"compliance-failure","controlId":"c3"}"#,
+            r#"{"hostname":"host-05","agentVersion":"test","event":"compliance-failure","controlId":"c4"}"#,
+            r#"{"hostname":"host-05","agentVersion":"test","event":"compliance-failure","controlId":"c5"}"#,
+        ];
+        for (i, (eid, sig)) in [
             ("e1", Some("verified")),
             ("e2", Some("unsigned")),
             ("e3", Some("no-pubkey")),
             ("e4", Some("mismatch")),
             ("e5", Some("malformed")),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let mut row = fail_event(Some("R1"), sig);
             row.event_id = eid;
+            row.report_json = report_jsons[i];
             db.reports().record_host_report(&row).unwrap();
         }
         let by_rollout = db
@@ -242,6 +271,59 @@ mod tests {
         assert_eq!(
             by_rollout.get("R1").and_then(|m| m.get("host-05")).copied(),
             Some(3),
+        );
+    }
+
+    /// Issue #6: repeated checkins for the same failing control must not
+    /// inflate the displayed count. The agent re-posts every still-failing
+    /// control each evidence cycle; without DISTINCT the count walked
+    /// 6 -> 7 -> 12 -> 18 across one demo loop. Same controlId 5x must
+    /// collapse to 1.
+    #[test]
+    fn outstanding_events_dedupe_same_control_id() {
+        let db = fresh_db();
+        let same_control = r#"{"hostname":"host-05","agentVersion":"test","event":"compliance-failure","controlId":"backup-set"}"#;
+        for eid in ["e1", "e2", "e3", "e4", "e5"] {
+            let mut row = fail_event(Some("R1"), Some("verified"));
+            row.event_id = eid;
+            row.report_json = same_control;
+            db.reports().record_host_report(&row).unwrap();
+        }
+        let by_rollout = db
+            .reports()
+            .outstanding_compliance_events_by_rollout()
+            .unwrap();
+        assert_eq!(
+            by_rollout.get("R1").and_then(|m| m.get("host-05")).copied(),
+            Some(1),
+            "5 events with same controlId must collapse to 1",
+        );
+    }
+
+    /// Companion: different controlIds count separately.
+    #[test]
+    fn outstanding_events_counts_distinct_controls() {
+        let db = fresh_db();
+        for (eid, ctrl) in [
+            ("e1", "backup-set"),
+            ("e2", "mfa-enforced"),
+            ("e3", "tls-enabled"),
+        ] {
+            let json =
+                format!(r#"{{"hostname":"host-05","agentVersion":"test","event":"compliance-failure","controlId":"{ctrl}"}}"#);
+            let mut row = fail_event(Some("R1"), Some("verified"));
+            row.event_id = eid;
+            row.report_json = &json;
+            db.reports().record_host_report(&row).unwrap();
+        }
+        let by_rollout = db
+            .reports()
+            .outstanding_compliance_events_by_rollout()
+            .unwrap();
+        assert_eq!(
+            by_rollout.get("R1").and_then(|m| m.get("host-05")).copied(),
+            Some(3),
+            "3 distinct controlIds count separately",
         );
     }
 
