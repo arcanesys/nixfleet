@@ -184,21 +184,29 @@ async fn fire_switch(
     Ok(None)
 }
 
-/// `_target_basename` unused on Linux (profile flip is source of truth);
-/// signature kept for cross-platform dispatch uniformity.
-async fn fire_rollback(_target_basename: &str) -> Result<Option<RollbackOutcome>> {
+/// LOADBEARING: `target_basename` resolves to the rolled-back closure's
+/// store path, NOT `/run/current-system`. The agent fires rollback while the
+/// failed closure is still current, so its `switch-to-configuration` would
+/// "switch to" itself - a no-op that leaves nginx (or whatever caused the
+/// failure) still down. Use the freshly-flipped profile target's binary.
+async fn fire_rollback(target_basename: &str) -> Result<Option<RollbackOutcome>> {
     let _ = Command::new("systemctl")
         .arg("reset-failed")
         .arg("nixfleet-rollback.service")
         .status()
         .await;
 
-    let switch_bin = "/run/current-system/bin/switch-to-configuration";
+    let switch_bin = rollback_switch_bin(target_basename);
+    tracing::info!(
+        target_basename = %target_basename,
+        switch_bin = %switch_bin,
+        "agent: firing rollback via systemd-run --unit=nixfleet-rollback (detached)",
+    );
     let fire_status = Command::new("systemd-run")
         .arg("--unit=nixfleet-rollback")
         .arg("--collect")
         .arg("--")
-        .arg(switch_bin)
+        .arg(&switch_bin)
         .arg("switch")
         .status()
         .await
@@ -215,6 +223,10 @@ async fn fire_rollback(_target_basename: &str) -> Result<Option<RollbackOutcome>
         }));
     }
     Ok(None)
+}
+
+fn rollback_switch_bin(target_basename: &str) -> String {
+    format!("/nix/store/{target_basename}/bin/switch-to-configuration")
 }
 
 #[cfg(test)]
@@ -241,6 +253,20 @@ mod tests {
     fn linux_backend_default_is_unit_struct() {
         let _b: LinuxBackend = LinuxBackend;
         let _: LinuxBackend = LinuxBackend::default();
+    }
+
+    /// Regression: fire_rollback used to invoke
+    /// `/run/current-system/bin/switch-to-configuration`, which is still the
+    /// failed closure when rollback fires (profile pointer flipped, but
+    /// /run/current-system unchanged until switch-to-configuration completes).
+    /// Use the rolled-back target's own binary.
+    #[test]
+    fn rollback_switch_bin_uses_target_store_path_not_current_system() {
+        let basename = "abc123-nixos-system-web-01-26.05";
+        assert_eq!(
+            rollback_switch_bin(basename),
+            "/nix/store/abc123-nixos-system-web-01-26.05/bin/switch-to-configuration",
+        );
     }
 
     /// Build a fake system tree at `root` where each `rel_path` is a symlink
