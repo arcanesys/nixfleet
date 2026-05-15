@@ -165,9 +165,25 @@ pub async fn build_for_gates(
             std::collections::HashMap::new()
         });
 
+    // LOADBEARING (regression fix): without `quarantined_closures` populated
+    // here, the dispatch endpoint's `evaluate_for_host` runs the anti-thrash
+    // gate against an empty map -- which is exactly the split-brain we lifted
+    // the gate to close. Reconciler-side `run_tick_with_projection` populates
+    // it from the same query; the dispatch-side projection must too, or the
+    // CP keeps serving the quarantined SHA on every checkin and the demo
+    // loops bad-SHA -> activate -> rollback -> bad-SHA forever.
+    let quarantined_closures = db
+        .quarantined_closures()
+        .active_by_channel()
+        .unwrap_or_else(|err| {
+            tracing::warn!(error = %err, "observed_view: quarantined_closures lookup failed; anti-thrash gate no-ops");
+            std::collections::HashMap::new()
+        });
+
     Observed {
         active_rollouts,
         outstanding_compliance_events_by_rollout,
+        quarantined_closures,
         ..Default::default()
     }
 }
@@ -221,5 +237,82 @@ async fn load_budgets_from_manifest(
             );
             Vec::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nixfleet_proto::testing::FleetBuilder;
+
+    fn fresh_db() -> Db {
+        let db = Db::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        db
+    }
+
+    /// Regression: `build_for_gates` previously constructed Observed with
+    /// `..Default::default()`, leaving `quarantined_closures` empty. The
+    /// quarantine gate (lifted into `evaluate_for_host`) then ran against an
+    /// empty map and let every dispatch through -- the very split-brain we
+    /// lifted the gate to close. With this populated, the dispatch endpoint
+    /// sees the same anti-thrash entries as the reconciler.
+    #[tokio::test]
+    async fn build_for_gates_populates_quarantined_closures() {
+        let db = fresh_db();
+        db.quarantined_closures()
+            .insert("edge", "bad-sha", "sustained probe failures")
+            .unwrap();
+        db.quarantined_closures()
+            .insert("stable", "other-bad", "sustained probe failures")
+            .unwrap();
+
+        let fleet = FleetBuilder::new()
+            .host("web-02", "edge")
+            .host_closure("web-02", "bad-sha")
+            .build();
+        let fleet_resolved_hash = "0".repeat(64);
+
+        let observed = build_for_gates(&db, &fleet, &fleet_resolved_hash, None).await;
+
+        assert!(
+            observed.quarantined_closures.contains_key("edge"),
+            "edge channel must surface in quarantined_closures; got {:?}",
+            observed.quarantined_closures,
+        );
+        assert!(
+            observed
+                .quarantined_closures
+                .get("edge")
+                .is_some_and(|set| set.contains("bad-sha")),
+            "edge/bad-sha must be present; got {:?}",
+            observed.quarantined_closures,
+        );
+        assert!(
+            observed
+                .quarantined_closures
+                .get("stable")
+                .is_some_and(|set| set.contains("other-bad")),
+            "stable/other-bad must be present too; got {:?}",
+            observed.quarantined_closures,
+        );
+    }
+
+    #[tokio::test]
+    async fn build_for_gates_quarantine_empty_when_no_entries() {
+        let db = fresh_db();
+        let fleet = FleetBuilder::new()
+            .host("web-02", "edge")
+            .host_closure("web-02", "good-sha")
+            .build();
+        let fleet_resolved_hash = "0".repeat(64);
+
+        let observed = build_for_gates(&db, &fleet, &fleet_resolved_hash, None).await;
+
+        assert!(
+            observed.quarantined_closures.is_empty(),
+            "no quarantine rows -> empty map; got {:?}",
+            observed.quarantined_closures,
+        );
     }
 }

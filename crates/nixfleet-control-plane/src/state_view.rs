@@ -33,6 +33,19 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
     let checkins = state.host_checkins.read().await;
     let reports = state.host_reports.read().await;
 
+    // CP-side quarantine table: `channel -> {closure_hash}`. The status
+    // table's `quarantined_closure` field was previously populated ONLY from
+    // the agent's `ClosureQuarantined` event-ring entry, so if the agent never
+    // emitted that event (e.g., rollback path short-circuited before the
+    // post-rollback report), the operator-visible field stayed null even
+    // though CP's quarantine table had the entry and the dispatch gate was
+    // refusing the SHA. Read the CP-side state as a backstop.
+    let cp_quarantine: HashMap<String, std::collections::HashSet<String>> = state
+        .db
+        .as_ref()
+        .and_then(|db| db.quarantined_closures().active_by_channel().ok())
+        .unwrap_or_default();
+
     // Memoise per-channel rollout ID; project once per channel, not per host.
     // Projection failure warns so a broken manifest surfaces in logs rather
     // than silently empty rollout_state.
@@ -137,6 +150,18 @@ pub async fn fleet_state_view(state: &AppState) -> Result<Vec<HostStatusEntry>, 
             }
             let compliance_failures = compliance_controls.len();
             let runtime_gate_errors = runtime_gate_reasons.len();
+            // Backstop: even if no agent-side ClosureQuarantined event landed,
+            // surface the CP-side quarantine entry so the status table
+            // ("✗ reverted - channel halted, push fix") agrees with the
+            // dispatch gate's decision.
+            if quarantined_closure.is_none()
+                && let Some(declared) = host_decl.closure_hash.as_deref()
+                && cp_quarantine
+                    .get(&host_decl.channel)
+                    .is_some_and(|set| set.contains(declared))
+            {
+                quarantined_closure = Some(declared.to_string());
+            }
             // pending_reboot is DB-backed: the durable `host_dispatch_state`
             // row is the single source of truth. Survives CP restart, doesn't
             // depend on the in-memory ring's eviction policy. The agent-side
