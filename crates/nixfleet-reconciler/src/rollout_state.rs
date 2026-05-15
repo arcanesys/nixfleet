@@ -69,9 +69,31 @@ pub(crate) fn advance_rollout(
     let wave = match waves.get(rollout.current_wave) {
         Some(w) => w,
         None => {
-            actions.push(Action::ConvergeRollout {
-                rollout: rollout.id.clone(),
-            });
+            // `all-at-once` channels lower to `fleet.waves[ch] = []`, so this
+            // arm fires from tick 1 before any host has activated. Gate
+            // ConvergeRollout on every declared-channel host's
+            // `current_generation` matching its declared `closure_hash`;
+            // otherwise the tick stamps `terminal_at`, the
+            // Healthy/Soaked sweep updates zero rows, and late-arriving
+            // hosts stay at Healthy forever (channelEdges successors
+            // blocked indefinitely).
+            let all_hosts_on_target = fleet
+                .hosts
+                .iter()
+                .filter(|(_, h)| h.channel == rollout.channel)
+                .filter_map(|(name, h)| h.closure_hash.as_deref().map(|c| (name.as_str(), c)))
+                .all(|(name, target)| {
+                    observed
+                        .host_state
+                        .get(name)
+                        .and_then(|s| s.current_generation.as_deref())
+                        == Some(target)
+                });
+            if all_hosts_on_target {
+                actions.push(Action::ConvergeRollout {
+                    rollout: rollout.id.clone(),
+                });
+            }
             return actions;
         }
     };
@@ -392,6 +414,100 @@ mod tests {
         assert!(
             actions.is_empty(),
             "expected zero actions for terminal rollout, got {actions:?}",
+        );
+    }
+
+    /// Regression: `all-at-once` channels lower `fleet.waves[ch] = []`. Before
+    /// the arrival gate, advance_rollout fired ConvergeRollout on the very
+    /// first tick (no wave at current_wave=0), `apply_actions` stamped
+    /// `terminal_at`, and the Healthy/Soaked sweep updated zero rows because
+    /// no host had reached Healthy yet. Hosts dispatched later stayed at
+    /// Healthy forever (channelEdges successors blocked indefinitely).
+    fn fleet_all_at_once_one_host(host: &str, channel: &str, closure: &str) -> FleetResolved {
+        let mut fleet = FleetBuilder::new()
+            .host(host, channel)
+            .host_closure(host, closure)
+            .build();
+        // The Nix lowering populates `fleet.waves[ch] = []` for every channel
+        // regardless of strategy. FleetBuilder omits the entry entirely
+        // (Some([]) vs None take different early-return paths); insert an
+        // empty list so the test exercises the production `Some([])` arm.
+        fleet.waves.insert(channel.to_string(), vec![]);
+        fleet
+    }
+
+    fn observed_with_host_state(host: &str, current: Option<&str>) -> Observed {
+        use crate::observed::HostState;
+        let mut host_state = HashMap::new();
+        host_state.insert(
+            host.into(),
+            HostState {
+                online: true,
+                current_generation: current.map(str::to_string),
+            },
+        );
+        Observed {
+            channel_refs: HashMap::new(),
+            last_rolled_refs: HashMap::new(),
+            host_state,
+            active_rollouts: vec![],
+            outstanding_compliance_events_by_rollout: HashMap::new(),
+            last_deferrals: HashMap::new(),
+            host_probes_passing: HashMap::new(),
+            quarantined_closures: HashMap::new(),
+        }
+    }
+
+    fn rollout_empty(id: &str, channel: &str) -> Rollout {
+        Rollout {
+            id: id.into(),
+            channel: channel.into(),
+            target_ref: id.into(),
+            state: RolloutState::Executing,
+            current_wave: 0,
+            host_states: HashMap::new(),
+            last_healthy_since: HashMap::new(),
+            budgets: vec![],
+            terminal_at: None,
+        }
+    }
+
+    #[test]
+    fn advance_rollout_empty_waves_holds_until_hosts_on_target() {
+        let fleet = fleet_all_at_once_one_host("web-02", "edge", "c-new");
+        let rollout = rollout_empty("R1", "edge");
+        // Host still on the old closure - not yet activated.
+        let observed = observed_with_host_state("web-02", Some("c-old"));
+        let actions = advance_rollout(&fleet, &observed, &rollout, Utc::now());
+        assert!(
+            actions.is_empty(),
+            "empty-waves rollout must hold ConvergeRollout until hosts arrive; got {actions:?}",
+        );
+    }
+
+    #[test]
+    fn advance_rollout_empty_waves_holds_when_host_state_missing() {
+        let fleet = fleet_all_at_once_one_host("web-02", "edge", "c-new");
+        let rollout = rollout_empty("R1", "edge");
+        // No checkin yet - host absent from observed.host_state.
+        let observed = observed_with_failures("R1", &[]);
+        let actions = advance_rollout(&fleet, &observed, &rollout, Utc::now());
+        assert!(
+            actions.is_empty(),
+            "empty-waves rollout must hold ConvergeRollout when host hasn't checked in; got {actions:?}",
+        );
+    }
+
+    #[test]
+    fn advance_rollout_empty_waves_converges_when_all_hosts_on_target() {
+        let fleet = fleet_all_at_once_one_host("web-02", "edge", "c-new");
+        let rollout = rollout_empty("R1", "edge");
+        let observed = observed_with_host_state("web-02", Some("c-new"));
+        let actions = advance_rollout(&fleet, &observed, &rollout, Utc::now());
+        let kinds = extract_action_kind(&actions);
+        assert!(
+            kinds.contains(&"converge_rollout"),
+            "ConvergeRollout must emit once every declared-channel host is on target; got {kinds:?}",
         );
     }
 }
