@@ -187,6 +187,18 @@ pub struct AppState {
     /// (subscriber starvation, reconciler crash mid-stamp), polling
     /// catches up within the cadence.
     pub channel_refs_kick: tokio::sync::watch::Sender<()>,
+    /// Per-host timestamp of the first reconcile tick where a Soaked host
+    /// reported `outstanding_health_failures > 0`. Used by
+    /// `sweep_soaked_health_failures` to transition hosts with sustained
+    /// probe failures (more than `HEALTH_FAILURE_THRESHOLD_SECS`) to
+    /// `Failed`, which re-enters the existing `RollbackAndHalt` policy
+    /// path in the reconciler decision-procedure. In-memory only: CP
+    /// restart resets the per-host timer; the next checkin re-seeds it,
+    /// so the operator-visible failure window grows by at most one CP
+    /// restart cycle. Cleared on recovery (zero outstanding failures) or
+    /// on transition out of `Soaked` to avoid stale entries leaking
+    /// across rollouts.
+    pub health_failure_first_seen: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
     pub confirm_deadline_secs: i64,
     pub rollouts_dir: Option<PathBuf>,
     pub rollouts_source: Option<crate::rollouts_source::RolloutsSource>,
@@ -262,6 +274,7 @@ impl Default for AppState {
             verified_fleet: Arc::new(RwLock::new(None)),
             last_deferrals: Arc::new(RwLock::new(HashMap::new())),
             channel_refs_kick: tokio::sync::watch::channel(()).0,
+            health_failure_first_seen: Arc::new(RwLock::new(HashMap::new())),
             confirm_deadline_secs: DEFAULT_CONFIRM_DEADLINE_SECS,
             rollouts_dir: None,
             rollouts_source: None,

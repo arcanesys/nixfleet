@@ -209,6 +209,15 @@ pub(super) fn spawn_reconcile_loop(
                     // list_active() forever and the reconciler emits
                     // no-op ConvergeRollout actions on every tick.
                     sweep_terminal_orphans(&state, live_fleet.as_ref()).await;
+                    // Probe-failure -> rollback bridge: transitions Soaked
+                    // hosts with sustained `outstanding_health_failures > 0`
+                    // to `Failed`, so the existing `RollbackAndHalt` path in
+                    // the reconciler decision-procedure can finally fire on
+                    // service-level failures (closes the framework's
+                    // safety-net contract; abstracts33d/nixfleet#99 tracks
+                    // the v0.2.1 hardening - per-channel thresholds and
+                    // quarantinedClosure anti-thrash).
+                    sweep_soaked_health_failures(&state, now).await;
                     let plan = render_plan(&out);
                     tracing::info!(target: "reconcile", "{}", plan.trim_end());
                 }
@@ -535,6 +544,105 @@ async fn sweep_terminal_orphans(
     }
 }
 
+/// Sustained-failure window before a Soaked host with non-zero
+/// `outstanding_health_failures` transitions to Failed. Fixed in v0.2;
+/// per-channel override + quarantinedClosure anti-thrash live in
+/// abstracts33d/nixfleet#99.
+const HEALTH_FAILURE_THRESHOLD_SECS: i64 = 60;
+
+/// Bridges probe failures to the existing `RollbackAndHalt` action path.
+/// Soaked hosts with non-Pass probes for > `HEALTH_FAILURE_THRESHOLD_SECS`
+/// transition to Failed; the reconciler decision-procedure (host_state.rs)
+/// then emits HaltRollout + RollbackHost as it already does for activation
+/// failures. Per-host timers are in-memory: CP restart re-seeds them from
+/// the next checkin, growing the window by at most one restart cycle.
+async fn sweep_soaked_health_failures(state: &AppState, now: chrono::DateTime<chrono::Utc>) {
+    let Some(db) = state.db.as_deref() else {
+        return;
+    };
+
+    let snapshots = match db.host_dispatch_state().active_rollouts_snapshot() {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::warn!(target: "health-sweep", error = %err, "active_rollouts_snapshot failed");
+            return;
+        }
+    };
+
+    let checkins = state.host_checkins.read().await;
+    let mut tracker = state.health_failure_first_seen.write().await;
+
+    for snap in &snapshots {
+        for (hostname, host_state) in &snap.host_states {
+            // Tracker is per-host, not per-(host, rollout); transitions out of
+            // Soaked (or onto a new rollout) reset the window on the way back.
+            if host_state.as_str() != "Soaked" {
+                tracker.remove(hostname);
+                continue;
+            }
+
+            // Mirrors `state_view::outstanding_health_failures`.
+            let outstanding = checkins
+                .get(hostname)
+                .map(|c| {
+                    c.checkin
+                        .health_probes
+                        .iter()
+                        .filter(|p| {
+                            !matches!(p.status, nixfleet_proto::agent_wire::ProbeStatus::Pass)
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
+
+            if outstanding == 0 {
+                tracker.remove(hostname);
+                continue;
+            }
+
+            let first_seen = *tracker.entry(hostname.clone()).or_insert(now);
+            let elapsed = now - first_seen;
+            if elapsed < chrono::Duration::seconds(HEALTH_FAILURE_THRESHOLD_SECS) {
+                continue;
+            }
+
+            match db.rollout_state().transition_host_state(
+                hostname,
+                &snap.rollout_id,
+                crate::state::HostRolloutState::Failed,
+                crate::state::HealthyMarker::Untouched,
+                Some(crate::state::HostRolloutState::Soaked),
+            ) {
+                Ok(0) => {
+                    // Race: host left Soaked between snapshot and transition.
+                    tracker.remove(hostname);
+                }
+                Ok(_) => {
+                    tracing::warn!(
+                        target: "health-sweep",
+                        hostname = %hostname,
+                        rollout = %snap.rollout_id,
+                        elapsed_secs = elapsed.num_seconds(),
+                        outstanding_health_failures = outstanding,
+                        "Soaked -> Failed: sustained probe failures (RollbackAndHalt path takes over)",
+                    );
+                    tracker.remove(hostname);
+                    kick_channel_refs_poll(state, "Soaked -> Failed health sweep");
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        target: "health-sweep",
+                        hostname = %hostname,
+                        rollout = %snap.rollout_id,
+                        error = %err,
+                        "Soaked -> Failed transition failed",
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Returns `(tick_output, fleet)`; fleet `None` on verify failure so caller preserves prior snapshot.
 #[allow(clippy::too_many_arguments)]
 fn run_tick_with_projection(
@@ -754,4 +862,189 @@ pub(super) fn verify_fleet_only(inputs: &TickInputs) -> Option<(FleetResolved, V
     )
     .ok()?;
     Some((fleet, artifact))
+}
+
+#[cfg(test)]
+mod health_sweep_tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::state::{HealthyMarker, HostRolloutState};
+    use nixfleet_proto::agent_wire::{
+        CheckinRequest, GenerationRef, ProbeKind, ProbeResult, ProbeStatus,
+    };
+
+    async fn build_state_with_soaked_host(
+        hostname: &str,
+        rollout_id: &str,
+        outstanding_failures: usize,
+    ) -> AppState {
+        let db = Db::open_in_memory().unwrap();
+        db.migrate().unwrap();
+        // Seed: ConfirmWindow row dispatched (operational state) plus the
+        // host_rollout_state Healthy row, then walk to Soaked via the same
+        // transition the runtime uses. Mirrors the canary path.
+        let now = chrono::Utc::now();
+        db.host_dispatch_state()
+            .record_dispatch(&crate::db::host_dispatch_state::DispatchInsert {
+                hostname,
+                channel: "stable",
+                rollout_id,
+                wave: 0,
+                target_closure_hash: "deadbeef",
+                target_channel_ref: "stable@r1",
+                confirm_deadline: now + chrono::Duration::seconds(360),
+            })
+            .unwrap();
+        db.rollout_state()
+            .transition_host_state(
+                hostname,
+                rollout_id,
+                HostRolloutState::Healthy,
+                HealthyMarker::Set(now),
+                None,
+            )
+            .unwrap();
+        db.rollout_state()
+            .transition_host_state(
+                hostname,
+                rollout_id,
+                HostRolloutState::Soaked,
+                HealthyMarker::Untouched,
+                Some(HostRolloutState::Healthy),
+            )
+            .unwrap();
+
+        let probes = (0..outstanding_failures)
+            .map(|i| ProbeResult {
+                name: format!("probe-{i}"),
+                kind: ProbeKind::Exec,
+                last_run_at: None,
+                last_pass_at: None,
+                status: ProbeStatus::Fail,
+                failure_reason: None,
+            })
+            .collect::<Vec<_>>();
+        let checkin = CheckinRequest {
+            hostname: hostname.to_string(),
+            agent_version: "0.2.0".to_string(),
+            current_generation: GenerationRef {
+                closure_hash: "deadbeef".to_string(),
+                channel_ref: None,
+                boot_id: "boot".to_string(),
+            },
+            pending_generation: None,
+            last_evaluated_target: None,
+            last_fetch_outcome: None,
+            uptime_secs: Some(1),
+            last_confirmed_at: None,
+            attestation_signature: None,
+            health_probes: probes,
+            health_check_mode: Some(nixfleet_proto::compliance::GateMode::Enforce),
+        };
+
+        let state = AppState {
+            db: Some(std::sync::Arc::new(db)),
+            ..AppState::default()
+        };
+        // RT::block_on at module level is fine here - tests use the std-thread
+        // tokio runtime from `#[tokio::test]` attributes.
+        let mut checkins = std::collections::HashMap::new();
+        checkins.insert(
+            hostname.to_string(),
+            HostCheckinRecord {
+                last_checkin: now,
+                checkin,
+            },
+        );
+        // Tokio's blocking write is fine in test ctor; the runtime is the
+        // tokio::test single-thread one.
+        *state.host_checkins.write().await = checkins;
+        state
+    }
+
+    #[tokio::test]
+    async fn within_threshold_does_not_transition() {
+        let hostname = "h1";
+        let rollout = "stable@r1";
+        let state = build_state_with_soaked_host(hostname, rollout, 1).await;
+        let now = chrono::Utc::now();
+
+        // First call: seeds tracker. Second call < threshold: no transition.
+        sweep_soaked_health_failures(&state, now).await;
+        sweep_soaked_health_failures(
+            &state,
+            now + chrono::Duration::seconds(HEALTH_FAILURE_THRESHOLD_SECS - 5),
+        )
+        .await;
+
+        let db = state.db.as_deref().unwrap();
+        let got = db
+            .rollout_state()
+            .host_state(hostname, rollout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(got, "Soaked", "must stay Soaked within threshold");
+    }
+
+    #[tokio::test]
+    async fn past_threshold_transitions_to_failed() {
+        let hostname = "h2";
+        let rollout = "stable@r1";
+        let state = build_state_with_soaked_host(hostname, rollout, 2).await;
+        let now = chrono::Utc::now();
+
+        sweep_soaked_health_failures(&state, now).await;
+        sweep_soaked_health_failures(
+            &state,
+            now + chrono::Duration::seconds(HEALTH_FAILURE_THRESHOLD_SECS + 1),
+        )
+        .await;
+
+        let db = state.db.as_deref().unwrap();
+        let got = db
+            .rollout_state()
+            .host_state(hostname, rollout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            got, "Failed",
+            "sustained probe failures must transition Soaked -> Failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovered_probes_clear_tracker() {
+        let hostname = "h3";
+        let rollout = "stable@r1";
+        let state = build_state_with_soaked_host(hostname, rollout, 1).await;
+        let now = chrono::Utc::now();
+
+        // Seed tracker.
+        sweep_soaked_health_failures(&state, now).await;
+        // Probes recover - rewrite checkin with no failing probes.
+        let mut checkins = state.host_checkins.write().await.clone();
+        let rec = checkins.get_mut(hostname).unwrap();
+        rec.checkin.health_probes.clear();
+        *state.host_checkins.write().await = checkins;
+
+        // Even past threshold, recovery clears tracker so no transition.
+        sweep_soaked_health_failures(
+            &state,
+            now + chrono::Duration::seconds(HEALTH_FAILURE_THRESHOLD_SECS + 1),
+        )
+        .await;
+
+        let tracker = state.health_failure_first_seen.read().await;
+        assert!(
+            !tracker.contains_key(hostname),
+            "tracker entry must be cleared after recovery: {tracker:?}",
+        );
+        let db = state.db.as_deref().unwrap();
+        let got = db
+            .rollout_state()
+            .host_state(hostname, rollout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(got, "Soaked", "must stay Soaked when probes recovered");
+    }
 }
