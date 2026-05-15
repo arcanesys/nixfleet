@@ -320,13 +320,29 @@ fn base_status_label(
 
     // Failed/Reverted ranks above closure-match: the state machine remembers
     // failures even after operator-driven recovery - keep surfacing them.
+    //
+    // Failed splits into two displayed flavors using existing primitives:
+    //   * Failed + agent still on the declared (bad) closure  -> "✗ failed"
+    //     (rollback has not fired yet, or the policy is Halt-only)
+    //   * Failed + agent has moved off declared (current != declared) ->
+    //     "→ reverting" (agent rolled back, CP just hasn't transitioned to
+    //     Reverted yet - transient, the next checkin will resolve it)
+    //
     // Issue #5: when the host has ALSO seen a ClosureQuarantined event, append
     // the channel-halt hint so the operator sees the actionable next step
     // ("push a new closure to clear") rather than just the failure label.
     if let Some(state) = host.rollout_state
         && state.is_failed()
     {
+        let off_declared = match (
+            host.declared_closure_hash.as_deref(),
+            host.current_closure_hash.as_deref(),
+        ) {
+            (Some(declared), Some(current)) => declared != current,
+            _ => false,
+        };
         let base = match state {
+            HostRolloutState::Failed if off_declared => "\u{2192} reverting".to_string(),
             HostRolloutState::Failed => "\u{2717} failed".to_string(),
             HostRolloutState::Reverted => "\u{2717} reverted".to_string(),
             _ => format!("\u{2717} {}", state.as_db_str().to_lowercase()),
@@ -399,6 +415,12 @@ fn base_status_label(
         Some(s) if s.is_terminal_for_ordering() => {
             format!("\u{2713} {}", s.as_db_str().to_lowercase(),)
         }
+        // Healthy is in `is_in_flight`, but the operator-facing label
+        // "→ healthy" reads as a terminal state. The host IS in the soak
+        // window between confirm and Soaked -- relabel to make that
+        // transient nature explicit. The state machine still calls it
+        // Healthy; the display layer just stops lying about it.
+        Some(HostRolloutState::Healthy) => "\u{2192} soaking".to_string(),
         Some(s) if s.is_in_flight() => format!("\u{2192} {}", s.as_db_str().to_lowercase(),),
         Some(HostRolloutState::Queued) => "\u{2026} queued".to_string(),
         _ => "\u{2192} in progress".to_string(),
@@ -650,6 +672,9 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
         let mut h = fixture_host("a", "stable", false, Some(1), 0);
         h.rollout_state = Some(HostRolloutState::Failed);
+        // Pin the host to the bad SHA so it shows "✗ failed" (on declared)
+        // rather than "→ reverting" (off declared).
+        h.current_closure_hash = h.declared_closure_hash.clone();
         h.pin = Some(nixfleet_proto::Pin {
             commit: "frozen1".into(),
             reason: "Q2 audit".into(),
@@ -696,6 +721,9 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
         let mut h = fixture_host("a", "stable", true, Some(1), 0);
         h.rollout_state = Some(HostRolloutState::Failed);
+        // Force current == declared so the "on declared" arm renders ("failed").
+        // The "off declared" arm ("reverting") is exercised separately.
+        h.current_closure_hash = h.declared_closure_hash.clone();
         let inputs = StatusInputs {
             now,
             hosts: vec![h],
@@ -709,6 +737,33 @@ mod tests {
         assert!(
             !out.contains("converged"),
             "should not show converged: {out}"
+        );
+    }
+
+    /// Issue (state-machine clarity): Failed with the host already off the
+    /// declared (bad) SHA means the agent has rolled back -- CP just hasn't
+    /// transitioned to Reverted yet. Render as "→ reverting" so the operator
+    /// knows recovery is in flight rather than seeing a stale "✗ failed".
+    #[test]
+    fn rollout_state_failed_off_declared_renders_reverting() {
+        use nixfleet_proto::HostRolloutState;
+        let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
+        let mut h = fixture_host("a", "stable", false, Some(1), 0);
+        h.rollout_state = Some(HostRolloutState::Failed);
+        // fixture_host already sets declared != current; keep as-is.
+        let inputs = StatusInputs {
+            now,
+            hosts: vec![h],
+            channel_freshness: BTreeMap::from([("stable".to_string(), 180)]),
+        };
+        let out = render_status_table(&inputs);
+        assert!(
+            out.contains("\u{2192} reverting"),
+            "Failed off-declared must show reverting: {out}",
+        );
+        assert!(
+            !out.contains("\u{2717} failed"),
+            "must not show '✗ failed' when the agent has moved off declared: {out}",
         );
     }
 
@@ -790,7 +845,11 @@ mod tests {
     /// confirm and Soaked. Show "→ healthy" so the operator sees the host
     /// is still progressing through the rollout, not done.
     #[test]
-    fn healthy_with_passing_probes_renders_healthy_not_converged() {
+    fn healthy_with_passing_probes_renders_soaking_not_converged() {
+        // Healthy is the soak window between confirm and Soaked. Label it as
+        // "→ soaking" so the operator sees rollout progress accurately --
+        // "healthy" reads as a terminal state and lies about the transient
+        // nature of this phase.
         use nixfleet_proto::HostRolloutState;
         let now = Utc.with_ymd_and_hms(2026, 5, 5, 0, 0, 0).unwrap();
         let mut h = fixture_host("a", "stable", true, Some(1), 0);
@@ -806,8 +865,12 @@ mod tests {
             "must not collapse healthy into converged: {out}",
         );
         assert!(
-            out.contains("healthy"),
-            "expected healthy state to surface: {out}",
+            out.contains("\u{2192} soaking"),
+            "Healthy must render as '→ soaking': {out}",
+        );
+        assert!(
+            !out.contains("\u{2192} healthy"),
+            "must not surface the raw '→ healthy' label: {out}",
         );
     }
 
@@ -1076,6 +1139,9 @@ mod tests {
 
         let mut h = fixture_host("a", "stable", false, Some(1), 0);
         h.rollout_state = Some(HostRolloutState::Failed);
+        // Force current == declared so the label is "✗ failed" (red), not
+        // "→ reverting" (off-declared transient).
+        h.current_closure_hash = h.declared_closure_hash.clone();
         let inputs = StatusInputs {
             now,
             hosts: vec![h],
