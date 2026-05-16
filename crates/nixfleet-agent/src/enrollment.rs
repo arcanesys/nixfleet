@@ -71,21 +71,38 @@ pub async fn enroll(
 
     let url = format!("{}/v1/enroll", cp_url.trim_end_matches('/'));
     let req = EnrollRequest { token, csr_pem };
-    let resp = client
-        .post(&url)
-        .header(PROTOCOL_VERSION_HEADER, PROTOCOL_MAJOR_VERSION.to_string())
-        .json(&req)
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        anyhow::bail!(
-            "enroll {}: {}: {}",
-            url,
-            resp.status(),
-            resp.text().await.unwrap_or_default()
-        );
-    }
-    let body: EnrollResponse = resp.json().await.context("parse enroll response")?;
+
+    // CP returns 503 "control plane not ready" between boot and first signed
+    // artifact landing (CI build window). Retry in-process instead of
+    // crashing the agent — systemd respawn loops on cold start lose minutes
+    // and look like agent defects in journals.
+    let body = loop {
+        let resp = client
+            .post(&url)
+            .header(PROTOCOL_VERSION_HEADER, PROTOCOL_MAJOR_VERSION.to_string())
+            .json(&req)
+            .send()
+            .await?;
+        let status = resp.status();
+        if status.is_success() {
+            break resp
+                .json::<EnrollResponse>()
+                .await
+                .context("parse enroll response")?;
+        }
+        let body_text = resp.text().await.unwrap_or_default();
+        if status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+            && body_text.contains("control plane not ready")
+        {
+            tracing::info!(
+                target: "nixfleet_agent::enrollment",
+                "enroll: CP cold-starting (awaiting first signed artifact); retrying in 10s"
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            continue;
+        }
+        anyhow::bail!("enroll {}: {}: {}", url, status, body_text);
+    };
 
     // Write only the cert; the private key is the SSH host key already
     // on disk at ssh_host_key_path. --client-key points there.
