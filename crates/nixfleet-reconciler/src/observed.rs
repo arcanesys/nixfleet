@@ -102,10 +102,16 @@ pub struct Rollout {
 
 impl Rollout {
     /// Active for `channelEdges` / host-edges sequencing. Empty
-    /// `host_states` counts as active (work declared, not started).
+    /// `host_states` counts as active (work declared, not started)
+    /// UNLESS `terminal_at` is stamped (rollout completed with no work
+    /// needed -- e.g., closure unchanged for this channel; gate must
+    /// release the successor symmetrically with the non-empty path).
     /// `Failed` / `Reverted` count as active - predecessor in trouble holds
     /// the successor. See `HostRolloutState::is_terminal_for_ordering`.
     pub fn is_active_for_ordering(&self) -> bool {
+        if self.terminal_at.is_some() {
+            return false;
+        }
         if self.host_states.is_empty() {
             return true;
         }
