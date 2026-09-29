@@ -34,7 +34,7 @@ The minimum path from a fresh repo to a single managed host. For multi-host flee
               };
               services.nixfleet-agent = {
                 enable = true;
-                controlPlane.url = "https://cp.example.com:8080";
+                controlPlaneUrl = "https://cp.example.com:8080";
               };
             })
           ];

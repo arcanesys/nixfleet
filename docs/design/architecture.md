@@ -530,7 +530,7 @@ let fleet = nixfleet.lib.mkFleet {
         nixfleet.scopes.keyslots.tpm
         ./hardware/web-01.nix
         ({ ... }: {
-          services.nixfleet-agent = { enable = true; controlPlane.url = "https://cp.example.com:8080"; };
+          services.nixfleet-agent = { enable = true; controlPlaneUrl = "https://cp.example.com:8080"; };
         })
       ];
     };
